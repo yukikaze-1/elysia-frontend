@@ -27,6 +27,7 @@ The docs are the engineering contract. Before writing code, read them; before ch
 | 12 | **Kickoff checklist & phased plan** (authoritative entry conditions / gates) |
 | 13 | Cross-document review & harmonized conventions (R-01…R-24) |
 | 14, 15 | Backend-side adaptation task list / prompt pack |
+| 16 | Per-phase execution checklist & progress tracker (living tracker; 10/12 remain authoritative) |
 
 Upstream requirement docs (not numbered): `Cyrene-Desktop-Demo-产品需求文档-v0.2.md` (product scope) and `Cyrene-Agent-工具执行系统补充需求.md` (tool execution system).
 
