@@ -1,0 +1,373 @@
+# Cyrene Live2D 前端接入设计
+
+**文档版本：** v0.2  
+**文档状态：** 首轮 Review 已修订 / 待模型资源、SDK 与许可验证  
+**适用范围：** Electron Renderer、Live2D 模型资源、TTS 播放联动  
+**文档日期：** 2026-08-03
+**最后复核日期：** 2026-08-04
+
+---
+
+## 1. 目标
+
+Live2D 为 Cyrene 提供持续角色形象和基础情绪反馈。它是表现层，不参与聊天、工具或权限决策。
+
+P0 目标：
+
+- 加载已安装并通过校验的模型；
+- 在设置页切换 Live2D 模型；
+- 待机、眨眼、呼吸和轻微视线跟随；
+- 根据连接、生成、工具和错误状态切换表现；
+- TTS 播放时进行基础音量口型；
+- 角色栏作为聊天窗口右侧布局列展开，不覆盖消息、滚动条或输入区；
+- 支持隐藏、降帧和静态头像降级；
+- Live2D 失败时聊天保持完整可用。
+
+P0 不包含摄像头追踪、精确音素口型、模型商店或未经校验的任意模型导入。Demo 至少准备两个可切换的模型配置或角色皮肤，用于验证切换流程。
+
+## 2. 分层结构
+
+```text
+Vue Live2DPanel
+       ↓
+Live2DController
+       ↓
+Expression / Motion / LipSync / Performance
+       ↓
+Live2DAdapter
+       ↓
+选定的 Cubism Web SDK 或兼容封装
+```
+
+业务模块只依赖 `Live2DController`，不直接调用 SDK API 或动作文件名。
+
+## 3. 核心接口
+
+```typescript
+interface Live2DController {
+  listInstalledModels(): Promise<Live2DModelSummary[]>;
+  load(modelId: string): Promise<void>;
+  switchModel(modelId: string): Promise<void>;
+  unload(): Promise<void>;
+  setState(state: CharacterState): void;
+  setExpression(name: string, priority?: MotionPriority): void;
+  playMotion(name: string, priority?: MotionPriority): Promise<void>;
+  setMouthLevel(level: number): void;
+  setLookTarget(target: NormalizedPoint | null): void;
+  setVisibility(visible: boolean): void;
+  setPerformanceMode(mode: PerformanceMode): void;
+  reset(): Promise<void>;
+}
+
+interface Live2DModelSummary {
+  id: string;
+  displayName: string;
+  preview: string;
+  version: string;
+  available: boolean;
+}
+
+type CharacterState =
+  | "offline"
+  | "idle"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "waiting_permission"
+  | "working"
+  | "happy"
+  | "sad"
+  | "surprised"
+  | "error";
+
+type MotionPriority = 0 | 1 | 2 | 3;
+type PerformanceMode = "auto" | "quality" | "balanced" | "low_power";
+```
+
+## 4. 模型资源包
+
+推荐资源目录：
+
+```text
+assets/live2d/<model-id>/
+├── manifest.json
+├── model3.json
+├── model.moc3
+├── textures/
+├── motions/
+├── expressions/
+├── physics3.json
+├── pose3.json
+└── preview.png
+```
+
+客户端自定义 `manifest.json`：
+
+```json
+{
+  "id": "cyrene-default",
+  "displayName": "Cyrene",
+  "modelFile": "model3.json",
+  "preview": "preview.png",
+  "expressions": ["neutral", "happy", "sad", "surprised"],
+  "motions": ["idle", "greeting", "thinking", "speaking"],
+  "licenseRef": "LICENSE.txt",
+  "integrityManifest": "integrity.json"
+}
+```
+
+所有资源路径从已安装模型目录解析，拒绝绝对路径、`..`、符号链接/连接点逃逸和未列入完整性清单的文件。`integrity.json` 记录相对路径、大小和 SHA-256；安装、切换和打包时复核。后端不能传入本地路径、URL 或脚本来加载新资源。
+
+设置页只列出已安装且 Manifest、资源完整性和许可状态通过校验的模型。
+
+## 5. 加载生命周期
+
+```text
+unloaded → loading → ready
+               ↓       ↓
+             failed ← device_lost
+               ↓
+             fallback
+```
+
+加载步骤：
+
+1. 检查用户是否启用 Live2D；
+2. 读取模型 Manifest；
+3. 验证资源路径和白名单；
+4. 创建渲染上下文；
+5. 加载模型、纹理、物理和默认动作；
+6. 进入待机状态；
+7. 失败时释放已创建资源并显示静态头像。
+
+切换会话不重复加载同一模型。窗口隐藏或系统休眠时暂停高频更新。
+
+### 5.1 模型切换
+
+模型切换流程：
+
+1. 校验目标模型已安装且可用；
+2. 保存当前模型 ID，不保存实时动作进度；
+3. 暂停动作、口型和渲染事件；
+4. 预加载目标模型关键资源；
+5. 目标加载成功后原子替换当前模型；
+6. 恢复当前业务状态；
+7. 加载失败时继续使用原模型并提示原因。
+
+切换过程中聊天、语音和工具流程不得暂停。后端只可以建议 `modelId`，最终是否允许切换由客户端已安装白名单和用户设置决定。
+
+## 6. 状态来源与优先级
+
+状态来源包括：
+
+- 客户端连接；
+- AI 生成；
+- TTS 播放；
+- 工具等待授权；
+- 工具执行；
+- 后端可选表现指令；
+- 用户点击互动。
+
+推荐优先级：
+
+| 优先级 | 状态 | 说明 |
+|---:|---|---|
+| 3 | error、waiting_permission | 必须让用户感知 |
+| 2 | speaking、working、thinking | 当前主要任务 |
+| 1 | 后端情绪建议、用户互动 | 可被主要任务打断 |
+| 0 | idle、自动眨眼、呼吸 | 默认循环 |
+
+高优先级状态结束后回到当前业务状态，而不是一律回到 `idle`。
+
+## 7. 状态映射
+
+| 业务事件 | 角色状态 | 默认表现 |
+|---|---|---|
+| 未连接 | offline | 低活跃待机 |
+| 已连接且空闲 | idle | 待机、眨眼、呼吸 |
+| 用户正在输入 | listening | 轻微注视输入区 |
+| 生成开始 | thinking | 思考动作 |
+| 首个正文增量到达 | speaking | 说话动作 |
+| TTS 播放 | speaking | 说话动作 + 口型 |
+| Desktop 工具待授权 | waiting_permission | 提醒动作 |
+| 工具运行 | working | 工作动作 |
+| 生成或工具失败 | error | 短暂错误表情 |
+| 完成且无音频 | idle | 平滑回到待机 |
+
+AI 文本内容不在前端进行复杂情绪分析。后端有明确指令时可作为低优先级建议。
+
+消息 `emotion` 主要用于文本标签展示；只有经过本地映射表识别的情绪代码才能转换为 Live2D 表情。未知代码显示为普通心情文本或“未知”，不能直接当作动作/表达式名称。
+
+## 8. 后端表现指令
+
+```typescript
+interface Live2DDirective {
+  state?: CharacterState;
+  expression?: string;
+  motion?: string;
+  priority?: 0 | 1 | 2 | 3;
+  durationMs?: number;
+}
+```
+
+校验规则：
+
+- 状态必须在前端枚举中；
+- 表情和动作必须存在于 Manifest 白名单；
+- 后端优先级上限由客户端限制；
+- 持续时间设置上下限；
+- 不接受路径、URL、代码或任意参数名；
+- 无效指令被忽略并记录脱敏警告，不影响消息显示。
+
+## 9. 动作调度
+
+调度器维护：
+
+- 当前动作；
+- 当前优先级；
+- 是否可中断；
+- 排队的短动作；
+- 待机恢复状态。
+
+规则：
+
+- 低优先级动作不能打断权限提醒或错误；
+- 同一动作在短时间内重复触发时合并；
+- 长动作设置最大时长；
+- 会话快速切换不堆积动作；
+- 模型未就绪时只记录最新业务状态，不缓存全部动作；
+- TTS 停止后口型立即进入平滑归零。
+
+## 10. 基础口型同步
+
+P0 使用音量驱动：
+
+```text
+TTS Audio
+   ↓ Web Audio Analyser
+RMS / 音量包络
+   ↓ 平滑、阈值、缩放
+mouthLevel 0..1
+   ↓
+Live2D 嘴部参数
+```
+
+建议处理：
+
+- 使用短窗口 RMS；
+- 设置噪声门限；
+- 上升较快、下降稍慢；
+- 限制最大变化速度；
+- 静音、暂停和结束时归零；
+- 音频播放失败时停止口型但不影响文字消息。
+
+不根据字符数量伪造口型，不使用麦克风输入驱动 AI 的嘴部。
+
+## 11. 鼠标和点击互动
+
+P0：
+
+- 鼠标在角色区域移动时轻微视线跟随；
+- 离开后平滑回正；
+- 点击一个安全命中区域触发预设动作；
+- 正在权限提醒、错误或 TTS 时，普通点击不打断高优先级动作。
+
+用户开启“减少动态效果”后关闭鼠标跟随和非必要点击动作。
+
+## 12. 性能策略
+
+### 12.1 性能模式
+
+| 模式 | 目标帧率 | 行为 |
+|---|---:|---|
+| quality | 60 FPS | 完整物理和动作 |
+| balanced | 30～60 FPS | 根据负载调整 |
+| low_power | 30 FPS 或更低 | 降低物理更新和画布分辨率 |
+| auto | 动态 | 根据窗口可见性和帧耗时选择 |
+
+### 12.2 自动降级
+
+- 窗口隐藏：暂停渲染循环；
+- Live2D 栏折叠：暂停画布并保留状态；
+- 连续帧耗时过高：降低帧率；
+- GPU 上下文丢失：尝试重建一次；
+- 重建失败：静态头像；
+- 系统低电量模式：切换低功耗配置。
+
+Live2D 资源释放后不得残留计时器、音频分析器或事件监听器。
+
+## 13. 尺寸和定位
+
+- 画布随右栏尺寸变化；
+- 右栏参与主布局排版；关闭、折叠或窄窗自动隐藏时，不改变聊天消息和滚动状态；
+- 模型使用统一的标准化坐标；
+- 用户可设置缩放和水平/垂直偏移；
+- 设置值限制在安全范围，防止模型完全移出画布；
+- DPI 和系统缩放变化时重新计算分辨率；
+- 不把模型区域覆盖到权限确认窗口。
+
+## 14. 设置和持久化
+
+```typescript
+interface Live2DSettings {
+  enabled: boolean;
+  modelId: string;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  mouseTracking: boolean;
+  autoMotions: boolean;
+  lipSync: boolean;
+  performanceMode: PerformanceMode;
+  reduceMotion: boolean;
+}
+```
+
+模型实例、动作进度和嘴部实时值不持久化。
+
+模型选择变化应即时预览；保存失败时回退到上一个可用模型。
+
+## 15. 资源与许可
+
+- 代码、SDK、Core、模型、纹理、动作和音频分别记录来源和许可；
+- 模型资源不因被打包进客户端就默认具备分发权；
+- 构建时检查必需许可文件；
+- 开源仓库和发布包可以使用不同的资源包含策略；
+- 引入或升级 SDK 前重新验证 Electron/Chromium、Windows、Linux 和图形环境兼容性。
+
+Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现及未来能力扩展，发布形态可能触及 Live2D 的 AI/Chatbot 或“Expandable Applications”分类。开发验证可先进行，但对外发布前必须按 Live2D 官方流程确认适用许可；不能仅凭“个人/小规模通常豁免”推断本项目一定豁免，因为 Expandable Application 可能需要单独审核和出版许可。模型作者授权与 Cubism SDK/Core 许可分别核对并留档。
+
+## 16. 测试场景
+
+- 模型首次加载成功；
+- 资源缺失、损坏和路径非法；
+- 完整性哈希不匹配、绝对路径和符号链接/连接点逃逸；
+- GPU 上下文丢失；
+- 隐藏、展开和调整窗口；
+- 60/30 FPS 切换；
+- thinking → speaking → idle；
+- waiting_permission 打断普通动作；
+- 后端发送未知表情或动作；
+- TTS 播放、暂停、结束和失败；
+- 快速切换会话；
+- 在两个已安装模型之间反复切换；
+- 目标模型损坏时保留原模型；
+- 长时间待机后无明显内存持续增长；
+- Live2D 完全禁用时聊天和工具流程正常。
+
+## 17. 验收标准
+
+- [ ] 至少两个合法、通过校验的模型配置可以加载；
+- [ ] 设置页可以列出并在两个已安装模型之间切换；
+- [ ] 切换失败时保留原模型和聊天状态；
+- [ ] 待机、眨眼、呼吸正常；
+- [ ] 生成、TTS、工具和错误状态映射正确；
+- [ ] 后端无法指定任意资源路径；
+- [ ] 高优先级状态不会被普通动作打断；
+- [ ] TTS 音量可以驱动基础口型；
+- [ ] 隐藏后停止高频渲染；
+- [ ] 失败后自动降级为静态头像；
+- [ ] Live2D 异常不影响聊天和权限操作；
+- [ ] 角色栏始终作为聊天右侧布局列展开，不覆盖聊天内容；
+- [ ] 模型及 SDK 许可已记录。
+- [ ] 对外发布前已确认 AI/Chatbot、可扩展应用分类及适用出版许可；无法确认时不发布含该 SDK/模型的产物。
