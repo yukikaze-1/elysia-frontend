@@ -1,0 +1,71 @@
+/*
+ * Cyrene 设计 token —— 从 ref/cyrene-ui-preview-v5.html 移植(保持变量名一致)。
+ * 这是 UI 的视觉契约:亮/暗主题、字体缩放、强调色都在此定义,组件不得另起颜色。
+ * 使用 light-dark(),随系统/设置 color-scheme 自动切换。
+ */
+:root {
+  color-scheme: light dark;
+
+  --cy-font-base: 14px;
+  --cy-user-font-scale: 1;
+
+  --cy-window: light-dark(#eef2f8, #11151d);
+  --cy-titlebar: light-dark(#e8edf5, #171c26);
+  --cy-nav: light-dark(#dce4f0, #1b2230);
+  --cy-pane: light-dark(#f5f7fb, #181e29);
+  --cy-surface: light-dark(#ffffff, #222a37);
+  --cy-surface-soft: light-dark(#f0f4fa, #293241);
+  --cy-surface-hover: light-dark(#e7edf7, #303a4a);
+  --cy-text: light-dark(#1f2938, #eef3fb);
+  --cy-muted: light-dark(#6b7687, #a9b4c5);
+  --cy-border: light-dark(#d7deea, #333d4d);
+  --cy-accent: light-dark(#dce8ff, #294466);
+  --cy-accent-strong: light-dark(#4b75ca, #7da8ff);
+  --cy-accent-text: light-dark(#18386f, #eef5ff);
+  --cy-user: light-dark(#dcecff, #284a70);
+  --cy-success: light-dark(#32765a, #73d7aa);
+  --cy-warning: light-dark(#9b6817, #efbf69);
+  --cy-danger: light-dark(#a33d47, #ff939b);
+  --cy-hair: light-dark(#6f7ea7, #8798ce);
+  --cy-hair-shadow: light-dark(#4d5d87, #596a9c);
+  --cy-skin: light-dark(#ffe2d5, #e5b7aa);
+  --cy-eye: light-dark(#4167a7, #9ac4ff);
+  --cy-clothes: light-dark(#dbe5f7, #354764);
+  --cy-glow: light-dark(#b9d2ff, #5c8bd8);
+  --cy-overlay: light-dark(rgba(52, 62, 80, 0.36), rgba(0, 0, 0, 0.56));
+  --cy-shadow: 0 18px 50px light-dark(rgba(52, 69, 98, 0.18), rgba(0, 0, 0, 0.38));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  color: var(--cy-text);
+  background: var(--cy-window);
+  font-family: Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-size: calc(var(--cy-font-base) * var(--cy-user-font-scale));
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}

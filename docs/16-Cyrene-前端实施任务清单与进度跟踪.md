@@ -163,25 +163,25 @@
 ### 任务清单
 
 - [x] 建立前端仓库（git init、分支 main、远程 origin、上游跟踪）——2026-08-06
-- [x] 固定 Node、包管理器与工具链（fnm + Node 22.23.0 + pnpm + `.nvmrc` + `.npmrc`）——2026-08-06
+- [x] 固定 Node、包管理器与工具链（fnm + Node 22.23.0 + pnpm + `.nvmrc` + `.npmrc` + pnpm-workspace.yaml）——2026-08-06
 - [x] 编写 README（环境信息、命令、协作约定）——2026-08-06
-- [~] 填写通信文档 02 §19 的后端对齐表（依赖 B/C 组输入）
-- [ ] 初始化 `apps/desktop/` 工程（Vue 3 + TS + Vite + Electron Forge + pnpm）
-- [ ] 建立前端领域类型、运行时 Schema 与公开错误模型（`shared/contracts`、`shared/schemas`、`shared/domain`、`shared/errors`）
-- [ ] 把真实流式事件整理为可重复播放的脱敏夹具（JSONL）
-- [ ] 建立 Main 中 `BackendAdapter` 接口骨架与 Mock Backend
-- [ ] 移植 `ref/cyrene-ui-preview-v5.html` 的设计 token 与四区布局为 Vue 组件（纯 UI）
-- [ ] 建立 `typecheck` / `lint` / `test` / `test:integration` 命令（Vitest）与最小 CI
+- [ ] 填写通信文档 02 §19 的后端对齐表（依赖 B/C 组输入）
+- [x] 初始化 `apps/desktop/` 工程（electron-vite + Vue 3 + TS + pnpm；Electron Forge 留待阶段 8）——2026-08-08
+- [x] 建立前端领域类型、运行时 Schema 与公开错误模型（`shared/contracts`、`shared/schemas`、`shared/domain`、`shared/errors`）——2026-08-08
+- [~] 把真实流式事件整理为可重复播放的脱敏夹具（已建 Mock 夹具 JSONL；真实事件待后端提供）
+- [x] 建立 Main 中 `BackendAdapter` 接口骨架与 Mock Backend（已开发、未联调）——2026-08-08
+- [x] 移植 `ref/cyrene-ui-preview-v5.html` 的设计 token 与四区布局为 Vue 组件（纯 UI 壳）——2026-08-08
+- [x] 建立 `typecheck` / `lint` / `test` / `test:integration` 命令（Vitest）与最小 CI——2026-08-08
 - [ ] 确认主验收平台、Live2D 资源与许可（H-01、G-01/G-02）
 
 ### 验收门槛
 
-- [ ] 全新环境按 README 能安装依赖并启动
-- [ ] 类型检查、格式检查与最小测试命令通过
-- [ ] 真实事件不经 UI 组件即可映射为前端领域事件（有真实样例时）
-- [ ] Mock 能重放 Inner Voice / Public Reply 多句流
+- [~] 全新环境按 README 能安装依赖并启动（沙箱内 dev 冒烟通过；窗口需在本机确认）
+- [x] 类型检查、格式检查与最小测试命令通过（typecheck/lint/test 19 项通过）——2026-08-08
+- [~] 真实事件不经 UI 组件即可映射为前端领域事件（Mock 事件经 Schema 后由 Adapter 消费；真实事件待后端提供）
+- [x] Mock 能重放 Inner Voice / Public Reply 多句流（mock-replay 单测覆盖）——2026-08-08
 - [ ] 未确认字段集中登记在 02 对齐表，无散落代码猜测
-- [ ] 仓库中不存在明文凭据
+- [x] 仓库中不存在明文凭据——2026-08-08
 
 ---
 
@@ -429,3 +429,4 @@
 | 日期 | 变更 | 状态 |
 |---|---|---|
 | 2026-08-06 | 创建本文；标记阶段 0 已完成项（仓库、环境、README）与待办项 | 进行中 |
+| 2026-08-08 | 阶段 0 工程推进：`apps/desktop/` 脚手架、领域契约、BackendAdapter 骨架 + Mock、设计 token 与四区 UI 壳、Vitest 单测与 CI 全部落地并通过验证；标注“已开发、未联调” | 进行中 |

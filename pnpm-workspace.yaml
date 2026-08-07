@@ -1,0 +1,16 @@
+packages:
+  - 'apps/*'
+
+# pnpm 11 用 allowBuilds 控制依赖构建脚本(onlyBuiltDependencies 已在 v11 移除,
+# 迁移时 allow 列表对应 true)。Electron 需要 postinstall 下载二进制,
+# esbuild/vue-demi 需要构建脚本,均显式放行。
+allowBuilds:
+  electron: true
+  esbuild: true
+  vue-demi: true
+
+# pnpm 11 的非认证设置统一放 pnpm-workspace.yaml(写在 .npmrc 会失效)。
+# nodeLinker=hoisted:Electron Forge/原生模块在 pnpm 严格布局下易出问题,使用扁平布局;
+# engineStrict=true:严格校验 Node 版本,与 .nvmrc 一致。
+nodeLinker: hoisted
+engineStrict: true

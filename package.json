@@ -1,0 +1,21 @@
+{
+  "name": "elysia-frontend",
+  "private": true,
+  "description": "Cyrene —— Electron 桌面 AI 助手客户端前端(设计文档见 docs/,工程在 apps/desktop)",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "dev": "pnpm --filter @cyrene/desktop dev",
+    "build": "pnpm --filter @cyrene/desktop build",
+    "typecheck": "pnpm --filter @cyrene/desktop typecheck",
+    "lint": "pnpm --filter @cyrene/desktop lint",
+    "test": "pnpm --filter @cyrene/desktop test",
+    "test:integration": "pnpm --filter @cyrene/desktop test:integration",
+    "test:e2e": "pnpm --filter @cyrene/desktop test:e2e",
+    "package": "pnpm --filter @cyrene/desktop build",
+    "make": "pnpm --filter @cyrene/desktop make",
+    "verify:artifact": "pnpm --filter @cyrene/desktop verify:artifact"
+  }
+}

@@ -2,7 +2,7 @@
 
 Cyrene —— Electron 桌面 AI 助手客户端(Windows + Ubuntu)的前端工程。包含 Live2D 角色、流式 AI 回复、语音输入,以及桌面工具/授权系统。
 
-> **当前状态:设计文档阶段(v0.2)。** 本仓库目前只有 `docs/` 设计文档与 `ref/` 的 UI 原型,**还没有应用代码**(无 `package.json`)。搭建工程脚手架属于实施阶段 0 的工作。
+> **当前状态:阶段 0 工程基线已落地(v0.1)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳(领域契约、BackendAdapter 骨架 + Mock Backend、设计 token 与四区布局、Vitest 单测)。后端协议未联调,相关能力标注“已开发、未联调”。
 
 ## 文档入口
 
@@ -42,24 +42,29 @@ npm install -g pnpm
 ### 版本固定机制
 
 - `.nvmrc` —— 固定 Node 版本,`fnm install` 自动读取
-- `.npmrc` —— `node-linker=hoisted`(保证 Electron Forge 与原生模块兼容)、`engine-strict=true`
-- 依赖锁文件 —— `pnpm-lock.yaml` 必须提交进仓库(工程初始化后生成)
-- Node 版本以 **22 系 LTS** 为准;升级需同步更新 `.nvmrc`、`.npmrc` 校验与 CI
+- `pnpm-workspace.yaml` —— `nodeLinker: hoisted`(保证 Electron Forge / 原生模块兼容)、`engineStrict: true`、`allowBuilds`(electron/esbuild/vue-demi 构建脚本白名单)
+  - 注意:pnpm 11 的非认证设置(如 `node-linker`)放在 `.npmrc` 会**失效**,必须写在 workspace yaml
+- 依赖锁文件 —— `pnpm-lock.yaml` 已提交进仓库
+- Node 版本以 **22 系 LTS** 为准;升级需同步更新 `.nvmrc`、workspace yaml 校验与 CI
 
 ## 目录结构
 
 ```text
 docs/                设计文档(18 份,中文,工程契约)
 ref/                 UI 原型与预览图
-apps/desktop/        (规划中)Electron 工程 —— main / preload / renderer / shared
-tests/               (规划中)unit / integration / e2e
+apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / shared)
+  ├── src/main/      主进程:入口、transport(BackendAdapter + MockBackend)、夹具
+  ├── src/preload/   具名 DesktopApi 占位(contextBridge)
+  ├── src/shared/    领域契约 / 运行时 Schema(zod) / 纯逻辑 / 错误模型(跨进程共享)
+  ├── src/renderer/  Vue 3 界面:设计 token、四区布局壳、双通道消息示意
+  ├── tests/         unit / integration(Vitest)
+  └── assets/live2d/ 占位(阶段 5 使用)
+.github/workflows/ci.yml   最小 CI(typecheck + lint + test)
 ```
-
-`apps/desktop/` 下的推荐目录结构见 [docs/01 §5](docs/01-Cyrene-Electron-前端总体架构设计-v0.2.md)。
 
 ## 开发命令
 
-> 命令语义由 [docs/09 §5](docs/09-Cyrene-前端构建打包与发布设计-v0.2.md) 定义;**工程尚未初始化,以下脚本尚不存在**,待阶段 0 脚手架落地。
+> 命令语义见 [docs/09 §5](docs/09-Cyrene-前端构建打包与发布设计-v0.2.md)。阶段 0 已实现 dev / build / typecheck / lint / test / test:integration;test:e2e(Playwright)、make(Forge 打包)、verify:artifact 留待后续阶段。
 
 | 命令 | 说明 |
 |---|---|
@@ -80,6 +85,6 @@ tests/               (规划中)unit / integration / e2e
 
 ## 当前状态与下一步
 
-- 设计文档 v0.2(2026-08-04 交叉 Review 完成),尚未达到"开工"基线
-- 待外部输入:真实后端测试环境与认证、完整流式回复事件样例、协议对齐表(见 [docs/12](docs/12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md) 的 P0 清单)
-- **下一步:阶段 0** —— 在 `apps/desktop/` 初始化工程、移植原型 UI、建立 `BackendAdapter` 骨架与 Mock Backend、搭建类型检查与测试命令
+- 阶段 0(工程基线)基本完成:`pnpm dev` 可启动 Electron 壳,typecheck / lint / test / build 通过
+- 待外部输入(阻塞阶段 2 联调):真实后端测试环境与认证、完整流式回复事件样例、协议对齐表(docs/02 §19,见 [docs/12](docs/12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md) 的 P0 清单)
+- **下一步:阶段 1** —— Electron 安全骨架(IPC 白名单、CSP 细化、凭据存储、正式 `DesktopApi`),以及阶段 2 的聊天纵向闭环(流式事件经 Adapter → Store → UI)
