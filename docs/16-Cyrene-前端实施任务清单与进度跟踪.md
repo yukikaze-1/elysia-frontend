@@ -207,12 +207,12 @@
 - [x] 落地 Main / Preload / Renderer 进程边界与推荐目录结构（文档 01 §5）
 - [x] 开启 Context Isolation、Renderer Sandbox、导航与新窗口限制
 - [ ] 让 Main 持有后端 Transport、认证凭据与原始协议解析
-- [x] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）
+- [~] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）（具名 Schema 校验 IPC 与 Preload DesktopApi 已落地；公开事件订阅/取消函数属阶段 2，待后续块）
 - [x] 实现窗口、单实例、外部链接拦截与应用生命周期
 - [x] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
 - [ ] 建立开发/测试/生产配置与最小打包流程
 - [ ] 落地 CSP（无 `unsafe-eval`）、受限自定义协议替代 `file://`
-- [ ] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试
+- [~] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试（zod Schema 校验机制与 executor 拒绝单测已落地；非法通道/超大输入拒绝的 Electron 集成测试待后续块）
 
 ### 验收门槛
 
