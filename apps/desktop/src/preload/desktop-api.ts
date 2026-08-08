@@ -1,18 +1,33 @@
+// apps/desktop/src/preload/desktop-api.ts
+import { ipcRenderer } from 'electron'
+import { IpcChannels, type IpcChannelName, type IpcResult } from '@shared/contracts'
 import type { AppInfo } from '@shared/contracts'
 
-/**
- * 具名 Desktop API(Phase 0 占位)。
- * Phase 1 将改为通过 contextBridge 暴露、经 Main 具名 IPC 与 Schema 校验实现;
- * Renderer 永远拿不到原始 ipcRenderer / Node 能力。
- */
-const appInfo: AppInfo = {
-  name: 'Cyrene',
-  version: '0.1.0',
-  platform: process.platform
+async function invoke<T>(channel: IpcChannelName): Promise<IpcResult<T>> {
+  try {
+    return (await ipcRenderer.invoke(channel)) as IpcResult<T>
+  } catch {
+    throw new Error('[IPC_ERROR] IPC 调用失败')
+  }
+}
+
+function isAppInfo(v: unknown): v is AppInfo {
+  return !!v && typeof v === 'object' && !Array.isArray(v) &&
+    typeof (v as AppInfo).name === 'string' && typeof (v as AppInfo).version === 'string' &&
+    typeof (v as AppInfo).platform === 'string'
 }
 
 export const desktopApi = {
-  getAppInfo: (): Promise<AppInfo> => Promise.resolve(appInfo)
+  getAppInfo: async (): Promise<AppInfo> => {
+    const res = await invoke<AppInfo>(IpcChannels.appGetInfo)
+    // 完整信封守卫：res 必须先判为对象（非信封值不崩 res.ok）；ok:true 且 data 为 AppInfo；ok:false 带 error{code,message}
+    if (res && typeof res === 'object' && res.ok === true && res.data !== undefined && res.data !== null && isAppInfo(res.data)) return res.data
+    if (res && typeof res === 'object' && res.ok === false &&
+        res.error && typeof res.error.code === 'string' && typeof res.error.message === 'string') {
+      throw new Error(`[${res.error.code}] ${res.error.message}`)
+    }
+    throw new Error('[IPC_ERROR] IPC 返回格式异常')
+  }
 }
 
 export type DesktopApi = typeof desktopApi
