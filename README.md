@@ -2,7 +2,7 @@
 
 Cyrene —— Electron 桌面 AI 助手客户端(Windows + Ubuntu)的前端工程。包含 Live2D 角色、流式 AI 回复、语音输入,以及桌面工具/授权系统。
 
-> **当前状态:阶段 0 工程基线已落地(v0.1)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳(领域契约、BackendAdapter 骨架 + Mock Backend、设计 token 与四区布局、Vitest 单测)。后端协议未联调,相关能力标注“已开发、未联调”。
+> **当前状态:阶段 0 工程基线 + 阶段 1 第一块(安全骨架地基)已落地(v0.2)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳。阶段 1 第一块已实现:9 子目录主进程结构、应用身份(`Cyrene` → `~/.config/Cyrene`)、userData 七目录(0700 + symlink 逃逸防护)、具名 Schema 校验 IPC 骨架(`app:get-info`)、主窗口导航/单实例/外部链接加固。后端协议契约已由交接包确认(doc 02 §19 对齐表已填写),真实联调未进行,相关能力标注“已开发、未联调”。
 
 ## 文档入口
 
@@ -85,6 +85,8 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 
 ## 当前状态与下一步
 
-- 阶段 0(工程基线)基本完成:`pnpm dev` 可启动 Electron 壳,typecheck / lint / test / build 通过
-- 待外部输入(阻塞阶段 2 联调):真实后端测试环境与认证、完整流式回复事件样例、协议对齐表(docs/02 §19,见 [docs/12](docs/12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md) 的 P0 清单)
-- **下一步:阶段 1** —— Electron 安全骨架(IPC 白名单、CSP 细化、凭据存储、正式 `DesktopApi`),以及阶段 2 的聊天纵向闭环(流式事件经 Adapter → Store → UI)
+- 阶段 0(工程基线)已完成:`pnpm dev` 可启动 Electron 壳,typecheck / lint / test / build 通过
+- 阶段 1 第一块(安全骨架地基)已落地:9 子目录、App 身份 + userData 七目录、具名 Schema IPC 骨架、主窗口加固(导航/单实例/外部链接);`docs/superpowers/specs|plans/2026-08-08-phase1-foundation-*` 为设计与实施文档(39/7 轮 review)
+- 后端协议契约已由交接包确认(doc 02 §19/§19.1 对齐表,40 错误码,WS v2);真实后端环境待联调
+- 待外部输入(阻塞后续阶段):真实后端测试环境地址(B-01)、主验收平台(H-01)、Live2D SDK 许可与模型(G-01/G-02)、签名证书(H-04)
+- **下一步:阶段 1 后续块** —— CSP/受限协议、凭据存储(safeStorage)、日志/审计模块、环境配置与最小打包;然后阶段 2 的聊天纵向闭环(流式事件经 Adapter → Store → UI)
