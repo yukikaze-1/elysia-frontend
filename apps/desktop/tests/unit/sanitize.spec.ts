@@ -15,6 +15,9 @@ describe('createSanitizePublicMessage', () => {
   it('file:// 绝对路径被掩', () => {
     expect(sanitize('load file:///tmp/secret 失败')).toBe('load <path> 失败')
   })
+  it('file:// 大小写不敏感（FILE:// 也掩）', () => {
+    expect(sanitize('load FILE:///tmp/secret 失败')).toBe('load <path> 失败')
+  })
   it('win32 大小写不敏感 + 分隔符归一（盘符带左边界，不误伤 http://）', () => {
     const win = createSanitizePublicMessage({ home: 'C:\\Users\\Alice', userData: 'C:\\Users\\Alice\\AppData\\Roaming\\Cyrene' })
     expect(win('C:\\Users\\Alice\\AppData\\Roaming\\Cyrene\\logs\\a.log')).toBe('<userData>\\logs\\a.log')

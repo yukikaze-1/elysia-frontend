@@ -18,8 +18,8 @@ export function createSanitizePublicMessage(roots: { home: string; userData: str
 
   return (message: string): string => {
     let out = message
-    // ① file:// 绝对路径（先于根替换，防 file://~/x 残留）
-    out = out.replace(/file:\/\/[^\s"'<>]+/g, '<path>')
+    // ① file:// 绝对路径（先于根替换，防 file://~/x 残留；大小写不敏感，FILE:// 也掩）
+    out = out.replace(/file:\/\/[^\s"'<>]+/gi, '<path>')
     // ② userData 根（分隔符不敏感、边界 [\\/] 或串尾、大小写不敏感；无左边界——绝对路径粘在词尾也要掩，防泄漏）
     const userDataRe = new RegExp(`${rootToRegex(userData)}(?=[\\\\/]|$)`, 'i')
     out = out.replace(userDataRe, '<userData>')
