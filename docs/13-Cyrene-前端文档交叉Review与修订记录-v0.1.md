@@ -190,3 +190,45 @@
 - 阶段门槛或验收脚本发生变化。
 
 每次变更至少同步检查主需求、相关详细设计、测试方案和 10/12 两份实施计划。
+
+---
+
+## 10. 增量 Review：后端协议对齐（2026-08-08）
+
+**触发条件：** doc 13 §9 第 1 条——「获取现有后端真实协议并填写 02 的对齐表」。
+
+**输入来源（后端只读）：** `elysia-agent/frontend-handoff-v2`（批次 7）——`docs/electron-backend-protocol-v2.md` v0.6（40 错误码）、`frontend_contract/`（ws_message.py 38 个 WS 消息 + rest.py）、`traces/ws-v2-*.jsonl` 真实轨迹。前端侧仅更新文档，未改动后端。
+
+### 10.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 02 §5 | 握手改写：后端 WS 头 + `session→server_info→expression` 连接帧取代旧 `ClientHello/ServerHello` 域握手；新增前端连接域 `ConnectionState` |
+| 02 §4 | 补注：wire 为扁平 JSON，`EventEnvelope` 由 Adapter 盖戳补充 |
+| 02 §6 | 补确认映射：`SessionSummary{conversationId,title?,messageCount,updatedAt,active}`，`Conversation` 需增补 `active` |
+| 02 §7 | 补确认映射：归档 wire `inner_voice`(字符串)+`content`(parts) 归一化为 `assistantSegments`；`status`/`segmentId` 由 Adapter 推导 |
+| 02 §8 | 补确认映射：`V2TextMessage` `content` 为字符串 + `attachments`/`stickerId`；幂等 `clientRequestId` |
+| 02 §9 | 修正 `finishReason` 仅 `stop/tool_calls`（取消/错误走 `generation.failed`）；`segment.completed` 必发带 `content`；`responseId` 弃用为 `generationId` |
+| 02 §10 | 补确认映射：`tool.request`/`tool.status`；四 P0 工具；`desktop.command.run` 不注册；repo 状态含 `expired/offline` |
+| 02 §11 | 补确认映射：`POST /api/uploads` + 签名下载/签发端点 + sticker 公共资源；`AttachmentInfo` wire 字段 |
+| 02 §12 | 补确认映射：`expression{expression,intensity}` + `generation.completed.mood` + `live2d_static_image` |
+| 02 §13 | 补确认映射：`/api/providers` + Secret Store + `switch_model`/`set_tts_voice`；三种语音 wire（`voice.record*`/`voice_session.*`/`dictation.*`）；TTS `audio_start/audio/audio_end/audio.cancel/audio_cancelled` |
+| 02 §14 | 补确认映射：40 码目录 + `ProtocolError` 统一信封；`PublicError.code` 透传后端稳定码 |
+| 02 §16 | 修正恢复规则：后端无断点续传，重连经 `session` 回放 + pending/generations 查询 |
+| 02 §19/§19.1 | 对齐表 27 项全部填写 + 字段差异桥接表 D-1~D-10（新增） |
+| 12 §4 | 输入清单状态注：已由交接包确认契约的项清单 + 仍未提供项 |
+| 16 §2/§3 | 输入组状态注；阶段 0 对齐表相关项勾选与变更登记 |
+
+### 10.2 仍未决（不阻塞阶段 0，需外部确认）
+
+- **E-07 / 02 §19 D-8**：输入法转写专用 STT Profile——后端 `dictation.start` 无独立 STT 字段，用当前活动 STT；待后端决策是否加字段或前端切活动 STT；
+- **F-06~F-09**：沙盒目录/路径/域名黑名单、授权级别、受控命令模板、Diff/覆盖策略——产品与安全决策，不因后端契约自动关闭；
+- **G-01~G-03/G-05/G-06**：Live2D SDK 许可、合法模型、表情/动作白名单、口型驱动、降级策略；
+- **H 组**：主验收平台、Windows 10/Ubuntu/Wayland 范围、打包签名与发布渠道、演示脚本等产品决策；
+- **B-01/B-07**：真实测试环境地址与数据保留策略（需实际部署，交接包不含）。
+
+### 10.3 自动回归
+
+对修订后的 02/12/13/16 执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+> 说明：本增量 Review 聚焦「后端真实协议 → 前端文档」对齐，未重跑完整交叉 Review（Live2D 许可、语音产品语义、平台范围等仍待外部输入）；对应阶段（4/5/6/7/8）进入前仍需各自验证。
