@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 当前处于阶段 0
+**文档状态：** 随实施持续更新 / 阶段 0 代码基线已落地并验证，待真实联调与外部输入（H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,12 +33,13 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 0（进行中）。**
+**当前所处阶段：阶段 0（代码基线已完成，待真实联调）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
-- 工程脚手架：已完成（阶段 0 基线，见 §3）
+- 工程脚手架：已完成（阶段 0 基线：脚手架/契约/Adapter+Mock/token+四区 UI/单测/CI，见 §3）
 - 后端输入（B/C/E/F 契约）：**已由 frontend-handoff-v2 批次 7 提供**，doc 02 §19 对齐表已填写；真实环境实测/联调待进行（详见 §2 说明）
+- 仍缺外部输入：主验收平台（H-01）、Live2D 资源与许可（G-01/G-02）、测试环境地址（B-01）
 
 ---
 
@@ -46,16 +47,16 @@
 
 > 这些输入决定 Adapter 契约与联调排期；未到位时对应任务只能以 Mock 推进并标注“已开发、未联调”。
 
-> **2026-08-08：** 后端交接包 frontend-handoff-v2 批次 7 已提供协议契约，doc 02 §19/§19.1 已填写（27 项对齐 + D-1~D-10 桥接差异）。下方表格中 **B-03~B-06/B-08、C-01~C-09、E-01~E-03/E-05/E-06/E-08、F-01~F-05、G-04** 契约已确认，在表格内以 `[~]` 标注「契约已确认」；仍缺：B-01/B-07、E-07（转写专用 STT 字段，待决策）、E-09、F-06~F-09、G-01~G-03/G-05/G-06、H 组。阶段 1 进入条件 E-03 凭据所有权契约已确认（后端 Secret Store + desktop/local 归 Electron），可按「已开发、未联调」推进。
+> **2026-08-08：** 后端交接包 frontend-handoff-v2 批次 7 已提供协议契约，doc 02 §19/§19.1 已填写（27 项对齐 + D-1~D-10 桥接差异）。符号约定：**`[~]` = 契约已由交接包确认、待真实环境实测/联调**（后端只读核对，未改后端）；**`[ ]` = 仍未提供，需外部输入**。已标 `[~]`：B-02~B-06/B-08、C-01~C-09、E-01~E-06/E-08、F-01~F-05、G-04。仍缺 `[ ]`：B-01/B-07、C-10/C-11、D-01~D-08（接口契约后端已备：`/api/uploads`、`/api/search/messages`、`/api/sessions/{id}/resources`、`/api/stickers`，具体实现细节阶段 3 处理）、E-07（转写专用 STT 字段，待决策）、E-09、F-06~F-11、G-01~G-03/G-05/G-06、H 组。阶段 1 进入条件 E-03 凭据所有权契约已确认（后端 Secret Store + desktop/local 归 Electron），可按「已开发、未联调」推进。
 
 ### 2.1 工程、仓库与协作（A 组）
 
 | 状态 | ID | 项 | 最迟阶段 |
 |---:|---|---|---:|
-| [~] | A-01 | 前端仓库（已建本地并推送到 GitHub `elysia-frontend`） | 0 |
+| [x] | A-01 | 前端仓库（已建并推送 `elysia-frontend`，main 分支） | 0 |
 | [~] | A-02 | 分支/提交/Review 约定（已定：本地提交、手动 push；Review 方式待定） | 0 |
 | [x] | A-03 | Node 版本、包管理器与工具链（fnm + Node 22.23.0 + pnpm） | 0 |
-| [~] | A-04 | 代码规范/格式化/Lint/测试约定（待脚手架建立） | 0 |
+| [x] | A-04 | 代码规范/格式化/Lint/测试约定（eslint flat config + vitest + tsconfig 已落地） | 0 |
 | [ ] | A-05 | CI 环境与 Runner（Windows/Ubuntu Runner 是否可用） | 1 |
 | [~] | A-06 | Issue/变更/版本记录方式（暂用本文档与 git 记录） | 0 |
 
@@ -64,28 +65,28 @@
 | 状态 | ID | 项 | 最迟阶段 |
 |---:|---|---|---:|
 | [ ] | B-01 | 测试环境地址/端口/协议/网络访问 | 0 |
-| [ ] | B-02 | 认证方式、测试账号、Token 获取/刷新/注销 | 0 |
-| [ ] | B-03 | REST / WebSocket / SSE 真实连接样例 | 0 |
-| [ ] | B-04 | 协议版本、客户端版本协商与不兼容错误 | 0 |
-| [ ] | B-05 | 心跳、超时、断线、重连与续传规则 | 2 |
-| [ ] | B-06 | 统一错误结构、错误码与 traceId 规则 | 2 |
+| [~] | B-02 | 认证方式、测试账号、Token 获取/刷新/注销（契约已确认：静态 Bearer + `AGENT_ACCESS_TOKEN`，无 refresh/注销；测试账号待环境） | 0 |
+| [~] | B-03 | REST / WebSocket / SSE 真实连接样例（WS v2 + REST，无 SSE） | 0 |
+| [~] | B-04 | 协议版本、客户端版本协商与不兼容错误（`X-Protocol-Version` + `server_info.protocol_version`） | 0 |
+| [~] | B-05 | 心跳、超时、断线、重连与续传规则（无断点续传；session 回放 + pending/generations 查询） | 2 |
+| [~] | B-06 | 统一错误结构、错误码与 traceId 规则（40 码 + `ProtocolError`，WS 侧 `requestId`） | 2 |
 | [ ] | B-07 | 测试环境上传/清理规则 | 3 |
-| [ ] | B-08 | 后端日志查询 / 联调 Trace 协作方式 | 2 |
+| [~] | B-08 | 后端日志查询 / 联调 Trace 协作方式（`requestId` 关联） | 2 |
 
 ### 2.3 会话、消息与流式回复契约（C 组）
 
 | 状态 | ID | 项 | 最迟阶段 |
 |---:|---|---|---:|
-| [ ] | C-01 | 会话列表/新建/重命名/删除/详情接口 | 2 |
-| [ ] | C-02 | 历史消息分页、稳定排序键、游标失效规则 | 2 |
-| [ ] | C-03 | 发送/确认/重试与 `clientRequestId` 幂等规则 | 2 |
-| [ ] | C-04 | 完整回复的开始/增量/分段完成/父完成/失败事件记录 | 0 |
-| [ ] | C-05 | `messageId/responseId/segmentId/segmentIndex` 真实字段 | 0 |
-| [ ] | C-06 | Inner Voice 与 Public Reply 字段、交错顺序与完成语义 | 0 |
-| [ ] | C-07 | 回复级/会话级 Token 字段 | 2 |
-| [ ] | C-08 | 实际模型、心情代码、显示名、强度与来源字段 | 2 |
-| [ ] | C-09 | 停止生成、取消成功与迟到增量规则 | 2 |
-| [ ] | C-10 | Markdown/引用/链接/代码块格式样例 | 2 |
+| [~] | C-01 | 会话列表/新建/重命名/删除/详情接口（`/api/sessions` + WS `activate_session`） | 2 |
+| [~] | C-02 | 历史消息分页、稳定排序键、游标失效规则（`before`/`after` keyset + `has_more`） | 2 |
+| [~] | C-03 | 发送/确认/重试与 `clientRequestId` 幂等规则 | 2 |
+| [~] | C-04 | 完整回复的开始/增量/分段完成/父完成/失败事件记录（`traces/ws-v2-*.jsonl`） | 0 |
+| [~] | C-05 | `messageId/generationId/segmentId/segmentIndex` 真实字段（`responseId` 弃用，别名 `generationId`） | 0 |
+| [~] | C-06 | Inner Voice 与 Public Reply 字段、交错顺序与完成语义 | 0 |
+| [~] | C-07 | 回复级/会话级 Token 字段（`usage{turn_total,rounds}` + `conversationUsage{total,byModel}`） | 2 |
+| [~] | C-08 | 实际模型、心情代码、显示名、强度与来源字段（`generation.completed.model/mood`） | 2 |
+| [~] | C-09 | 停止生成、取消成功与迟到增量规则（WS `interrupt` → `generation.failed{CANCELLED}`） | 2 |
+| [ ] | C-10 | Markdown/引用/链接/代码块格式样例（后端 content 为纯文本，渲染由前端处理） | 2 |
 | [ ] | C-11 | 撤回/编辑/重新生成/分支是否进入 Demo | 3 |
 
 ### 2.4 附件、多媒体、搜索与聊天历史（D 组）
@@ -105,25 +106,25 @@
 
 | 状态 | ID | 项 | 最迟阶段 |
 |---:|---|---|---:|
-| [ ] | E-01 | LLM/STT/TTS Profile 查询、创建、测试、激活、禁用、删除 | 4 |
-| [ ] | E-02 | 内置/自定义 Profile 字段、Provider、能力、执行位置枚举 | 4 |
-| [ ] | E-03 | 凭据所有权（后端/Main/Local Worker）与一次性提交规则 | 1 |
-| [ ] | E-04 | 自定义 Endpoint 安全规则（HTTPS/本机、DNS/重定向/Header 白名单） | 4 |
-| [ ] | E-05 | 录音/实时语音音频格式、采样率、字幕、VAD、断句、轮次事件 | 4 |
-| [ ] | E-06 | TTS 整段/流式、音频格式、声音、取消与播放完成事件 | 4 |
-| [ ] | E-07 | 输入法转写专用 STT 选择与执行位置（Backend/本机/Local Worker） | 4 |
-| [ ] | E-08 | 输入法转写按下/松开/取消/最终文字/临时音频清理规则 | 4 |
+| [~] | E-01 | LLM/STT/TTS Profile 查询、创建、测试、激活、禁用、删除（`/api/providers` + WS `switch_model`） | 4 |
+| [~] | E-02 | 内置/自定义 Profile 字段、Provider、能力、执行位置枚举（`runtime/credentialConfigured/capabilities`） | 4 |
+| [~] | E-03 | 凭据所有权（后端/Main/Local Worker）与一次性提交规则（后端 Secret Store `data/secrets/`；desktop/local 归 Electron） | 1 |
+| [~] | E-04 | 自定义 Endpoint 安全规则（后端 SSRF 校验已落地 `SSRF_BLOCKED`；前端 Header/重定向白名单细节阶段 4） | 4 |
+| [~] | E-05 | 录音/实时语音音频格式、采样率、字幕、VAD、断句、轮次事件（三种语音 v2-only 契约已确认） | 4 |
+| [~] | E-06 | TTS 整段/流式、音频格式、声音、取消与播放完成事件（`audio_*` 流式；声音 `GET /api/tts/voices`） | 4 |
+| [ ] | E-07 | 输入法转写专用 STT 选择与执行位置（后端 `dictation.start` 无独立 STT 字段，用活动 STT——**待决策**，doc 02 §19 D-8） | 4 |
+| [~] | E-08 | 输入法转写按下/松开/取消/最终文字/临时音频清理规则（`dictation.*` 契约已确认，零消息副作用） | 4 |
 | [ ] | E-09 | Local Worker 启动、发现、版本、模型下载与资源占用接口 | 4 |
 
 ### 2.6 工具系统、Desktop Runtime 与权限策略（F 组）
 
 | 状态 | ID | 项 | 最迟阶段 |
 |---:|---|---|---:|
-| [ ] | F-01 | 工具注册表、名称/描述/Runtime/风险/输入输出 Schema | 6 |
-| [ ] | F-02 | Backend/Desktop/Local Worker 真实标识与路由规则 | 6 |
-| [ ] | F-03 | 工具请求/状态/进度/结果/失败/取消/超时事件 | 6 |
-| [ ] | F-04 | `callId` 幂等、重连查询与结果重传规则 | 6 |
-| [ ] | F-05 | Demo P0 Desktop 工具最终清单（默认：文件读/写/截图） | 6 |
+| [~] | F-01 | 工具注册表、名称/描述/Runtime/风险/输入输出 Schema（`GET /api/tools` → `ToolMetadata[16]`） | 6 |
+| [~] | F-02 | Backend/Desktop/Local Worker 真实标识与路由规则（`runtime` + `X-Client-Platform: electron`） | 6 |
+| [~] | F-03 | 工具请求/状态/进度/结果/失败/取消/超时事件（`tool.request` / `tool.status` 六态） | 6 |
+| [~] | F-04 | `callId` 幂等、重连查询与结果重传规则（`paramHash` 篡改拒绝 + `GET /api/tools/calls/{callId}`） | 6 |
+| [~] | F-05 | Demo P0 Desktop 工具最终清单（确认四工具：文件选/读/写 + 截图；`desktop.command.run` 不注册） | 6 |
 | [ ] | F-06 | 沙盒目录、路径/域名黑名单默认值与权限管理 | 6 |
 | [ ] | F-07 | 授权级别（一次/目录范围/命令模板/有效期/撤销） | 6 |
 | [ ] | F-08 | 受控命令模板是否进入 Demo；命令与参数范围 | 6 |
@@ -138,7 +139,7 @@
 | [ ] | G-01 | 可用的 Live2D SDK 版本、许可分类（AI/Chatbot/Expandable） | 5 |
 | [ ] | G-02 | 至少两个合法模型配置及 Manifest | 5 |
 | [ ] | G-03 | 模型表情/动作/参数名称安全白名单 | 5 |
-| [ ] | G-04 | 后端情绪/状态 → idle/listening/thinking/speaking 映射表 | 5 |
+| [~] | G-04 | 后端情绪/状态 → idle/listening/thinking/speaking 映射表（`expression`/`generation.completed.mood` 源字段已确认；映射表待设计产出） | 5 |
 | [ ] | G-05 | TTS 口型驱动方式（音量/音素/后端参数） | 5 |
 | [ ] | G-06 | 默认模型、切换规则、目标帧率与低性能降级策略 | 7 |
 
@@ -433,3 +434,4 @@
 | 2026-08-06 | 创建本文；标记阶段 0 已完成项（仓库、环境、README）与待办项 | 进行中 |
 | 2026-08-08 | 阶段 0 工程推进：`apps/desktop/` 脚手架、领域契约、BackendAdapter 骨架 + Mock、设计 token 与四区 UI 壳、Vitest 单测与 CI 全部落地并通过验证；标注“已开发、未联调” | 进行中 |
 | 2026-08-08 | 依据后端交接包 frontend-handoff-v2 批次 7 填写 doc 02 §19 对齐表 + §19.1 字段差异桥接表；勾选阶段 0 对齐表相关项 | 进行中 |
+| 2026-08-08 | §2 输入清单逐行标注：契约已确认项标 `[~]`（B-02~B-06/B-08、C-01~C-09、E-01~E-06/E-08、F-01~F-05、G-04），A-01/A-04 勾 `[x]`；仍缺项列表补全；头部状态更新 | 进行中 |
