@@ -1,65 +1,55 @@
-import { app, shell, BrowserWindow } from 'electron'
-import { join } from 'path'
+// apps/desktop/src/main/index.ts
+import { app, dialog } from 'electron'
+import { installAppIdentity, expectedUserDataBase } from './app/lifecycle'
+import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
+import { registerHandlers } from './ipc/handlers'
+import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
 
-/**
- * 创建主窗口。
- * Phase 0 只要求可运行空工程;安全基线(contextIsolation/sandbox/webSecurity)
- * 已按文档 07 开启,IPC 白名单与 CSP 细化属阶段 1。
- *
- * 注:不使用 @electron-toolkit/* 包——其在 pnpm peer 变体下会解析到错误的
- * electron 副本导致 require('electron').app 为 undefined(见 docs/16 备注)。
- */
-function createWindow(): void {
-  const mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 760,
-    minWidth: 736,
-    minHeight: 560,
-    show: false,
-    autoHideMenuBar: true,
-    backgroundColor: '#181e29',
-    title: 'Cyrene',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webSecurity: true
-    }
-  })
-
-  mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
-  })
-
-  // 外部链接一律交给系统浏览器,不新建窗口
-  mainWindow.webContents.setWindowOpenHandler((details) => {
-    if (details.url.startsWith('http:') || details.url.startsWith('https:')) {
-      shell.openExternal(details.url)
-    }
-    return { action: 'deny' }
-  })
-
-  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+function failStart(message: string): void {
+  dialog.showErrorBox('Cyrene 无法启动', message)
+  app.exit(1)
 }
 
-app.whenReady().then(() => {
-  // Windows 通知/任务栏应用身份
-  app.setAppUserModelId('com.cyrene.desktop')
-
-  createWindow()
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
+async function main(): Promise<void> {
+  let ident
+  try {
+    ident = installAppIdentity() // fatal（appData/base 真创建失败）→ failStart 弹框，不静默挂起
+  } catch (e) {
+    failStart(e instanceof Error ? e.message : '未知错误')
+    return
   }
+  const { baseCreated, setPathOk } = ident
+
+  if (!app.requestSingleInstanceLock()) {
+    app.exit(0)
+    return
+  }
+  app.on('second-instance', () => focusOrDefer())
+
+  await app.whenReady()
+
+  try {
+    app.setAppUserModelId('com.cyrene.desktop')
+    // setPath 失败 = base 破损（文件/symlink）——直接弹框，不等 ensureUserDataDirs
+    if (!setPathOk) {
+      failStart(`userData 目录不可用：${expectedUserDataBase()}（请检查是否为普通文件或符号链接）`)
+      return
+    }
+    await ensureUserDataDirs(expectedUserDataBase(), { baseCreated })
+    registerHandlers()
+    markAppStarted()
+    ensureMainWindow()
+  } catch (e) {
+    failStart(e instanceof UserDataDirError ? e.message : `启动失败：${e instanceof Error ? e.message : '未知错误'}`)
+  }
+
+  app.on('activate', () => focusOrDefer())
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}
+
+void main().catch((e) => {
+  dialog.showErrorBox('Cyrene 无法启动', e instanceof Error ? e.message : '未知错误')
+  app.exit(1)
 })
