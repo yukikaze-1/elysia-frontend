@@ -38,6 +38,10 @@ Read [00](docs/00-Cyrene-前端文档索引与阅读顺序.md) first — it maps
 
 Electron + Vue 3 + TypeScript + Vite, Electron Forge, pnpm, Vitest, Playwright. Versions locked in the repo, not hardcoded in docs. Only Electron/Vue/Vite supported-toolchain choices were confirmed; actual versions and repo conventions are still open decisions (doc 12 input list A-01…A-06).
 
+### Vision MCP (available in this environment)
+
+The `mimo-vision` MCP server is connected and exposes **`analyze_image`** (visual inspection of one local screenshot) and **`compare_images`** (before/after or implementation-vs-reference comparison), powered by MiMo-V2.5. Use them to visually verify UI: read a Playwright MCP screenshot (saved under `.playwright-mcp/`), check layout/colors/overflow, or diff two renders. Details & usage pitfalls: docs 17.
+
 ## Architecture overview
 
 ### Trust boundary (docs 01, 07)
