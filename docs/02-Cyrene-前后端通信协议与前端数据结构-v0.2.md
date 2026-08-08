@@ -1,10 +1,10 @@
 # Cyrene 前后端通信协议与前端数据结构
 
 **文档版本：** v0.2  
-**文档状态：** 首轮 Review 已修订 / 待与现有后端核对  
+**文档状态：** 已按后端交接包（frontend-handoff-v2 批次 7 时点）填写 §19 对齐表 / 待真实事件联调确认  
 **适用范围：** Electron 客户端与现有 Agent 后端  
 **文档日期：** 2026-08-03
-**最后复核日期：** 2026-08-04
+**最后复核日期：** 2026-08-08
 
 > 本文定义前端需要的稳定语义，不宣称现有后端已经使用相同 URL 或字段名。接入时由 `BackendAdapter` 把现有后端协议映射为本文的前端领域事件。
 
@@ -887,37 +887,56 @@ idle → connecting → connected
 
 ## 19. 与现有后端对齐清单
 
-接入前逐项填写“现有值”和“前端映射”：
+下表“现有后端值”依据后端交接包 **`frontend-handoff-v2`（批次 7 时点）** 填写：协议契约以 `docs/electron-backend-protocol-v2.md`（v0.6，40 错误码）为准，wire 字段形状以 `frontend_contract/`（ws_message.py / rest.py，Pydantic 单源包）为准，真实轨迹见 `frontend-handoff-v2/traces/`。状态：已记录、**未联调**。
 
 | 核对项 | 现有后端值 | 前端映射 |
 |---|---|---|
-| 认证方式 | 待填写 | `BackendAdapter.connect` |
-| 会话列表接口 | 待填写 | `listConversations` |
-| 历史消息接口 | 待填写 | `getConversation` |
-| 历史消息游标与稳定排序键 | 待填写 | `MessagePage.nextCursor` |
-| 按消息 ID 获取上下文 | 待填写 | `getMessageContext` / `MessageContextQuery` |
-| 会话搜索/聊天历史查询接口 | 待填写 | `listConversations` / `ChatHistoryPage` |
-| 会话多媒体资源接口 | 待填写 | `ConversationResourcePage` |
-| 用户消息发送 | 待填写 | `sendMessage` |
-| 流式传输方式 | 待填写 | `generation.*` |
-| 消息增量字段 | 待填写 | `GenerationDeltaPayload` |
-| Inner Voice 字段与增量规则 | 待填写 | `channel: inner_voice` |
-| Public Reply 字段与增量规则 | 待填写 | `channel: public_reply` |
-| 句子分段 ID、顺序和父回复完成事件 | 待填写 | `responseId/segmentId/segmentIndex` |
-| 消息/会话 Token、实际模型和心情字段 | 待填写 | `TokenUsage/ModelIdentity/EmotionState` |
-| 停止生成接口 | 待填写 | `cancelGeneration` |
-| 工具调用字段 | 待填写 | `ToolCall` |
-| 工具结果接口 | 待填写 | `submitToolResult` |
-| 附件上传流程 | 待填写 | `AttachmentRef` |
-| LLM/STT/TTS Profile 配置接口 | 待填写 | `ModelProfile` |
-| 自定义模型新增/编辑/删除 | 待填写 | `UpsertCustomModelProfileCommand` |
-| 模型连接测试与切换接口 | 待填写 | `ModelProfileTestResult` |
-| 输入法转写专用 STT 选择 | 待填写 | `dictationSttProfileId` / `DictationSettings` |
-| 普通录音输入与发送确认 | 待填写 | `VoiceInputSession` / `RecordedVoiceInputReadyEvent` |
-| 实时语音字幕、断句与轮次提交 | 待填写 | `VoiceCaptionEvent` / 后端轮次事件映射 |
-| TTS 整段/流式音频、取消和完成 | 待填写 | `TtsPlaybackSession` / `TtsChunkEvent` |
-| 重连/续传方式 | 待填写 | `resume` |
-| 错误结构 | 待填写 | `PublicError` |
+| 认证方式 | WS/REST 均 Bearer：`Authorization: Bearer <access_token>`（`AGENT_ACCESS_TOKEN` 配置时匿名 401；本地空 token 为 fail-open）；WS 建连附加 `X-Protocol-Version: 2` + `X-Client-Platform: electron`；建连帧 `session → server_info{protocol_version, server_version, features, services, connectionId, build_sha} → expression` | `BackendAdapter.connect` |
+| 会话列表接口 | `GET /api/sessions`（cursor/limit/search，items 带 `active`）/ `POST /api/sessions`（创建 `conv_<uuid4>`）→ `SessionListResult{sessions, has_more, cursor}`；兼容旧 `GET /api/messages` 全库 `_id` 游标 | `listConversations` |
+| 历史消息接口 | `GET /api/sessions/{id}/messages`（`before` 倒序 keyset + `has_more` + `total`）；`GET /api/sessions/{id}/messages?after={messageId}` 正序增量 | `getConversation` |
+| 历史消息游标与稳定排序键 | 会话内 `before={messageId}`（`_id` 倒序）/ `after={messageId}`（正序增量）；会话列表 cursor = base64(`updated_at|session_id`)；消息稳定键 `messageId`（`msg_`） | `MessagePage.nextCursor` |
+| 按消息 ID 获取上下文 | `GET /api/messages/{mid}/context?conversationId&before=5&after=5` → `MessageContextResponse{anchor, before, after, conversationId}` | `getMessageContext` / `MessageContextQuery` |
+| 会话搜索/聊天历史查询接口 | `GET /api/search/messages`（`query/conversationId/date_from/date_to/timezone/category/cursor/limit`，上限 100）→ `SearchMessagesResponse{items, has_more, cursor}`（cursor=base64(`timestamp|_id`)；item 含 `responseId` best-effort） | `listConversations` / `ChatHistoryPage` |
+| 会话多媒体资源接口 | `GET /api/sessions/{id}/resources`（`category=image\|link\|video\|audio\|file\|sticker`）→ `ResourceListResponse{items{messageId, timestamp, kind, url}, has_more, cursor}`；附件项为稳定路径，渲染层经签发端点解析签名 URL | `ConversationResourcePage` |
+| 用户消息发送 | WS v2 `{"type":"text","content","clientRequestId"(必填幂等键),"clientMessageId"?,"conversationId"?,"attachments"?,"stickerId"?}` → `user_message.ack{messageId, clientRequestId, clientMessageId?, conversationId?, receivedAt, status(accepted/rejected), error?}`；相同 `clientRequestId` + 同摘要重发原 ACK 不重复生成 | `sendMessage` |
+| 流式传输方式 | WS（`X-Protocol-Version: 2`，非 SSE/HTTP）；`generation.*` 事件帧 | `generation.*` |
+| 消息增量字段 | `generation.delta{generationId, segmentId, segmentIndex, deltaSequence(段内 0 起), delta, conversationId?}` | `GenerationDeltaPayload` |
+| Inner Voice 字段与增量规则 | `generation.segment.started/completed` 带 `channel:"inner_voice"`、`kind:"text"/"markdown"`；增量走 `generation.delta`；`segment.completed.content` 携带整段文本 | `channel: inner_voice` |
+| Public Reply 字段与增量规则 | `channel:"public_reply"`；一段 = 一句（PRD BE-022），每句独立 `segmentId` 与全局 `segmentIndex`；`segment.completed.content` 携带整句文本，客户端无需拼 delta | `channel: public_reply` |
+| 句子分段 ID、顺序和父回复完成事件 | `segmentId`(seg_) / `segmentIndex`(全局单调) / `generationId`(gen_；**`responseId` 弃用，别名 generationId**)；`generation.completed` 是唯一终态（`finishReason` 限 stop/tool_calls），取消/错误走 `generation.failed` | `responseId/segmentId/segmentIndex` |
+| 消息/会话 Token、实际模型和心情字段 | `generation.completed{usage:{turn_total, rounds[{model, input_tokens, output_tokens, total_tokens, cached_tokens, reasoning_tokens, round_num, timestamp}]}, conversationUsage?{total, byModel}, model(实际模型快照), mood, completeness}` | `TokenUsage/ModelIdentity/EmotionState` |
+| 停止生成接口 | WS `{"type":"interrupt"}` → `generation.failed{code:GENERATION_CANCELLED}` + `state interrupted` → `idle`；迟到增量被服务端停止 | `cancelGeneration` |
+| 工具调用字段 | Server→Client `tool.request{callId(call_), toolName, toolVersion, runtime(desktop), arguments, reason?, riskLevel(safe/medium/high), permissionRequired, approvalAuthority(client), paramHash(规范化 arguments SHA-256), expiresAt, requestId?}`；注册表 `GET /api/tools` → `ToolRegistryResponse{tools: ToolMetadata[16], desktopAvailable}`；`desktop.command.run` 不注册 | `ToolCall` |
+| 工具结果接口 | Client→Server `tool.status{callId, status(accepted/rejected/running/result/error/cancelled), toolName, toolVersion, runtime, paramHash, output?, error?, attachments?, executionSummary?}`（toolName/version/runtime/paramHash 不一致即篡改拒绝）；查询 `GET /api/tools/calls/{callId}` → `DesktopCallStatus`；桌面附件 `POST /api/uploads/desktop/{callId}`（`X-Client-Connection` 持有者校验） | `submitToolResult` |
+| 附件上传流程 | `POST /api/uploads`（multipart `files[]` + `kind`?，魔数真值校验，≤10 文件，image 10MB/video 50MB/audio 20MB/file 20MB，聚合 64MB）→ `AttachmentUploadResponse{attachments: AttachmentInfo{attachmentId, kind, mime, size, url, signedUrl?, filename}}`；签名下载 `GET /api/attachments/{id}?sig=&exp=`（免 Bearer，Range/206）；签发 `GET /api/attachments/{id}/sign`（Bearer）；消息关联 `attachments: AttachmentRef[]` / `stickerId` | `AttachmentRef` |
+| LLM/STT/TTS Profile 配置接口 | `GET/POST /api/providers` → `ProvidersResponse{llm, stt, tts, custom, unconfigured}`（条目含 `credentialConfigured` / `runtime` / `capabilities`）；WS `switch_model{service, model}` / `set_service{service, enabled}`；TTS `GET /api/tts/voices` + `POST /api/tts/preview` + WS `set_tts_voice{voice}` | `ModelProfile` |
+| 自定义模型新增/编辑/删除 | `POST /api/providers`（custom 条目，同名更新；`api_key` 一次性提交入 Secret Store **永不读回**，非 backend runtime 带 key → 400 `PROFILE_INVALID_RUNTIME`）；删除激活中 profile → 409 `PROFILE_IN_USE` | `UpsertCustomModelProfileCommand` |
+| 模型连接测试与切换接口 | `POST /api/providers/test`（base_url 非空一律 SSRF 校验）→ `ProviderTestResult{ok, latency_ms?, error?, detail?}`；切换经 WS `switch_model` / `set_tts_voice` → `switch_model_result` / `set_tts_voice_result{ok, error?}` | `ModelProfileTestResult` |
+| 输入法转写专用 STT 选择 | **无独立字段（待对齐）**：后端 `dictation.start` 仅带 `clientRequestId`，转写用**当前活动 STT**；前端 `dictationSttProfileId` 需在 start 前经 `switch_model{service:"stt"}` / `set_service` 切到目标 STT | `dictationSttProfileId` / `DictationSettings` |
+| 普通录音输入与发送确认 | WS `voice.record.start{recordingId(rec_)}` → BINARY PCM ×N（全段缓冲）→ `voice.record.stop{recordingId}` → `voice.transcript{recordingId, text, emotion?}` → `voice.commit{recordingId, text, clientRequestId, clientMessageId?, conversationId?}` → `user_message.ack` + generation.*（复用字幕文本不重转写）；`voice.discard{recordingId}` | `VoiceInputSession` / `RecordedVoiceInputReadyEvent` |
+| 实时语音字幕、断句与轮次提交 | WS `voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped/cancelled/timeout/stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压 | `VoiceCaptionEvent` / 后端轮次事件映射 |
+| TTS 整段/流式音频、取消和完成 | WS `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data, is_final}` ×N → `audio_end{stream_id}`（字节全发≠播完，完成由前端 `onended` 判定）；`audio.cancel{stream_id}`（全局）→ `audio_cancelled{stream_id}` | `TtsPlaybackSession` / `TtsChunkEvent` |
+| 重连/续传方式 | **无断点续传**；重连后 WS `session` 回放历史；生成中断由客户端据回放判断（消息无对应 `generation.completed` → 视为中断 → 用新 `clientRequestId` 重发）；补充 `GET /api/sessions/{id}/pending`（pendingMessages / pendingApprovals）+ `GET /api/sessions/{id}/generations`（GenerationStatus） | `resume` |
+| 错误结构 | WS `error` 帧 / `ErrorMessage{message, code?, requestId?, retryable?, details?}`；REST `ProtocolError{code, message, retryable, requestId, error(=message 别名), details}`；`generation.failed{code, message, retryable, details}`；ACK rejected 带 `error{code, message, retryable}`；40 码目录见 protocol-v2 §9.1 | `PublicError` |
+
+### 19.1 字段差异与 Adapter 桥接项
+
+下表记录 wire 字段与前端领域字段的命名/形状差异，`BackendAdapter` 落地时必须在 Main 内桥接，不得让 wire 原始字段泄漏进 Vue 组件：
+
+| # | wire 字段 | 前端领域字段 | 桥接说明 |
+|---|---|---|---|
+| D-1 | `generationId`（gen_） | `responseId` / `generationId` | 后端已弃用 `responseId`，**别名 generationId**；前端两字段并存时以 generationId 为准 |
+| D-2 | `generation.delta.delta` | `GenerationDeltaEvent.text` | 增量文本改名；语义不变（段内累计、`deltaSequence` 排序） |
+| D-3 | `generation.completed.mood` | `emotion`（EmotionState） | 心情字段改名 |
+| D-4 | `generation.completed.usage{turn_total, rounds[]}` | `TokenUsage`（source=`provider_reported`） | 按 generation 去重由 `generationId` 保证；rounds 为 provider 逐轮明细 |
+| D-5 | `generation.completed.conversationUsage{total, byModel}` | `conversationUsage`（source=`server_aggregate`） | 会话级累计来自服务端，非前端累加 |
+| D-6 | `generation.segment.completed.content` | `AssistantSegment.text` | 后端整段文本为权威，无需拼 delta；前端 `SegmentCompletedEvent` 当前未含 content，Adapter 需透传或用其覆盖累积 |
+| D-7 | `MessageChannel` 含 `status` 通道 | `SegmentChannel` 仅 inner_voice/public_reply | 后端预留 `status` 通道；Adapter 需映射或过滤，不得丢字段 |
+| D-8 | `dictation.start` 无 STT Profile 字段 | `dictationSttProfileId` | 后端用活动 STT，前端需在 start 前切换；**待后端确认是否加独立字段** |
+| D-9 | `generation.completed.finishReason` 限 stop/tool_calls | 前端消息状态 completed | 取消/错误统一走 `generation.failed`，前端不得从 `state idle` 推断完成 |
+| D-10 | `server_info.features` / `services` | 连接能力快照 | 各 feature 如实声明；前端据 `features` 门控 UI，不超前实现 |
+
+**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧未动。剩余待后端确认项：`dictationSttProfileId`（D-8）、E-03 凭据所有权（阶段 1 进入条件）。
 
 完成这张表并通过真实事件联调后，才可以把本文状态从“待与现有后端核对”改为“已对齐 / 可作为工程契约基线”。
 
