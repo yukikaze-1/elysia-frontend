@@ -204,12 +204,12 @@
 
 ### 任务清单
 
-- [ ] 落地 Main / Preload / Renderer 进程边界与推荐目录结构（文档 01 §5）
+- [x] 落地 Main / Preload / Renderer 进程边界与推荐目录结构（文档 01 §5）
 - [ ] 开启 Context Isolation、Renderer Sandbox、导航与新窗口限制
 - [ ] 让 Main 持有后端 Transport、认证凭据与原始协议解析
-- [ ] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）
-- [ ] 实现窗口、单实例、外部链接拦截与应用生命周期
-- [ ] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
+- [x] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）
+- [x] 实现窗口、单实例、外部链接拦截与应用生命周期
+- [x] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
 - [ ] 建立开发/测试/生产配置与最小打包流程
 - [ ] 落地 CSP（无 `unsafe-eval`）、受限自定义协议替代 `file://`
 - [ ] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试
@@ -447,3 +447,4 @@
 | 2026-08-08 | §2 输入清单逐行标注：契约已确认项标 `[~]`（B-02~B-06/B-08、C-01~C-09、E-01~E-06/E-08、F-01~F-05、G-04），A-01/A-04 勾 `[x]`；仍缺项列表补全；头部状态更新 | 进行中 |
 | 2026-08-08 | 深读后端批次 0-8c 全部进度/审计文档后复核：**D-01~D-08、F-08、H-03/H-06 升级为 `[~]`**（后端批次 3/7 契约已覆盖）；剩余 `[ ]` 明确标注性质——前端本地授权/沙盒/审计设计（F-06 后端 security §3.2 明确属 Electron 职责）与外部资源/产品决策（G-01/G-02 Live2D、H-01/H-04 平台/签名） | 进行中 |
 | 2026-08-08 | **阶段 1 前置决策拍板**（§4.0）：App 身份 Cyrene/com.cyrene.desktop、沙盒 `userData/sandbox`、开发者模式不进 P0 恒关、凭据 safeStorage 不可用即拒存、日志 5MB×3/审计 30 天/诊断导出进 P0；F-06/H-09 升级 `[~]` | 进行中 |
+| 2026-08-09 | 阶段 1 第一块落地：9 子目录、installAppIdentity + userData 七目录、IPC 骨架（app:get-info） | 已开发、未联调 |
