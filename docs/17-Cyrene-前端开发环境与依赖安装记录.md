@@ -193,6 +193,8 @@ ls ~/.cache/ms-playwright/*/INSTALLATION_COMPLETE   # 浏览器装全
 | P-4 | `pkill -f "http.server 8899"` 退出码 144、shell 被杀 | `-f` 全命令行匹配到了自身 | `ss -tlnp \| grep 8899` 找 pid 再 `kill` |
 | P-5 | 误以为 Chromium 没装 | 浏览器在 `~/.cache/ms-playwright/` 已有且带完成标记 | 查 `INSTALLATION_COMPLETE` / `DEPENDENCIES_VALIDATED`；revision 与 Playwright 版本需匹配 |
 | P-6 | 本环境 `git push` 失败 | HTTPS remote，环境无 GitHub 凭据 | 本地提交，用户在 VS Code 终端手动 push |
+| P-7 | `xwd`/ffmpeg x11grab 抓屏全黑，找不到 Electron 窗口 | Electron 跑在 **Wayland**（GPU 进程 `--ozone-platform=wayland`），窗口在合成器下不在 X11 | 用 Playwright `_electron` 截图；或 `WINIT_UNIX_BACKEND=x11`/`--ozone-platform=x11` 强制 X11 |
+| P-8 | `pnpm dev -- -- --remote-debugging-port=9222` 端口不监听 | 参数经 pnpm→electron-vite→electron 多层转发丢失，未成为 Chromium switch | 用 Playwright `_electron.launch`（内部处理 CDP）；E2E 阶段 3 再正式接线 |
 
 ---
 
@@ -201,3 +203,30 @@ ls ~/.cache/ms-playwright/*/INSTALLATION_COMPLETE   # 浏览器装全
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 时跑 `pnpm install --frozen-lockfile` → typecheck → lint → test（当前不跑 E2E，阶段 3 补充）。
 - **版本一致性**：Node 版本由 `.nvmrc` 统一（本地 + `actions/setup-node` 的 `node-version-file`）；pnpm 版本由 `packageManager` + `pnpm/action-setup` 双保险。
 - **README** 根目录有当前工程说明；本文与之配套，README 变更时同步检查 §1 版本表。
+
+---
+
+## 12. Electron GUI 冒烟（Playwright `_electron` + vision MCP）
+
+2026-08-09 首次自动化冒烟成功，方法可复用（对应 doc 16 阶段 1 验收门槛「Ubuntu 启动一次」）。
+
+**流程：**
+
+```bash
+# 1. 构建产物（冒烟对象 = out/）
+cd /home/yomu/elysia-frontend/apps/desktop && pnpm build
+
+# 2. 跑冒烟脚本（已存在 .playwright-mcp/smoke-electron.cjs，gitignored）
+cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.cjs
+# → SMOKE_RESULT {"appInfo":{"name":"Cyrene","version":"0.1.0","platform":"linux"},"title":"Cyrene"}
+# → 写 .playwright-mcp/cyrene-electron-built.png
+```
+
+**脚本要点（`smoke-electron.cjs`）：**
+
+- `_electron.launch` 需显式 `executablePath`（`node_modules/.pnpm/electron@43.../dist/electron`）+ **`args: [cwd]`（应用目录）而非 `out/main/index.js`**——传文件会让 `app.getVersion()` 找不到 package.json 回退 `0.0`；
+- 必须 `delete env.ELECTRON_RUN_AS_NODE`（沙箱注入，P-2）；
+- playwright 从 npx 缓存 require（`~/.npm/_npx/*/node_modules/playwright`），不是项目依赖；
+- `firstWindow` → `waitForFunction(window.desktopApi)` → `evaluate(getAppInfo)`。
+
+**验证项：** 主进程无错启动、`~/.config/Cyrene` 七目录 0700、`getAppInfo` 真实 IPC 往返、窗口标题、UI 渲染（截图 + vision MCP `analyze_image` 确认四栏布局/流式演示/Live2D 占位）、普通浏览器 `desktopApi` undefined（信任边界）。

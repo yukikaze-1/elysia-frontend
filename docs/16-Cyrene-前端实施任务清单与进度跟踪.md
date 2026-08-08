@@ -216,11 +216,11 @@
 
 ### 验收门槛
 
-- [ ] Renderer 无 Node、任意 IPC、系统凭据或带凭据后端直连
+- [~] Renderer 无 Node、任意 IPC、系统凭据或带凭据后端直连（结构保证 sandbox/contextIsolation/不暴露 ipcRenderer + 冒烟确认普通浏览器 `window.desktopApi` 为 undefined；完整安全测试套件后续块）
 - [ ] 非白名单通道、非法参数与超大输入被 Main 拒绝
 - [ ] Token/密钥只显示状态，不能从 Renderer 读回
 - [ ] 外部链接通过受控接口打开
-- [ ] Windows 与目标 Ubuntu 开发环境各启动一次
+- [~] Windows 与目标 Ubuntu 开发环境各启动一次（**Ubuntu(Wayland)已冒烟通过**：Playwright `_electron` 启动构建产物，`getAppInfo` 返回 `{Cyrene, 0.1.0, linux}`、七目录 0700、四栏 UI 渲染；Windows 待验证）
 - [ ] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭
 
 ---
@@ -448,3 +448,4 @@
 | 2026-08-08 | 深读后端批次 0-8c 全部进度/审计文档后复核：**D-01~D-08、F-08、H-03/H-06 升级为 `[~]`**（后端批次 3/7 契约已覆盖）；剩余 `[ ]` 明确标注性质——前端本地授权/沙盒/审计设计（F-06 后端 security §3.2 明确属 Electron 职责）与外部资源/产品决策（G-01/G-02 Live2D、H-01/H-04 平台/签名） | 进行中 |
 | 2026-08-08 | **阶段 1 前置决策拍板**（§4.0）：App 身份 Cyrene/com.cyrene.desktop、沙盒 `userData/sandbox`、开发者模式不进 P0 恒关、凭据 safeStorage 不可用即拒存、日志 5MB×3/审计 30 天/诊断导出进 P0；F-06/H-09 升级 `[~]` | 进行中 |
 | 2026-08-09 | 阶段 1 第一块落地：9 子目录、installAppIdentity + userData 七目录、IPC 骨架（app:get-info） | 已开发、未联调 |
+| 2026-08-09 | **GUI 冒烟自动验证通过**（Playwright `_electron` + vision MCP）：Ubuntu(Wayland) 启动构建产物，七目录 0700、`getAppInfo`→`{Cyrene,0.1.0,linux}`、四栏 UI 渲染正常、普通浏览器 `desktopApi` undefined（信任边界）；验收门槛 2 项升 `[~]` | 已开发、未联调 |
