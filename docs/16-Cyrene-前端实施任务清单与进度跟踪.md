@@ -209,7 +209,7 @@
 - [ ] 让 Main 持有后端 Transport、认证凭据与原始协议解析
 - [ ] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）
 - [ ] 实现窗口、单实例、外部链接拦截与应用生命周期
-- [ ] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/cache/logs/audit/temp/models）
+- [ ] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
 - [ ] 建立开发/测试/生产配置与最小打包流程
 - [ ] 落地 CSP（无 `unsafe-eval`）、受限自定义协议替代 `file://`
 - [ ] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试
