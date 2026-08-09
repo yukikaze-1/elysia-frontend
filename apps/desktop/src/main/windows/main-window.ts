@@ -1,44 +1,29 @@
 // apps/desktop/src/main/windows/main-window.ts
 import { app, BrowserWindow, shell } from 'electron'
-import { join, sep } from 'path'
-import { fileURLToPath } from 'url'
-import { realpath } from 'fs/promises'
+import { join } from 'path'
 import { getMainWindow, setMainWindow } from '../ipc/registry'
+import { getAppConfig, shouldUseViteDevServer } from '../config'
+import { PROTOCOL_SCHEME, RENDERER_HOST } from '../protocol'
+import { classifyNavigation } from './navigation'
 
 let pendingFocus = false
 let appStarted = false
 function setPendingFocus(): void { pendingFocus = true }
 function consumePendingFocus(): boolean { const p = pendingFocus; pendingFocus = false; return p }
-/** main() 在 registerHandlers 后调用——置位前 focusOrDefer 遇 null 只 defer，不抢在建窗前（避免 IPC handler 未注册时窗口已拉起） */
 export function markAppStarted(): void { appStarted = true }
 
-function sameOrigin(a: URL, b: URL): boolean {
-  return a.protocol === b.protocol && a.host === b.host
-}
-
-async function isAppOwnUrl(targetUrl: string, rendererRoot: string): Promise<boolean> {
-  try {
-    const url = new URL(targetUrl)
-    if (!app.isPackaged) {
-      // dev：同源 http(s) 且不在 Vite 文件代理前缀
-      const dev = process.env['ELECTRON_RENDERER_URL']
-      if (dev && sameOrigin(url, new URL(dev)) && !url.pathname.startsWith('/@fs/') && !url.pathname.startsWith('/@vite/')) {
-        return true
-      }
-      return false
-    }
-    if (url.protocol !== 'file:') return false
-    const targetPath = await realpath(fileURLToPath(url))
-    const root = await realpath(rendererRoot)
-    const lower = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s)
-    // 路径边界：targetPath === root，或以 root + path.sep 开头——join('.') 返回 '.' 不是分隔符，勿用
-    return lower(targetPath) === lower(root) || lower(targetPath).startsWith(lower(root) + sep)
-  } catch {
-    return false // fail-closed
-  }
-}
-
 export function createMainWindow(): void {
+  const config = getAppConfig()
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  // 加载/导航统一谓词（shouldUseViteDevServer = 未打包 && 有 dev server）：
+  // dev（electron-vite dev，含 --mode test）→ http；打包恒 cyrene://（残留 dev env 无法劫持）；
+  // 无 dev server（test/production 构建、--mode development 直启）→ cyrene://。
+  const usingDevServer = shouldUseViteDevServer(app.isPackaged, process.env)
+  // devOrigin 仅在 usingDevServer 下解析，且 try/catch——打包/残留畸形 ELECTRON_RENDERER_URL 不崩建窗（导航门 deny 兜底）
+  let devOrigin: URL | undefined
+  if (usingDevServer && devUrl) {
+    try { devOrigin = new URL(devUrl) } catch { devOrigin = undefined }
+  }
   const win = new BrowserWindow({
     width: 1200,
     height: 760,
@@ -53,10 +38,11 @@ export function createMainWindow(): void {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: true
+      webSecurity: true,
+      devTools: config.devToolsAllowed // BrowserWindow 层封死 DevTools：打包恒 false（Electron 安全检查清单项）
     }
   })
-  setMainWindow(win) // new 后、load 前立即注入
+  setMainWindow(win)
 
   let shown = false
   const showOnce = (): void => {
@@ -77,25 +63,23 @@ export function createMainWindow(): void {
 
   win.webContents.on('will-navigate', (event, url) => {
     event.preventDefault() // 默认 deny
-    const root = join(__dirname, '../renderer')
-    void isAppOwnUrl(url, root).then((own) => {
-      try {
-        if (own) { win.loadURL(url).catch(() => { /* 加载失败保持 preventDefault，fail-closed */ }); return }
-        // 非自身但与应用同源（dev 的 /@fs/ 等被拦前缀）→ 拒绝，不开外部浏览器
-        const dev = process.env['ELECTRON_RENDERER_URL']
-        if (dev && !app.isPackaged && sameOrigin(new URL(url), new URL(dev))) return
-        if (url.startsWith('http:') || url.startsWith('https:')) { shell.openExternal(url); return }
-        // 其余 deny
-      } catch {
-        // fail-closed：异步分支任何异常都保持 preventDefault（已调），不崩溃
-      }
-    })
+    const kind = classifyNavigation(url, devOrigin, usingDevServer)
+    if (kind === 'app') { win.loadURL(url).catch(() => { /* fail-closed */ }); return }
+    if (kind === 'external') { shell.openExternal(url).catch(() => { /* 系统浏览器拒绝时吞掉，fail-closed */ }); return }
+    // deny（preventDefault 已调）
   })
 
-  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
-    win.loadURL(process.env['ELECTRON_RENDERER_URL']).catch(() => { /* fail-closed：加载失败不静默，窗口不显示由 5s 兜底 show 暴露 */ })
+  if (config.devToolsAllowed) {
+    win.webContents.on('before-input-event', (_ev, input) => {
+      if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools()
+    })
+  }
+
+  if (usingDevServer && devUrl) {
+    win.loadURL(devUrl).catch((err) => { console.error('[main] dev server 加载失败', err) })
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html')).catch(() => { /* fail-closed */ })
+    // 打包/直启 cyrene://：失败必须留诊断（handler 缺失→404 空白窗，本块无日志模块先 console.error，块 B 建 logger 后换）
+    win.loadURL(`${PROTOCOL_SCHEME}://${RENDERER_HOST}/index.html`).catch((err) => { console.error('[main] cyrene:// 渲染器加载失败', err) })
   }
 }
 
@@ -111,8 +95,6 @@ export function ensureMainWindow(): void {
 export function focusOrDefer(): void {
   const win = getMainWindow()
   if (!win) {
-    // 已完整启动（handler 已注册）→ 重建；启动中途（await ensureUserDataDirs 间隙）→ 置待聚焦，
-    // 避免窗口在 registerHandlers 前拉起、首个 getAppInfo() 无 handler 拒绝
     if (app.isReady() && appStarted) { createMainWindow(); raiseWindow(); return }
     setPendingFocus()
     return
