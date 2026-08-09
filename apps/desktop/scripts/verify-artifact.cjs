@@ -1,5 +1,5 @@
 // apps/desktop/scripts/verify-artifact.cjs
-// 静态检查 out/ 产物；--smoke 或存在 DISPLAY 时加 Playwright _electron 启动冒烟。
+// 静态检查 out/ 产物；仅显式传 --smoke 时加 Playwright _electron 启动冒烟（存在 DISPLAY 不够，须显式请求）。
 const fs = require('fs')
 const path = require('path')
 
@@ -230,6 +230,8 @@ async function smoke() {
       ok(`截图 ${path.join(shotDir, 'cyrene-cyrene-proto.png')}`)
       // 负路径（仅打包形态）：带禁止开关（无 harness）→ 调试门应 failStart 退出（验证拒绝路径接线 E2E，
       // 而不只是单测覆盖纯函数）。out/ 未打包 isPackaged=false 不触发门，此处只在 packagedExe 时测。
+      // 注：本断言实际由 Playwright 注入的 --inspect=0 触发门（allowRandomPort=false 时拒绝），早于显式 --remote-debugging-port=9222——
+      // 它证明打包调试门会拒绝非 harness 启动；显式端口 9222 的拒绝由单测 config-debug-switches.spec 另行覆盖。
       if (packagedExe) {
         const negEnv = { ...env }
         delete negEnv.CYRENE_TEST_HARNESS

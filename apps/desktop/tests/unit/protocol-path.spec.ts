@@ -1,12 +1,14 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { resolveRendererPath } from '../../src/main/protocol/path'
 
-const ROOT = '/opt/cyrene/renderer'
+// 平台无关根：Windows 下 path.resolve 会生成 C:\… 形态，期望值须用 path.join 派生而非硬编码正斜杠串
+const ROOT = path.resolve('opt', 'cyrene', 'renderer')
 
 describe('resolveRendererPath', () => {
   it('合法相对路径 → 渲染根内绝对路径', () => {
-    expect(resolveRendererPath(ROOT, '/index.html')).toBe('/opt/cyrene/renderer/index.html')
-    expect(resolveRendererPath(ROOT, '/assets/app.js')).toBe('/opt/cyrene/renderer/assets/app.js')
+    expect(resolveRendererPath(ROOT, '/index.html')).toBe(path.join(ROOT, 'index.html'))
+    expect(resolveRendererPath(ROOT, '/assets/app.js')).toBe(path.join(ROOT, 'assets', 'app.js'))
   })
   it('空 pathname（/）→ 渲染根本身（目录由 handler 映射 index.html）', () => {
     expect(resolveRendererPath(ROOT, '/')).toBe(ROOT)
@@ -32,10 +34,10 @@ describe('resolveRendererPath', () => {
     // '.' 前置 + relative()：/.. 段被显式拒；深路径仍限根内。
     // 字符串前缀包含（startsWith(root)）会误放行 renderer2 兄弟目录——本实现用 relative() 边界，
     // 该陷阱无可触发的 API 输入（从根只能向下），故用契约测试锚定语义，防未来重构改回字符串前缀比较。
-    expect(resolveRendererPath(ROOT, '/deep/nested/asset.js')).toBe('/opt/cyrene/renderer/deep/nested/asset.js')
+    expect(resolveRendererPath(ROOT, '/deep/nested/asset.js')).toBe(path.join(ROOT, 'deep', 'nested', 'asset.js'))
     expect(resolveRendererPath(ROOT, '/a/../../b')).toBeNull()
   })
   it('根内 .. 前缀条目（如 ..hidden）不被误杀', () => {
-    expect(resolveRendererPath(ROOT, '/..hidden/asset.js')).toBe('/opt/cyrene/renderer/..hidden/asset.js')
+    expect(resolveRendererPath(ROOT, '/..hidden/asset.js')).toBe(path.join(ROOT, '..hidden', 'asset.js'))
   })
 })
