@@ -2,7 +2,7 @@
 
 Cyrene —— Electron 桌面 AI 助手客户端(Windows + Ubuntu)的前端工程。包含 Live2D 角色、流式 AI 回复、语音输入,以及桌面工具/授权系统。
 
-> **当前状态:阶段 0 工程基线 + 阶段 1 第一块(安全骨架地基)已落地(v0.2)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳。阶段 1 第一块已实现:9 子目录主进程结构、应用身份(`Cyrene` → `~/.config/Cyrene`)、userData 七目录(0700 + symlink 逃逸防护)、具名 Schema 校验 IPC 骨架(`app:get-info`)、主窗口导航/单实例/外部链接加固。后端协议契约已由交接包确认(doc 02 §19 对齐表已填写),真实联调未进行,相关能力标注“已开发、未联调”。
+> **当前状态:阶段 0 工程基线 + 阶段 1 第一块(安全骨架地基)与块 A(安全加载与环境基线)已落地(v0.2)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳。阶段 1 第一块已实现:9 子目录主进程结构、应用身份(`Cyrene` → `~/.config/Cyrene`)、userData 七目录(0700 + symlink 逃逸防护)、具名 Schema 校验 IPC 骨架(`app:get-info`)、主窗口导航/单实例/外部链接加固。**块 A 已实现**:`cyrene://` 受限自定义协议替代 `file://`、严格 CSP(响应头 AND 保留 meta)、dev/test/prod 环境(`__APP_MODE__` 烘焙)、生产安全默认(DevTools 恒关 + 远程调试门)、electron-builder 未分发包 + `verify:artifact`。后端协议契约已由交接包确认(doc 02 §19 对齐表已填写),真实联调未进行,相关能力标注“已开发、未联调”。
 
 ## 文档入口
 
@@ -64,7 +64,7 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 
 ## 开发命令
 
-> 命令语义见 [docs/09 §5](docs/09-Cyrene-前端构建打包与发布设计-v0.2.md)。阶段 0 已实现 dev / build / typecheck / lint / test / test:integration;test:e2e(Playwright)、make(Forge 打包)、verify:artifact 留待后续阶段。
+> 命令语义见 [docs/09 §5](docs/09-Cyrene-前端构建打包与发布设计-v0.2.md)。阶段 0 已实现 dev / build / typecheck / lint / test / test:integration;阶段 1 块 A 已实现 `package`(electron-builder `dir` 未分发包)与 `verify:artifact`(产物检查,`--smoke` 启动冒烟);`test:e2e`(Playwright)、`make`(Forge 打包)仍为占位,留后续阶段。
 
 | 命令 | 说明 |
 |---|---|
@@ -74,8 +74,8 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 | `pnpm test` | 单元测试(Vitest) |
 | `pnpm test:integration` | 集成测试 |
 | `pnpm test:e2e` | 端到端测试(Playwright) |
-| `pnpm package` / `pnpm make` | 打包 / 生成安装产物 |
-| `pnpm verify:artifact` | 校验产物内容与安全配置 |
+| `pnpm package` / `pnpm make` | 打包(electron-builder `dir` 未分发包,产物在 `dist/linux-unpacked/`) / 生成安装产物(占位,阶段 8) |
+| `pnpm verify:artifact` | 校验产物内容与安全配置(静态检查;`-- --smoke` 追加 Playwright 启动冒烟) |
 
 ## 协作约定
 
@@ -86,7 +86,8 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 ## 当前状态与下一步
 
 - 阶段 0(工程基线)已完成:`pnpm dev` 可启动 Electron 壳,typecheck / lint / test / build 通过
-- 阶段 1 第一块(安全骨架地基)已落地:9 子目录、App 身份 + userData 七目录、具名 Schema IPC 骨架、主窗口加固(导航/单实例/外部链接);`docs/superpowers/specs|plans/2026-08-08-phase1-foundation-*` 为设计与实施文档(39/7 轮 review)
+- 阶段 1 第一块(安全骨架地基)已落地:9 子目录、App 身份 + userData 七目录、具名 Schema IPC 骨架、主窗口加固(导航/单实例/外部链接);`docs/superpowers/specs|plans/2026-08-08-phase1-foundation-*` 为设计与实施文档
+- **阶段 1 块 A(安全加载与环境基线)已落地并全量验证**:`cyrene://` 受限协议替代 `file://`、严格 CSP(`frame-src 'none'`、响应头 AND 保留 meta)、dev/test/prod 环境(`__APP_MODE__` 烘焙 + `resolveAppConfig`)、生产安全默认(DevTools 恒关 + 远程调试门)、electron-builder `dir` 未分发包 + `verify:artifact`(静态 + 冒烟 16/17 项);`docs/superpowers/specs|plans/2026-08-09-phase1-loading-env-*` 为设计与实施文档
 - 后端协议契约已由交接包确认(doc 02 §19/§19.1 对齐表,40 错误码,WS v2);真实后端环境待联调
 - 待外部输入(阻塞后续阶段):真实后端测试环境地址(B-01)、主验收平台(H-01)、Live2D SDK 许可与模型(G-01/G-02)、签名证书(H-04)
-- **下一步:阶段 1 后续块** —— CSP/受限协议、凭据存储(safeStorage)、日志/审计模块、环境配置与最小打包;然后阶段 2 的聊天纵向闭环(流式事件经 Adapter → Store → UI)
+- **下一步:阶段 1 块 B(主进程受信服务)** —— 日志模块、凭据存储(safeStorage)、审计与诊断导出;块 C 集成测试套件;然后阶段 2 的聊天纵向闭环(流式事件经 Adapter → Store → UI)

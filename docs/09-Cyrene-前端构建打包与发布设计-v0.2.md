@@ -45,6 +45,8 @@ Playwright
 
 环境差异通过构建配置和运行时安全配置注入，不通过修改源代码切换。
 
+**已落地（阶段 1 块 A，2026-08-09）：** dev/test/prod 三环境经 electron-vite `define` 构建时烘焙 `__APP_MODE__`（`dev` 默认 development、`build` 默认 production、`build --mode test` 为 test）；运行时 `resolveAppConfig(mode, isPackaged, env)` 纯函数解析——**缺失/未知 mode 一律归 `production`**（不信任 `NODE_ENV` env，防 env 翻转 mode）；`devToolsAllowed = !isPackaged`（打包恒关，与构建 mode 无关），`logLevel` 打包恒 info、非打包可经 `CYRENE_LOG_LEVEL` 白名单覆盖。staging 留阶段 2（B-01 测试环境地址未到位）。
+
 ## 4. 配置模型
 
 ### 4.1 构建时配置
@@ -96,6 +98,12 @@ verify:artifact 校验产物内容和安全配置
 ```
 
 具体命令由项目 `package.json` 实现，开发者不需要记住长参数。
+
+**已落地（阶段 1 块 A，2026-08-09）：**
+
+- `package` = `electron-vite build && electron-builder --dir` —— **未分发包**（Linux 输出 `dist/linux-unpacked/`，`appId=com.cyrene.desktop`、`productName=Cyrene`、`files:[out/**,package.json]`、`asar:false`、`executableName:Cyrene` 固定 Linux 二进制名）；Forge 全量安装包留阶段 8；
+- `verify:artifact` = `node scripts/verify-artifact.cjs` —— 静态检查（out/ 三产物存在、index.html 保留 CSP meta 且无 `unsafe-eval`、`.env`/Token/`Bearer ` 模式扫描、version 可读）+ `--smoke` Playwright `_electron` 启动冒烟（优先未分发包，缺失回退 out/；断言协议 `cyrene:`、严格 CSP 响应头、Vue 挂载、`getAppInfo`、普通浏览器 `desktopApi` undefined 信任边界、打包调试门负路径）；
+- `make`（Forge 打包）与 `test:e2e` 仍为占位脚本。
 
 ## 6. 版本策略
 

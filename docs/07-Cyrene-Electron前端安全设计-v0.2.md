@@ -85,6 +85,12 @@ allowRunningInsecureContent: false
 - 任何构建都不得开放远程调试端口；
 - 权限请求默认拒绝，按功能显式放行。
 
+**已落地基线（阶段 1 块 A，2026-08-09）：**
+
+- 打包/构建产物 Renderer 经 `cyrene://` 受限自定义协议加载（只读服务渲染根，fail-closed），替代 `file://` 路径映射；加载/协议注册统一谓词 `shouldUseViteDevServer = 未打包 && 有合法 ELECTRON_RENDERER_URL`——dev（electron-vite dev，含 `--mode test`）走 Vite http；**打包恒走 `cyrene://`，残留 dev env 无法劫持**；test/production 构建与 `--mode development` 直启同样走 `cyrene://`（协议注册与加载谓词同源，缺 handler 即 404 空白窗）；
+- **远程调试门**：`main()` 顶部同步扫 `process.argv` + `commandLine` + `NODE_OPTIONS`，**打包（isPackaged）**命中即 failStart 退出（先于浏览器进程初始化，CDP 端口在 whenReady 前已绑定）——拒绝 `--remote-debugging-port`（显式端口/裸开关）、`--inspect`（显式端口/裸开关）、`--inspect-brk/-node/-brk-node/-wait/-wait-node`、`--remote-debugging-fd`（恒拒）、`--remote-debugging-pipe`（非 harness 拒）；**`--remote-debugging-port=0`/`--inspect=0` 默认也拒**，仅测试 harness env 标记 `CYRENE_TEST_HARNESS=1`（verify:artifact 冒烟注入）放行随机端口；`NODE_OPTIONS=--inspect` 系为纯 env 通道（argv/commandLine 均不含），另查恒拒（`--inspect-brk` 在 Node 引导期暂停、进程内无法拦截，为已知固有限制，阶段 8 Fuses 评估）；
+- 非打包（dev/preview/`--mode development` 直启）不触发该门（决策 D-5 限生产，见 doc 16 §4.0）。
+
 ## 5. 内容安全策略
 
 Renderer 使用严格 CSP，原则上：
@@ -98,6 +104,8 @@ Renderer 使用严格 CSP，原则上：
 - Live2D 资源从已安装本地目录加载。
 
 实际 CSP 需根据打包产物和 SDK 验证，不能为了消除报错直接放宽为通配符。
+
+**已落地（阶段 1 块 A，2026-08-09）：** 严格 CSP 由 `buildRendererCsp()` 纯函数产出——`default-src 'none'`、`script-src 'self'`、`style-src 'self'`、`img-src 'self' data:`、`font-src 'self' data:`（Vite 内联 <4KB 字体为 data: URI）、`connect-src 'self'`、`object-src 'none'`、`base-uri 'none'`、**`frame-src 'none'`**、`form-action 'none'`、`frame-ancestors 'none'`；无 `unsafe-eval`、无 `unsafe-inline`。**交付方式为 AND 取交集**：prod/preview 经 `cyrene://` 协议响应头注入严格版，同时**保留** index.html 的宽松 meta 不剥离——响应头与 meta 取交集、严格头胜出，meta 独有的 `blob:`/`ws:`/内联 `style` 属性在 prod 被剔除；dev（electron-vite dev http 场景）靠 meta 兜底（`pnpm start` preview 不设 `ELECTRON_RENDERER_URL` → 走 cyrene:// 严格头）。`frame-src 'none'` 收口第一块 G-6 缺口（同窗口 iframe 的 `event.sender` 即主 webContents）。AND 耦合（改 dev meta 会静默改变 prod 有效策略）记为已知限制 G-9。
 
 ## 6. Preload 与 IPC
 

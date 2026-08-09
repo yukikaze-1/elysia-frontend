@@ -333,7 +333,7 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 
 1. Main 初始化日志和配置；
 2. 读取安全凭据；
-3. 创建窗口并加载本地 Renderer；
+3. 创建窗口并加载本地 Renderer（打包/构建产物经 `cyrene://` 受限自定义协议，替代 `file://`；dev 走 Vite http）——阶段 1 块 A 已落地；
 4. Renderer 加载非敏感设置；
 5. 初始化 Store 和 Live2D；
 6. BackendAdapter 建立连接；

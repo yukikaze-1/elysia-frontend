@@ -418,3 +418,12 @@ export function buildRendererCsp(): string {
 | G-9 | CSP 保留 meta + 响应头 AND 取交集（改 dev meta 会静默改变 prod 有效策略） | 为保 dev http 场景有 CSP（dev 需 meta；剥离会令 dev 零 CSP）；**有效 prod 策略 = 严格头 ∩ meta**——meta 独有的 blob:/ws:/unsafe-inline **及内联 `style` 属性/Vue `:style` 绑定**在 prod 被剔除（`style-src 'self'` 无 unsafe-inline；Task 4 有锚定测试；阶段 3/5 若需动态样式/blob: 图片预览须显式改头 + 测试，勿静默）；阶段 7 安全收敛可再评估剥离方案 |
 
 **实施中新增决策/限制**：按目标指令追加至本节并回写最终报告。
+
+**实施中新增决策回写（2026-08-09，Task 10 已核对实现）：** 与 spec §5.5 的 4 处实现差异，均已在块 A 代码/配置落地并验证：
+
+1. **verify-artifact.cjs 入口 ASI 修正**：入口 IIFE 前置分号 `;(async () => {…})()`，规避 CJS 脚本在相邻语句/拼接场景的 ASI（自动分号插入）隐患（Plan 阶段即已采用，spec 未明文写出）；
+2. **electron dist/ 路径细化**：`findPackagedExecutable()` 按平台感知解析未分发包——linux→`dist/linux-unpacked`、win32→`dist/win-unpacked`、darwin→`dist/mac[-arm64|-universal]/Cyrene.app/Contents/MacOS`，并按 productName 候选名（`Cyrene`/`cyrene`、`Cyrene.exe`）挑选真实应用二进制（electron-builder 产物含 `.chrome-sandbox`/`chrome_crashpad_handler` 等 helper，不能直接当应用启动）；**有打包目录但找不到候选 → 判失败**（防打包命名变化被静默掩盖），无目录才回退 out/；
+3. **electron-builder.yml 加 `executableName: Cyrene`**：Linux 可执行名默认取 package name（`@cyrene/desktop`→`@cyrenedesktop`，不跟随 productName 且 `@` 前缀不是合法二进制名），显式固定为 productName，使 `dist/linux-unpacked/Cyrene` 与 verify-artifact 候选名一致；
+4. **pnpm-workspace `allowBuilds` 显式拒绝 `electron-winstaller: false`**：electron-builder 的 Windows-only Squirrel 安装器 install 脚本在 Linux 下必然抛错（vendor 文件不存在），显式拒绝杜绝 `ERR_PNPM_IGNORED_BUILDS` 阻断后续 install/build。
+
+另补充（非 spec 明确列出，属实现补充的开关面）：`--inspect-wait`/`--inspect-wait-node`（Node 22）纳入 `FORBIDDEN_DEBUG_SWITCHES` 恒拒——与 `--inspect-brk` 同危害（固定端口开 inspector 并等待），Playwright 不注入，不影响测试 harness。

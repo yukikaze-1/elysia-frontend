@@ -232,3 +232,44 @@
 对修订后的 02/12/13/16 执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
 
 > 说明：本增量 Review 聚焦「后端真实协议 → 前端文档」对齐，未重跑完整交叉 Review（Live2D 许可、语音产品语义、平台范围等仍待外部输入）；对应阶段（4/5/6/7/8）进入前仍需各自验证。
+
+---
+
+## 11. 增量 Review：阶段 1 块 A 安全加载与环境基线（2026-08-09）
+
+**触发条件：** doc 13 §9——「安全策略、权限持久化、路径规则或日志内容发生变化」「更换 Electron、打包方式或目标平台」（块 A 落地 CSP 交付方式、`cyrene://` 自定义协议、生产安全默认与 electron-builder 最小打包流程，需重跑交叉 Review）。
+
+**Review 对象：** 阶段 1 块 A（安全加载与环境基线）实施后的文档同步——doc 07（§4 加载模型/远程调试门、§5 CSP AND）、doc 09（§3/§5 环境与命令）、doc 16（§4 任务③④与验收门槛）、doc 01（§8.1 加载）、doc 10（§4.1 范围）、doc 17（新增踩坑）。
+
+### 11.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 07 §4 | 补充已落地基线：`cyrene://` 受限协议替代 `file://` 加载打包 Renderer（dev 走 Vite http，谓词 `shouldUseViteDevServer`）；远程调试门 main() 顶部同步拒绝显式端口/裸开关/pipe（非 harness），`=0` 与 pipe 仅测试 harness `CYRENE_TEST_HARNESS=1` 放行 |
+| 07 §5 | 补充已落地 CSP：严格版（无 `unsafe-eval`/`unsafe-inline`、`frame-src 'none'`）经协议响应头注入，与保留的 index.html meta **AND 取交集**（dev http 靠 meta 兜底；meta 不剥离） |
+| 09 §3/§5 | 补充 dev/test/prod 环境落地（`__APP_MODE__` 烘焙 + `resolveAppConfig`，未知 mode 归 production）；`package`=未分发包（electron-builder --dir）、`verify:artifact`=产物检查（静态 + `--smoke` 冒烟）语义 |
+| 16 §4 | 任务 ③④ 勾选 `[x]`；验收门槛「生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭」升 `[x]`；变更记录加行；头部/当前阶段状态更新 |
+| 17 §10/§13 | 新增 P-9~P-11（electron-builder 首次打包、打包冒烟 `=0` 通道、verify:artifact 用法）与 §13 产物检查说明 |
+| 01 §8.1 | 加载本地 Renderer 注明打包/构建产物经 `cyrene://` 受限协议 |
+| 10 §4.1 | 阶段 1 块 A 范围回写（开发/测试/生产配置 + 最小打包 + 自定义协议/CSP 落地） |
+
+### 11.2 一致性核对
+
+- **加载协议**：doc 07 §4 / 01 §8.1 / spec `2026-08-09-phase1-loading-env-design` §5.3 均为「打包恒 `cyrene://`、dev 走 Vite http」同一谓词（`shouldUseViteDevServer`），无冲突；
+- **CSP**：doc 07 §5「严格头 ∩ 保留 meta」与 spec D-6/G-9 一致；`frame-src 'none'` 收口第一块 G-6 缺口；
+- **远程调试门**：doc 07 §4「任何构建都不得开放远程调试端口」为发布门槛，`=0`/pipe 仅测试 harness 放行——与实现（`hasForbiddenDebugSwitch` + `CYRENE_TEST_HARNESS`）一致；`--inspect-brk` 在 Node 引导期暂停、进程内无法拦截为已知固有限制（spec G-7，阶段 8 Fuses 评估）；
+- **环境划分**：doc 09 §3 staging 仍留阶段 2（B-01 未到位），dev/test/prod 已落地——无口径冲突；
+- **命令语义**：doc 09 §5 的 `package`/`verify:artifact` 与 README、doc 17 §13 一致（`make`/`test:e2e` 仍为占位）。
+
+### 11.3 仍待后续块验证
+
+- **块 B**：日志模块（当前冒烟/启动错误先 `console.error`，块 B 建 logger 后替换）；凭据存储 safeStorage、审计与诊断导出；
+- **块 C**：集成测试套件（`test:integration` 目前因无匹配测试文件失败）；`verify:artifact` 冒烟正式化为 test:integration；
+- **跨平台**：Windows 打包/冒烟、macOS 最小菜单（appMenu/editMenu/windowMenu 不含 View→DevTools）待实机验证；
+- **代码 Review 遗留**：见 `docs/review/2026-08-09-阶段1A-loading-env-code-review.md` 的 [P1]（调试门负路径冒烟可能被单实例锁混淆假通过）、[P2]（普通浏览器检查跳过正则过宽）、[P3]（路径单测硬编码 POSIX 路径，Windows 会失败）——非本块文档门禁，后续块处理。
+
+### 11.4 自动回归
+
+对修订后的 01/07/09/10/13/16/17 与 README 执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+> 说明：本次为块级增量 Review，聚焦加载/环境/CSP/打包的一致性，未重跑完整交叉 Review（Live2D 许可、语音产品语义、平台范围等仍待外部输入）；对应阶段进入前仍需各自验证。

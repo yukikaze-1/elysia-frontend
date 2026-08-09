@@ -195,6 +195,9 @@ ls ~/.cache/ms-playwright/*/INSTALLATION_COMPLETE   # 浏览器装全
 | P-6 | 本环境 `git push` 失败 | HTTPS remote，环境无 GitHub 凭据 | 本地提交，用户在 VS Code 终端手动 push |
 | P-7 | `xwd`/ffmpeg x11grab 抓屏全黑，找不到 Electron 窗口 | Electron 跑在 **Wayland**（GPU 进程 `--ozone-platform=wayland`），窗口在合成器下不在 X11 | 用 Playwright `_electron` 截图；或 `WINIT_UNIX_BACKEND=x11`/`--ozone-platform=x11` 强制 X11 |
 | P-8 | `pnpm dev -- -- --remote-debugging-port=9222` 端口不监听 | 参数经 pnpm→electron-vite→electron 多层转发丢失，未成为 Chromium switch | 用 Playwright `_electron.launch`（内部处理 CDP）；E2E 阶段 3 再正式接线 |
+| P-9 | `pnpm package` 首次运行 electron-builder 需联网拉取 app-builder-bin/fuses | `--dir` 打包依赖在线解析构建器 | 首次打包前确认网络；本地受阻时退化为 `pnpm build` 只出 `out/`（不产未分发包），阶段 8 正式配置再处理 |
+| P-10 | 打包冒烟启动需 Playwright 注入 `--remote-debugging-port=0`/`--inspect=0` 控制通道，但生产默认拒绝 | 调试门连 `=0` 也拒（doc 07「任何构建都不得开放远程调试端口」）；Playwright `_electron` 用随机端口 CDP | 冒烟脚本显式设 `CYRENE_TEST_HARNESS=1` 放行 `=0`；不带该标记启动打包产物会被调试门 failStart 退出 |
+| P-11 | `verify:artifact` 冒烟在无显示环境直接判失败 | `--smoke` 需 Linux `DISPLAY` 或 `WAYLAND_DISPLAY`，否则无法启动 Electron 窗口 | 桌面会话/`xvfb-run` 下执行；无显示时脚本明确 `fail`，不会假绿 |
 
 ---
 
@@ -230,3 +233,14 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 - `firstWindow` → `waitForFunction(window.desktopApi)` → `evaluate(getAppInfo)`。
 
 **验证项：** 主进程无错启动、`~/.config/Cyrene` 七目录 0700、`getAppInfo` 真实 IPC 往返、窗口标题、UI 渲染（截图 + vision MCP `analyze_image` 确认四栏布局/流式演示/Live2D 占位）、普通浏览器 `desktopApi` undefined（信任边界）。
+
+---
+
+## 13. 产物检查 verify:artifact（2026-08-09 起可用）
+
+`pnpm verify:artifact` = `node apps/desktop/scripts/verify-artifact.cjs`（根 package 转发到子包；阶段 1 块 A 落地，对应 doc 16 §4 任务 ④ 与 doc 09 §5 命令语义）。
+
+- **默认只做静态检查**：out/ 三产物（main/preload/renderer index.html）存在、index.html 保留 CSP meta 且无 `unsafe-eval`（dev http 兜底，prod 由响应头 AND 收紧）、`.env`/`AGENT_ACCESS_TOKEN` 赋值/`Bearer ` 长 token 模式扫描（best-effort，非完整扫描器）、package.json version 可读；
+- **`--smoke` 追加启动冒烟**（Playwright `_electron`）：优先启动未分发包（Linux→`dist/linux-unpacked/`，按 productName 候选名 `Cyrene`/`cyrene` 挑选真实二进制；win/darwin 同理），缺失回退 out/ 未打包直启；断言协议 `cyrene:`、`cyrene://` 响应头严格 CSP（`frame-src 'none'`/无 `unsafe-eval`/`unsafe-inline`）、Vue `#app` 挂载 + `.cy-app` grid 样式（防 CSP 拦样式假绿）、`getAppInfo`、普通浏览器 `desktopApi` undefined（信任边界）、打包调试门负路径（`--remote-debugging-port=9222` → failStart 退出）；Linux 需 `DISPLAY` 或 `WAYLAND_DISPLAY`，否则判失败不假绿；
+- **冒烟 env**：`delete ELECTRON_RUN_AS_NODE/ELECTRON_ENABLE_LOGGING/ELECTRON_RENDERER_URL/NODE_OPTIONS`（残留 dev env 会把回退冒烟劫持到 http）+ `CYRENE_TEST_HARNESS=1`（调试门放行 `=0` 控制通道，见 P-10）；
+- 无 `--smoke` 时输出 `（仅静态检查：未传 --smoke…）`；任一检查失败退出码 1。

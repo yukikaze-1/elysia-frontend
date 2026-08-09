@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 代码基线已落地并验证，待真实联调与外部输入（H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 代码基线已落地并验证；阶段 1 块 A（安全加载与环境基线）已落地并全量验证，待真实联调与外部输入（H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,7 +33,7 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 0（代码基线已完成，待真实联调）。**
+**当前所处阶段：阶段 1（块 A 安全加载与环境基线已落地并全量验证；块 B 主进程受信服务 / 块 C 集成测试待推进）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
@@ -210,8 +210,8 @@
 - [~] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）（具名 Schema 校验 IPC 与 Preload DesktopApi 已落地；公开事件订阅/取消函数属阶段 2，待后续块）
 - [x] 实现窗口、单实例、外部链接拦截与应用生命周期
 - [x] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
-- [ ] 建立开发/测试/生产配置与最小打包流程
-- [ ] 落地 CSP（无 `unsafe-eval`）、受限自定义协议替代 `file://`
+- [x] 建立开发/测试/生产配置与最小打包流程（`__APP_MODE__` 烘焙 + `resolveAppConfig` 三 mode、生产安全默认恒关；electron-builder `dir` 未分发包 + `verify:artifact` 静态/冒烟）——2026-08-09
+- [x] 落地 CSP（无 `unsafe-eval`）、受限自定义协议替代 `file://`（严格 CSP 响应头 + 保留 meta AND 取交集、`frame-src 'none'`；`cyrene://` 只读服务渲染根，打包恒走受限协议）——2026-08-09
 - [~] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试（zod Schema 校验机制与 executor 拒绝单测已落地；非法通道/超大输入拒绝的 Electron 集成测试待后续块）
 
 ### 验收门槛
@@ -221,7 +221,7 @@
 - [ ] Token/密钥只显示状态，不能从 Renderer 读回
 - [ ] 外部链接通过受控接口打开
 - [~] Windows 与目标 Ubuntu 开发环境各启动一次（**Ubuntu(Wayland)已冒烟通过**：Playwright `_electron` 启动构建产物，`getAppInfo` 返回 `{Cyrene, 0.1.0, linux}`、七目录 0700、四栏 UI 渲染；Windows 待验证）
-- [ ] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭
+- [x] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭（`devToolsAllowed = !isPackaged` 恒关 + `Menu.setApplicationMenu(null)` 无加速键路径；远程调试门 main() 顶部同步拒绝显式端口/裸开关/pipe，`=0` 仅测试 harness 放行；verify:artifact 负路径冒烟验证拒绝生效）——2026-08-09
 
 ---
 
@@ -449,3 +449,4 @@
 | 2026-08-08 | **阶段 1 前置决策拍板**（§4.0）：App 身份 Cyrene/com.cyrene.desktop、沙盒 `userData/sandbox`、开发者模式不进 P0 恒关、凭据 safeStorage 不可用即拒存、日志 5MB×3/审计 30 天/诊断导出进 P0；F-06/H-09 升级 `[~]` | 进行中 |
 | 2026-08-09 | 阶段 1 第一块落地：9 子目录、installAppIdentity + userData 七目录、IPC 骨架（app:get-info） | 已开发、未联调 |
 | 2026-08-09 | **GUI 冒烟自动验证通过**（Playwright `_electron` + vision MCP）：Ubuntu(Wayland) 启动构建产物，七目录 0700、`getAppInfo`→`{Cyrene,0.1.0,linux}`、四栏 UI 渲染正常、普通浏览器 `desktopApi` undefined（信任边界）；验收门槛 2 项升 `[~]` | 已开发、未联调 |
+| 2026-08-09 | **阶段 1 块 A（安全加载与环境基线）落地并全量验证**：`cyrene://` 受限协议替代 `file://`、严格 CSP（响应头 AND 保留 meta、`frame-src 'none'`）、dev/test/prod 环境（`__APP_MODE__` 烘焙）与生产安全默认（DevTools 恒关 + 远程调试门）、electron-builder 未分发包 + `verify:artifact`（静态 + 冒烟 16/17 项，负路径验证调试门）；勾选 §4 任务 ③④ 与验收门槛「生产恒关/远程调试恒关」 | 进行中 |

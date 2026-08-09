@@ -87,6 +87,8 @@
 - 建立普通设置、系统安全凭据、日志、诊断和临时目录；
 - 建立开发、测试、生产配置和最小打包流程。
 
+> **阶段 1 块 A 状态（2026-08-09）：** 「建立开发、测试、生产配置和最小打包流程」及对应的安全加载/环境基线已落地——打包/构建产物 Renderer 经 `cyrene://` 受限协议加载（替代 `file://`）、严格 CSP（响应头 AND 保留 meta、`frame-src 'none'`）、dev/test/prod 三环境（`__APP_MODE__` 烘焙 + `resolveAppConfig`）、生产安全默认（DevTools 恒关 + 远程调试门）、electron-builder `dir` 未分发包 + `verify:artifact`。详见 doc 07 §4/§5、doc 09 §3/§5 与 doc 16 §4。
+
 ### 4.2 完成标准
 
 - [ ] Renderer 无 Node、任意 IPC、系统凭据或带凭据后端直连；
