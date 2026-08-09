@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Phase 0 基础 CSP;无 unsafe-eval。细化(自定义协议、媒体来源等)属阶段 1 -->
+    <!-- dev 宽松 CSP（保留；prod/preview 由 cyrene:// 响应头严格 CSP AND 收紧——阶段 1 块 A D-6/G-9） -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'"
