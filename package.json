@@ -14,7 +14,7 @@
     "test": "pnpm --filter @cyrene/desktop test",
     "test:integration": "pnpm --filter @cyrene/desktop test:integration",
     "test:e2e": "pnpm --filter @cyrene/desktop test:e2e",
-    "package": "pnpm --filter @cyrene/desktop build",
+    "package": "pnpm --filter @cyrene/desktop package",
     "make": "pnpm --filter @cyrene/desktop make",
     "verify:artifact": "pnpm --filter @cyrene/desktop verify:artifact"
   }

@@ -1,0 +1,15 @@
+# apps/desktop/electron-builder.yml —— 阶段 1 最小未分发包（Forge 全量安装包留阶段 8）
+appId: com.cyrene.desktop
+productName: Cyrene
+directories:
+  output: dist
+files:
+  - out/**
+  - package.json
+asar: false
+linux:
+  target: dir
+  category: Utility
+  # Linux 可执行名默认取 package name（@cyrene/desktop→@cyrenedesktop），不跟随 productName；
+  # 显式固定为 productName，使 dist/linux-unpacked/Cyrene 与 verify-artifact 的候选名一致
+  executableName: Cyrene

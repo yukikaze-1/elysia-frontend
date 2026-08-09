@@ -6,6 +6,9 @@ packages:
 # esbuild/vue-demi 需要构建脚本,均显式放行。
 allowBuilds:
   electron: true
+  # electron-builder 的 Windows-only Squirrel 安装器：install 脚本拷 7z.exe/.dll，
+  # Linux 下必然抛错（vendor 文件不存在）——显式拒绝，杜绝 ERR_PNPM_IGNORED_BUILDS 阻断后续 install/build
+  electron-winstaller: false
   esbuild: true
   vue-demi: true
 
