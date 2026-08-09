@@ -15,8 +15,10 @@ export interface ModelProfile {
   name: string
 }
 
-/** 凭据状态:Renderer 只见状态,永远看不到明文 */
-export interface CredentialStatus {
+/** 模型 Profile 凭据元数据（阶段 4 模型密钥 UI 消费）：Renderer 只见状态,永远看不到明文。
+ *  注意区别于 contracts/credentials.ts 的 4 值 `CredentialStatus`（unavailable/locked/empty/available）——
+ *  此处是模型 Profile 的凭据详情元数据，两者命名曾冲突，本类型更名为 ModelCredentialInfo 避免 barrel 重名。 */
+export interface ModelCredentialInfo {
   configured: boolean
   originLabel?: string
   expiresAt?: string

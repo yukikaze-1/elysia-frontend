@@ -1,6 +1,5 @@
 import { z } from 'zod'
-import { isKeyAllowed } from '@shared/contracts'
-import type { CredentialStatus } from '@shared/contracts/credentials'
+import { isKeyAllowed, type CredentialStatus } from '@shared/contracts'
 
 export const appInfoSchema = z.object({
   name: z.string(),
