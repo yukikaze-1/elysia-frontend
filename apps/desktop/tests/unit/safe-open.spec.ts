@@ -66,4 +66,11 @@ describe('openSafeFile', () => {
     symlinkSync(join(outside, 'f'), p) // 悬空 symlink → realpath 解析到 outside
     await expect(openSafeFile(p, { mode: 'create', purpose: 'append', safeRoot })).rejects.toThrow()
   })
+  it('中间目录换链逃逸 safeRoot → 拒绝（realpath 包含性真正覆盖）', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'cy-escape-out-'))
+    const linkDir = join(root, 'escape-sub')
+    symlinkSync(outside, linkDir) // 中间组件 symlink→outside：open 跟随成功，realpath 逃逸
+    const p = join(linkDir, 'f.log')
+    await expect(openSafeFile(p, { mode: 'create', purpose: 'append', safeRoot })).rejects.toThrow(/逃逸/)
+  })
 })
