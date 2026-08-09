@@ -29,5 +29,13 @@ export default tseslint.config(
       // Mock 实现里 `_` 前缀参数表示"本实现不使用但接口要求"
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }]
     }
+  },
+  {
+    // .cjs 脚本(scripts/verify-artifact.cjs)以 CommonJS 运行,require 是合法机制,
+    // 不在 recommended 的 no-require-imports 规则范围内
+    files: ['**/*.cjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off'
+    }
   }
 )
