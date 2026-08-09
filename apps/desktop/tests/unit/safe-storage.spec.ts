@@ -13,6 +13,13 @@ function fakeSafe(over: Partial<Record<string, unknown>> = {}): any {
   }
 }
 
+/** 临时篡改 process.platform 并在 finally 恢复，使平台分支测试在任意宿主（含非 Linux）可移植 */
+function withPlatform(platform: string, fn: () => void): void {
+  const orig = process.platform
+  Object.defineProperty(process, 'platform', { value: platform })
+  try { fn() } finally { Object.defineProperty(process, 'platform', { value: orig }) }
+}
+
 describe('isValidBase64', () => {
   it('合法 base64 通过', () => {
     expect(isValidBase64('AQID')).toBe(true)
@@ -30,18 +37,20 @@ describe('isSafeStorageUsable', () => {
     expect(isSafeStorageUsable(fakeSafe({ isEncryptionAvailable: () => false }))).toBe(false)
   })
   it('linux + basic_text → 不可用（明文降级拒存）', () => {
-    expect(isSafeStorageUsable(fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }))).toBe(false)
+    withPlatform('linux', () => {
+      expect(isSafeStorageUsable(fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }))).toBe(false)
+    })
   })
   it('linux + gnome_libsecret → 可用', () => {
-    expect(isSafeStorageUsable(fakeSafe({ getSelectedStorageBackend: () => 'gnome_libsecret' }))).toBe(true)
+    withPlatform('linux', () => {
+      expect(isSafeStorageUsable(fakeSafe({ getSelectedStorageBackend: () => 'gnome_libsecret' }))).toBe(true)
+    })
   })
   it('非 linux 不调用 getSelectedStorageBackend（未提供该方法的 fake 不崩）', () => {
-    const orig = process.platform
-    Object.defineProperty(process, 'platform', { value: 'win32' })
-    try {
+    withPlatform('win32', () => {
       const safe: any = { isEncryptionAvailable: () => true, encryptString: () => Buffer.from('x'), decryptString: () => 'x' }
       expect(isSafeStorageUsable(safe)).toBe(true) // 不访问 getSelectedStorageBackend
-    } finally { Object.defineProperty(process, 'platform', { value: orig }) }
+    })
   })
 })
 
