@@ -3,9 +3,23 @@ export const IpcChannels = {
   appGetInfo: 'app:get-info',
   credentialsGetStatus: 'credentials:get-status',
   credentialsSet: 'credentials:set',
-  credentialsClear: 'credentials:clear'
+  credentialsClear: 'credentials:clear',
+  chatConnect: 'chat:connect',
+  chatDisconnect: 'chat:disconnect',
+  chatListConversations: 'chat:list-conversations',
+  chatGetMessages: 'chat:get-messages',
+  chatSend: 'chat:send',
+  chatCancel: 'chat:cancel',
+  chatActivate: 'chat:activate',
+  chatCreate: 'chat:create',
+  chatRename: 'chat:rename',
+  chatDelete: 'chat:delete',
+  chatGetState: 'chat:get-state'
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
+
+/** Main → Renderer 主动推送通道(PushChannels)：不入 IpcChannels（非命令，无 invoke 语义） */
+export const PushChannels = { event: 'chat:event', state: 'chat:state', replay: 'chat:replay' } as const
 
 /** IPC 错误体：只含公开信息，不泄漏堆栈/路径 */
 export interface IpcErrorBody {

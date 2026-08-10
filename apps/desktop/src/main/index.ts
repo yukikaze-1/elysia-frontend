@@ -2,10 +2,11 @@
 import { app, dialog, Menu, safeStorage } from 'electron'
 import { join } from 'path'
 import { realpath } from 'fs/promises'
-import { isKeyAllowed } from '@shared/contracts'
+import { BACKEND_TOKEN_KEY, isKeyAllowed } from '@shared/contracts'
 import { installAppIdentity, expectedUserDataBase } from './app/lifecycle'
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
+import { getMainWindow } from './ipc/registry'
 import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
 import { hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
@@ -14,6 +15,8 @@ import { createDiagnostics } from './diagnostics'
 import { createShutdownHandler } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
+import { MockBackend } from './transport/mock-backend'
+import { createChatService, type ChatService } from './chat/chat-service'
 
 function failStart(message: string): void {
   dialog.showErrorBox('Cyrene 无法启动', message)
@@ -90,7 +93,22 @@ async function main(): Promise<void> {
     const safeRoot = await realpath(expectedUserDataBase())
     const diagnostics = createDiagnostics({ logs: dirs.logs, audit: dirs.audit }, { logLevel: config.logLevel, retentionDays: 30, sanitize })
     const store = new CredentialStore(join(dirs.config, 'credentials.json'), safeStorage, isKeyAllowed, safeRoot)
-    registerHandlers({ credentials: store, logger: diagnostics.logger })
+    // 装配 chat-service：MockBackend 默认(requireToken:false)；RealBackend 可经配置切换。
+    // onConnectionStateChange 桥到 svc.pushState（chat-service 自身在 connect/disconnect 后也主动推快照，双推幂等）。
+    // 用 const 桥容器打破 adapter→svc 环引用（adapter 构造在前、svc 在后，回调只在 connect/disconnect 时触发，此时已装配完）。
+    // onSessionReplay 接线(P2-2)：若 adapter 为 RealBackend，其构造时 onSessionReplay 桥 send(PushChannels.replay)（当前 MockBackend 无回放,跳过）。
+    const chatBridge: { svc: ChatService | undefined } = { svc: undefined }
+    const adapter = new MockBackend({
+      onConnectionStateChange: (state) => chatBridge.svc?.pushState(state)
+    })
+    const chatSvc = createChatService({
+      adapter,
+      send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },   // P3:webContents 守卫(窗口未建不崩)
+      getToken: () => store.getCredential(BACKEND_TOKEN_KEY).then((t) => t ?? undefined),   // R1:CredentialStore 是 async getCredential
+      requireToken: adapter instanceof MockBackend ? false : true
+    })
+    chatBridge.svc = chatSvc
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc })
     app.on('before-quit', createShutdownHandler({ closeAll: diagnostics.closeAll, quit: () => app.quit() }))
     diagnostics.logger.info('app:user-data-ready', { baseCreated, config: dirs.config, logs: dirs.logs, audit: dirs.audit })
     if (!shouldUseViteDevServer(app.isPackaged, process.env)) {

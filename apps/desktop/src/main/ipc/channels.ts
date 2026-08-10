@@ -18,3 +18,40 @@ export const credentialsSetSchema = z.object({
 export const credentialsClearSchema = z.object({
   key: z.string().refine(isKeyAllowed)
 })
+
+// —— chat 命令 request schema(P0 精确字段;响应校验用 z.unknown() 信封,阶段 7 细化)——
+export const chatConnectSchema = z.object({
+  serverUrl: z.string().min(1)
+})
+export const chatSendSchema = z.object({
+  conversationId: z.string().min(1),
+  text: z.string(),
+  clientRequestId: z.string().min(1)
+})
+export const chatGetMessagesSchema = z.object({
+  conversationId: z.string().min(1),
+  before: z.string().optional(),
+  after: z.string().optional(),
+  limit: z.number().int().positive().optional()
+})
+export const chatRenameSchema = z.object({
+  conversationId: z.string().min(1),
+  title: z.string().min(1)
+})
+export const chatActivateSchema = z.object({
+  conversationId: z.string().min(1)
+})
+export const chatListConversationsSchema = z.object({
+  cursor: z.string().optional(),
+  limit: z.number().int().positive().optional()
+})
+export const chatCreateSchema = z.object({
+  title: z.string().optional()
+})
+export const chatCancelSchema = z.object({
+  generationId: z.string().min(1)
+})
+export const chatDeleteSchema = z.object({
+  conversationId: z.string().min(1)
+})
+export const chatGetStateSchema = z.undefined()
