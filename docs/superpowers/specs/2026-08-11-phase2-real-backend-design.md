@@ -60,10 +60,10 @@
 | B-3 | 接口扩展 | `BackendAdapter` 新增 `activateConversation(id): Promise<{conversationId}>` 与 `getConversationMessages(input: ConversationMessagesQuery): Promise<MessagePage>`（`GetConversationQuery` 保持详情用途；分页用新方法，docs/18 §10.2） |
 | B-4 | 连接配置 | `ConnectInput{serverUrl, token?}` 现有形状不变；`token` 由 2C 从凭据存储取；2B 只消费 |
 | B-5 | 事件流 | 复用 2A `FrameMapper`（每连接一个实例，`connectionId` 注入）；`session/server_info/expression` 帧 mapper 返回 null，由 RealBackend 直接处理（缓冲/连接元数据） |
-| B-6 | session 回放归属 | `session.conversationId` 存在即用；缺省（旧后端）时缓冲 `messages` 至活动会话解析（**REST `GET /api/sessions` 的 `active:true` 条目**；勿用 `server_info.connectionId`——连接身份 ≠ 会话 ID，后端无按 connectionId 查会话的端点） |
+| B-6 | session 回放归属 | `session.conversationId` 存在即用；缺省（旧后端）时缓冲 `messages` 至活动会话解析（REST `active:true` 条目）。**实施落地（F4）**：当前后端 `SessionMessage.conversationId` 必填 → fallback 为**文档化 no-op**——缓冲仅在带 conversationId 的新会话帧到达时被替换并告警 `SESSION_BUFFER_REPLACED`，不实现 REST active:true 投递（不可达路径，联调旧后端时再补） |
 | B-7 | 重连 | 断线 → 指数退避（1s 起 ×2，上限 30s）→ 重新握手 → 重新 session 回放；重连期间 `generation.failed` 语义由 2C 状态机处理；`onProtocolWarning` 接日志 |
 | B-8 | 分页 | `before` 用 `_id`（倒序，入 UI 前按时间正序归一化）；`after` 用 `_id`（正序增量）；畸形游标 400 → `CyreneError(CONTRACT_VALIDATION)`；`nextCursor` 用响应 `cursor` 原样 |
-| B-9 | 错误映射 | REST `ProtocolError`/`ApiFail` → `CyreneError`（保留 code/message/retryable）；WS `error` 帧 → `onError` 公开错误回调（§5.3 分派）+ `onProtocolWarning` |
+| B-9 | 错误映射 | REST `ProtocolError`/`ApiFail` → `CyreneError`（保留 code/message/retryable）；WS `error` 帧 → `onError` 公开错误回调（§5.3 分派）+ `onProtocolWarning`。**实施落地（F6）**：后端原始 code（`SESSION_NOT_FOUND`/`RATE_LIMITED` 等）保留在 `CyreneError.details.code`，顶层用领域码（ack rejected → `INVALID_INPUT`、error 帧 → `UNKNOWN`），2C 分支时读 details |
 | B-10 | 状态公开 | RealBackend 暴露 `getConnectionState(): ConnectionState`（`disconnected/connecting/connected/reconnecting/error` + 细节），2C connectionStore 消费；本块只定义类型 |
 | B-11 | 标记 | 真实联调未做（B-01 未到位）→ **「已开发、未联调」**；单测用 Mock WS 服务（Node http + ws 库起本地伪后端）+ REST Mock |
 | B-12 | raw 层扩展 | **2B 扩展 `raw-types`/`raw-schemas` 纳入 `user_message.ack` 与 `error` 两帧**（2A 判别 union 只含 9 类无此二者；不做则 sendMessage 的 ack 关联与 WS 错误上报失效）。二者由 RealBackend 直接处理（不产生领域事件，FrameMapper 返回 null，同 session/server_info 模式）：`user_message.ack` 按 `clientRequestId` 关联 pending sendMessage；`error` 路由到公开错误回调 |
@@ -158,10 +158,10 @@ export class RestMapper {
 映射要点：
 - `message_id` → `messageId`；`session_id` → `conversationId`（缺省时由调用方注入）；`timestamp` → `createdAt`；`inner_voice`/`parts`/`content` → assistant 消息组装 `assistantSegments`（`role==='assistant'` 时：`content` 纯文本 → 单 `public_reply/text` 段；`inner_voice` → 单 `inner_voice/text` 段；`parts[]` → markdown 段）。`role==='user'` → `content`（拼接 parts 或 content）；`role==='tool'` → `content`。
 - `_id` → `nextCursor`（`has_more` 时用响应 `cursor`；**缺省 cursor 且 `has_more` 时**用 raw 最末条 `_id`（反转前的最旧条，before 方向正确）；`has_more=false` 时无 cursor）。
-- `before` 页：raw 倒序 → `items` 按 `(_id, timestamp)` 正序归一化（`_id` ObjectId 单调，作稳定排序键；同刻不漂移）；`after` 页：已正序，不反转。
+- `before` 页：raw 倒序 → `items` 按 `(timestamp, messageId)` 正序归一化（领域 `Message` 无 `_id` 字段，用 `messageId` 作同刻稳定键；**实施落地 F5**：与 `frame-mapper` 排序一致）；`after` 页：已正序，不反转。
 - 领域 `Message.status`：归档消息 → `completed`（assistant 有 segments）/`completed`（user/tool）。
 - `role==='tool'` 时除 `content` 外，保留 `tool_call_id`/`name`/`success`/`error`/`error_type`/`duration_ms`/`truncated` 到领域 `Message.tool?`（docs/18 §14 禁止按普通文本丢弃）。
-- assistant 段组装**优先级**：`inner_voice` 独立成 `inner_voice/text` 段；`content` 纯文本 → 单 `public_reply/text` 段；`parts[]`（`_archive_to_client` 对纯文本同时产出 `content` 与 `parts`）→ **`content` 优先，`parts` 仅当 `content` 非纯文本/缺失时**（防同一文本重复成两条段）。
+- assistant 段组装**优先级**：`inner_voice` 独立成 `inner_voice/text` 段；`content` 纯文本 → 单 `public_reply/markdown` 段（**实施落地 F5**：public_reply 恒 `markdown`，归档文本可能含 markdown 语法）；`parts[]`（`_archive_to_client` 对纯文本同时产出 `content` 与 `parts`）→ **`content` 优先，`parts` 仅当 `content` 非纯文本/缺失时**（防同一文本重复成两条段）。
 - 页间去重以 `messageId` 为准（Store 层 2C 保证；mapper 输出不重复即可）。
 
 ### 5.3 RealBackend（`real-backend.ts`）—— 实现 `BackendAdapter`

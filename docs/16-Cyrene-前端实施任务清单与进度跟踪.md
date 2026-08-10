@@ -233,7 +233,7 @@
 
 - [x] 连接、认证、心跳、重连与公开错误状态——2026-08-11（2B RealBackend：WS `/ws` 握手 `X-Protocol-Version:"2"`/`X-Client-Platform:electron`/Bearer、`server_info` 版本 fail-closed、心跳(pong)、断线指数退避重连 + `unexpected-response` fail-fast、`ConnectionState` 公开；**已开发、未联调**）
 - [x] 会话列表、当前会话、历史第一页与基本管理——2026-08-11（2B RealBackend REST：list/get/create/rename/delete + `activateConversation`、`getConversationMessages` `_id` cursor 分页、`session` 回放缓冲归属；**已开发、未联调**）
-- [x] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试——2026-08-11（2B `sendMessage` → WS `text` + `user_message.ack` 关联(accepted/rejected/15s 超时)；乐观状态/UI 幂等属 2C）
+- [~] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试——2026-08-11（2B 已落地 `sendMessage` → WS `text` + `user_message.ack` 关联(accepted/rejected/15s 超时)与 `clientRequestId` 幂等键语义；**乐观状态与 UI 幂等展示属 2C**，故标进行中）
 - [x] 合并 `generation.started/segment.started/delta/segment.completed/completed/failed`——2026-08-11（2A 逻辑层：领域契约 + raw wire schema + frame-mapper + Accumulator，`fixtures/wire-v2/` raw fixture 驱动；**已开发、未联调**）
 - [x] 按 `responseId` 归并有序 `AssistantSegment[]`——2026-08-11（2A Accumulator 权威 content 规则 + segmentIndex 排序；**已开发、未联调**）
 - [ ] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）（全局顺序由 2A Accumulator 保证；折叠 UI 属 2C）
