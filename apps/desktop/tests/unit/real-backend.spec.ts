@@ -15,7 +15,13 @@ let receivedHeaders: Record<string, string> = {}
 let receivedClientFrames: string[] = []
 
 beforeAll(async () => {
-  server = createServer((_req, res) => {
+  server = createServer((req, res) => {
+    // REST mock:activateConversation connected 路径走真实 HTTP(与 wss 同 server);Task 4 既有用例不依赖此 handler
+    if (req.url === '/api/sessions/conv-2/activate' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ activeConversationId: 'conv-2' }))
+      return
+    }
     res.writeHead(404); res.end()
   })
   wss = new WebSocketServer({ server, path: '/ws' })
@@ -207,5 +213,15 @@ describe('RealBackend REST 方法', () => {
     const r = await b.activateConversation('conv-2')
     expect(r.conversationId).toBe('conv-2')
     expect(calls[0]?.url).toContain('/api/sessions/conv-2/activate')
+  })
+
+  it('activateConversation connected → REST 完成即 resolve + WS activate_session 帧已发', async () => {
+    const b = makeBackend()
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    const r = await b.activateConversation('conv-2')
+    expect(r.conversationId).toBe('conv-2')
+    await new Promise((resolve) => setTimeout(resolve, 50)) // ws.send fire-and-forget,等伪后端收帧
+    expect(receivedClientFrames).toContain('activate_session')
+    await b.disconnect()
   })
 })

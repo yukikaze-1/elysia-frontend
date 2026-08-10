@@ -207,7 +207,7 @@ REST 方法（`fetchImpl`，`baseUrl = serverUrl`；**所有请求统一注入 `
 - `createConversation({title?})` → `POST /api/sessions`；
 - `renameConversation(id, title)` → `PATCH`（接口若无，2B 扩展——见 §5.4）；
 - `deleteConversation(id)` → `DELETE /api/sessions/{id}`；
-- `activateConversation(id)` → `POST /api/sessions/{id}/activate`（响应 `{activeConversationId}` → 结果 `{conversationId: activeConversationId}`）+ 发起 WS `activate_session{conversationId}`（触发新会话回放）；**resolve 时机 = WS 新会话回放帧到达**（旧回放缓冲被替换）；
+- `activateConversation(id)` → `POST /api/sessions/{id}/activate`（响应 `{activeConversationId}` → 结果 `{conversationId: activeConversationId}`）+ 发起 WS `activate_session{conversationId}`（connected 时；触发新会话回放）；**resolve 时机 = REST 完成即 resolve**（简化契约，Task 5 实施定：回放**异步**经 `onSessionReplay` 投递，2C 以该回调渲染，不等待回放帧；B-G6 记录）；
 - `sendMessage(input)` → WS `text{content, clientRequestId, conversationId}`（`clientMessageId` 可选）→ 注册 pending（keyed by `clientRequestId`）→ 等待 `user_message.ack`：accepted → resolve `ClientRequestRef{clientRequestId, serverMessageId}`；rejected → 抛 `CyreneError`（带 ack `error` 的 code/message）；超时（15s，`now()` 注入）→ 抛 `CyreneError(TIMEOUT)` 并清 pending；
 - `cancelGeneration({generationId})` → WS `interrupt`（**非定向**：后端 `InterruptMessage` 仅 `{type:"interrupt"}`，无 generationId——语义为打断当前生成；`generationId` 参数仅日志关联）；
 - `queryChatHistory`/`getMessageContext` → 阶段 3（本块 `NOT_IMPLEMENTED` 抛错，不 Mock 假装）。
@@ -298,4 +298,4 @@ export interface BackendAdapter {
 | B-G3 | `sendMessage` 的 `user_message.ack` 超时语义 | 块内 15s 超时兜底（`now()` 注入，§5.3）；2C 决定 UI 层展示 |
 | B-G4 | 重连后的 pending/generation 恢复查询 | 本块只做重新握手回放；pending 查询（`GET /api/sessions/{id}/pending`）接入留 2C（断线恢复 UX） |
 | B-G5 | 模型服务/语音/Desktop 工具方法在 RealBackend 抛 `NOT_IMPLEMENTED` | 阶段 4/6 实现；接口存在但未接真实 |
-| B-G6 | **实施中新增决策** | ① `CyreneErrorCode` 扩展 `TIMEOUT`/`NOT_FOUND`/`AUTHENTICATION_FAILED`（ack 15s 超时 / REST 404 / 认证失败）；② REST 400 `CONTRACT_VALIDATION` → `CyreneError(INVALID_INPUT)`（现有枚举无 CONTRACT_VALIDATION）；③ `RestMapper.toDomainMessage`/`toMessagePage` 加 `conversationId?` 参数（REST 消息 `session_id` 缺省时由调用方注入） |
+| B-G6 | **实施中新增决策** | ① `CyreneErrorCode` 扩展 `TIMEOUT`/`NOT_FOUND`/`AUTHENTICATION_FAILED`（ack 15s 超时 / REST 404 / 认证失败）；② REST 400 `CONTRACT_VALIDATION` → `CyreneError(INVALID_INPUT)`（现有枚举无 CONTRACT_VALIDATION）；③ `RestMapper.toDomainMessage`/`toMessagePage` 加 `conversationId?` 参数（REST 消息 `session_id` 缺省时由调用方注入）；④ `activateConversation` resolve = **REST 完成即 resolve**，回放异步经 `onSessionReplay` 投递（不等待回放帧，2C 以回调渲染）；⑤ REST 方法需先 `connect`（`serverUrl` 已设），connect 前调用抛 `NOT_CONNECTED` guard；⑥ 告警码收编：`RAW_FRAME_INVALID`/`SESSION_BUFFER_REPLACED`/`ACK_UNKNOWN_CLIENT_REQUEST_ID`/`WS_ERROR_FRAME`/`MAPPER_ERROR` 并入 `ProtocolWarningCode`（Task 5 落地） |
