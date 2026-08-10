@@ -132,6 +132,26 @@ const RawGenerationFailedSchema = z.object({
   conversationId: z.string().optional()
 }).strict()
 
+const RawUserAckSchema = z.object({
+  type: z.literal('user_message.ack'),
+  messageId: z.string().min(1),
+  clientRequestId: z.string().min(1),
+  clientMessageId: z.string().optional(),
+  conversationId: z.string().optional(),
+  receivedAt: z.string().min(1),
+  status: z.enum(['accepted', 'rejected']),
+  error: z.object({ code: z.string().min(1), message: z.string(), retryable: z.boolean().optional() }).optional()
+}).strict()
+
+const RawErrorMessageSchema = z.object({
+  type: z.literal('error'),
+  message: z.string().min(1),
+  code: z.string().optional(),
+  requestId: z.string().optional(),
+  retryable: z.boolean().optional(),
+  details: z.record(z.string(), z.unknown()).optional()
+}).strict()
+
 export const RawFrameSchema = z.discriminatedUnion('type', [
   RawSessionMessageSchema,
   RawServerInfoSchema,
@@ -141,7 +161,9 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawGenerationDeltaSchema,
   RawGenerationSegmentCompletedSchema,
   RawGenerationCompletedSchema,
-  RawGenerationFailedSchema
+  RawGenerationFailedSchema,
+  RawUserAckSchema,
+  RawErrorMessageSchema
 ])
 
 export function parseRawFrame(input: unknown): {

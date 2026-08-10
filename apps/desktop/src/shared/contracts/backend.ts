@@ -28,6 +28,19 @@ export interface MessageContextQuery {
   after?: number
 }
 
+/** 会话消息分页查询(游标为后端 _id opaque 串) */
+export interface ConversationMessagesQuery {
+  conversationId: string
+  before?: string   // _id opaque cursor(倒序)
+  after?: string    // _id opaque cursor(正序增量)
+  limit?: number
+}
+
+/** 激活会话结果(后端返回的权威会话标识) */
+export interface ActivateConversationResult {
+  conversationId: string
+}
+
 /** 消息上下文页(历史查看器跳转来源) */
 export interface MessagePage {
   items: Message[]

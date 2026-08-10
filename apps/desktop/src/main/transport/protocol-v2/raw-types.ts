@@ -122,7 +122,26 @@ export interface RawGenerationFailed {
   conversationId?: string
 }
 
+export interface RawUserAck {
+  type: 'user_message.ack'
+  messageId: string
+  clientRequestId: string
+  clientMessageId?: string
+  conversationId?: string
+  receivedAt: string
+  status: 'accepted' | 'rejected'
+  error?: { code: string; message: string; retryable?: boolean }
+}
+export interface RawErrorMessage {
+  type: 'error'
+  message: string
+  code?: string
+  requestId?: string
+  retryable?: boolean
+  details?: Record<string, unknown>
+}
 export type RawFrame =
   | RawSessionMessage | RawServerInfo | RawExpression
   | RawGenerationStarted | RawGenerationSegmentStarted | RawGenerationDelta
   | RawGenerationSegmentCompleted | RawGenerationCompleted | RawGenerationFailed
+  | RawUserAck | RawErrorMessage

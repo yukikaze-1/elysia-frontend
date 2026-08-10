@@ -1,4 +1,5 @@
 import type {
+  ActivateConversationResult,
   ActivateModelProfileCommand,
   BackendSession,
   CancelGenerationInput,
@@ -6,6 +7,7 @@ import type {
   ChatHistoryQuery,
   ConnectInput,
   ConversationDetail,
+  ConversationMessagesQuery,
   GetConversationQuery,
   MessageContextQuery,
   MessagePage,
@@ -37,8 +39,11 @@ export interface BackendAdapter {
 
   listConversations(input: PageQuery): Promise<Page<Conversation>>
   getConversation(input: GetConversationQuery): Promise<ConversationDetail>
+  getConversationMessages(input: ConversationMessagesQuery): Promise<MessagePage>
   getMessageContext(input: MessageContextQuery): Promise<MessagePage>
   createConversation(input: CreateConversationInput): Promise<Conversation>
+  activateConversation(conversationId: string): Promise<ActivateConversationResult>
+  renameConversation(id: string, title: string): Promise<Conversation>
   deleteConversation(id: string): Promise<void>
 
   sendMessage(input: SendMessageInput): Promise<ClientRequestRef>

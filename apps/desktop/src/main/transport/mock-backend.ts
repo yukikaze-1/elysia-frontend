@@ -1,4 +1,5 @@
 import type {
+  ActivateConversationResult,
   ActivateModelProfileCommand,
   BackendSession,
   CancelGenerationInput,
@@ -6,6 +7,7 @@ import type {
   ChatHistoryQuery,
   ConnectInput,
   ConversationDetail,
+  ConversationMessagesQuery,
   DictationSession,
   GetConversationQuery,
   MessageContextQuery,
@@ -102,6 +104,10 @@ export class MockBackend implements BackendAdapter {
     return { ...MOCK_CONVERSATIONS[0] }
   }
 
+  async getConversationMessages(_input: ConversationMessagesQuery): Promise<MessagePage> {
+    return { items: [], hasMore: false }
+  }
+
   async getMessageContext(_input: MessageContextQuery): Promise<MessagePage> {
     return { items: [], hasMore: false }
   }
@@ -112,6 +118,17 @@ export class MockBackend implements BackendAdapter {
       title: input.title ?? '新会话',
       updatedAt: new Date().toISOString()
     }
+  }
+
+  async activateConversation(conversationId: string): Promise<ActivateConversationResult> {
+    return { conversationId }
+  }
+
+  async renameConversation(id: string, title: string): Promise<Conversation> {
+    const conv = MOCK_CONVERSATIONS.find((c) => c.id === id)
+    if (!conv) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `会话不存在: ${id}`)
+    conv.title = title
+    return { ...conv }
   }
 
   async deleteConversation(_id: string): Promise<void> {

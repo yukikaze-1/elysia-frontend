@@ -93,3 +93,22 @@ describe('raw wire schema', () => {
     expect(parseRawFrame(r0).success).toBe(true)
   })
 })
+
+describe('raw schema ack/error 扩展(2B)', () => {
+  it('user_message.ack accepted 通过', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: 'msg-1', clientRequestId: 'c1', receivedAt: '2026-08-11T00:00:00.000Z', status: 'accepted' })
+    expect(r.success).toBe(true)
+  })
+  it('user_message.ack rejected 带 error 通过', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: 'msg-1', clientRequestId: 'c1', receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected', error: { code: 'CONTRACT_VALIDATION', message: 'bad', retryable: false } })
+    expect(r.success).toBe(true)
+  })
+  it('error 帧通过', () => {
+    const r = parseRawFrame({ type: 'error', message: '会话不存在', code: 'SESSION_NOT_FOUND', requestId: 'req-1', retryable: false })
+    expect(r.success).toBe(true)
+  })
+  it('ack status 非法拒绝', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: 'm', clientRequestId: 'c', receivedAt: 't', status: 'pending' })
+    expect(r.success).toBe(false)
+  })
+})
