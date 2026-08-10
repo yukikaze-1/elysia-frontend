@@ -66,6 +66,7 @@ export interface RealBackendOptions {
   onSessionReplay?: (conversationId: string, messages: Message[]) => void
   onError?: (error: CyreneError) => void
   ackTimeoutMs?: number   // 默认 15000;测试注入小值
+  reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
 }
 
 /** ack 关联的 pending 发送(按 clientRequestId 幂等) */
@@ -108,6 +109,7 @@ export class RealBackend implements BackendAdapter {
   private sessionBuffer: RawSessionMessageItem[] = []
   private reconnectAttempts = 0
   private reconnectTimer?: ReturnType<typeof setTimeout>
+  private lastSocketClosedAt?: number
   private disconnected = false
   private serverUrl = ''
   private token = ''
@@ -266,25 +268,36 @@ export class RealBackend implements BackendAdapter {
     ws.on('unexpected-response', (_req, res) => { this.onUnexpectedResponse(res) })
   }
 
-  /** 非 101 升级响应(401/403 认证失败、400 协议拒绝)→ fail-fast error,不重连 */
+  /** 非 101 升级响应:仅 400/401/403 fail-fast(协议/认证硬错);429 RATE_LIMITED/503 超限等瞬态状态码 → 走重连退避,
+   *  避免限流下全 fail-fast 让重连永久失效(F3,whole-branch review) */
   private onUnexpectedResponse(res: unknown): void {
     const statusCode = typeof res === 'object' && res !== null && 'statusCode' in res
       ? (res as { statusCode?: number }).statusCode
       : undefined
-    const err = new CyreneError(CyreneErrorCode.AUTHENTICATION_FAILED, `WebSocket 升级被拒绝(HTTP ${statusCode ?? '未知状态码'})`, { statusCode })
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
-    this.ws = undefined
-    this.state = { status: 'error', lastError: err.message, serverUrl: this.serverUrl }
-    this.connectReject?.(err)
-    this.connectResolve = undefined
-    this.connectReject = undefined
-    this.options.onError?.(err)
+    if (statusCode === 400 || statusCode === 401 || statusCode === 403) {
+      const err = new CyreneError(
+        statusCode === 400 ? CyreneErrorCode.PROTOCOL_MISMATCH : CyreneErrorCode.AUTHENTICATION_FAILED,
+        `WebSocket 升级被拒绝(HTTP ${statusCode ?? '未知状态码'})`,
+        { statusCode }
+      )
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
+      this.ws = undefined
+      this.state = { status: 'error', lastError: err.message, serverUrl: this.serverUrl }
+      this.connectReject?.(err)
+      this.connectResolve = undefined
+      this.connectReject = undefined
+      this.options.onError?.(err)
+      return
+    }
+    // 瞬态状态码:视为本次连接失败,关闭当前 socket 后进入指数退避重连(不置 error)
+    this.onSocketClosed()
   }
 
   private onSocketClosed(): void {
     if (this.disconnected) return
     if (this.state.status === 'error') return // unexpected-response/版本不符 fail-fast 后,后续 close/error 不再翻回 reconnecting
     this.ws = undefined
+    this.lastSocketClosedAt = this.options.now?.() ?? Date.now() // F2:掉线时刻接入注入时钟(now())
     this.scheduleReconnect()
   }
 
@@ -304,7 +317,13 @@ export class RealBackend implements BackendAdapter {
       return
     }
     this.state = { status: 'reconnecting', serverUrl: this.serverUrl }
-    const delay = Math.min(RECONNECT_BASE_DELAY_MS * 2 ** (this.reconnectAttempts - 1), RECONNECT_MAX_DELAY_MS)
+    // 退避延迟 = base * 2^(attempts-1) 封顶 MAX;now() 注入时钟做差值判定(自上次掉线已流逝时间计入延迟,
+    // 测试可注入时钟/缩短 reconnectBaseDelayMs 避免慢测试)
+    const now = this.options.now?.() ?? Date.now()
+    const base = this.options.reconnectBaseDelayMs ?? RECONNECT_BASE_DELAY_MS
+    const backoffMs = Math.min(base * 2 ** (this.reconnectAttempts - 1), RECONNECT_MAX_DELAY_MS)
+    const elapsed = this.lastSocketClosedAt !== undefined ? Math.max(0, now - this.lastSocketClosedAt) : 0
+    const delay = Math.max(0, backoffMs - elapsed)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined
       this.establishWs()
@@ -334,6 +353,14 @@ export class RealBackend implements BackendAdapter {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接,无法发送消息')
     }
     const ackTimeoutMs = this.options.ackTimeoutMs ?? ACK_TIMEOUT_DEFAULT_MS
+    // F7:同 clientRequestId 重复 → 先 reject 旧 pending(GENERATION_CONFLICT)再覆盖,防首个 promise 永不 settle
+    // 且避免新 pending 注册后被旧 timer 误删(旧 timer 已 clearTimeout)
+    const existing = this.pendingAcks.get(input.clientRequestId)
+    if (existing) {
+      clearTimeout(existing.timer)
+      this.pendingAcks.delete(input.clientRequestId)
+      existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `clientRequestId 重复: ${input.clientRequestId}`))
+    }
     const promise = new Promise<ClientRequestRef>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingAcks.delete(input.clientRequestId)
@@ -363,6 +390,10 @@ export class RealBackend implements BackendAdapter {
   // —— REST 会话方法(Task 5)——
   /** 统一 REST 请求:serverUrl 尾斜杠剥除 + Authorization Bearer + content-type;非 2xx → CyreneError(mapHttpError) */
   private async restFetch(path: string, init?: RequestInit): Promise<Response> {
+    if (!this.serverUrl) {
+      // F1:spec B-G6⑤——REST 方法需先 connect(serverUrl 自 connect 记录),connect 前调用显式失败而非打到空 url
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
+    }
     const url = `${(this.serverUrl ?? '').replace(/\/$/, '')}${path}`
     const res = await (this.options.fetchImpl ?? fetch)(url, {
       ...init,

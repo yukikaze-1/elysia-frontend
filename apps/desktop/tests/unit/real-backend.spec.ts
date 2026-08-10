@@ -151,9 +151,72 @@ describe('RealBackend WS 连接', () => {
     await expect(b.connect({ serverUrl: `http://127.0.0.1:${authPort}`, token: 'bad' })).rejects.toBeDefined()
     expect(b.getConnectionState().status).toBe('error') // 不是 reconnecting
   })
+
+  it('重连退避:close 后 reconnecting → 重连成功 connected(F2)', async () => {
+    let call = 0
+    const wsFactory = (_url: string, _headers: Record<string, string>) => {
+      const id = call++
+      let closeCb: (() => void) | undefined
+      return {
+        on: (ev: string, cb: (arg?: unknown) => void) => {
+          if (ev === 'message') {
+            cb(Buffer.from(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })))
+            cb(Buffer.from(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: 'v', features: {}, services: {}, connectionId: `conn-${id}` })))
+            if (id === 0) setTimeout(() => closeCb?.(), 0) // 首个连接握手完成后模拟掉线 → 触发退避重连
+          }
+          if (ev === 'close') closeCb = () => cb()
+        },
+        send: () => {}, close: () => {}, readyState: 1
+      }
+    }
+    const b = new RealBackend({ now: () => Date.now(), wsFactory, reconnectBaseDelayMs: 100 })
+    await b.connect({ serverUrl: 'http://x', token: 't' })
+    expect(b.getConnectionState().status).toBe('connected')
+    await new Promise((resolve) => setTimeout(resolve, 30)) // setTimeout(0) 掉线已触发 → reconnecting(100ms 退避未到)
+    expect(b.getConnectionState().status).toBe('reconnecting')
+    await new Promise((resolve) => setTimeout(resolve, 150)) // 退避 timer 触发 → ws#1 握手 → connected
+    expect(b.getConnectionState().status).toBe('connected')
+    await b.disconnect()
+  })
+
+  it('unexpected-response(429) → 瞬态走重连退避,不置 error(F3)', async () => {
+    const wsFactory = () => ({
+      on: (ev: string, cb: (arg?: unknown, arg2?: unknown) => void) => {
+        if (ev === 'unexpected-response') {
+          setTimeout(() => cb(null, { statusCode: 429 }), 0)
+        }
+      },
+      send: () => {}, close: () => {}, readyState: 0
+    })
+    const b = new RealBackend({ now: () => Date.now(), wsFactory, reconnectBaseDelayMs: 100 })
+    b.connect({ serverUrl: 'http://x', token: 't' }).catch(() => {}) // 不 await:无 server_info,connect promise 悬挂,disconnect 时 reject
+    await new Promise((resolve) => setTimeout(resolve, 30)) // 429 → onSocketClosed → reconnecting(100ms 退避未到)
+    expect(b.getConnectionState().status).toBe('reconnecting')
+    await b.disconnect()
+  })
+
+  it('sendMessage 重复 clientRequestId → 旧 pending reject GENERATION_CONFLICT(F7)', async () => {
+    const b = makeBackend()
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    const first = b.sendMessage({ conversationId: 'conv-1', text: 'hi', clientRequestId: 'c-dup' })
+    const second = b.sendMessage({ conversationId: 'conv-1', text: 'hi', clientRequestId: 'c-dup' })
+    await expect(first).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
+    const ref = await second
+    expect(ref.clientRequestId).toBe('c-dup')
+    await b.disconnect()
+  })
 })
 
-const fakeWs = () => ({ on: () => {}, send: () => {}, close: () => {}, readyState: 0 })
+// REST 用例的 ws mock:on('message') 同步投递握手帧(session + server_info),使 connect 可 resolve(connected 状态)
+const fakeWs = () => ({
+  on: (ev: string, cb: (arg?: unknown) => void) => {
+    if (ev === 'message') {
+      cb(Buffer.from(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })))
+      cb(Buffer.from(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: 'v', features: {}, services: {}, connectionId: 'conn-1' })))
+    }
+  },
+  send: () => {}, close: () => {}, readyState: 1
+})
 
 describe('RealBackend REST 方法', () => {
   function mockFetch(responses: Record<string, unknown>): { fetchImpl: typeof fetch; calls: { url: string; opts: RequestInit }[] } {
@@ -173,7 +236,7 @@ describe('RealBackend REST 方法', () => {
       '/api/sessions': { sessions: [{ conversationId: 'conv-1', title: 't', messageCount: 1, updatedAt: '2026-08-11T00:00:00.000Z', active: true }], has_more: false }
     })
     const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
-    await b.setToken('sk-token')
+    await b.connect({ serverUrl: 'http://test.local', token: 'sk-token' })
     const page = await b.listConversations({ limit: 20 })
     expect(page.items[0]?.id).toBe('conv-1')
     expect(calls[0]?.url).toContain('/api/sessions')
@@ -186,21 +249,21 @@ describe('RealBackend REST 方法', () => {
       '/api/sessions/conv-1/messages': { messages: [], has_more: false, total: 0 }
     })
     const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
-    await b.setToken('sk-token')
+    await b.connect({ serverUrl: 'http://test.local', token: 'sk-token' })
     const page = await b.getConversationMessages({ conversationId: 'conv-1', before: '507f1f77bcf86cd799439011' })
     expect(calls[0]?.url).toContain('before=507f1f77bcf86cd799439011')
     expect(page.hasMore).toBe(false)
 
     const badFetch = async () => new Response(JSON.stringify({ code: 'CONTRACT_VALIDATION', message: '非法游标' }), { status: 400 })
     const b2 = new RealBackend({ fetchImpl: badFetch as never, now: () => Date.now(), wsFactory: () => fakeWs() })
-    await b2.setToken('t')
+    await b2.connect({ serverUrl: 'http://test.local', token: 't' })
     await expect(b2.getConversationMessages({ conversationId: 'c', before: 'bad' })).rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
   })
 
   it('getConversationMessages 透传 after/limit', async () => {
     const { fetchImpl, calls } = mockFetch({ '/api/sessions/conv-1/messages': { messages: [], has_more: false, total: 0 } })
     const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
-    await b.setToken('t')
+    await b.connect({ serverUrl: 'http://test.local', token: 't' })
     await b.getConversationMessages({ conversationId: 'conv-1', after: '507f1f77bcf86cd799439011', limit: 50 })
     expect(calls[0]?.url).toContain('after=507f1f77bcf86cd799439011')
     expect(calls[0]?.url).toContain('limit=50')
@@ -209,7 +272,7 @@ describe('RealBackend REST 方法', () => {
   it('activateConversation → REST activate + WS activate_session', async () => {
     const { fetchImpl, calls } = mockFetch({ '/activate': { activeConversationId: 'conv-2' } })
     const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
-    await b.setToken('sk-token')
+    await b.connect({ serverUrl: 'http://test.local', token: 'sk-token' })
     const r = await b.activateConversation('conv-2')
     expect(r.conversationId).toBe('conv-2')
     expect(calls[0]?.url).toContain('/api/sessions/conv-2/activate')
@@ -223,5 +286,11 @@ describe('RealBackend REST 方法', () => {
     await new Promise((resolve) => setTimeout(resolve, 50)) // ws.send fire-and-forget,等伪后端收帧
     expect(receivedClientFrames).toContain('activate_session')
     await b.disconnect()
+  })
+
+  it('REST 方法 connect 前调用 → NOT_CONNECTED guard(F1)', async () => {
+    const b = new RealBackend({ now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b.setToken('t')
+    await expect(b.listConversations({ limit: 20 })).rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
   })
 })
