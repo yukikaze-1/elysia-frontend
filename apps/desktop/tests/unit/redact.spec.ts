@@ -26,8 +26,9 @@ describe('redactSensitiveValues', () => {
     expect(redactSensitiveValues('x=shorttoken')).toBe('x=shorttoken')
   })
   it('≥40 Bearer token 由 Bearer 规则命中（顺序回归：非 ≥40 规则二次替换）', () => {
-    // 含 '-'（非 ≥40 规则字符类 [A-Za-z0-9+/]），只有 Bearer 规则能命中——若规则顺序被调乱会残留
-    const longToken = `${'a'.repeat(30)}-${'b'.repeat(29)}`
+    // 45 位 base64 连续段 + '-' 尾巴：若 ≥40 规则先跑会把它替换为 [REDACTED] 并漏出 -bbb... 尾巴，
+    // 只有 Bearer 规则先命中才得到干净的 `Bearer [REDACTED]`——真钉住规则顺序。
+    const longToken = `${'a'.repeat(45)}-${'b'.repeat(29)}`
     expect(redactSensitiveValues(`auth: Bearer ${longToken}`)).toBe('auth: Bearer [REDACTED]')
   })
 })
