@@ -52,12 +52,32 @@ export interface Message {
   emotion?: string
 }
 
+/** 单轮 token 消耗(映射自后端 raw TokenRound;session_id/timestamp 有意丢弃) */
+export interface TokenUsageRound {
+  model?: string
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  cachedTokens?: number
+  reasoningTokens?: number
+  roundNum: number
+}
+
 /** Token 用量(区分单次回复 vs 服务端累计;禁止用字符数冒充) */
 export interface TokenUsage {
   input: number
   output: number
   total: number
   source: 'provider_reported' | 'server_aggregate' | 'client_sum'
+  /** 保留模型/缓存/推理拆分(设置页/诊断页后续需要) */
+  rounds?: TokenUsageRound[]
+}
+
+/** 会话累计 token(后端只提供 total+byModel,禁止虚构 input/output) */
+export interface ConversationTokenUsage {
+  total: number
+  byModel: Record<string, number>
+  source: 'server_aggregate'
 }
 
 /** 发送用户消息 */
