@@ -17,7 +17,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run --config vitest.config.mts",
-    "test:integration": "vitest run --config vitest.integration.config.mts",
+    "test:integration": "electron-vite build --mode test && vitest run --config vitest.integration.config.mts",
     "test:e2e": "echo 'E2E(Playwright) 留待阶段 3 配置' && exit 0",
     "make": "echo 'Forge 打包留待阶段 8 配置' && exit 0",
     "package": "electron-vite build && electron-builder --dir",
