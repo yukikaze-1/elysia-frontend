@@ -48,13 +48,14 @@ describe('RestMapper', () => {
   it('toDomainMessageFromReplay:回放项 name/mood 处理', () => {
     const replay: RawSessionMessageItem = {
       role: 'tool', message_id: 'msg-4', timestamp: '2026-08-11T00:00:03.000Z',
-      content: '结果', name: 'desktop.file.write', success: false, error: 'denied'
+      content: '结果', name: 'desktop.file.write', success: false, error: 'denied', mood: 'calm'
     }
     const m = mapper.toDomainMessageFromReplay(replay, 'conv-9')
     expect(m.conversationId).toBe('conv-9')
     expect(m.tool?.name).toBe('desktop.file.write')
     expect(m.tool?.success).toBe(false)
     expect(m.tool?.error).toBe('denied')
+    expect(m.emotion).toBe('calm')
   })
 
   it('toConversation 映射', () => {

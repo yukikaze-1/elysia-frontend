@@ -72,6 +72,7 @@ export class RestMapper {
       if (src.truncated !== undefined) tool.truncated = src.truncated
       if (Object.keys(tool).length) base.tool = tool
     }
+    if (src.mood) base.emotion = src.mood // 回放项 mood → 领域 emotion(docs/18 §14 不静默丢弃)
     return base
   }
 }
