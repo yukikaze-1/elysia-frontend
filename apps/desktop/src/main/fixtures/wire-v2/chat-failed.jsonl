@@ -1,0 +1,4 @@
+{"type":"generation.started","generationId":"gen-fixture-fail","messageId":"msg-fail-1","conversationId":"conv-1","requestId":"req-fail-1","model":"cyrene-llm-v1"}
+{"type":"generation.segment.started","generationId":"gen-fixture-fail","segmentId":"seg-fail-1","segmentIndex":0,"channel":"public_reply","kind":"text","conversationId":"conv-1"}
+{"type":"generation.delta","generationId":"gen-fixture-fail","segmentId":"seg-fail-1","segmentIndex":0,"deltaSequence":0,"delta":"部分内容已生成","conversationId":"conv-1"}
+{"type":"generation.failed","generationId":"gen-fixture-fail","messageId":"msg-fail-1","model":"cyrene-llm-v1","code":"GENERATION_TIMEOUT","message":"生成超时","retryable":true,"details":{"elapsed_ms":30000},"conversationId":"conv-1"}
