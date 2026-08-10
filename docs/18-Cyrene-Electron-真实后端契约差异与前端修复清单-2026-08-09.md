@@ -12,6 +12,8 @@
 
 > **状态注记（2026-08-11）：阶段 2 块 A（领域契约修复 + raw wire 层）已实施并合并。** §3 两层类型、§4 P0（`SegmentCompletedEvent.kind/content` 权威文本）、§5 fixture 分离（`fixtures/domain/` 领域 + `fixtures/wire-v2/` raw wire + manifest，锚定 `beeba577`）、§8 generation 全映射（新增 `GenerationSegmentStartedEvent`、frame-mapper 补 channel/kind/conversationId/fail-closed）、§9 Token 结构（`usage.rounds` + `ConversationTokenUsage{total,byModel}`）已按本清单落地，231 单测 + typecheck/lint/build 全绿，标注「已开发、未联调」。设计见 `docs/superpowers/specs/2026-08-10-phase2-contract-raw-wire-design.md` + `plans/2026-08-10-phase2-contract-raw-wire.md`。**§16 阶段 B（连接/REST/会话，即块 2B）为下一步**；§7 session 回放归属、§10 `_id` 分页游标随 2B 实施（后端已补 `SessionMessage.conversationId` 与 `MessagesPageResponse.cursor`，见 spec §1.1）。
 
+> **状态注记（2026-08-11）：阶段 2 块 B（RealBackend REST/WS v2 Adapter）已实施并合并。** §16 阶段 B 全 8 项落地：握手 header 精确 `"2"`/`electron`/Bearer + `server_info` 版本 fail-closed（检查 `"2.0"`）、`session→server_info→expression` 处理 + 回放缓冲归属（`onSessionReplay`）、connectionId 与 activeConversationId 分离、REST snake_case 映射（rest-mapper，含 `Message.tool?` 元数据与回放项 mood→emotion）、`_id` opaque cursor 分页（`before` 倒序归一化 / `after` 正序）、Token 类型（2A 已做）。§7 的 session 回放归属、§10 的 `_id` 分页游标随本块解决。新增 `user_message.ack`/`error` raw 帧、发送确认/`interrupt`、重连退避 + unexpected-response fail-fast。265 单测 + typecheck/lint/build 全绿，标注「已开发、未联调」。设计见 `docs/superpowers/specs/2026-08-11-phase2-real-backend-design.md` + `plans/2026-08-11-phase2-real-backend.md`。**§16 阶段 C（Desktop 工具）与阶段 2 块 C（Store/UI）为下一步**。
+
 ## 1. 结论与执行边界
 
 后端为 Electron 实现的 WebSocket v2、多会话 REST、Desktop 工具桥、三种语音模式、模型/TTS/STT 设置、附件与恢复查询主体已经存在，后端专项测试通过。当前主要问题不是“后端没有实现”，而是新 Electron 前端尚未建立可执行的 raw-wire 适配层，并且现有领域类型、Mock fixture 与真实后端之间存在多处结构差异。

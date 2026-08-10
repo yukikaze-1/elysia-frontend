@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 块 A（领域契约 + raw wire 层）已落地（231 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 块 B/C 待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 块 A（领域契约 + raw wire 层）+ 块 B（RealBackend REST/WS Adapter）已落地（265 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 块 C（Store/UI）待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,7 +33,7 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 1 三块（块 A 安全加载与环境基线 + 块 B 主进程受信服务 + 块 C IPC/协议安全集成测试）全部落地并全量验证（182 单测 + 18 集成用例 + verify:artifact 冒烟全绿）；阶段 2 块 A（领域契约修复 + raw wire 层：raw-types/raw-schemas/frame-mapper/StreamAccumulator 权威规则/wire fixtures）已落地并全量验证（231 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」；下一块为阶段 2 块 B RealBackend（连接/会话/REST 历史）。**
+**当前所处阶段：阶段 1 三块（块 A 安全加载与环境基线 + 块 B 主进程受信服务 + 块 C IPC/协议安全集成测试）全部落地并全量验证（182 单测 + 18 集成用例 + verify:artifact 冒烟全绿）；阶段 2 块 A（领域契约 + raw wire 层）与块 B（RealBackend REST/WS v2 Adapter：握手/会话/历史 `_id` cursor 分页/发送 ack/重连）已落地并全量验证（265 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」；下一块为阶段 2 块 C（Store + IPC 事件推送 + 聊天 UI 纵向闭环）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
@@ -231,9 +231,9 @@
 
 ### 任务清单
 
-- [ ] 连接、认证、心跳、重连与公开错误状态（属 2B RealBackend）
-- [ ] 会话列表、当前会话、历史第一页与基本管理（属 2B，后端已补 `SessionMessage.conversationId`/`MessagesPageResponse.cursor`）
-- [ ] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试（属 2C）
+- [x] 连接、认证、心跳、重连与公开错误状态——2026-08-11（2B RealBackend：WS `/ws` 握手 `X-Protocol-Version:"2"`/`X-Client-Platform:electron`/Bearer、`server_info` 版本 fail-closed、心跳(pong)、断线指数退避重连 + `unexpected-response` fail-fast、`ConnectionState` 公开；**已开发、未联调**）
+- [x] 会话列表、当前会话、历史第一页与基本管理——2026-08-11（2B RealBackend REST：list/get/create/rename/delete + `activateConversation`、`getConversationMessages` `_id` cursor 分页、`session` 回放缓冲归属；**已开发、未联调**）
+- [x] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试——2026-08-11（2B `sendMessage` → WS `text` + `user_message.ack` 关联(accepted/rejected/15s 超时)；乐观状态/UI 幂等属 2C）
 - [x] 合并 `generation.started/segment.started/delta/segment.completed/completed/failed`——2026-08-11（2A 逻辑层：领域契约 + raw wire schema + frame-mapper + Accumulator，`fixtures/wire-v2/` raw fixture 驱动；**已开发、未联调**）
 - [x] 按 `responseId` 归并有序 `AssistantSegment[]`——2026-08-11（2A Accumulator 权威 content 规则 + segmentIndex 排序；**已开发、未联调**）
 - [ ] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）（全局顺序由 2A Accumulator 保证；折叠 UI 属 2C）
@@ -453,3 +453,4 @@
 | 2026-08-10 | **阶段 1 块 B（主进程受信服务）落地并全量验证**：凭据存储（`safeStorage` 封装 + 版本化 `config/credentials.json` 0600/原子写/每 key 加密块 + `credentialStatus` 4 值 IPC + key 白名单单一来源）+ 日志/审计（手写 JSONL logger 无 msg 参数/落盘双净化、append-only 审计按日 + 30 天清理、共享 file-writer rotate 5MB×3）+ 装配（before-quit allowQuit 防挂死 flush、生命周期日志）；182 单测全绿 + typecheck/lint/build 通过；勾选验收门槛「Token/密钥只显示状态」；诊断导出措辞同步为「阶段 7 安全收敛（Demo P0 范围）」（B-1） | 已开发、未联调 |
 | 2026-08-10 | **阶段 1 块 C（IPC/协议安全集成测试）落地**：Playwright _electron 集成套件（协议 handler F1 403/404/逃逸/200+CSP、IPC API 面/超大输入/来源校验、外部链接受控、普通浏览器信任边界）+ test:integration(--mode test 构建) + CI xvfb-run | 已开发、未联调 |
 | 2026-08-11 | **阶段 2 块 A（领域契约修复 + raw wire 层）落地**：领域事件扩展（`GenerationSegmentStartedEvent`、`SegmentCompleted.kind/content`、Token 结构 `usage.rounds`/`ConversationTokenUsage`、`ProtocolWarning`）+ raw-types/raw-schemas（判别 `type` + strict，zod 4.4.3 双参 record）+ frame-mapper（status 过滤/fail-closed/告警）+ StreamAccumulator 权威 content 规则（docs/18 §4.3 七条）+ fixture 分离（`domain/` 领域 + `wire-v2/` raw wire + manifest 锚定 `beeba577`）+ wire-fixtures 两层校验；231 单测全绿 + typecheck/lint/build；spec/plan 见 superpowers 目录 | 已开发、未联调 |
+| 2026-08-11 | **阶段 2 块 B（RealBackend REST/WS v2 Adapter）落地**：`ws` 依赖 + REST wire 层（rest-types/rest-schemas 混合命名 + strict）+ rest-mapper（`Message.tool?` 元数据、`_id` cursor 分页、回放项 mood→emotion）+ raw 层扩展 `user_message.ack`/`error` + `BackendAdapter` 接口扩展（`getConversationMessages`/`activateConversation`/`renameConversation`）+ `RealBackend`（握手 header 精确/`server_info` 版本 fail-closed/session 回放缓冲/ack 关联 15s 超时/重连退避 + unexpected-response fail-fast/REST 会话·历史·激活 + Bearer + 错误映射）；告警码收编 `ProtocolWarningCode`；265 单测全绿 + typecheck/lint/build；spec/plan 见 superpowers 目录 | 已开发、未联调 |
