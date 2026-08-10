@@ -10,7 +10,7 @@ describe('普通浏览器信任边界', () => {
     const page = await browser.newPage()
     try {
       await page.goto(server.url)
-      expect(await page.evaluate(() => typeof (window as any).desktopApi)).toBe('undefined')
+      expect(await page.evaluate(() => typeof (window as unknown as { desktopApi?: unknown }).desktopApi)).toBe('undefined')
     } finally {
       await browser.close()
       await server.close()

@@ -7,7 +7,7 @@ on:
 
 jobs:
   check:
-    name: typecheck + lint + test
+    name: typecheck + lint + unit + integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +29,12 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Install Playwright (integration)
+        run: pnpm --filter @cyrene/desktop exec playwright install --with-deps chromium
+
+      - name: Integration tests (xvfb)
+        run: xvfb-run -a pnpm test:integration
 
       - name: Unit tests
         run: pnpm test
