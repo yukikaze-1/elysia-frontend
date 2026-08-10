@@ -27,6 +27,7 @@ import type { Conversation, CreateConversationInput, Page, PageQuery } from '@sh
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
 import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
+import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseRawFrame } from './protocol-v2/raw-schemas'
 import type {
@@ -38,6 +39,7 @@ import type {
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper } from './protocol-v2/rest-mapper'
+import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema } from './protocol-v2/rest-schemas'
 import type { BackendAdapter, BackendEventHandler } from './backend-adapter'
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
@@ -79,11 +81,21 @@ const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_MAX_DELAY_MS = 30000
 const RECONNECT_MAX_ATTEMPTS = 6
 
+/** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
+ *  400 CONTRACT_VALIDATION → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
+function mapHttpError(status: number, code: string): CyreneErrorCode {
+  if (status === 400 && code === 'CONTRACT_VALIDATION') return CyreneErrorCode.INVALID_INPUT
+  if (status === 401 || status === 403) return CyreneErrorCode.AUTHENTICATION_FAILED
+  if (status === 404) return CyreneErrorCode.NOT_FOUND
+  return CyreneErrorCode.UNKNOWN
+}
+
 /**
- * RealBackend:真实后端适配器(WS 连接核心)。
+ * RealBackend:真实后端适配器(WS 连接核心 + REST 会话方法)。
  * 协议差异全部收敛在此(URL/字段名/WS 帧),UI 只消费领域事件。
  * Task 4 实现 connect/握手/帧分派/session 回放/心跳重连/ack 关联/error 路由;
- * REST 会话方法与模型/语音/工具方法抛 NOT_IMPLEMENTED 占位(Task 5/阶段 3/4/6)。
+ * Task 5 实现 REST 会话方法(list/get/messages/create/rename/delete/activate + Bearer + 错误映射);
+ * 模型/语音/工具方法抛 NOT_IMPLEMENTED 占位(阶段 3/4/6)。
  */
 export class RealBackend implements BackendAdapter {
   private ws?: WebSocketLike
@@ -210,8 +222,8 @@ export class RealBackend implements BackendAdapter {
     this.options.onError?.(err)
   }
 
-  private warn(code: string, message: string): void {
-    this.options.onProtocolWarning?.({ code, message } as ProtocolWarning)
+  private warn(code: ProtocolWarningCode, message: string): void {
+    this.options.onProtocolWarning?.({ code, message })
   }
 
   private emit(event: BackendEvent): void { for (const h of this.handler) h(event) }
@@ -348,14 +360,86 @@ export class RealBackend implements BackendAdapter {
     this.ws.send(JSON.stringify({ type: 'interrupt' }))
   }
 
-  // —— REST 会话方法(Task 5 实现)——
-  async listConversations(_input: PageQuery): Promise<Page<Conversation>> { throw this.notImplemented('listConversations') }
-  async getConversation(_input: GetConversationQuery): Promise<ConversationDetail> { throw this.notImplemented('getConversation') }
-  async getConversationMessages(_input: ConversationMessagesQuery): Promise<MessagePage> { throw this.notImplemented('getConversationMessages') }
-  async createConversation(_input: CreateConversationInput): Promise<Conversation> { throw this.notImplemented('createConversation') }
-  async activateConversation(_conversationId: string): Promise<ActivateConversationResult> { throw this.notImplemented('activateConversation') }
-  async renameConversation(_id: string, _title: string): Promise<Conversation> { throw this.notImplemented('renameConversation') }
-  async deleteConversation(_id: string): Promise<void> { throw this.notImplemented('deleteConversation') }
+  // —— REST 会话方法(Task 5)——
+  /** 统一 REST 请求:serverUrl 尾斜杠剥除 + Authorization Bearer + content-type;非 2xx → CyreneError(mapHttpError) */
+  private async restFetch(path: string, init?: RequestInit): Promise<Response> {
+    const url = `${(this.serverUrl ?? '').replace(/\/$/, '')}${path}`
+    const res = await (this.options.fetchImpl ?? fetch)(url, {
+      ...init,
+      headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
+      throw new CyreneError(mapHttpError(res.status, code), (body as { message?: string }).message ?? `HTTP ${res.status}`, body)
+    }
+    return res
+  }
+
+  async listConversations(input: PageQuery): Promise<Page<Conversation>> {
+    const q = new URLSearchParams()
+    if (input.cursor) q.set('cursor', input.cursor)
+    if (input.limit) q.set('limit', String(input.limit))
+    const res = await this.restFetch(`/api/sessions${q.size ? `?${q}` : ''}`)
+    const parsed = parseRestSessions(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '会话列表响应校验失败')
+    return { items: parsed.data.sessions.map((s) => this.restMapper.toConversation(s)), hasMore: parsed.data.has_more, nextCursor: parsed.data.cursor }
+  }
+
+  async getConversation(input: GetConversationQuery): Promise<ConversationDetail> {
+    const res = await this.restFetch(`/api/sessions/${encodeURIComponent(input.conversationId)}`)
+    const parsed = parseRestSessionDetail(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '会话详情响应校验失败')
+    const { session, messages } = parsed.data
+    // 详情第一页 query_page 为 _id 倒序 → (timestamp, messageId) 正序归一化(与 toMessagePage 'before' 同规则)
+    const items = messages
+      .map((m) => this.restMapper.toDomainMessage(m, session.conversationId))
+      .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.messageId < b.messageId ? -1 : 1)
+    return { ...this.restMapper.toConversation(session), messages: items }
+  }
+
+  async getConversationMessages(input: ConversationMessagesQuery): Promise<MessagePage> {
+    const q = new URLSearchParams()
+    if (input.before) q.set('before', input.before)
+    if (input.after) q.set('after', input.after)
+    if (input.limit) q.set('limit', String(input.limit))
+    const res = await this.restFetch(`/api/sessions/${encodeURIComponent(input.conversationId)}/messages${q.size ? `?${q}` : ''}`)
+    const parsed = parseRestMessagesPage(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '会话消息响应校验失败')
+    // before/无游标首页为倒序 → 'before'(正序归一化);after 增量已正序 → 'after'(不反转)
+    const direction = input.after && !input.before ? 'after' : 'before'
+    return this.restMapper.toMessagePage(parsed.data, { direction, conversationId: input.conversationId })
+  }
+
+  async createConversation(input: CreateConversationInput): Promise<Conversation> {
+    const res = await this.restFetch('/api/sessions', { method: 'POST', body: JSON.stringify(input.title !== undefined ? { title: input.title } : {}) })
+    const parsed = RestSessionSummarySchema.safeParse(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '创建会话响应校验失败')
+    return this.restMapper.toConversation(parsed.data)
+  }
+
+  async renameConversation(id: string, title: string): Promise<Conversation> {
+    const res = await this.restFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ title }) })
+    const parsed = RestSessionSummarySchema.safeParse(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '重命名会话响应校验失败')
+    return this.restMapper.toConversation(parsed.data)
+  }
+
+  async deleteConversation(id: string): Promise<void> {
+    await this.restFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  }
+
+  async activateConversation(conversationId: string): Promise<ActivateConversationResult> {
+    const res = await this.restFetch(`/api/sessions/${encodeURIComponent(conversationId)}/activate`, { method: 'POST' })
+    const parsed = parseRestActivateResult(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '激活会话响应校验失败')
+    this.state = { ...this.state, activeConversationId: parsed.data.activeConversationId }
+    if (this.state.status === 'connected' && this.ws) {
+      // 回放走 WS activate_session(仅 connected 发送;未连接时只 REST 切 active)
+      this.ws.send(JSON.stringify({ type: 'activate_session', conversationId }))
+    }
+    return { conversationId: parsed.data.activeConversationId }
+  }
 
   // —— 非目标方法(阶段 3/4/6 实现,不 Mock 假装)——
   async getMessageContext(_input: MessageContextQuery): Promise<MessagePage> { throw this.notImplemented('getMessageContext') }

@@ -146,3 +146,66 @@ describe('RealBackend WS 连接', () => {
     expect(b.getConnectionState().status).toBe('error') // 不是 reconnecting
   })
 })
+
+const fakeWs = () => ({ on: () => {}, send: () => {}, close: () => {}, readyState: 0 })
+
+describe('RealBackend REST 方法', () => {
+  function mockFetch(responses: Record<string, unknown>): { fetchImpl: typeof fetch; calls: { url: string; opts: RequestInit }[] } {
+    const calls: { url: string; opts: RequestInit }[] = []
+    const fetchImpl = async (url: string | URL | Request, opts?: RequestInit) => {
+      const u = String(url)
+      calls.push({ url: u, opts: opts ?? {} })
+      const key = Object.keys(responses).find((k) => u.includes(k))
+      if (!key) throw new Error(`no mock for ${u}`)
+      return new Response(JSON.stringify(responses[key]), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    return { fetchImpl, calls }
+  }
+
+  it('listConversations 透传 limit/cursor + Bearer + 映射', async () => {
+    const { fetchImpl, calls } = mockFetch({
+      '/api/sessions': { sessions: [{ conversationId: 'conv-1', title: 't', messageCount: 1, updatedAt: '2026-08-11T00:00:00.000Z', active: true }], has_more: false }
+    })
+    const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b.setToken('sk-token')
+    const page = await b.listConversations({ limit: 20 })
+    expect(page.items[0]?.id).toBe('conv-1')
+    expect(calls[0]?.url).toContain('/api/sessions')
+    expect(calls[0]?.url).toContain('limit=20')
+    expect((calls[0]?.opts.headers as Record<string, string>).authorization).toBe('Bearer sk-token')
+  })
+
+  it('getConversationMessages 透传 before + 400 CONTRACT_VALIDATION → CyreneError', async () => {
+    const { fetchImpl, calls } = mockFetch({
+      '/api/sessions/conv-1/messages': { messages: [], has_more: false, total: 0 }
+    })
+    const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b.setToken('sk-token')
+    const page = await b.getConversationMessages({ conversationId: 'conv-1', before: '507f1f77bcf86cd799439011' })
+    expect(calls[0]?.url).toContain('before=507f1f77bcf86cd799439011')
+    expect(page.hasMore).toBe(false)
+
+    const badFetch = async () => new Response(JSON.stringify({ code: 'CONTRACT_VALIDATION', message: '非法游标' }), { status: 400 })
+    const b2 = new RealBackend({ fetchImpl: badFetch as never, now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b2.setToken('t')
+    await expect(b2.getConversationMessages({ conversationId: 'c', before: 'bad' })).rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
+  })
+
+  it('getConversationMessages 透传 after/limit', async () => {
+    const { fetchImpl, calls } = mockFetch({ '/api/sessions/conv-1/messages': { messages: [], has_more: false, total: 0 } })
+    const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b.setToken('t')
+    await b.getConversationMessages({ conversationId: 'conv-1', after: '507f1f77bcf86cd799439011', limit: 50 })
+    expect(calls[0]?.url).toContain('after=507f1f77bcf86cd799439011')
+    expect(calls[0]?.url).toContain('limit=50')
+  })
+
+  it('activateConversation → REST activate + WS activate_session', async () => {
+    const { fetchImpl, calls } = mockFetch({ '/activate': { activeConversationId: 'conv-2' } })
+    const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b.setToken('sk-token')
+    const r = await b.activateConversation('conv-2')
+    expect(r.conversationId).toBe('conv-2')
+    expect(calls[0]?.url).toContain('/api/sessions/conv-2/activate')
+  })
+})
