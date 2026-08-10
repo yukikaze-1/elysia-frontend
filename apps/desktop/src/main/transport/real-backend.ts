@@ -153,6 +153,8 @@ export class RealBackend implements BackendAdapter {
   private handleServerInfo(frame: RawServerInfo): void {
     if (frame.protocol_version !== PROTOCOL_VERSION_WIRE) {
       const err = new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `后端协议版本 ${frame.protocol_version} 不兼容,要求 ${PROTOCOL_VERSION_WIRE}`)
+      this.ws?.close() // 版本不符 fail-closed:关闭已建立的 socket,避免后续帧继续被分派/泄漏
+      this.ws = undefined
       this.state = { status: 'error', lastError: err.message, serverUrl: this.serverUrl }
       this.connectReject?.(err)
       this.connectResolve = undefined
@@ -307,6 +309,8 @@ export class RealBackend implements BackendAdapter {
     this.pendingAcks.clear()
     this.ws?.close()
     this.ws = undefined
+    // 握手未完成(connecting/reconnecting)时取消:reject 挂起的 connect promise,避免 await connect() 永久挂死
+    this.connectReject?.(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已取消'))
     this.connectResolve = undefined
     this.connectReject = undefined
     this.state = { status: 'disconnected' }
