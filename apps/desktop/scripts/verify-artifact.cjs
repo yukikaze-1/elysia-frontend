@@ -215,10 +215,12 @@ async function smoke() {
           server.close()
         }
       } catch (e) {
-        // 仅「chromium 二进制不可用」跳过；其他失败（goto/evaluate/静态服务）判失败，防 §8.6 假通过
+        // 仅「chromium 二进制不可用」跳过；其他失败（goto/evaluate/静态服务/启动回归）判失败，防 §8.6 假通过。
+        // 块 A review [P2]：不得匹配通用 browserType.launch——权限/参数/共享库等真实回归也会携带该上下文，跳过会掩盖；
+        // 只对白名单化的环境缺失错误跳过（块 C trust-boundary 集成测试已把该检查做成 CI 硬门）。
         const m = e && e.message ? String(e.message) : String(e)
-        if (/Executable doesn't exist|browserType\.launch|browser binaries|Please run npx playwright install|Running as root without --no-sandbox|SUID sandbox helper|chrome-sandbox/.test(m)) {
-          console.warn('（跳过普通浏览器信任边界检查：chromium 二进制不可用或沙箱受限——块 C 集成测试再强化）')
+        if (/Executable doesn't exist|browser binaries|Please run npx playwright install|Running as root without --no-sandbox|SUID sandbox helper|chrome-sandbox/.test(m)) {
+          console.warn('（跳过普通浏览器信任边界检查：chromium 二进制不可用或沙箱受限——块 C trust-boundary 集成测试为硬门）')
         } else {
           fail(`普通浏览器信任边界检查失败：${m}`)
         }
@@ -228,6 +230,10 @@ async function smoke() {
       fs.mkdirSync(shotDir, { recursive: true })
       await win.screenshot({ path: path.join(shotDir, 'cyrene-cyrene-proto.png') })
       ok(`截图 ${path.join(shotDir, 'cyrene-cyrene-proto.png')}`)
+      // 负路径前先关正路径 app 并等单实例锁释放——否则负路径若因锁退出（而非调试门拒绝）会被误判为门禁生效，
+      // 门禁回归时假通过（块 A review [P1]：正路径 app 仍持有 userData 锁）。
+      await app.close()
+      await new Promise((r) => setTimeout(r, 300))
       // 负路径（仅打包形态）：带禁止开关（无 harness）→ 调试门应 failStart 退出（验证拒绝路径接线 E2E，
       // 而不只是单测覆盖纯函数）。out/ 未打包 isPackaged=false 不触发门，此处只在 packagedExe 时测。
       // 注：本断言实际由 Playwright 注入的 --inspect=0 触发门（allowRandomPort=false 时拒绝），早于显式 --remote-debugging-port=9222——

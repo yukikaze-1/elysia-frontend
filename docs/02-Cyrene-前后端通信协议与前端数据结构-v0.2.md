@@ -1,7 +1,7 @@
 # Cyrene 前后端通信协议与前端数据结构
 
 **文档版本：** v0.2  
-**文档状态：** 已按后端交接包（frontend-handoff-v2 批次 7 时点）填写 §19 对齐表 / 待真实事件联调确认  
+**文档状态：** 已按后端交接包（frontend-handoff-v2 **批次 7 时点**）填写 §19 对齐表 / 待真实事件联调确认；**注意：后端 local main 已领先至批次 8a/8b/8c（`frontend_contract` 单源），批次 7 交接包已归档仅参考**——新旧差异与真实后端契约审计见 `docs/18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md`
 **适用范围：** Electron 客户端与现有 Agent 后端  
 **文档日期：** 2026-08-03
 **最后复核日期：** 2026-08-08
@@ -961,7 +961,7 @@ idle → connecting → connected
 | 认证方式 | WS/REST 均 Bearer：`Authorization: Bearer <access_token>`（`AGENT_ACCESS_TOKEN` 配置时匿名 401；本地空 token 为 fail-open）；WS 建连附加 `X-Protocol-Version: 2` + `X-Client-Platform: electron`；建连帧 `session → server_info{protocol_version, server_version, features, services, connectionId, build_sha} → expression` | `BackendAdapter.connect` |
 | 会话列表接口 | `GET /api/sessions`（cursor/limit/search，items 带 `active`）/ `POST /api/sessions`（创建 `conv_<uuid4>`）→ `SessionListResult{sessions, has_more, cursor}`；兼容旧 `GET /api/messages` 全库 `_id` 游标 | `listConversations` |
 | 历史消息接口 | `GET /api/sessions/{id}/messages`（`before` 倒序 keyset + `has_more` + `total`）；`GET /api/sessions/{id}/messages?after={messageId}` 正序增量 | `getConversation` |
-| 历史消息游标与稳定排序键 | 会话内 `before={messageId}`（`_id` 倒序）/ `after={messageId}`（正序增量）；会话列表 cursor = base64(`updated_at\|session_id`)；消息稳定键 `messageId`（`msg_`） | `MessagePage.nextCursor` |
+| 历史消息游标与稳定排序键 | 会话内 `before={_id}`（Mongo 24 位十六进制 ObjectId，倒序 keyset）/ `after={messageId}`（`msg_` 稳定业务键，正序增量）；会话列表 cursor = base64(`updated_at\|session_id`)；消息稳定键 `messageId`（`msg_`），`_id` 仅作历史游标不暴露为 UI messageId | `MessagePage.nextCursor` |
 | 按消息 ID 获取上下文 | `GET /api/messages/{mid}/context?conversationId&before=5&after=5` → `MessageContextResponse{anchor, before, after, conversationId}` | `getMessageContext` / `MessageContextQuery` |
 | 会话搜索/聊天历史查询接口 | `GET /api/search/messages`（`query/conversationId/date_from/date_to/timezone/category/cursor/limit`，上限 100）→ `SearchMessagesResponse{items, has_more, cursor}`（cursor=base64(`timestamp\|_id`)；item 含 `responseId` best-effort） | `listConversations` / `ChatHistoryPage` |
 | 会话多媒体资源接口 | `GET /api/sessions/{id}/resources`（`category=image\|link\|video\|audio\|file\|sticker`）→ `ResourceListResponse{items{messageId, timestamp, kind, url}, has_more, cursor}`；附件项为稳定路径，渲染层经签发端点解析签名 URL | `ConversationResourcePage` |
