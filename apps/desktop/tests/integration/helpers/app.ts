@@ -43,7 +43,9 @@ export async function closeApp(launched: LaunchedApp): Promise<void> {
 /** 静态服务 out/renderer（信任边界测试用；普通浏览器无 preload → desktopApi undefined） */
 export async function serveRenderer(): Promise<{ url: string; close(): Promise<void> }> {
   const server = createServer((req, res) => {
-    const pathname = decodeURIComponent((req.url ?? '/index.html').split('?')[0])
+    let pathname: string
+    try { pathname = decodeURIComponent((req.url ?? '/index.html').split('?')[0]) }
+    catch { res.writeHead(400); res.end(); return } // 畸形 % → 400，不崩 worker
     const file = resolve(RENDERER_OUT, '.' + (pathname === '/' ? '/index.html' : pathname))
     // resolve + 前缀边界防穿越（verify-artifact 同款纪律）
     if (!file.startsWith(RENDERER_OUT + sep) && file !== RENDERER_OUT) { res.writeHead(404); res.end(); return }
