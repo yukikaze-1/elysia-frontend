@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 代码基线已落地并验证；阶段 1 块 A（安全加载与环境基线）+ 块 B（主进程受信服务：凭据存储 + 日志/审计）已落地并全量验证，待块 C 集成测试与真实联调外部输入（H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 块 A（领域契约 + raw wire 层）已落地（231 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 块 B/C 待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,7 +33,7 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 1 三块（块 A 安全加载与环境基线 + 块 B 主进程受信服务 + 块 C IPC/协议安全集成测试）全部落地并全量验证（182 单测 + 18 集成用例 + verify:artifact 冒烟全绿）；阶段 1 验收门槛 4 项全勾选；下一块为阶段 2 核心聊天纵向闭环。**
+**当前所处阶段：阶段 1 三块（块 A 安全加载与环境基线 + 块 B 主进程受信服务 + 块 C IPC/协议安全集成测试）全部落地并全量验证（182 单测 + 18 集成用例 + verify:artifact 冒烟全绿）；阶段 2 块 A（领域契约修复 + raw wire 层：raw-types/raw-schemas/frame-mapper/StreamAccumulator 权威规则/wire fixtures）已落地并全量验证（231 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」；下一块为阶段 2 块 B RealBackend（连接/会话/REST 历史）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
@@ -231,15 +231,15 @@
 
 ### 任务清单
 
-- [ ] 连接、认证、心跳、重连与公开错误状态
-- [ ] 会话列表、当前会话、历史第一页与基本管理
-- [ ] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试
-- [ ] 合并 `generation.started/delta/segment.completed/completed/failed`
-- [ ] 按 `responseId` 归并有序 `AssistantSegment[]`
-- [ ] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）
-- [ ] 回复级/会话级 Token、实际模型与心情落位
-- [ ] Markdown、代码块、复制、停止生成与基础断线恢复
-- [ ] Adapter、流式累加器与 Store 的契约测试
+- [ ] 连接、认证、心跳、重连与公开错误状态（属 2B RealBackend）
+- [ ] 会话列表、当前会话、历史第一页与基本管理（属 2B，后端已补 `SessionMessage.conversationId`/`MessagesPageResponse.cursor`）
+- [ ] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试（属 2C）
+- [x] 合并 `generation.started/segment.started/delta/segment.completed/completed/failed`——2026-08-11（2A 逻辑层：领域契约 + raw wire schema + frame-mapper + Accumulator，`fixtures/wire-v2/` raw fixture 驱动；**已开发、未联调**）
+- [x] 按 `responseId` 归并有序 `AssistantSegment[]`——2026-08-11（2A Accumulator 权威 content 规则 + segmentIndex 排序；**已开发、未联调**）
+- [ ] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）（全局顺序由 2A Accumulator 保证；折叠 UI 属 2C）
+- [~] 回复级/会话级 Token、实际模型与心情落位——2026-08-11（2A 逻辑层：`usage.rounds`/`ConversationTokenUsage` 映射 + Accumulator 写入已落地；UI 落位属 2C；**已开发、未联调**）
+- [ ] Markdown、代码块、复制、停止生成与基础断线恢复（Markdown 渲染/复制/停止/断线恢复属 2C；停止生成协议侧经 `generation.failed{CANCELLED}` 已由 2A mapper 覆盖）
+- [~] Adapter、流式累加器与 Store 的契约测试——2026-08-11（2A：mapper/Accumulator/wire-fixtures 两层校验已落地；Store 契约测试属 2C）
 
 ### 验收门槛
 
@@ -452,3 +452,4 @@
 | 2026-08-09 | **阶段 1 块 A（安全加载与环境基线）落地并全量验证**：`cyrene://` 受限协议替代 `file://`、严格 CSP（响应头 AND 保留 meta、`frame-src 'none'`）、dev/test/prod 环境（`__APP_MODE__` 烘焙）与生产安全默认（DevTools 恒关 + 远程调试门）、electron-builder 未分发包 + `verify:artifact`（静态 + 冒烟 16/17 项，负路径验证调试门）；勾选 §4 任务 ③④ 与验收门槛「生产恒关/远程调试恒关」 | 进行中 |
 | 2026-08-10 | **阶段 1 块 B（主进程受信服务）落地并全量验证**：凭据存储（`safeStorage` 封装 + 版本化 `config/credentials.json` 0600/原子写/每 key 加密块 + `credentialStatus` 4 值 IPC + key 白名单单一来源）+ 日志/审计（手写 JSONL logger 无 msg 参数/落盘双净化、append-only 审计按日 + 30 天清理、共享 file-writer rotate 5MB×3）+ 装配（before-quit allowQuit 防挂死 flush、生命周期日志）；182 单测全绿 + typecheck/lint/build 通过；勾选验收门槛「Token/密钥只显示状态」；诊断导出措辞同步为「阶段 7 安全收敛（Demo P0 范围）」（B-1） | 已开发、未联调 |
 | 2026-08-10 | **阶段 1 块 C（IPC/协议安全集成测试）落地**：Playwright _electron 集成套件（协议 handler F1 403/404/逃逸/200+CSP、IPC API 面/超大输入/来源校验、外部链接受控、普通浏览器信任边界）+ test:integration(--mode test 构建) + CI xvfb-run | 已开发、未联调 |
+| 2026-08-11 | **阶段 2 块 A（领域契约修复 + raw wire 层）落地**：领域事件扩展（`GenerationSegmentStartedEvent`、`SegmentCompleted.kind/content`、Token 结构 `usage.rounds`/`ConversationTokenUsage`、`ProtocolWarning`）+ raw-types/raw-schemas（判别 `type` + strict，zod 4.4.3 双参 record）+ frame-mapper（status 过滤/fail-closed/告警）+ StreamAccumulator 权威 content 规则（docs/18 §4.3 七条）+ fixture 分离（`domain/` 领域 + `wire-v2/` raw wire + manifest 锚定 `beeba577`）+ wire-fixtures 两层校验；231 单测全绿 + typecheck/lint/build；spec/plan 见 superpowers 目录 | 已开发、未联调 |

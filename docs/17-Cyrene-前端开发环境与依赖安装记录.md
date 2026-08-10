@@ -257,3 +257,10 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 - **vitest 集成超时**：Electron 冷启动 8–20s，`testTimeout` 与 `hookTimeout` 都须 ≥60s（`hookTimeout` 管 beforeAll 里的 launchApp）；`fileParallelism: false` 防多 Electron 并发争抢。
 - **`shell.openExternal` 可写**（Electron 43 主进程模块属性），monkeypatch 须返回 `Promise.resolve()`——`will-navigate` 分支对 `openExternal(url).catch(...)`。
 - **`expect.poll` 优于固定 `waitForTimeout`**：openExternal 同步 push，poll 断言更稳。
+
+## 15. 阶段 2 块 A 经验（2026-08-11 追加）
+
+- **zod 4.4.3 单参 `z.record` 已废弃**：单参 `z.record(valueSchema)` 推断 `Record<number, unknown>`（TS2554/2322），必须双参 `z.record(keySchema, valueSchema)`。本块 schema（领域 + raw）全部 `z.record(z.string(), …)`。与既有记录互补：schema 断言仍用 `z.record(z.string(), z.number()…)` 形式。
+- **SDD `task-brief` 对代码 fence 配对敏感**：plan 中 ` ``` ` 数量若为奇数（如 Task 4 实现块漏闭合 fence），awk 的 infence 状态错乱会导致后续任务 brief 提取把后续全部内容合并进来（Task 4 brief 曾含 Task 4-6 全部）。写 plan 后跑 `grep -c '^```' plan.md` 确认偶数是低成本保险。
+- **主模型/沙箱分类器间歇不可用**：`claude-opus-4-8[1M] is temporarily unavailable` 会拦截 `Agent`/`Bash` 派发（只读 `Read` 不受影响）。表现是间歇性窗口：窗口内可连续执行多个工具调用，窗口外全部被拦。处置：窗口内批量推进（一次 Bash 合并多条命令）、窗口外做只读核验；换模型（`/model`）可触发分类器重新初始化。
+- **`AssistantSegment.text?: string` 可选**：对 `s.text.length`/`s.text.includes` 断言需 `(s.text ?? '')` 收窄，否则严格 typecheck TS18048。
