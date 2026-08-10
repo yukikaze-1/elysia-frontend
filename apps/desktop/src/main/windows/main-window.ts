@@ -12,7 +12,7 @@ function setPendingFocus(): void { pendingFocus = true }
 function consumePendingFocus(): boolean { const p = pendingFocus; pendingFocus = false; return p }
 export function markAppStarted(): void { appStarted = true }
 
-export function createMainWindow(): void {
+export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
   const config = getAppConfig()
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // 加载/导航统一谓词（shouldUseViteDevServer = 未打包 && 有 dev server）：
@@ -76,17 +76,17 @@ export function createMainWindow(): void {
   }
 
   if (usingDevServer && devUrl) {
-    win.loadURL(devUrl).catch((err) => { console.error('[main] dev server 加载失败', err) })
+    win.loadURL(devUrl).catch((err) => { loadErrorSink?.(err) })
   } else {
-    // 打包/直启 cyrene://：失败必须留诊断（handler 缺失→404 空白窗，本块无日志模块先 console.error，块 B 建 logger 后换）
-    win.loadURL(`${PROTOCOL_SCHEME}://${RENDERER_HOST}/index.html`).catch((err) => { console.error('[main] cyrene:// 渲染器加载失败', err) })
+    // 打包/直启 cyrene://：失败必须留诊断（handler 缺失→404 空白窗）
+    win.loadURL(`${PROTOCOL_SCHEME}://${RENDERER_HOST}/index.html`).catch((err) => { loadErrorSink?.(err) })
   }
 }
 
-export function ensureMainWindow(): void {
+export function ensureMainWindow(loadErrorSink?: (err: unknown) => void): void {
   const win = getMainWindow()
   if (!win || win.isDestroyed()) {
-    createMainWindow()
+    createMainWindow(loadErrorSink)
     if (consumePendingFocus()) { const w = getMainWindow(); if (w) { if (w.isMinimized()) w.restore(); if (!w.isVisible()) w.show(); w.focus() } }
     return
   }

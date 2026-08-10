@@ -1,9 +1,9 @@
 // tests/unit/safe-storage.spec.ts
 import { describe, expect, it } from 'vitest'
-import { decryptCredential, encryptCredential, isSafeStorageUsable, isValidBase64 } from '../../src/main/credentials/safe-storage'
+import { decryptCredential, encryptCredential, isSafeStorageUsable, isValidBase64, type SafeStorageLike } from '../../src/main/credentials/safe-storage'
 import { CyreneErrorCode } from '../../src/shared/errors'
 
-function fakeSafe(over: Partial<Record<string, unknown>> = {}): any {
+function fakeSafe(over: Partial<SafeStorageLike> = {}): SafeStorageLike {
   return {
     isEncryptionAvailable: () => true,
     getSelectedStorageBackend: () => 'basic_text',
@@ -48,7 +48,7 @@ describe('isSafeStorageUsable', () => {
   })
   it('非 linux 不调用 getSelectedStorageBackend（未提供该方法的 fake 不崩）', () => {
     withPlatform('win32', () => {
-      const safe: any = { isEncryptionAvailable: () => true, encryptString: () => Buffer.from('x'), decryptString: () => 'x' }
+      const safe = { isEncryptionAvailable: () => true, encryptString: () => Buffer.from('x'), decryptString: () => 'x' } as unknown as SafeStorageLike
       expect(isSafeStorageUsable(safe)).toBe(true) // 不访问 getSelectedStorageBackend
     })
   })
@@ -63,6 +63,6 @@ describe('encrypt/decrypt', () => {
   it('decryptString 抛错 → 抛 CREDENTIAL_LOCKED', () => {
     const safe = fakeSafe({ decryptString: () => { throw new Error('keyring locked') } })
     try { decryptCredential(safe, Buffer.from('AQID')); expect.unreachable() }
-    catch (e: any) { expect(e.code).toBe(CyreneErrorCode.CREDENTIAL_LOCKED) }
+    catch (e: unknown) { expect((e as { code: string }).code).toBe(CyreneErrorCode.CREDENTIAL_LOCKED) }
   })
 })

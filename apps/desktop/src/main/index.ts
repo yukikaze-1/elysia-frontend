@@ -1,6 +1,8 @@
 // apps/desktop/src/main/index.ts
-import { app, dialog, Menu } from 'electron'
+import { app, dialog, Menu, safeStorage } from 'electron'
 import { join } from 'path'
+import { realpath } from 'fs/promises'
+import { isKeyAllowed } from '@shared/contracts'
 import { installAppIdentity, expectedUserDataBase } from './app/lifecycle'
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
@@ -8,6 +10,10 @@ import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-w
 import { hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
 import { registerCyreneScheme, registerCyreneProtocolHandler } from './protocol'
+import { createDiagnostics } from './diagnostics'
+import { createShutdownHandler } from './shutdown'
+import { CredentialStore } from './credentials/credential-store'
+import { createSanitizePublicMessage } from './diagnostics/sanitize'
 
 function failStart(message: string): void {
   dialog.showErrorBox('Cyrene 无法启动', message)
@@ -79,17 +85,21 @@ async function main(): Promise<void> {
     }
     const config = getAppConfig()
     if (!config.devToolsAllowed) applyProductionMenu() // 打包：无 View→DevTools 加速键（mac 保 Cmd+Q/C/V）
-    await ensureUserDataDirs(expectedUserDataBase(), { baseCreated })
-    registerHandlers()
-    // 协议 handler 在「无 Vite dev server」场景注册（shouldUseViteDevServer = 未打包 && 有 ELECTRON_RENDERER_URL）：
-    // dev（electron-vite dev，含 --mode test）→ 走 http 且不产出 out/renderer → 不注册；
-    // 其余（打包、test/production 构建、--mode development 直启）→ shouldUseViteDevServer=false → 必须注册，
-    // 否则 loadURL 落 cyrene:// 而 handler 缺失 → 404 空白窗。
+    const dirs = await ensureUserDataDirs(expectedUserDataBase(), { baseCreated })
+    const sanitize = createSanitizePublicMessage({ home: app.getPath('home'), userData: expectedUserDataBase() })
+    const safeRoot = await realpath(expectedUserDataBase())
+    const diagnostics = createDiagnostics({ logs: dirs.logs, audit: dirs.audit }, { logLevel: config.logLevel, retentionDays: 30, sanitize })
+    const store = new CredentialStore(join(dirs.config, 'credentials.json'), safeStorage, isKeyAllowed, safeRoot)
+    registerHandlers({ credentials: store, logger: diagnostics.logger })
+    app.on('before-quit', createShutdownHandler({ closeAll: diagnostics.closeAll, quit: () => app.quit() }))
+    diagnostics.logger.info('app:user-data-ready', { baseCreated, config: dirs.config, logs: dirs.logs, audit: dirs.audit })
     if (!shouldUseViteDevServer(app.isPackaged, process.env)) {
       await registerCyreneProtocolHandler(join(__dirname, '../renderer'))
+      diagnostics.logger.info('protocol:registered')
     }
+    diagnostics.logger.info('app:started', { mode: config.mode, packaged: app.isPackaged })
     markAppStarted()
-    ensureMainWindow()
+    ensureMainWindow((err) => diagnostics.logger.error('window:load-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) }))
   } catch (e) {
     failStart(e instanceof UserDataDirError ? e.message : `启动失败：${e instanceof Error ? e.message : '未知错误'}`)
   }
