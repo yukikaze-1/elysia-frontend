@@ -26,7 +26,7 @@ import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
 import type { BackendAdapter, BackendEventHandler } from './backend-adapter'
-import fixtureRaw from '../fixtures/streaming-reply.jsonl?raw'
+import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
 
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */

@@ -1,21 +1,9 @@
 import { z } from 'zod'
 import type { BackendEvent } from '../contracts'
 
-/**
- * 后端事件的运行时 Schema。
- * 外部输入必须经过 Schema 校验(DoD);未知可选字段兼容,非法输入显式报错。
- */
-
 export const SegmentChannelSchema = z.enum(['inner_voice', 'public_reply'])
 export const SegmentKindSchema = z.enum([
-  'text',
-  'markdown',
-  'image',
-  'video',
-  'audio',
-  'file',
-  'sticker',
-  'link'
+  'text', 'markdown', 'image', 'video', 'audio', 'file', 'sticker', 'link'
 ])
 
 export const BackendEventEnvelopeSchema = z.object({
@@ -31,6 +19,15 @@ export const GenerationStartedEventSchema = BackendEventEnvelopeSchema.extend({
   responseId: z.string().min(1),
   conversationId: z.string().min(1),
   model: z.string().optional()
+})
+
+export const GenerationSegmentStartedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('generation.segment.started'),
+  generationId: z.string().min(1),
+  segmentId: z.string().min(1),
+  segmentIndex: z.number().int().nonnegative(),
+  channel: SegmentChannelSchema,
+  kind: SegmentKindSchema
 })
 
 export const GenerationDeltaEventSchema = BackendEventEnvelopeSchema.extend({
@@ -49,50 +46,68 @@ export const SegmentCompletedEventSchema = BackendEventEnvelopeSchema.extend({
   generationId: z.string().min(1),
   segmentId: z.string().min(1),
   segmentIndex: z.number().int().nonnegative(),
-  channel: SegmentChannelSchema
+  channel: SegmentChannelSchema,
+  kind: SegmentKindSchema,
+  content: z.string().optional()
+})
+
+export const TokenUsageRoundSchema = z.object({
+  model: z.string().optional(),
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  cachedTokens: z.number().int().nonnegative().optional(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+  roundNum: z.number().int().nonnegative()   // 后端 TokenRound.round_num 为 int(无下限,测试用 0);契约对齐
 })
 
 export const TokenUsageSchema = z.object({
   input: z.number().int().nonnegative(),
   output: z.number().int().nonnegative(),
   total: z.number().int().nonnegative(),
-  source: z.enum(['provider_reported', 'server_aggregate', 'client_sum'])
+  source: z.enum(['provider_reported', 'server_aggregate', 'client_sum']),
+  rounds: z.array(TokenUsageRoundSchema).optional()
 })
 
 export const ConversationUsageSchema = z.object({
-  input: z.number().int().nonnegative(),
-  output: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative()
+  total: z.number().int().nonnegative(),
+  byModel: z.record(z.string(), z.number().int().nonnegative()),
+  source: z.literal('server_aggregate')
 })
 
 export const GenerationCompletedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('generation.completed'),
   generationId: z.string().min(1),
+  messageId: z.string().optional(),
   responseId: z.string().min(1),
   usage: TokenUsageSchema.optional(),
   conversationUsage: ConversationUsageSchema.optional(),
   model: z.string().optional(),
-  emotion: z.string().optional()
+  emotion: z.string().optional(),
+  finishReason: z.string().optional()
 })
 
 export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('generation.failed'),
   generationId: z.string().min(1),
+  messageId: z.string().optional(),
   error: z.object({
     code: z.string().min(1),
-    message: z.string()
+    message: z.string(),
+    retryable: z.boolean().optional(),
+    details: z.unknown().optional()
   })
 })
 
 export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationStartedEventSchema,
+  GenerationSegmentStartedEventSchema,
   GenerationDeltaEventSchema,
   SegmentCompletedEventSchema,
   GenerationCompletedEventSchema,
   GenerationFailedEventSchema
 ])
 
-/** 解析并校验单个后端事件;成功时返回领域事件 */
 export function parseBackendEvent(input: unknown): {
   success: true
   data: BackendEvent

@@ -5,6 +5,7 @@ import type {
   SegmentKind,
   TokenUsage
 } from '../contracts'
+import type { ConversationTokenUsage } from '../contracts/message'
 
 /**
  * 流式消息累加器(纯逻辑,不依赖 Electron/Vue)。
@@ -40,7 +41,7 @@ export interface StreamAccumulatorState {
   segments: Record<string, SegmentAccumulatorState>
   status: StreamStatus
   usage?: TokenUsage
-  conversationUsage?: { input: number; output: number; total: number }
+  conversationUsage?: ConversationTokenUsage
   model?: string
   emotion?: string
 }

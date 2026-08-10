@@ -37,7 +37,8 @@ function segmentCompleted(segmentId: string, index: number): BackendEvent {
     generationId: 'gen-1',
     segmentId,
     segmentIndex: index,
-    channel: 'public_reply'
+    channel: 'public_reply',
+    kind: 'text'
   }
 }
 
