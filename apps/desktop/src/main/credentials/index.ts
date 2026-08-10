@@ -32,6 +32,7 @@ export function createCredentialsExecutors(store: CredentialStore, opts: { logge
       async (req) => {
         const before = await store.getStatus(req.key)
         await store.setCredential(req.key, req.value)
+        opts.logger.info('credential:set', { key: req.key }) // 操作事件（元数据，无秘密值）
         await maybeLogStatusChange(opts.logger, store, req.key, before)
         return { status: await store.getStatus(req.key), key: req.key }
       },
@@ -40,6 +41,7 @@ export function createCredentialsExecutors(store: CredentialStore, opts: { logge
       async (req) => {
         const before = await store.getStatus(req.key)
         await store.clearCredential(req.key)
+        opts.logger.info('credential:clear', { key: req.key }) // 操作事件（元数据，无秘密值）
         await maybeLogStatusChange(opts.logger, store, req.key, before)
         return { status: await store.getStatus(req.key), key: req.key }
       },

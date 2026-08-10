@@ -30,13 +30,20 @@ export function auditFilesToDelete(files: readonly string[], retentionDays: numb
 }
 
 /** append-only 审计：summary 净化在此层（file-writer 是 dumb append）；启动清理 30 天前文件唯一归属此层 */
-export function createAuditor(writer: FileWriter, opts: { sanitize: MessageSanitizer; retentionDays: number; dir: string }): Auditor {
+export function createAuditor(writer: FileWriter, opts: {
+  sanitize: MessageSanitizer
+  retentionDays: number
+  dir: string
+  onCleanupError?: (err: unknown) => void // 装配注入：清理失败记日志（spec §9「启动清理失败记录日志不阻塞」）
+}): Auditor {
   void (async () => {
     try {
       const names = await readdir(opts.dir)
       const toDelete = auditFilesToDelete(names, opts.retentionDays, new Date())
       await Promise.all(toDelete.map((n) => unlink(join(opts.dir, n)).catch(() => {})))
-    } catch { /* 启动清理失败记录日志不阻塞 */ }
+    } catch (e: unknown) {
+      opts.onCleanupError?.(e) // 记录日志（经装配 logger），不阻塞启动
+    }
   })()
   return {
     async audit(event: AuditEvent): Promise<void> {

@@ -11,6 +11,8 @@ export interface FileWriterOptions {
   maxFiles?: number
   retentionDays?: number
   sync?: boolean
+  /** 异步批量模式的定时 flush 间隔(ms)。不设则不启用——但长运行场景日志仅退出才落盘，崩溃丢全部日志（spec §5.4 定时 flush）。sync:true 每写已 fsync，忽略此项。 */
+  flushIntervalMs?: number
 }
 export interface FileWriter {
   append(line: string): Promise<void>
@@ -81,6 +83,14 @@ export function createFileWriter(opts: FileWriterOptions): FileWriter {
 
   const flushOnce = async (): Promise<void> => { await drain(); if (fd) await fd.sync() }
 
+  // 定时 flush（spec §5.4：日志批量异步 + 定时 flush + 退出 flush）：unref 不阻止进程退出，
+  // 崩溃/强杀时已落盘内容保留，退出时 close() 做最终排空。
+  let timer: NodeJS.Timeout | null = null
+  if (opts.flushIntervalMs && !sync) {
+    timer = setInterval(() => { flushing = flushing.then(flushOnce, flushOnce) }, opts.flushIntervalMs)
+    timer.unref()
+  }
+
   return {
     async append(line: string): Promise<void> {
       if (opts.mode === 'daily') {
@@ -108,6 +118,7 @@ export function createFileWriter(opts: FileWriterOptions): FileWriter {
     async close(): Promise<void> {
       if (closed) return
       closed = true
+      if (timer) { clearInterval(timer); timer = null }
       await this.flush()
       if (fd) { const f = fd; fd = null; await f.close().catch(() => {}) }
     }

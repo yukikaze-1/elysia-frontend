@@ -11,6 +11,15 @@ export interface CredentialFileSchemaV1 {
 
 const EMPTY_FILE: CredentialFileSchemaV1 = { version: 1, keys: {} }
 
+/** 顶层形状守卫：JSON 可解析但 keys 缺失/非对象（如 {"version":1}、keys:null）→ 视为损坏
+ *  （version 值留待调用方判定——未知版本须走 UNSUPPORTED_VERSION，不能被当作损坏重建） */
+function hasKeysShape(v: unknown): v is { version: number; keys: Record<string, unknown> } {
+  return !!v && typeof v === 'object' && !Array.isArray(v) &&
+    typeof (v as { keys?: unknown }).keys === 'object' &&
+    (v as { keys?: unknown }).keys !== null &&
+    !Array.isArray((v as { keys?: unknown }).keys)
+}
+
 export class CredentialStore {
   private queue: Promise<unknown> = Promise.resolve()
   private cache = new Map<string, string>()
@@ -36,7 +45,9 @@ export class CredentialStore {
       const r = await openSafeFile(this.filePath, { mode: 'existing', purpose: 'read', safeRoot: this.safeRoot })
       fd = r.fd
       const text = await fd.readFile('utf8')
-      return JSON.parse(text) as CredentialFileSchemaV1
+      const parsed = JSON.parse(text) as unknown
+      if (!hasKeysShape(parsed)) throw new Error('凭据文件形状非法') // 可解析但形状损坏 → 与 JSON 解析失败同语义（损坏）
+      return parsed as CredentialFileSchemaV1
     } catch (e: unknown) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null
       throw e // JSON 解析失败 / 权限 / 逃逸 → 调用方按损坏或不可用处理
@@ -54,6 +65,7 @@ export class CredentialStore {
     if (!file) return 'empty'
     const block = file.keys[key]
     if (!block) return 'empty'
+    if (typeof block !== 'object' || block === null || typeof (block as { enc?: unknown }).enc !== 'string') return 'unavailable' // 单 key 形状非法
     if (!isValidBase64(block.enc)) return 'unavailable' // 损坏 blob 不误归 locked
     try {
       const plaintext = decryptCredential(this.safe, Buffer.from(block.enc, 'base64'))

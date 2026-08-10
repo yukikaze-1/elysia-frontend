@@ -25,4 +25,9 @@ describe('redactSensitiveValues', () => {
   it('短 token（<40）无前缀标记 → 保留（无法可靠判定，不误伤）', () => {
     expect(redactSensitiveValues('x=shorttoken')).toBe('x=shorttoken')
   })
+  it('≥40 Bearer token 由 Bearer 规则命中（顺序回归：非 ≥40 规则二次替换）', () => {
+    // 含 '-'（非 ≥40 规则字符类 [A-Za-z0-9+/]），只有 Bearer 规则能命中——若规则顺序被调乱会残留
+    const longToken = `${'a'.repeat(30)}-${'b'.repeat(29)}`
+    expect(redactSensitiveValues(`auth: Bearer ${longToken}`)).toBe('auth: Bearer [REDACTED]')
+  })
 })

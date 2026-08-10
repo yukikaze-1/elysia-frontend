@@ -44,6 +44,24 @@ describe('getStatus', () => {
     writeFileSync(filePathOf(s), '{oops', { mode: 0o600 })
     expect(await s.getStatus('backend.token')).toBe('unavailable')
   })
+  it('可解析但形状非法（无 keys）→ unavailable（不抛 TypeError）', async () => {
+    const s = makeStore()
+    writeFileSync(filePathOf(s), JSON.stringify({ version: 1 }), { mode: 0o600 })
+    expect(await s.getStatus('backend.token')).toBe('unavailable')
+  })
+  it('可解析但形状非法（keys 非对象）→ unavailable', async () => {
+    const s = makeStore()
+    writeFileSync(filePathOf(s), JSON.stringify({ version: 1, keys: null }), { mode: 0o600 })
+    expect(await s.getStatus('backend.token')).toBe('unavailable')
+  })
+  it('单 key 块 enc 非法（null / 非字符串）→ unavailable（非 locked）', async () => {
+    const s = makeStore()
+    writeFileSync(filePathOf(s), JSON.stringify({ version: 1, keys: { 'backend.token': { enc: null, algo: 'safeStorage' } } }), { mode: 0o600 })
+    expect(await s.getStatus('backend.token')).toBe('unavailable')
+    const s2 = makeStore()
+    writeFileSync(filePathOf(s2), JSON.stringify({ version: 1, keys: { 'backend.token': 'garbage' } }), { mode: 0o600 })
+    expect(await s2.getStatus('backend.token')).toBe('unavailable')
+  })
   it('base64 非法 → unavailable（非 locked）', async () => {
     const s = makeStore()
     writeFileSync(filePathOf(s), JSON.stringify({ version: 1, keys: { 'backend.token': { enc: 'AQI*', algo: 'safeStorage' } } }), { mode: 0o600 })

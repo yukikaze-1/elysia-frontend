@@ -59,4 +59,12 @@ describe('createFileWriter 集成', () => {
     await w.close()
     expect(readFileSync(join(dir, 'app.log'), 'utf8')).toBe('line1\n')
   })
+  it('定时 flush：async 模式周期落盘（无需 close，spec §5.4）', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cy-fw-t-'))
+    const w = createFileWriter({ dir, baseName: 'app', mode: 'rotate', sync: false, flushIntervalMs: 30 })
+    await w.append('line1')
+    await new Promise((r) => setTimeout(r, 150)) // 至少一个 flush 周期
+    expect(readFileSync(join(dir, 'app.log'), 'utf8')).toBe('line1\n')
+    await w.close()
+  })
 })
