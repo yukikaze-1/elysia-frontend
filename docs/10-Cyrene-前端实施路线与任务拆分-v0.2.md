@@ -88,6 +88,8 @@
 - 建立开发、测试、生产配置和最小打包流程。
 
 > **阶段 1 块 A 状态（2026-08-09）：** 「建立开发、测试、生产配置和最小打包流程」及对应的安全加载/环境基线已落地——打包/构建产物 Renderer 经 `cyrene://` 受限协议加载（替代 `file://`）、严格 CSP（响应头 AND 保留 meta、`frame-src 'none'`）、dev/test/prod 三环境（`__APP_MODE__` 烘焙 + `resolveAppConfig`）、生产安全默认（DevTools 恒关 + 远程调试门）、electron-builder `dir` 未分发包 + `verify:artifact`。详见 doc 07 §4/§5、doc 09 §3/§5 与 doc 16 §4。
+>
+> **阶段 1 块 B 状态（2026-08-10）：** 主进程受信服务落地——凭据存储（`safeStorage` 加密 `config/credentials.json` 0600/版本化/原子写 + `credentialStatus` 4 值 IPC，Renderer 只经 IPC 见状态）+ 日志/审计（手写 JSONL logger 无 msg 参数 + 落盘双净化、append-only 审计按日 + 30 天清理、共享 file-writer rotate 5MB×3）+ 装配（before-quit allowQuit 防挂死 flush）。详见 doc 07 §11/§12 与 doc 16 §4。
 
 ### 4.2 完成标准
 

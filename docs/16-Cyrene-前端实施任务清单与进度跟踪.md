@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 代码基线已落地并验证；阶段 1 块 A（安全加载与环境基线）已落地并全量验证，待真实联调与外部输入（H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 代码基线已落地并验证；阶段 1 块 A（安全加载与环境基线）+ 块 B（主进程受信服务：凭据存储 + 日志/审计）已落地并全量验证，待块 C 集成测试与真实联调外部输入（H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,7 +33,7 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 1（块 A 安全加载与环境基线已落地并全量验证；块 B 主进程受信服务 / 块 C 集成测试待推进）。**
+**当前所处阶段：阶段 1（块 A 安全加载与环境基线 + 块 B 主进程受信服务已落地并全量验证；块 C IPC 安全集成测试待推进）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
@@ -155,7 +155,7 @@
 | [~] | H-06 | 测试账号/会话/文件/可公开截图数据（交接包 `traces/` 提供脱敏测试会话/消息；测试账号/Token 待真实环境） | 2 |
 | [ ] | H-07 | Demo 演示脚本、P0/P1 范围与成功标准 | 0 |
 | [ ] | H-08 | 性能基线机器与 CPU/内存/GPU 允许范围 | 7 |
-| [~] | H-09 | 日志/开发者模式策略已定默认（轮转 5MB×3、审计 30 天、开发者模式恒关、诊断导出进 P0）；正式确认待产品 | 7 |
+| [~] | H-09 | 日志/开发者模式策略已定默认（轮转 5MB×3、审计 30 天、开发者模式恒关、诊断导出 = 阶段 7 安全收敛/Demo P0 范围）；正式确认待产品 | 7 |
 
 ---
 
@@ -200,13 +200,13 @@
 | 沙盒目录（F-06） | `userData/sandbox`，随应用数据走、0700、卸载即清理；黑名单默认值与授权级别阶段 6 细化 | 后端 security §3.2 明确路径校验属 Electron 职责 |
 | 开发者模式（H-09） | **不进 P0 Demo**：生产构建恒关 DevTools、远程调试恒关、无开启路径；日志/审计脱敏仍做 | doc 07 §12、验收门槛第 6 条 |
 | 凭据存储（E-03 前端落地） | Electron 侧 `safeStorage`；**不可用即拒存**（`credentialStatus=unavailable` + 提示解锁钥匙串），绝不静默明文降级 | doc 07 §11「优先使用系统安全存储」 |
-| 日志/审计/诊断 | 运行日志轮转 5MB×3 份；审计保留 30 天；诊断导出进 P0（导出前二次脱敏） | doc 07 §11/§12、doc 11 设置中心 |
+| 日志/审计/诊断 | 运行日志轮转 5MB×3 份；审计保留 30 天；诊断导出 = 阶段 7 安全收敛（Demo P0 范围，导出前二次脱敏；阶段 1 块 B 只立 JSONL 机制） | doc 07 §11/§12、doc 11 设置中心 |
 
 ### 任务清单
 
 - [x] 落地 Main / Preload / Renderer 进程边界与推荐目录结构（文档 01 §5）
 - [x] 开启 Context Isolation、Renderer Sandbox、导航与新窗口限制
-- [ ] 让 Main 持有后端 Transport、认证凭据与原始协议解析
+- [~] 让 Main 持有后端 Transport、认证凭据与原始协议解析（**凭据存储已落地**：`safeStorage` 加密 `config/credentials.json` + `credentialStatus` 4 值 IPC，Renderer 只经 IPC 见状态；真实 Token 供给/Transport 连接属阶段 2）
 - [~] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）（具名 Schema 校验 IPC 与 Preload DesktopApi 已落地；公开事件订阅/取消函数属阶段 2，待后续块）
 - [x] 实现窗口、单实例、外部链接拦截与应用生命周期
 - [x] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
@@ -218,7 +218,7 @@
 
 - [~] Renderer 无 Node、任意 IPC、系统凭据或带凭据后端直连（结构保证 sandbox/contextIsolation/不暴露 ipcRenderer + 冒烟确认普通浏览器 `window.desktopApi` 为 undefined；完整安全测试套件后续块）
 - [ ] 非白名单通道、非法参数与超大输入被 Main 拒绝
-- [ ] Token/密钥只显示状态，不能从 Renderer 读回
+- [x] Token/密钥只显示状态，不能从 Renderer 读回（块 B 凭据 IPC：`credentials:get-status/set/clear` 统一返回 `{status,key}`，preload 只解包 `.status`、无明文读取通道；key 白名单单一来源 `shared/contracts/credentials.ts`）——2026-08-10
 - [ ] 外部链接通过受控接口打开
 - [~] Windows 与目标 Ubuntu 开发环境各启动一次（**Ubuntu(Wayland)已冒烟通过**：Playwright `_electron` 启动构建产物，`getAppInfo` 返回 `{Cyrene, 0.1.0, linux}`、七目录 0700、四栏 UI 渲染；Windows 待验证）
 - [x] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭（`devToolsAllowed = !isPackaged` 恒关 + `Menu.setApplicationMenu(null)` 无加速键路径；远程调试门 main() 顶部同步拒绝显式端口/裸开关/pipe，`=0` 仅测试 harness 放行；verify:artifact 负路径冒烟验证拒绝生效）——2026-08-09
@@ -450,3 +450,4 @@
 | 2026-08-09 | 阶段 1 第一块落地：9 子目录、installAppIdentity + userData 七目录、IPC 骨架（app:get-info） | 已开发、未联调 |
 | 2026-08-09 | **GUI 冒烟自动验证通过**（Playwright `_electron` + vision MCP）：Ubuntu(Wayland) 启动构建产物，七目录 0700、`getAppInfo`→`{Cyrene,0.1.0,linux}`、四栏 UI 渲染正常、普通浏览器 `desktopApi` undefined（信任边界）；验收门槛 2 项升 `[~]` | 已开发、未联调 |
 | 2026-08-09 | **阶段 1 块 A（安全加载与环境基线）落地并全量验证**：`cyrene://` 受限协议替代 `file://`、严格 CSP（响应头 AND 保留 meta、`frame-src 'none'`）、dev/test/prod 环境（`__APP_MODE__` 烘焙）与生产安全默认（DevTools 恒关 + 远程调试门）、electron-builder 未分发包 + `verify:artifact`（静态 + 冒烟 16/17 项，负路径验证调试门）；勾选 §4 任务 ③④ 与验收门槛「生产恒关/远程调试恒关」 | 进行中 |
+| 2026-08-10 | **阶段 1 块 B（主进程受信服务）落地并全量验证**：凭据存储（`safeStorage` 封装 + 版本化 `config/credentials.json` 0600/原子写/每 key 加密块 + `credentialStatus` 4 值 IPC + key 白名单单一来源）+ 日志/审计（手写 JSONL logger 无 msg 参数/落盘双净化、append-only 审计按日 + 30 天清理、共享 file-writer rotate 5MB×3）+ 装配（before-quit allowQuit 防挂死 flush、生命周期日志）；177 单测全绿 + typecheck/lint/build 通过；勾选验收门槛「Token/密钥只显示状态」；诊断导出措辞同步为「阶段 7 安全收敛（Demo P0 范围）」（B-1） | 已开发、未联调 |
