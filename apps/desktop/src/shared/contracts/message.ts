@@ -50,6 +50,19 @@ export interface Message {
   usage?: TokenUsage
   model?: string
   emotion?: string
+  /** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */
+  tool?: MessageToolInfo
+}
+
+/** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */
+export interface MessageToolInfo {
+  callId?: string
+  name?: string
+  success?: boolean
+  error?: string
+  errorType?: string
+  durationMs?: number
+  truncated?: boolean
 }
 
 /** 单轮 token 消耗(映射自后端 raw TokenRound;session_id/timestamp 有意丢弃) */
