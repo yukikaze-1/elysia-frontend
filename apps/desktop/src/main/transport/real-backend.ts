@@ -8,6 +8,7 @@ import type {
   ChatHistoryPage,
   ChatHistoryQuery,
   ConnectInput,
+  ConnectionState,
   ConversationDetail,
   ConversationMessagesQuery,
   DictationSession,
@@ -23,6 +24,7 @@ import type {
   ToolResult,
   VoiceInputSession
 } from '@shared/contracts/backend'
+export type { ConnectionState, ConnectionStatus } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
 import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
@@ -42,16 +44,6 @@ import { RestMapper } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema } from './protocol-v2/rest-schemas'
 import type { BackendAdapter, BackendEventHandler } from './backend-adapter'
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
-export interface ConnectionState {
-  status: ConnectionStatus
-  serverUrl?: string
-  protocolVersion?: string
-  serverVersion?: string
-  connectionId?: string
-  activeConversationId?: string
-  lastError?: string
-}
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
   send(data: string): void
@@ -65,6 +57,8 @@ export interface RealBackendOptions {
   onProtocolWarning?: (warning: ProtocolWarning) => void
   onSessionReplay?: (conversationId: string, messages: Message[]) => void
   onError?: (error: CyreneError) => void
+  /** 连接状态变化回调(状态机任意迁移触发;2C 用于 IPC 状态推送) */
+  onConnectionStateChange?: (state: ConnectionState) => void
   ackTimeoutMs?: number   // 默认 15000;测试注入小值
   reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
 }
@@ -119,6 +113,14 @@ export class RealBackend implements BackendAdapter {
   constructor(options: RealBackendOptions = {}) { this.options = options }
 
   getConnectionState(): ConnectionState { return this.state }
+
+  /** 统一状态迁移入口:赋值 + 回调。加性改造——迁移前后各状态机路径产生的对象值不变;
+   *  `this.state` 直接替换(非原地 Object.assign):getConnectionState 当前无外部调用方持引用依赖对象身份
+   *  (仅 spec 即时断言),替换语义与 2B 逐点一致,避免原地合并残留旧字段(如 error 后 lastError 泄漏进 connecting)。 */
+  private setState(next: ConnectionState): void {
+    this.state = next
+    this.options.onConnectionStateChange?.(this.state)
+  }
   subscribe(handler: BackendEventHandler): () => void { this.handler.add(handler); return () => this.handler.delete(handler) }
   async setToken(token: string): Promise<void> { this.token = token }
 
@@ -153,7 +155,7 @@ export class RealBackend implements BackendAdapter {
         // B-6:旧回放缓冲被替换(新会话帧自带 conversationId)
         this.warn('SESSION_BUFFER_REPLACED', `活动会话 ${frame.conversationId} 到达,丢弃 ${this.sessionBuffer.length} 条未归属回放缓冲`)
       }
-      this.state = { ...this.state, activeConversationId: frame.conversationId }
+      this.setState({ ...this.state, activeConversationId: frame.conversationId })
       this.mapper?.setActiveConversationId(frame.conversationId)
       const messages = frame.messages.map((m) => this.restMapper.toDomainMessageFromReplay(m, frame.conversationId as string))
       this.sessionBuffer = []
@@ -169,7 +171,7 @@ export class RealBackend implements BackendAdapter {
       const err = new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `后端协议版本 ${frame.protocol_version} 不兼容,要求 ${PROTOCOL_VERSION_WIRE}`)
       this.ws?.close() // 版本不符 fail-closed:关闭已建立的 socket,避免后续帧继续被分派/泄漏
       this.ws = undefined
-      this.state = { status: 'error', lastError: err.message, serverUrl: this.serverUrl }
+      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
       this.connectReject?.(err)
       this.connectResolve = undefined
       this.connectReject = undefined
@@ -177,7 +179,7 @@ export class RealBackend implements BackendAdapter {
       return
     }
     this.reconnectAttempts = 0
-    this.state = {
+    this.setState({
       status: 'connected',
       serverUrl: this.serverUrl,
       protocolVersion: frame.protocol_version,
@@ -185,7 +187,7 @@ export class RealBackend implements BackendAdapter {
       connectionId: frame.connectionId,
       activeConversationId: this.state.activeConversationId,
       lastError: undefined
-    }
+    })
     this.connectResolve?.({
       sessionId: frame.connectionId ?? 'local',
       protocolVersion: frame.protocol_version,
@@ -242,7 +244,7 @@ export class RealBackend implements BackendAdapter {
     return new Promise<BackendSession>((resolve, reject) => {
       this.connectResolve = resolve
       this.connectReject = reject
-      this.state = { status: 'connecting', serverUrl: this.serverUrl }
+      this.setState({ status: 'connecting', serverUrl: this.serverUrl })
       this.establishWs()
     })
   }
@@ -282,7 +284,7 @@ export class RealBackend implements BackendAdapter {
       )
       if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
       this.ws = undefined
-      this.state = { status: 'error', lastError: err.message, serverUrl: this.serverUrl }
+      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
       this.connectReject?.(err)
       this.connectResolve = undefined
       this.connectReject = undefined
@@ -309,14 +311,14 @@ export class RealBackend implements BackendAdapter {
     this.reconnectAttempts += 1
     if (this.reconnectAttempts > RECONNECT_MAX_ATTEMPTS) {
       const err = new CyreneError(CyreneErrorCode.NOT_CONNECTED, `重连失败超过 ${RECONNECT_MAX_ATTEMPTS} 次,连接终止`)
-      this.state = { status: 'error', lastError: err.message, serverUrl: this.serverUrl }
+      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
       this.connectReject?.(err)
       this.connectResolve = undefined
       this.connectReject = undefined
       this.options.onError?.(err)
       return
     }
-    this.state = { status: 'reconnecting', serverUrl: this.serverUrl }
+    this.setState({ status: 'reconnecting', serverUrl: this.serverUrl })
     // 退避延迟 = base * 2^(attempts-1) 封顶 MAX;now() 注入时钟做差值判定(自上次掉线已流逝时间计入延迟,
     // 测试可注入时钟/缩短 reconnectBaseDelayMs 避免慢测试)
     const now = this.options.now?.() ?? Date.now()
@@ -344,7 +346,7 @@ export class RealBackend implements BackendAdapter {
     this.connectReject?.(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已取消'))
     this.connectResolve = undefined
     this.connectReject = undefined
-    this.state = { status: 'disconnected' }
+    this.setState({ status: 'disconnected' })
   }
 
   // —— WS 发送 ——
@@ -464,7 +466,7 @@ export class RealBackend implements BackendAdapter {
     const res = await this.restFetch(`/api/sessions/${encodeURIComponent(conversationId)}/activate`, { method: 'POST' })
     const parsed = parseRestActivateResult(await res.json())
     if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '激活会话响应校验失败')
-    this.state = { ...this.state, activeConversationId: parsed.data.activeConversationId }
+    this.setState({ ...this.state, activeConversationId: parsed.data.activeConversationId })
     if (this.state.status === 'connected' && this.ws) {
       // 回放走 WS activate_session(仅 connected 发送;未连接时只 REST 切 active)
       this.ws.send(JSON.stringify({ type: 'activate_session', conversationId }))

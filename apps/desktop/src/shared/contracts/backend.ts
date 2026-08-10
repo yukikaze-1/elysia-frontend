@@ -8,6 +8,18 @@ export interface BackendSession {
   serverUrl: string
 }
 
+/** 连接状态机 status(由适配器各状态机路径维护;IPC 推送与 store 消费) */
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error'
+export interface ConnectionState {
+  status: ConnectionStatus
+  serverUrl?: string
+  protocolVersion?: string
+  serverVersion?: string
+  connectionId?: string
+  activeConversationId?: string
+  lastError?: string
+}
+
 export interface ConnectInput {
   serverUrl: string
   token?: string

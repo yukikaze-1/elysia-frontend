@@ -6,6 +6,7 @@ import type {
   ChatHistoryPage,
   ChatHistoryQuery,
   ConnectInput,
+  ConnectionState,
   ConversationDetail,
   ConversationMessagesQuery,
   GetConversationQuery,
@@ -36,6 +37,9 @@ export type BackendEventHandler = (event: BackendEvent) => void
 export interface BackendAdapter {
   connect(input: ConnectInput): Promise<BackendSession>
   disconnect(): Promise<void>
+
+  /** 当前连接状态(快照;IPC 推送与 store 经此轮询/首拉) */
+  getConnectionState(): ConnectionState
 
   listConversations(input: PageQuery): Promise<Page<Conversation>>
   getConversation(input: GetConversationQuery): Promise<ConversationDetail>

@@ -28,6 +28,7 @@ export type MessageStatus =
   | 'pending'
   | 'acknowledged'
   | 'streaming'
+  | 'completing'
   | 'completed'
   | 'interrupted'
   | 'failed'

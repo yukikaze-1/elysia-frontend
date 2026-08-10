@@ -6,6 +6,7 @@ import type {
   ChatHistoryPage,
   ChatHistoryQuery,
   ConnectInput,
+  ConnectionState,
   ConversationDetail,
   ConversationMessagesQuery,
   DictationSession,
@@ -35,6 +36,8 @@ export interface MockBackendOptions {
   emitDelayMs?: number
   /** 覆盖内置夹具(测试用) */
   fixtureRaw?: string
+  /** 连接状态变化回调(connect/disconnect 时触发) */
+  onConnectionStateChange?: (state: ConnectionState) => void
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -58,9 +61,11 @@ export class MockBackend implements BackendAdapter {
   private connected = false
   private readonly fixture: BackendEvent[]
   private readonly emitDelayMs: number
+  private readonly onConnectionStateChange?: (state: ConnectionState) => void
 
   constructor(options: MockBackendOptions = {}) {
     this.emitDelayMs = options.emitDelayMs ?? 30
+    this.onConnectionStateChange = options.onConnectionStateChange
     const raw = options.fixtureRaw ?? fixtureRaw
     this.fixture = raw
       .split('\n')
@@ -88,12 +93,18 @@ export class MockBackend implements BackendAdapter {
 
   async connect(input: ConnectInput): Promise<BackendSession> {
     this.connected = true
+    this.onConnectionStateChange?.({ status: 'connected' })
     return { ...MOCK_SESSION, serverUrl: input.serverUrl }
   }
 
   async disconnect(): Promise<void> {
     this.connected = false
     this.clearTimers()
+    this.onConnectionStateChange?.({ status: 'disconnected' })
+  }
+
+  getConnectionState(): ConnectionState {
+    return { status: this.connected ? 'connected' : 'disconnected' }
   }
 
   async listConversations(_input: PageQuery): Promise<Page<Conversation>> {
