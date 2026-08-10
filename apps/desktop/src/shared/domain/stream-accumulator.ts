@@ -1,19 +1,23 @@
 import type {
   AssistantSegment,
   BackendEvent,
+  ConversationTokenUsage,
   SegmentChannel,
   SegmentKind,
   TokenUsage
 } from '../contracts'
-import type { ConversationTokenUsage } from '../contracts/message'
+import type { ProtocolWarning } from '../contracts/protocol'
+import { ProtocolWarningCode } from '../contracts/protocol'
 
 /**
  * 流式消息累加器(纯逻辑,不依赖 Electron/Vue)。
- * 规则见 docs/06 §5:
+ * 规则见 docs/06 §5 与 docs/18 §4.3:
  * - 按 responseId 归组父回复,按 segmentId 合并增量;
  * - segmentIndex 决定全局顺序,deltaSequence 仅在分段内累计;
  * - 重复增量忽略,缺口进入 pendingChunks 等待补传;
- * - generation.segment.completed 只完成一个分段;
+ * - generation.segment.completed 只完成一个分段;带 content 时为权威文本,
+ *   覆盖 committedText/renderText、清 pendingChunks、停更 expectedSequence,
+ *   此后迟到 delta 一律忽略并告警;
  * - generation.completed 才完成父回复;有缺口时进入 completing,不伪装完整;
  * - 完成后把有序 AssistantSegment[]、Token、模型、心情写回。
  */
@@ -30,6 +34,8 @@ export interface SegmentAccumulatorState {
   committedText: string
   renderText: string
   completed: boolean
+  /** 权威 content 已落地(此后 delta 一律忽略+告警) */
+  authoritative?: boolean
 }
 
 export interface StreamAccumulatorState {
@@ -46,6 +52,10 @@ export interface StreamAccumulatorState {
   emotion?: string
 }
 
+export interface StreamAccumulatorOptions {
+  onProtocolWarning?: (warning: ProtocolWarning) => void
+}
+
 function emptySegment(segmentId: string, segmentIndex: number, channel: SegmentChannel, kind: SegmentKind): SegmentAccumulatorState {
   return {
     segmentId,
@@ -56,19 +66,21 @@ function emptySegment(segmentId: string, segmentIndex: number, channel: SegmentC
     pendingChunks: {},
     committedText: '',
     renderText: '',
-    completed: false
+    completed: false,
+    authoritative: false
   }
 }
 
 export class StreamAccumulator {
   private state: StreamAccumulatorState
+  private readonly onProtocolWarning: (warning: ProtocolWarning) => void
 
   constructor(init?: {
     generationId?: string
     messageId?: string
     responseId?: string
     conversationId?: string
-  }) {
+  } & StreamAccumulatorOptions) {
     this.state = {
       generationId: init?.generationId ?? '',
       messageId: init?.messageId ?? '',
@@ -78,17 +90,20 @@ export class StreamAccumulator {
       segments: {},
       status: 'streaming'
     }
+    this.onProtocolWarning = init?.onProtocolWarning ?? (() => {})
   }
 
   getState(): StreamAccumulatorState {
     return this.state
   }
 
-  /** 应用一个后端事件,推进累加器状态 */
   apply(event: BackendEvent): void {
     switch (event.event) {
       case 'generation.started':
         this.applyStarted(event)
+        break
+      case 'generation.segment.started':
+        this.applySegmentStarted(event)
         break
       case 'generation.delta':
         this.applyDelta(event)
@@ -105,7 +120,6 @@ export class StreamAccumulator {
     }
   }
 
-  /** 停止生成:保留已提交内容,标记中断 */
   markInterrupted(): void {
     if (this.state.status === 'streaming') {
       this.state.status = 'interrupted'
@@ -125,17 +139,25 @@ export class StreamAccumulator {
     if (event.model) this.state.model = event.model
   }
 
+  private applySegmentStarted(event: Extract<BackendEvent, { event: 'generation.segment.started' }>): void {
+    this.ensureSegment(event.segmentId, event.segmentIndex, event.channel, event.kind)
+  }
+
   private applyDelta(event: Extract<BackendEvent, { event: 'generation.delta' }>): void {
     const segment = this.ensureSegment(event.segmentId, event.segmentIndex, event.channel, event.kind)
-    // 已应用的序号直接忽略(重复增量)
+    if (segment.authoritative) {
+      this.onProtocolWarning({
+        code: ProtocolWarningCode.ACCUMULATOR_LATE_DELTA_AFTER_AUTHORITATIVE,
+        message: `segment ${event.segmentId} 权威 content 已落地后收到迟到 delta(seq ${event.deltaSequence}),忽略`
+      })
+      return
+    }
     if (event.deltaSequence < segment.expectedSequence) return
-    // 命中下一个期望序号:连续刷出
     if (event.deltaSequence === segment.expectedSequence) {
       segment.committedText += event.text
       segment.expectedSequence += 1
       this.flushContiguous(segment)
     } else {
-      // 缺口:放入 pendingChunks,等待补传后连续刷出
       if (segment.pendingChunks[event.deltaSequence] === undefined) {
         segment.pendingChunks[event.deltaSequence] = event.text
       }
@@ -144,9 +166,14 @@ export class StreamAccumulator {
   }
 
   private applySegmentCompleted(event: Extract<BackendEvent, { event: 'generation.segment.completed' }>): void {
-    const segment = this.ensureSegment(event.segmentId, event.segmentIndex, event.channel, 'text')
+    const segment = this.ensureSegment(event.segmentId, event.segmentIndex, event.channel, event.kind)
     segment.completed = true
-    // segment.completed 不结束父回复
+    if (event.content !== undefined) {
+      segment.committedText = event.content
+      segment.renderText = event.content
+      segment.pendingChunks = {}
+      segment.authoritative = true
+    }
   }
 
   private applyCompleted(event: Extract<BackendEvent, { event: 'generation.completed' }>): void {
@@ -157,12 +184,7 @@ export class StreamAccumulator {
     this.state.status = this.hasGap() ? 'completing' : 'completed'
   }
 
-  private ensureSegment(
-    segmentId: string,
-    segmentIndex: number,
-    channel: SegmentChannel,
-    kind: SegmentKind
-  ): SegmentAccumulatorState {
+  private ensureSegment(segmentId: string, segmentIndex: number, channel: SegmentChannel, kind: SegmentKind): SegmentAccumulatorState {
     let segment = this.state.segments[segmentId]
     if (!segment) {
       segment = emptySegment(segmentId, segmentIndex, channel, kind)
@@ -182,12 +204,10 @@ export class StreamAccumulator {
     }
   }
 
-  /** 是否存在未补齐的序列缺口 */
   private hasGap(): boolean {
     return Object.values(this.state.segments).some((s) => Object.keys(s.pendingChunks).length > 0)
   }
 
-  /** 按 segmentIndex 全局排序输出有序分段(仅包含有内容的) */
   toAssistantSegments(): AssistantSegment[] {
     return this.state.orderedSegmentIds
       .map((id) => this.state.segments[id])
