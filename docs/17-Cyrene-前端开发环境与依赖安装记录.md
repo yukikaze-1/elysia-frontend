@@ -244,3 +244,16 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 - **`--smoke` 追加启动冒烟**（Playwright `_electron`）：优先启动未分发包（Linux→`dist/linux-unpacked/`，按 productName 候选名 `Cyrene`/`cyrene` 挑选真实二进制；win/darwin 同理），缺失回退 out/ 未打包直启；断言协议 `cyrene:`、`cyrene://` 响应头严格 CSP（`frame-src 'none'`/无 `unsafe-eval`/`unsafe-inline`）、Vue `#app` 挂载 + `.cy-app` grid 样式（防 CSP 拦样式假绿）、`getAppInfo`、普通浏览器 `desktopApi` undefined（信任边界）、打包调试门负路径（`--remote-debugging-port=9222` → failStart 退出）；Linux 需 `DISPLAY` 或 `WAYLAND_DISPLAY`，否则判失败不假绿；
 - **冒烟 env**：`delete ELECTRON_RUN_AS_NODE/ELECTRON_ENABLE_LOGGING/ELECTRON_RENDERER_URL/NODE_OPTIONS`（残留 dev env 会把回退冒烟劫持到 http）+ `CYRENE_TEST_HARNESS=1`（调试门放行 `=0` 控制通道，见 P-10）；
 - 无 `--smoke` 时输出 `（仅静态检查：未传 --smoke…）`；任一检查失败退出码 1。
+
+## 14. 阶段 1 块 C 集成测试经验（2026-08-10 追加）
+
+**运行方式：** `pnpm --filter @cyrene/desktop test:integration`（自动 `electron-vite build --mode test` + `vitest run --config vitest.integration.config.mts`；out/ 恒为 test 产物）。Linux 无显示器用 `xvfb-run -a`。
+
+**经验教训：**
+- **tsc 同名遮蔽**：目录内 `index.d.ts` 与 `index.ts` 同名时声明文件被静默丢弃——`src/preload/index.d.ts` 在 tsconfig.node 程序加载不到。集成测试用非冲突基名 `desktop-api.d.ts` 提供 `Window.desktopApi` 类型（与 preload 类型逐字段一致，node/web 程序各用各的）。
+- **`net.fetch('cyrene://…')` 主进程可取自定义协议**（`supportFetchAPI` + `protocol.handle`），用于 F1 恶意请求实测；但**空 host `cyrene://` 在 URL loader 层抛 `Invalid URL`**（不进 handler）——用例需 try/catch 兼容。
+- **`_electron.launch` userData 隔离**：`XDG_CONFIG_HOME`（Linux）/`APPDATA`（Windows）/`HOME`（macOS）env 重定向即可，零代码改动；本机启动 ~2.2s。
+- **chromium 沙箱**：AppArmor userns 限制下 `chromium.launch` 需 `args: ['--no-sandbox']`（仅测试实例，不涉应用沙箱）；CI 用 `playwright install --with-deps chromium` 补系统库。
+- **vitest 集成超时**：Electron 冷启动 8–20s，`testTimeout` 与 `hookTimeout` 都须 ≥60s（`hookTimeout` 管 beforeAll 里的 launchApp）；`fileParallelism: false` 防多 Electron 并发争抢。
+- **`shell.openExternal` 可写**（Electron 43 主进程模块属性），monkeypatch 须返回 `Promise.resolve()`——`will-navigate` 分支对 `openExternal(url).catch(...)`。
+- **`expect.poll` 优于固定 `waitForTimeout`**：openExternal 同步 push，poll 断言更稳。

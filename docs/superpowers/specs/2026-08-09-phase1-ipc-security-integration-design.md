@@ -354,5 +354,6 @@ test: {
 | C-G4 | `window.open`/`location` 外部链接测试依赖 shell.openExternal monkeypatch | 每例独立 launch + closeApp 关进程即退出，无需显式恢复（§5.4）；若套件内多例共享 app 需 afterEach 还原原函数 |
 | C-G5 | 集成测试跑 `--mode test` 构建（非打包） | 与 verify:artifact 打包冒烟互补；打包形态由 verify:artifact 覆盖 |
 | C-G6 | protocol handler 的 400 分支是防御性死代码（`new URL` 对 `cyrene://` 等畸形不抛错，空 host 落 404；`net.fetch` 无法触发 400） | 集成套件不测 400（404 覆盖）；如后续要测 400，需把 handler 的 URL 解析段抽纯函数单测——记录待后续 |
+| C-G7 | **实施期新增决策汇总**：① 空 host `net.fetch` 在 main URL loader 层抛 `Invalid URL` → 空 host 用例 try/catch 兼容为 404（handler 404 分支防御性，`net.fetch` 主进程取 `cyrene://` 已实证可用）；② tsc 同名遮蔽（`src/preload/index.d.ts` 被 `index.ts` 遮蔽）→ 新增 `tests/integration/helpers/desktop-api.d.ts` 提供 Window.desktopApi 类型（与 preload 类型逐字段一致，node 程序与 web 程序各用各的、无污染）；③ chromium 测试实例 `--no-sandbox`（AppArmor userns，仅测试不涉应用沙箱）；④ navigation 用例 URL 带路径（裸域名被 normalize 成 `/`）；⑤ 凭据往返 unavailable/locked 分支本机未实测（CI basic_text 覆盖 unavailable 路，locked 由块 B 单测覆盖） | 均记录于块 C SDD ledger（D-C1/T3-1/T4-1/T5-1/T6-1），折叠进最终文档提交 |
 
 **实施中新增决策/限制**：按目标指令追加至本节并回写最终报告。

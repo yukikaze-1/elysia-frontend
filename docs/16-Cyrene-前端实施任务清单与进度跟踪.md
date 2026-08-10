@@ -212,7 +212,7 @@
 - [x] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
 - [x] 建立开发/测试/生产配置与最小打包流程（`__APP_MODE__` 烘焙 + `resolveAppConfig` 三 mode、生产安全默认恒关；electron-builder `dir` 未分发包 + `verify:artifact` 静态/冒烟）——2026-08-09
 - [x] 落地 CSP（无 `unsafe-eval`）、受限自定义协议替代 `file://`（严格 CSP 响应头 + 保留 meta AND 取交集、`frame-src 'none'`；`cyrene://` 只读服务渲染根，打包恒走受限协议）——2026-08-09
-- [~] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试（zod Schema 校验机制与 executor 拒绝单测已落地；非法通道/超大输入拒绝的 Electron 集成测试待后续块）
+- [x] 建立 IPC Schema 校验与非法通道/超大输入拒绝测试（zod Schema 校验机制与 executor 拒绝单测 + 块 C 集成测试：API 面白名单/4097/空串→SCHEMA_VALIDATION_FAILED/来源校验隐藏窗被拒）——2026-08-10
 
 ### 验收门槛
 
