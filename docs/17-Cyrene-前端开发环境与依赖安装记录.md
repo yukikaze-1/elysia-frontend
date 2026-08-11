@@ -84,7 +84,7 @@ engineStrict: true
 
 - 二进制路径：`node_modules/electron/dist/electron`（下载内容记在 `node_modules/electron/path.txt` 指向的路径）。
 - 真实版本看 `node_modules/electron/package.json` 的 `version`（当前 43.3.0）。
-- **electron 43 起没有 postinstall**：包内 `package.json` 不再声明 scripts，二进制改为 **`require('electron')` 时懒下载**（`electron/index.js` 检测 `dist/` 缺失 → 调 `install.js`），`pnpm install` 不再自动拉取。显式触发：`pnpm --filter @cyrene/desktop ensure:electron`（= `node node_modules/electron/install.js`，幂等，已装即秒退；CI 在 install 后固定执行，见 §10 P-12）。
+- **electron 43 起没有 postinstall**：包内 `package.json` 不再声明 scripts，二进制改为 **`require('electron')` 时懒下载**（`electron/index.js` 检测 `dist/` 缺失 → 调 `install.js`），`pnpm install` 不再自动拉取。显式触发：`pnpm --filter @cyrene/desktop ensure:electron`（= `node -e "require('electron')"`，Node 沿目录向上解析 electron 包，任何 node_modules 布局都成立；幂等，已装即秒退；CI 在 install 后固定执行 + `~/.cache/electron` 缓存，见 §10 P-12/P-14）。
 
 **坑（P-2）**：在本仓库的开发沙箱里，shell 被注入了 `ELECTRON_RUN_AS_NODE=1`（执行 `env | grep ELECTRON` 可见）。此时直接运行 `electron --version` 得到的是其**内置 Node 版本**（如 v24.18.1），不是 Electron 版本——Electron 在 `ELECTRON_RUN_AS_NODE` 模式下以纯 Node 身份运行。判断 Electron 是否装好，请用 `node_modules/electron/package.json` 的 version 字段，或用不注入该变量的干净终端跑 `electron --version`。
 
@@ -199,8 +199,9 @@ ls ~/.cache/ms-playwright/*/INSTALLATION_COMPLETE   # 浏览器装全
 | P-9 | `pnpm package` 首次运行 electron-builder 需联网拉取 app-builder-bin/fuses | `--dir` 打包依赖在线解析构建器 | 首次打包前确认网络；本地受阻时退化为 `pnpm build` 只出 `out/`（不产未分发包），阶段 8 正式配置再处理 |
 | P-10 | 打包冒烟启动需 Playwright 注入 `--remote-debugging-port=0`/`--inspect=0` 控制通道，但生产默认拒绝 | 调试门连 `=0` 也拒（doc 07「任何构建都不得开放远程调试端口」）；Playwright `_electron` 用随机端口 CDP | 冒烟脚本显式设 `CYRENE_TEST_HARNESS=1` 放行 `=0`；不带该标记启动打包产物会被调试门 failStart 退出 |
 | P-11 | `verify:artifact` 冒烟在无显示环境直接判失败 | `--smoke` 需 Linux `DISPLAY` 或 `WAYLAND_DISPLAY`，否则无法启动 Electron 窗口 | 桌面会话/`xvfb-run` 下执行；无显示时脚本明确 `fail`，不会假绿 |
-| P-12 | CI `test:integration` 全部 launch Electron 用例 `spawn .../electron/dist/electron ENOENT`，本地却正常 | electron 43 无 postinstall，二进制懒下载；集成测试 helper 硬编码 `node_modules/electron/dist/electron` 路径不走 `require('electron')`，本地二进制是历史遗留，CI 全新环境缺失 | CI install 后显式 `pnpm --filter @cyrene/desktop ensure:electron`（`apps/desktop/package.json` 脚本，内部 `node node_modules/electron/install.js`） |
+| P-12 | CI `test:integration` 全部 launch Electron 用例 `spawn .../electron/dist/electron ENOENT`，本地却正常 | electron 43 无 postinstall，二进制懒下载；集成测试 helper 硬编码 `node_modules/electron/dist/electron` 路径不走 `require('electron')`，本地二进制是历史遗留，CI 全新环境缺失 | CI install 后显式 `pnpm --filter @cyrene/desktop ensure:electron`（脚本内部 `node -e "require('electron')"`）+ `actions/cache` 缓存 `~/.cache/electron` |
 | P-13 | 本地集成测试 `window.desktopApi` undefined，contextBridge 未暴露 | `sandbox: true` 的 preload 只能 require 有限模块；electron-vite `externalizeDepsPlugin` 把 `dependencies`（zod）外部化 → 产物 `require("zod")` 在沙箱抛错 → contextBridge 中断。2C 引入 chat schema 后首次暴露（集成测试当时未跑） | preload 构建 `externalizeDepsPlugin({ exclude: ['zod'] })`，让 zod bundle 进 preload 产物（`out/preload/index.js` 只应剩 `require("electron")`） |
+| P-14 | CI `ensure:electron` 的 `node node_modules/electron/install.js` 报 `MODULE_NOT_FOUND`（`apps/desktop/node_modules/electron/install.js` 不存在） | pnpm **hoisted 干净 install 不创建 workspace 子包的 `node_modules`**（依赖全扁平在根 `node_modules`，子包目录无它）；本地 `apps/desktop/node_modules` 是历史残留，本地能跑是假象 | `ensure:electron` 改用 `node -e "require('electron')"`（Node 沿目录向上解析到根 `node_modules/electron`，任何布局都成立）；排查先 `node -e "console.log(require.resolve('electron'))"` |
 
 ---
 
@@ -268,14 +269,18 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 - **主模型/沙箱分类器间歇不可用**：`claude-opus-4-8[1M] is temporarily unavailable` 会拦截 `Agent`/`Bash` 派发（只读 `Read` 不受影响）。表现是间歇性窗口：窗口内可连续执行多个工具调用，窗口外全部被拦。处置：窗口内批量推进（一次 Bash 合并多条命令）、窗口外做只读核验；换模型（`/model`）可触发分类器重新初始化。
 - **`AssistantSegment.text?: string` 可选**：对 `s.text.length`/`s.text.includes` 断言需 `(s.text ?? '')` 收窄，否则严格 typecheck TS18048。
 
-## 16. 阶段 2 CI 首次跑暴露的两个问题（2026-08-11 追加）
+## 16. 阶段 2 CI 首次跑暴露的问题（2026-08-11 追加）
 
-阶段 2 收尾后第一次 push 到 CI，`xvfb-run pnpm test:integration` 全红。两个独立根因（本地均正常，因二进制为历史遗留 + 集成测试没在本地重跑），见 §10 P-12/P-13：
+阶段 2 收尾后第一次 push 到 CI，`xvfb-run pnpm test:integration` 全红。根因是独立的（本地均正常，因二进制/布局为历史遗留 + 集成测试没在本地重跑），见 §10 P-12/P-13/P-14：
 
-1. **electron 二进制缺失**：electron 43 无 postinstall，`pnpm install` 不拉二进制；集成测试 helper（`tests/integration/helpers/app.ts`）直接拼 `node_modules/electron/dist/electron` 路径给 `_electron.launch`，从不 `require('electron')`，懒下载永不触发 → CI ENOENT。修复：`ensure:electron` 脚本 + CI 步骤。
+1. **electron 二进制缺失**：electron 43 无 postinstall，`pnpm install` 不拉二进制；集成测试 helper（`tests/integration/helpers/app.ts`）直接拼 `node_modules/electron/dist/electron` 路径给 `_electron.launch`，从不 `require('electron')`，懒下载永不触发 → CI ENOENT。修复：`ensure:electron` + CI 步骤。
 2. **preload 沙箱 require zod 失败**：`sandbox: true` 下 preload 只能 require 有限模块；electron-vite 默认把 `dependencies`（zod）外部化 → 产物 `require("zod")` 运行时抛错，`contextBridge` 中断 → `window.desktopApi` undefined。修复：`externalizeDepsPlugin({ exclude: ['zod'] })`。
+3. **ensure 脚本相对路径失效**：第一版 `ensure:electron` 用 `node node_modules/electron/install.js`，本地能跑但 CI 报 `MODULE_NOT_FOUND`——pnpm hoisted 干净 install 不创建 workspace 子包 `node_modules`（见 P-14）。修复：改用 `node -e "require('electron')"`。
+
+**CI 工作流拆分（同一批次）**：原单 job 顺序跑 typecheck→lint→install playwright→integration→unit，改为 3 个独立 job——`check`（typecheck+lint，纯 node）/ `unit`（vitest 单测）/ `integration`（electron+playwright+xvfb，含 `~/.cache/electron` 的 `actions/cache`，缓存 key 锚定 `pnpm-lock.yaml`）。失败各自定位、可并行，integration 不再阻塞静态检查。
 
 **排查要点（可复用）**：
 - 本地能跑 ≠ CI 能跑：`node_modules` 里的二进制/布局是累积态，全新环境才暴露"install 后缺什么"；
 - `sandbox: true` 的 preload 产物应只剩 `require("electron")`——任何第三方 `require(...)` 都要检查是否被外部化；
-- 用 `grep -o 'require("[^"]*")' out/preload/index.js` 快速核验 preload 外部化列表。
+- 用 `grep -o 'require("[^"]*")' out/preload/index.js` 快速核验 preload 外部化列表；
+- 定位 electron 包不要用 `node_modules/<pkg>` 相对路径，先 `node -e "console.log(require.resolve('electron'))"` 看实际解析位置。
