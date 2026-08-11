@@ -1,0 +1,1 @@
+{ "backendCommit": "unverified", "protocol": "2", "serverProtocolVersion": "2.0", "schemaHash": "fcec2065e01d7206c3a62e8f8d6464e71fff7df77666e0c81149554097c5d60b", "verified": false, "scenario": "rejected-ack-storage-unavailable" }

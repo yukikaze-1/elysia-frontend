@@ -1,0 +1,1 @@
+{"type":"user_message.ack","messageId":"","clientRequestId":"req-ack-empty-1","clientMessageId":"cm-ack-empty-1","conversationId":"conv-1","receivedAt":"2026-08-12T02:00:00.000Z","status":"rejected","error":{"code":"QUEUE_FULL","message":"消息队列已满，请稍后重试","retryable":true}}

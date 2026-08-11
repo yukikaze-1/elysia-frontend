@@ -1,0 +1,1 @@
+{"type":"user_message.ack","messageId":"msg-storage-1","clientRequestId":"req-storage-1","clientMessageId":"cm-storage-1","conversationId":"conv-1","receivedAt":"2026-08-12T02:01:00.000Z","status":"rejected","error":{"code":"STORAGE_UNAVAILABLE","message":"存储服务不可用，消息未持久化","retryable":true}}
