@@ -1,5 +1,6 @@
 // tests/unit/message.store.spec.ts
 // Task 4:messageStore 流式应用——generation 守卫/归并(StreamAccumulator)/cancel 乐观置位/断线 in-flight/loadReplay/乐观发送。
+// Task 7(批次B):事件归属守卫(generationByConversation)+ loadReplay 纯缓冲(pendingReplay)+ migrateKey 竞态守卫(I1)+ 断线清 local-*(I5)。
 // env=node:不触 Electron——store 经 stores/desktop-api 注入 mock api(R2);pinia 用 createPinia + setActivePinia。
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
@@ -20,13 +21,21 @@ const mockApi = {
 // 注入机制定死(P1-3):stores/desktop-api.ts export let api + setDesktopApi;store 惰性 import { api };
 // main.ts 调 setDesktopApi(window.desktopApi);测试 beforeEach 里 setDesktopApi(mockApi)(node env 无 window,不触全局)
 
+// 守卫丢弃只记 warn + 计数器,静音避免刷屏(断言走 droppedEvents)
+vi.spyOn(console, 'warn').mockImplementation(() => {})
+
 // started 返回 GenerationStartedEvent(而非 BackendEvent 联合):completed 测试里 {...started(), event:'generation.completed'}
 // 的联合展开会在缺少 responseId 的成员上无法赋给 BackendEvent,typecheck:node 需精确类型。
 function started(): GenerationStartedEvent { return { eventId: 'e', sequence: 1, event: 'generation.started', generationId: 'gen-1', messageId: 'msg-1', responseId: 'gen-1', conversationId: 'conv-1', model: 'm1' } }
 function delta(seg: string, seq: number, text: string): BackendEvent { return { eventId: 'e', sequence: 2, event: 'generation.delta', generationId: 'gen-1', segmentId: seg, segmentIndex: 0, channel: 'public_reply', kind: 'markdown', deltaSequence: seq, text } }
 
+/** F2:归属守卫依赖 currentId——默认注入当前会话;显式改状态用 setCurrent */
+function setCurrent(id: string | undefined): void {
+  useConversationStore().$patch({ currentId: id })
+}
+
 describe('messageStore 流式应用', () => {
-  beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi) })   // R2:注入 mock api(import { setDesktopApi } from stores/desktop-api)
+  beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi); setCurrent('conv-1') })   // R2:注入 mock api;F2:默认当前会话
 
   it('started→delta→completed 归并 assistant 消息(Token/model/emotion 落位)', () => {
     const store = useMessageStore()
@@ -126,5 +135,141 @@ describe('messageStore 流式应用', () => {
       code: 'AUTHENTICATION_FAILED', message: 'token 无效', backendCode: 'TOKEN_EXPIRED'
     })
     expect(Object.values(store.byId).some((m) => m.role === 'user' && m.status === 'failed')).toBe(true)
+  })
+
+  // ---------- Task 7(批次B):归属守卫 + 纯缓冲 + 竞态修复 ----------
+
+  it('generation.started 非当前会话 → 丢弃 + droppedEvents 计数', () => {
+    setCurrent('conv-2')
+    const store = useMessageStore()
+    store.applyEvent(started())   // started 属于 conv-1,当前是 conv-2
+    expect(store.byId['msg-1']).toBeUndefined()
+    expect(store.droppedEvents).toBe(1)
+    expect(store.generationByConversation['gen-1']).toBeUndefined()
+  })
+
+  it('generation.started 当前会话 → 记录 generationByConversation 并正常处理(正向,M2)', () => {
+    const store = useMessageStore()   // beforeEach currentId=conv-1
+    store.applyEvent(started())
+    expect(store.generationByConversation['gen-1']).toBe('conv-1')
+    expect(store.byId['msg-1']?.role).toBe('assistant')
+    expect(store.byId['msg-1']?.status).toBe('streaming')
+    expect(store.droppedEvents).toBe(0)
+  })
+
+  it('中间事件查 generationByConversation:非当前/查无 → 丢弃', () => {
+    const store = useMessageStore()
+    // 查无:started 未到达,delta 无表可查
+    store.applyEvent(delta('seg-1', 0, '你好'))
+    expect(store.byId['msg-1']).toBeUndefined()
+    expect(store.droppedEvents).toBe(1)
+    // 非当前:started 属于 conv-2(当前 conv-1)被丢 → 表无记录 → 其中间事件继续被丢
+    store.applyEvent({ ...started(), conversationId: 'conv-2', generationId: 'gen-2' })
+    expect(store.droppedEvents).toBe(2)
+    store.applyEvent({ ...delta('seg-1', 0, 'x'), generationId: 'gen-2' })
+    expect(store.droppedEvents).toBe(3)
+    expect(store.byId['msg-1']).toBeUndefined()
+  })
+
+  it('当前会话中间事件正常通过(正向,M2)', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(delta('seg-1', 0, '你好'))
+    expect(store.byId['msg-1']?.assistantSegments?.[0]?.text).toBe('你好')
+    expect(store.droppedEvents).toBe(0)
+  })
+
+  it('resetConversation 清 generationByConversation', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    expect(store.generationByConversation['gen-1']).toBe('conv-1')
+    store.resetConversation('conv-1')
+    expect(store.generationByConversation).toEqual({})
+  })
+
+  it('loadReplay 匹配 → 合并;未设 currentId → 纯缓冲;不匹配 → 丢弃', () => {
+    const store = useMessageStore()
+    const msgA = { messageId: 'msg-a', conversationId: 'conv-1', role: 'user', content: 'a', status: 'completed', createdAt: 't' } as Message
+    const msgB = { messageId: 'msg-b', conversationId: 'conv-2', role: 'user', content: 'b', status: 'completed', createdAt: 't' } as Message
+    const msgC = { messageId: 'msg-c', conversationId: 'conv-3', role: 'user', content: 'c', status: 'completed', createdAt: 't' } as Message
+
+    // 匹配当前 → 合并进 byId
+    store.loadReplay('conv-1', [msgA])   // beforeEach currentId=conv-1
+    expect(store.byId['msg-a']).toBeDefined()
+    expect(store.pendingReplay).toBeUndefined()
+
+    // 未设 currentId → 纯缓冲,不污染 byId
+    setCurrent(undefined)
+    store.loadReplay('conv-2', [msgB])
+    expect(store.byId['msg-b']).toBeUndefined()
+    expect(store.pendingReplay?.conversationId).toBe('conv-2')
+    expect(store.pendingReplay?.messages).toHaveLength(1)
+
+    // 不匹配 → 丢弃 + 计数;缓冲区保持原样(m5 由 applyPendingReplay 清空)
+    setCurrent('conv-1')
+    store.loadReplay('conv-3', [msgC])
+    expect(store.byId['msg-c']).toBeUndefined()
+    expect(store.droppedEvents).toBe(1)
+    expect(store.pendingReplay?.conversationId).toBe('conv-2')
+  })
+
+  it('applyPendingReplay 应用并清空;不匹配也清空(m5)', () => {
+    const store = useMessageStore()
+    // 匹配 → 应用 + 清空
+    setCurrent(undefined)
+    const msg = { messageId: 'msg-b', conversationId: 'conv-2', role: 'user', content: 'hi', status: 'completed', createdAt: 't' } as Message
+    store.loadReplay('conv-2', [msg])
+    expect(store.pendingReplay?.conversationId).toBe('conv-2')
+    store.applyPendingReplay('conv-2')
+    expect(store.byId['msg-b']?.conversationId).toBe('conv-2')
+    expect(store.pendingReplay).toBeUndefined()
+
+    // 不匹配 → 不应用,但同样清空(m5 防残留)
+    setCurrent(undefined)
+    const msg2 = { messageId: 'msg-c', conversationId: 'conv-3', role: 'user', content: 'c', status: 'completed', createdAt: 't' } as Message
+    store.loadReplay('conv-3', [msg2])
+    expect(store.pendingReplay?.conversationId).toBe('conv-3')
+    store.applyPendingReplay('conv-9')
+    expect(store.byId['msg-c']).toBeUndefined()
+    expect(store.pendingReplay).toBeUndefined()
+  })
+
+  it('migrateKey 旧 key 已清(切会话)→ 不重插(I1)', async () => {
+    let resolveSend!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    mockApi.send.mockImplementationOnce(() => new Promise((res) => { resolveSend = res }))
+    const store = useMessageStore()
+    const p = store.send('hi')   // 乐观 local-* 同步入 byId
+    const localKey = Object.keys(store.byId)[0]!
+    expect(localKey.startsWith('local-')).toBe(true)
+    // 切会话 → resetConversation 清空 byId
+    store.resetConversation('conv-2')
+    expect(store.byId[localKey]).toBeUndefined()
+    // 迟到 ack 带 serverMessageId → migrateKey 旧 key 已清,不得重插(I1)
+    resolveSend({ clientRequestId: 'c1', serverMessageId: 'server-1' })
+    await p
+    expect(store.byId['server-1']).toBeUndefined()
+    expect(store.byId[localKey]).toBeUndefined()
+  })
+
+  it('handleConnectionStateChange 断线清理 local-* pending 消息(I5)', async () => {
+    let resolveSend!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    mockApi.send.mockImplementationOnce(() => new Promise((res) => { resolveSend = res }))
+    const store = useMessageStore()
+    const p = store.send('hi')
+    const localKey = Object.keys(store.byId)[0]!
+    expect(store.byId[localKey]?.status).toBe('pending')
+    // 非 pending 的 local-* 与普通消息应保留
+    store.loadReplay('conv-1', [
+      { messageId: 'local-done', conversationId: 'conv-1', role: 'user', content: 'x', status: 'acknowledged', createdAt: 't' } as Message,
+      { messageId: 'msg-normal', conversationId: 'conv-1', role: 'user', content: 'y', status: 'pending', createdAt: 't' } as Message
+    ])
+    // 断线:无 active generation 也要清理(F11:清理循环插在早退之前)
+    store.handleConnectionStateChange({ status: 'reconnecting' })
+    expect(store.byId[localKey]).toBeUndefined()
+    expect(store.order).not.toContain(localKey)
+    expect(store.byId['local-done']).toBeDefined()
+    expect(store.byId['msg-normal']).toBeDefined()
+    resolveSend({ clientRequestId: 'c1' })
+    await p
   })
 })
