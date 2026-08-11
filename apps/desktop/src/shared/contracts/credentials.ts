@@ -7,8 +7,14 @@ export type CredentialKey = 'backend.token' // 未来: 'model.llm.*' 等
 /** 当前唯一 key */
 export const BACKEND_TOKEN_KEY: CredentialKey = 'backend.token'
 
+/**
+ * Token 与 Endpoint Origin 的绑定值 key（明文 origin；非 CredentialKey 字面量联合，
+ * 专用字符串类型避免 TS 报错——它由 connection-config 内部读写，不暴露给通用凭据路径）。
+ */
+export const BACKEND_TOKEN_ORIGIN_KEY: string = 'backend_token_origin'
+
 /** key 白名单单一来源（zod .refine / store 谓词 / preload 固定 key 全派生自它） */
-export const CREDENTIAL_KEY_ALLOWLIST: readonly string[] = ['backend.token']
+export const CREDENTIAL_KEY_ALLOWLIST: readonly string[] = ['backend.token', 'backend_token_origin']
 
 /**
  * 白名单谓词：字面量精确匹配，或 `prefix.*` 通配（当前 allowlist 无通配项，

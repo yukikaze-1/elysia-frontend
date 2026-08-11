@@ -25,6 +25,12 @@ export interface ConnectInput {
   token?: string
 }
 
+/** 装配模式信息（renderer 连接面板展示：打包恒 real，未打包默认 real + CYRENE_BACKEND=mock 显式 mock） */
+export interface RuntimeInfo {
+  mode: 'real' | 'mock'
+  packaged: boolean
+}
+
 export interface GetConversationQuery {
   conversationId: string
 }
