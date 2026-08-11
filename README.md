@@ -2,7 +2,7 @@
 
 Cyrene —— Electron 桌面 AI 助手客户端(Windows + Ubuntu)的前端工程。包含 Live2D 角色、流式 AI 回复、语音输入,以及桌面工具/授权系统。
 
-> **当前状态:阶段 0 工程基线 + 阶段 1 第一块(安全骨架地基)、块 A(安全加载与环境基线)与块 B(主进程受信服务)已落地(v0.2)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳。阶段 1 第一块已实现:9 子目录主进程结构、应用身份(`Cyrene` → `~/.config/Cyrene`)、userData 七目录(0700 + symlink 逃逸防护)、具名 Schema 校验 IPC 骨架(`app:get-info`)、主窗口导航/单实例/外部链接加固。**块 A 已实现**:`cyrene://` 受限自定义协议替代 `file://`、严格 CSP(响应头 AND 保留 meta)、dev/test/prod 环境(`__APP_MODE__` 烘焙)、生产安全默认(DevTools 恒关 + 远程调试门)、electron-builder 未分发包 + `verify:artifact`。**块 B 已实现**:凭据存储(`safeStorage` 加密 `config/credentials.json` + `credentialStatus` 4 值 IPC + key 白名单单一来源)+ 日志/审计(手写 JSONL logger 无 msg 参数/落盘双净化、append-only 审计按日 + 30 天清理)。后端协议契约已由交接包确认(doc 02 §19 对齐表已填写),真实联调未进行,相关能力标注“已开发、未联调”。
+> **当前状态:阶段 0 工程基线 + 阶段 1 第一块(安全骨架地基)、块 A(安全加载与环境基线)与块 B(主进程受信服务)已落地(v0.2)。** `docs/` 设计文档 + `ref/` UI 原型 + `apps/desktop/` 可运行的 Electron 壳。阶段 1 第一块已实现:9 子目录主进程结构、应用身份(`Cyrene` → `~/.config/Cyrene`)、userData 七目录(0700 + symlink 逃逸防护)、具名 Schema 校验 IPC 骨架(`app:get-info`)、主窗口导航/单实例/外部链接加固。**块 A 已实现**:`cyrene://` 受限自定义协议替代 `file://`、严格 CSP(响应头 AND 保留 meta)、dev/test/prod 环境(`__APP_MODE__` 烘焙)、生产安全默认(DevTools 恒关 + 远程调试门)、electron-builder 未分发包 + `verify:artifact`。**块 B 已实现**:凭据存储(`safeStorage` 加密 `config/credentials.json` + `credentialStatus` 4 值 IPC + key 白名单单一来源)+ 日志/审计(手写 JSONL logger 无 msg 参数/落盘双净化、append-only 审计按日 + 30 天清理)。**阶段 2 三块 + 真实联调整改·批次 A 已落地**(360 单测 + 20 集成 + typecheck/lint/build 全绿):真实模式装配策略、连接面板 Endpoint/Token 设置、rejected ACK 结构化。后端协议契约已由交接包确认(doc 02 §19 对齐表已填写),真实联调未进行,相关能力标注“已开发、未联调”。
 
 ## 文档入口
 
@@ -77,6 +77,24 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 | `pnpm package` / `pnpm make` | 打包(electron-builder `dir` 未分发包,产物在 `dist/linux-unpacked/`) / 生成安装产物(占位,阶段 8) |
 | `pnpm verify:artifact` | 校验产物内容与安全配置(静态检查;`-- --smoke` 追加 Playwright 启动冒烟) |
 
+## 真实模式联调
+
+> 装配策略（spec 决策 7）：**打包恒 Real**；未打包默认 Real，仅 `CYRENE_BACKEND=mock` 显式进入 Mock 演示模式（免 token）。真实联调时连接凭据的 Endpoint/Token 在**连接面板**内设置，渲染进程不传任意 URL（`connect` 无参；Token 与 Endpoint Origin 绑定，origin 变化自动清 token，详见 plan `docs/superpowers/plans/2026-08-11-phase2-realconn-preparation.md`）。
+
+| 场景 | 命令 |
+|---|---|
+| 显式 Mock（演示/联调前自测） | `CYRENE_BACKEND=mock pnpm dev` |
+| 真实模式（默认，需设置 Endpoint + Token） | `pnpm dev`（或显式 `CYRENE_BACKEND=real pnpm dev`） |
+| 打包产物 | 恒为 Real（无需 env；须在连接面板设置后端地址与 Token） |
+
+启动后在连接面板操作：
+
+1. **设置 Endpoint**：填 `https://…`（远程任意 host）或回环 `http://127.0.0.1:8765`（`localhost` / `127.0.0.0/8` / `[::1]`）；`http:` 非回环被拒；userinfo / query / fragment 被拒；pathname 保留、尾斜杠去除。
+2. **设置 Token**：先设 Endpoint 才能设 Token（否则 `CREDENTIAL_UNAVAILABLE`）；Token 与当前 Endpoint origin 绑定，`setEndpoint` 改 origin 自动清旧 Token 与绑定，防跨域复用；提交后明文立即清空。
+3. **连接**：`connect()` 无参，Main 校验绑定 origin 与 Token 存在后经 `BackendAdapter` 建立会话。
+
+联调前置链路均已就绪（`chat-service` connect 无参 + `setEndpoint/getEndpoint/getRuntimeInfo`、desktopApi 三新方法、rejected ACK 结构化 `BACKEND_REJECTED`/`backendCode`/`retryable`），真实后端环境（B-01）到位即可进入联调；此前相关能力标注“已开发、未联调”。
+
 ## 协作约定
 
 - **Git push 由开发者手动执行。** 本环境(Claude 沙箱)无 GitHub 凭据,HTTPS 推送会失败;在 VS Code 集成终端里推送可复用 VS Code 的 GitHub 登录,免输入凭据。
@@ -91,4 +109,4 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 - **阶段 1 块 B(主进程受信服务)已落地并全量验证**:凭据存储(`safeStorage` 封装 + 版本化 `config/credentials.json` 0600/原子写/每 key 加密块 + `credentialStatus` 4 值 IPC + key 白名单单一来源 `shared/contracts/credentials.ts`)+ 日志/审计(手写 JSONL logger `(code, fields?)` 无 msg 参数/落盘双净化、共享 file-writer rotate 5MB×3、append-only 审计按日 + 30 天清理)+ 装配(before-quit allowQuit 防挂死 flush);177 单测 + typecheck/lint/build 全绿;`docs/superpowers/specs|plans/2026-08-09-phase1-trusted-services-*` 为设计与实施文档
 - 后端协议契约已由交接包确认(doc 02 §19/§19.1 对齐表,40 错误码,WS v2);真实后端环境待联调
 - 待外部输入(阻塞后续阶段):真实后端测试环境地址(B-01)、主验收平台(H-01)、Live2D SDK 许可与模型(G-01/G-02)、签名证书(H-04)
-- **下一步:阶段 1 块 C(IPC 安全集成测试)** —— Playwright `_electron` 集成测试(非法通道/超大输入/来源校验/外部链接)+ 块 A F1 覆盖(protocol handler 拒绝分支);然后阶段 2 的聊天纵向闭环(流式事件经 Adapter → Store → UI)
+- **下一步:真实后端联调(B-01 到位后,见「真实模式联调」小节)或阶段 3 完整聊天/历史/多媒体** —— 阶段 2 真实联调整改·批次 A 已把装配策略与连接面板(Endpoint/Token)就绪

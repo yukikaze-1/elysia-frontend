@@ -59,7 +59,8 @@ async function clearToken(): Promise<void> {
 async function toggleConnect(): Promise<void> {
   busy.value = true
   try {
-    connected.value ? await connection.disconnect() : await connection.connect()
+    if (connected.value) await connection.disconnect()
+    else await connection.connect()
   } finally {
     busy.value = false
   }

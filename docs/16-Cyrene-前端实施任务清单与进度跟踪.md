@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 三块（A 领域契约+raw wire / B RealBackend / C Store+IPC+UI）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 3 待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 三块（A 领域契约+raw wire / B RealBackend / C Store+IPC+UI）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 A（连接凭据安全 / 真实模式装配 / rejected ACK 结构化）三块落地并全量验证（360 单测 + 20 集成 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 3 待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,7 +33,7 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 1 三块（安全加载 / 凭据·日志 / IPC 集成测试）全部落地并全量验证；阶段 2 三块（A 领域契约+raw wire、B RealBackend REST/WS Adapter、C Store+IPC+聊天 UI 纵向闭环）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」——「发送 → 流式 → 渲染」完整链路已打通（Mock 驱动）；下一块为阶段 3 完整聊天/历史/多媒体（含历史查看器、附件、代码复制）。**
+**当前所处阶段：阶段 1 三块（安全加载 / 凭据·日志 / IPC 集成测试）全部落地并全量验证；阶段 2 三块（A 领域契约+raw wire、B RealBackend REST/WS Adapter、C Store+IPC+聊天 UI 纵向闭环）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」——「发送 → 流式 → 渲染」完整链路已打通（Mock 驱动）；阶段 2 真实联调整改·批次 A（FE-P0-01 Token 与 Endpoint Origin 绑定 / FE-P1-02 Real/Mock 装配策略与最小连接设置 / FE-P1-01 rejected ACK 即时结构化传递）落地并全量验证（360 单测 + 20 集成），仍标记「已开发、未联调」——连接面板（Endpoint/Token 设置）+ 装配策略已就绪，真实后端环境（B-01）到位即可进入联调；下一块为阶段 3 完整聊天/历史/多媒体（含历史查看器、附件、代码复制）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
@@ -459,3 +459,4 @@
 | 2026-08-11 | **CI 首次跑修复（阶段 2 后第一推）**：`.github/workflows/ci.yml` 集成测试全红，两个独立根因——① electron 43 无 postinstall + 集成测试 helper 硬编码 `dist` 路径（不走 `require('electron')` 懒下载）→ CI 全新环境二进制缺失（`spawn electron ENOENT`），修复 `ensure:electron` 脚本 + CI install 后步骤；② `sandbox: true` preload 被 electron-vite 外部化 zod → 产物 `require("zod")` 沙箱运行时报错 → contextBridge 中断 `window.desktopApi` undefined，修复 `externalizeDepsPlugin({ exclude: ['zod'] })`；本地 18 集成测试全绿复验；坑与排查要点见 doc 17 §4/§10 P-12/P-13/§16 | 已开发、未联调 |
 | 2026-08-11 | **CI 修复 v2（ensure 脚本布局 + 缓存 + job 拆分）**：① `ensure:electron` 由 `node node_modules/electron/install.js` 改为 `node -e "require('electron')"`——pnpm hoisted 干净 install 不创建 workspace 子包 `node_modules`（本地该目录是历史残留），相对路径脚本在 CI 报 `MODULE_NOT_FOUND`（P-14）；② CI 拆 3 个独立 job（check=typecheck+lint / unit / integration），integration 加 `actions/cache` 缓存 `~/.cache/electron`（key 锚定 `pnpm-lock.yaml`）；本地复验 18 集成 + 315 单测 + typecheck + lint 全绿 | 已开发、未联调 |
 | 2026-08-11 | **CI 修复 v3（helper electron 路径定位）**：v2 后 ensure 用对路径（`require('electron')` 解析到根 hoisted 区下载成功），但 launch 仍 ENOENT——测试 helper（`tests/integration/helpers/app.ts`）硬编码 `join(ROOT,'node_modules/electron/dist/…')`，干净布局下 `apps/desktop/node_modules` 整个不存在；改为 `require.resolve('electron')` + `dirname` 定位包再拼 `dist/<exe>`；本地模拟 CI 布局（mv 子包 node_modules）18 集成全绿复验 | 已开发、未联调 |
+| 2026-08-12 | **阶段 2 真实联调整改·批次 A（收尾批：main 装配 + 集成测试 + 全量验证/文档）落地**：装配策略（`resolveBackendMode` 纯函数：打包恒 Real、未打包默认 Real + `CYRENE_BACKEND=mock` 显式 Mock；`connection-config` 注入 CredentialStore 端口 + `onEndpointChanged` 审计 `endpoint:set`）；集成测试（白名单 18→21 键、凭据往返先 `setEndpoint`、attacker endpoint 变更后旧 token 不自动复用、`getRuntimeInfo` 装配模式、`launchApp` 固定 `CYRENE_BACKEND=mock`）；修复 Task 7 遗留 `CyConnectionPanel` lint 错误（三目表达式改 if/else）；**360 单测 + 20 集成 + typecheck/lint/build 全绿**；仍标「已开发、未联调」；plan 见 `docs/superpowers/plans/2026-08-11-phase2-realconn-preparation.md`，批次报告见 `docs/superpowers/sdd/2026-08-11-phase2-realconn-preparation/task-batch-C-report.md` | 已开发、未联调 |
