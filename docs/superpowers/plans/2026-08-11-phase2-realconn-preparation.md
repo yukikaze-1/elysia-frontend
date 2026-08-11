@@ -144,7 +144,7 @@ describe('ConnectionConfig', () => {
   it('远程 http://example.com 被拒 INVALID_INPUT', () => {
     const { port } = makePort(); const c = new ConnectionConfig(port)
     try { c.normalizeEndpoint('http://example.com'); expect.unreachable() }
-    catch (e: unknown) { expect((e as { code?: string }).code).toBe(CyneErrorCode.INVALID_INPUT) }
+    catch (e: unknown) { expect((e as { code?: string }).code).toBe(CyreneErrorCode.INVALID_INPUT) }
   })
   it('回环 http://127.0.0.1:8765 / localhost / [::1] 通过', () => {
     const { port } = makePort(); const c = new ConnectionConfig(port)
@@ -227,13 +227,13 @@ export class ConnectionConfig {
   ) {}
   normalizeEndpoint(rawUrl: string): NormalizedEndpoint {
     let u: URL
-    try { u = new URL(rawUrl) } catch { throw new CyreneError(CyneErrorCode.INVALID_INPUT, 'Endpoint 不是合法 URL') }
-    if (u.username || u.password) throw new CyreneError(CyneErrorCode.INVALID_INPUT, 'Endpoint 不得包含 userinfo')
-    if (u.search || u.hash) throw new CyreneError(CyneErrorCode.INVALID_INPUT, 'Endpoint 不得包含 query 或 fragment')
+    try { u = new URL(rawUrl) } catch { throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'Endpoint 不是合法 URL') }
+    if (u.username || u.password) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'Endpoint 不得包含 userinfo')
+    if (u.search || u.hash) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'Endpoint 不得包含 query 或 fragment')
     const host = u.hostname
     if (u.protocol === 'https:') { /* 任意 host 通过 */ }
-    else if (u.protocol === 'http:') { if (!isLoopbackHost(host)) throw new CyreneError(CyneErrorCode.INVALID_INPUT, 'http 仅允许回环地址') }
-    else throw new CyreneError(CyneErrorCode.INVALID_INPUT, 'Endpoint 仅支持 https 或回环 http')
+    else if (u.protocol === 'http:') { if (!isLoopbackHost(host)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'http 仅允许回环地址') }
+    else throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'Endpoint 仅支持 https 或回环 http')
     const origin = `${u.protocol}//${u.host}`
     const baseUrl = origin + u.pathname.replace(/\/+$/, '')
     const ws = new URL(u.toString()); ws.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -251,7 +251,7 @@ export class ConnectionConfig {
   getEndpoint(): NormalizedEndpoint | undefined { return this.endpoint }
   async setBackendToken(token: string): Promise<void> {
     const e = this.endpoint
-    if (!e) throw new CyreneError(CyneErrorCode.CREDENTIAL_UNAVAILABLE, '请先设置后端地址')
+    if (!e) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '请先设置后端地址')
     await this.port.saveToken(token); await this.port.saveBinding(e.origin)
   }
   async clearBackendToken(): Promise<void> { await this.port.clearToken(); await this.port.clearBinding() }
@@ -354,9 +354,9 @@ const RawUserAckSchema = z.object({
 ```ts
 } else {
   if (frame.error) {
-    pending.reject(new CyreneError(CyneErrorCode.BACKEND_REJECTED, frame.error.message, { backendCode: frame.error.code, retryable: frame.error.retryable }))
+    pending.reject(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, frame.error.message, { backendCode: frame.error.code, retryable: frame.error.retryable }))
   } else {
-    pending.reject(new CyreneError(CyneErrorCode.INVALID_INPUT, '消息被后端拒绝'))
+    pending.reject(new CyreneError(CyreneErrorCode.INVALID_INPUT, '消息被后端拒绝'))
   }
 }
 ```
@@ -394,7 +394,7 @@ git commit -m "feat(批次A): Task3 ACK superRefine + handleAck 结构化(BACKEN
 `ipc-executor.spec.ts` 追加（先读该文件现有断言风格；用一个抛 `CyreneError` 的 fn）：
 ```ts
 it('CyreneError.details 的 backendCode/retryable/requestId 上提进 IpcErrorBody', async () => {
-  const fn = () => { throw new CyreneError(CyneErrorCode.BACKEND_REJECTED, '队列已满', { backendCode: 'QUEUE_FULL', retryable: true }) }
+  const fn = () => { throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列已满', { backendCode: 'QUEUE_FULL', retryable: true }) }
   const handler = createIpcHandler(z.undefined(), z.unknown(), fn, { sanitize: (s: string) => s })
   const res = await handler(undefined)
   expect(res.ok).toBe(false)
@@ -405,7 +405,7 @@ it('CyreneError.details 的 backendCode/retryable/requestId 上提进 IpcErrorBo
   }
 })
 it('兼容 details.code（error 帧路径）', async () => {
-  const fn = () => { throw new CyreneError(CyneErrorCode.INVALID_INPUT, 'x', { code: 'BAD_FRAME' }) }
+  const fn = () => { throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'x', { code: 'BAD_FRAME' }) }
   const handler = createIpcHandler(z.undefined(), z.unknown(), fn, { sanitize: (s: string) => s })
   const res = await handler(undefined)
   if (!res.ok) expect(res.error.backendCode).toBe('BAD_FRAME')
@@ -537,11 +537,11 @@ Expected: FAIL——connect 签名/逻辑未变
 async connect(): Promise<BackendSession> {
   const endpoint = deps.connectionConfig.getEndpoint()
   if (deps.requireToken !== false) {
-    if (!endpoint) throw new CyreneError(CyneErrorCode.CREDENTIAL_UNAVAILABLE, '请先设置后端地址')
+    if (!endpoint) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '请先设置后端地址')
     const binding = await deps.connectionConfig.getTokenBinding()
-    if (binding?.origin !== endpoint.origin) throw new CyreneError(CyneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置或与当前地址不匹配')
+    if (binding?.origin !== endpoint.origin) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置或与当前地址不匹配')
     const token = await deps.getToken()
-    if (!token) throw new CyreneError(CyneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置')
+    if (!token) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置')
     const session = await adapter.connect({ serverUrl: endpoint.baseUrl, token })
     pushState(adapter.getConnectionState()); return session
   }
