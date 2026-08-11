@@ -316,6 +316,11 @@ const fakeWs = () => ({
   send: () => {}, close: () => {}, readyState: 1
 })
 
+// T3:abort-aware fetch 挂起直到 signal abort(真实实现靠它触发 TIMEOUT/disconnect 取消)
+const abortAwareFetch = (_url: string, init?: RequestInit) => new Promise<Response>((_, reject) => {
+  init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+})
+
 describe('RealBackend REST 方法', () => {
   function mockFetch(responses: Record<string, unknown>): { fetchImpl: typeof fetch; calls: { url: string; opts: RequestInit }[] } {
     const calls: { url: string; opts: RequestInit }[] = []
@@ -390,5 +395,20 @@ describe('RealBackend REST 方法', () => {
     const b = new RealBackend({ now: () => Date.now(), wsFactory: () => fakeWs() })
     await b.setToken('t')
     await expect(b.listConversations({ limit: 20 })).rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
+  })
+
+  // —— T3:REST 超时 + AbortController + disconnect abort ——
+  it('REST 超时:fetchImpl 挂起且 abort-aware → TIMEOUT', async () => {
+    const b = new RealBackend(makeOpts({ fetchImpl: abortAwareFetch as never, restTimeoutMs: 20 }))
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' })
+    await expect(b.listConversations({})).rejects.toMatchObject({ code: CyreneErrorCode.TIMEOUT })
+  })
+
+  it('disconnect 主动 abort → NOT_CONNECTED 而非 TIMEOUT', async () => {
+    const b = new RealBackend(makeOpts({ fetchImpl: abortAwareFetch as never, restTimeoutMs: 10000 }))
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' })
+    const p = b.listConversations({})   // 挂起
+    await b.disconnect()                // abort 全部 activeControllers
+    await expect(p).rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
   })
 })

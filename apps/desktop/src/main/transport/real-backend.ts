@@ -62,6 +62,7 @@ export interface RealBackendOptions {
   ackTimeoutMs?: number   // 默认 15000;测试注入小值
   reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
   handshakeTimeoutMs?: number  // 默认 10000;握手(connect → server_info)超时,测试注入小值
+  restTimeoutMs?: number  // 默认 10000;REST 请求超时,测试注入小值
 }
 
 /** ack 关联的 pending 发送(按 clientRequestId 幂等) */
@@ -77,6 +78,7 @@ const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_MAX_DELAY_MS = 30000
 const RECONNECT_MAX_ATTEMPTS = 6
 const HANDSHAKE_TIMEOUT_DEFAULT_MS = 10000
+const REST_TIMEOUT_DEFAULT_MS = 10000
 
 /** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
  *  400 CONTRACT_VALIDATION → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
@@ -112,8 +114,12 @@ export class RealBackend implements BackendAdapter {
   private token = ''
   private connectResolve?: (s: BackendSession) => void
   private connectReject?: (e: unknown) => void
+  /** T3:在途 REST 请求的 AbortController;disconnect 时统一 abort,使挂起请求按 NOT_CONNECTED 终止 */
+  private readonly activeControllers = new Set<AbortController>()
 
   constructor(options: RealBackendOptions = {}) { this.options = options }
+
+  private get restTimeoutMs(): number { return this.options.restTimeoutMs ?? REST_TIMEOUT_DEFAULT_MS }
 
   getConnectionState(): ConnectionState { return this.state }
 
@@ -379,6 +385,9 @@ export class RealBackend implements BackendAdapter {
     this.connectResolve = undefined
     this.connectReject = undefined
     this.setState({ status: 'disconnected' })
+    // T3:abort 全部在途 REST 请求(disconnected 已置 true → catch 走 NOT_CONNECTED,不误报 TIMEOUT)
+    for (const c of this.activeControllers) c.abort()
+    this.activeControllers.clear()
   }
 
   // —— WS 发送 ——
@@ -422,23 +431,40 @@ export class RealBackend implements BackendAdapter {
   }
 
   // —— REST 会话方法(Task 5)——
-  /** 统一 REST 请求:serverUrl 尾斜杠剥除 + Authorization Bearer + content-type;非 2xx → CyreneError(mapHttpError) */
+  /** 统一 REST 请求:serverUrl 尾斜杠剥除 + Authorization Bearer + content-type;非 2xx → CyreneError(mapHttpError)。
+   *  T3:每请求一个 AbortController,restTimeoutMs 超时 timer abort → TIMEOUT;disconnect 主动 abort → NOT_CONNECTED(不误报超时)。 */
   private async restFetch(path: string, init?: RequestInit): Promise<Response> {
     if (!this.serverUrl) {
       // F1:spec B-G6⑤——REST 方法需先 connect(serverUrl 自 connect 记录),connect 前调用显式失败而非打到空 url
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
     }
-    const url = `${(this.serverUrl ?? '').replace(/\/$/, '')}${path}`
-    const res = await (this.options.fetchImpl ?? fetch)(url, {
-      ...init,
-      headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
-      throw new CyreneError(mapHttpError(res.status, code), (body as { message?: string }).message ?? `HTTP ${res.status}`, body)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.restTimeoutMs)
+    this.activeControllers.add(controller)
+    const url = `${this.serverUrl.replace(/\/$/, '')}${path}`
+    try {
+      const res = await (this.options.fetchImpl ?? fetch)(url, {
+        ...init,
+        signal: controller.signal,
+        headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
+        throw new CyreneError(mapHttpError(res.status, code), (body as { message?: string }).message ?? `HTTP ${res.status}`, body)
+      }
+      return res
+    } catch (e) {
+      if (controller.signal.aborted) {
+        // I3/D17:disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED;否则是超时 timer abort → TIMEOUT
+        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
+        throw new CyreneError(CyreneErrorCode.TIMEOUT, `REST 请求超时(${this.restTimeoutMs}ms): ${path}`)
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+      this.activeControllers.delete(controller)
     }
-    return res
   }
 
   async listConversations(input: PageQuery): Promise<Page<Conversation>> {
