@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
+import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Message } from '@shared/contracts'
 
@@ -115,5 +116,161 @@ describe('conversationStore', () => {
     const callsBefore = mockApi.listConversations.mock.calls.length
     await store.getMore()
     expect(mockApi.listConversations.mock.calls.length).toBe(callsBefore)
+  })
+
+  // —— 批次B T8:初始化编排(FE-P1-03 §4.1)+ epoch 守卫(FE-P1-04 §4.2.3/4)+ ready/busy/error + 补激活(§4.1.3) ——
+  it('activate epoch:快速 A→B→A 迟到 A 响应不覆盖', async () => {
+    const store = useConversationStore()
+    const messageStore = useMessageStore()
+    const msgB: Message = { messageId: 'b1', conversationId: 'c2', role: 'user', content: 'B', status: 'completed', createdAt: 't' }
+    const msgA: Message = { messageId: 'a1', conversationId: 'c1', role: 'user', content: 'A', status: 'completed', createdAt: 't' }
+    let resolveLateActivate!: (v: { conversationId: string }) => void
+    mockApi.activate.mockImplementationOnce(() => new Promise((r) => { resolveLateActivate = r }))  // 第一次 A:activate 挂起(迟到)
+    mockApi.activate.mockResolvedValue({ conversationId: 'c' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+    const late = store.activate('c1')          // epoch=1,挂起于 api.activate
+    mockApi.getMessages.mockResolvedValue({ items: [msgB], hasMore: false })
+    await store.activate('c2')                 // epoch=2 完整完成
+    expect(store.currentId).toBe('c2')
+    mockApi.getMessages.mockResolvedValue({ items: [msgA], hasMore: false })
+    await store.activate('c1')                 // epoch=3 完整完成
+    expect(store.currentId).toBe('c1')
+    resolveLateActivate({ conversationId: 'c1' })  // 迟到的第一次 A 响应到达
+    await late
+    expect(store.currentId).toBe('c1')             // 不被迟到响应覆盖
+    expect(messageStore.byId['a1']?.content).toBe('A')  // 最终 A 的页面已载入
+    expect(messageStore.byId['b1']).toBeUndefined()     // 最终 A 激活时 reset 已清空 B
+    expect(store.busy).toBe(false)
+  })
+
+  it('activate epoch:getMessages 迟到页面不提交到新会话', async () => {
+    const store = useConversationStore()
+    const messageStore = useMessageStore()
+    const msgB: Message = { messageId: 'b1', conversationId: 'c2', role: 'user', content: 'B', status: 'completed', createdAt: 't' }
+    const staleA: Message = { messageId: 'a-stale', conversationId: 'c1', role: 'user', content: 'A-stale', status: 'completed', createdAt: 't' }
+    let resolveStalePage!: (v: { items: Message[]; hasMore: boolean }) => void
+    mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
+    mockApi.getMessages.mockImplementationOnce(() => new Promise((r) => { resolveStalePage = r }))  // 第一次 A:getMessages 挂起
+    const first = store.activate('c1')             // epoch=1,到达 getMessages 后挂起
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve()  // 让 first 推进到 getMessages 挂起点
+    mockApi.getMessages.mockResolvedValue({ items: [msgB], hasMore: false })
+    await store.activate('c2')                     // epoch=2 完整完成
+    expect(store.currentId).toBe('c2')
+    resolveStalePage({ items: [staleA], hasMore: false })  // 迟到的 c1 页面
+    await first
+    expect(store.currentId).toBe('c2')                  // 不被覆盖
+    expect(messageStore.byId['a-stale']).toBeUndefined() // 迟到页面未提交到 B
+    expect(messageStore.byId['b1']?.content).toBe('B')
+  })
+
+  it('onConnected 幂等:同 connectionId 只跑一次', async () => {
+    const store = useConversationStore()
+    mockApi.listConversations.mockResolvedValue({ items: [convA], hasMore: false })
+    await store.onConnected('conn-1')
+    expect(store.ready).toBe(true)
+    const calls = mockApi.listConversations.mock.calls.length
+    await store.onConnected('conn-1')
+    expect(mockApi.listConversations.mock.calls.length).toBe(calls)
+    expect(store.initializedFor).toBe('conn-1')
+  })
+
+  it('onConnected 首次:list 后 activeId 存在 → activate', async () => {
+    const store = useConversationStore()
+    useConnectionStore().$patch({ state: { status: 'connected', activeConversationId: 'c1' } })
+    mockApi.listConversations.mockResolvedValue({ items: [convA], hasMore: false })
+    mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+    await store.onConnected('conn-1')
+    expect(mockApi.listConversations).toHaveBeenCalledWith({})
+    expect(mockApi.activate).toHaveBeenCalledWith('c1')
+    expect(store.currentId).toBe('c1')
+    expect(store.ready).toBe(true)
+  })
+
+  it('onConnected 首次无 activeId → currentId 留空 + ready true(空态)', async () => {
+    const store = useConversationStore()
+    useConnectionStore().$patch({ state: { status: 'connected' } })
+    mockApi.listConversations.mockResolvedValue({ items: [], hasMore: false })
+    await store.onConnected('conn-1')
+    expect(store.currentId).toBeUndefined()
+    expect(store.ready).toBe(true)
+    expect(mockApi.activate).not.toHaveBeenCalled()
+  })
+
+  it('onConnected 重连(有 currentId):只 safeList + reconcile(activeId!==currentId → activate)', async () => {
+    const store = useConversationStore()
+    store.$patch({ currentId: 'c1' })
+    useConnectionStore().$patch({ state: { status: 'connected', activeConversationId: 'c2' } })
+    mockApi.listConversations.mockResolvedValue({ items: [convA, convB], hasMore: false })
+    mockApi.activate.mockResolvedValue({ conversationId: 'c2' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+    await store.onConnected('conn-2')
+    expect(mockApi.listConversations).toHaveBeenCalled()
+    expect(mockApi.activate).toHaveBeenCalledWith('c2')
+    expect(store.currentId).toBe('c2')
+    expect(store.ready).toBe(true)
+  })
+
+  it('safeList 失败写 error 不抛', async () => {
+    const store = useConversationStore()
+    mockApi.listConversations.mockRejectedValue(new Error('list boom'))
+    await expect(store.safeList()).resolves.toBeUndefined()
+    expect(store.error?.message).toContain('list boom')
+    expect(store.busy).toBe(false)
+  })
+
+  it('ready 初始 false,onConnected(safeList) 后 true(N1)', async () => {
+    const store = useConversationStore()
+    expect(store.ready).toBe(false)
+    mockApi.listConversations.mockResolvedValue({ items: [], hasMore: false })
+    await store.onConnected('conn-1')
+    expect(store.ready).toBe(true)
+  })
+
+  it('onActiveConversationAppeared:currentId 空 → activate;已设 → 不动;busy → 跳过', async () => {
+    const store = useConversationStore()
+    mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+    // currentId 空 → activate
+    await store.onActiveConversationAppeared('c1')
+    expect(mockApi.activate).toHaveBeenCalledWith('c1')
+    expect(store.currentId).toBe('c1')
+    const callsAfterActivate = mockApi.activate.mock.calls.length
+    // 已设 → 不动
+    await store.onActiveConversationAppeared('c2')
+    expect(mockApi.activate.mock.calls.length).toBe(callsAfterActivate)
+    expect(store.currentId).toBe('c1')
+    // busy → 跳过
+    store.$patch({ currentId: undefined })
+    store.$patch({ busy: true })
+    await store.onActiveConversationAppeared('c3')
+    expect(mockApi.activate.mock.calls.length).toBe(callsAfterActivate)
+    expect(store.currentId).toBeUndefined()
+  })
+
+  it('safeList 期间用户切会话不覆盖(m6)', async () => {
+    const store = useConversationStore()
+    useConnectionStore().$patch({ state: { status: 'connected', activeConversationId: 'c1' } })
+    let resolveList!: (v: unknown) => void
+    mockApi.listConversations.mockImplementationOnce(() => new Promise((r) => { resolveList = r }))
+    mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+    const init = store.onConnected('conn-1')   // 挂起于 safeList
+    await store.activate('c9')                 // 挂起期间用户手动切到 c9
+    expect(store.currentId).toBe('c9')
+    resolveList({ items: [convA, convB], hasMore: false })
+    await init
+    expect(store.currentId).toBe('c9')             // 不覆盖用户选择
+    expect(mockApi.activate).not.toHaveBeenCalledWith('c1')  // activeId c1 不再自动 activate
+    expect(store.ready).toBe(true)
+  })
+
+  it('activate 失败写 error + busy 复位', async () => {
+    const store = useConversationStore()
+    mockApi.activate.mockRejectedValue(new Error('activate boom'))
+    await store.activate('c1')
+    expect(store.error?.message).toContain('activate boom')
+    expect(store.busy).toBe(false)
+    expect(store.currentId).toBe('c1')   // currentId 已立即切走(失败也留在目标会话)
   })
 })
