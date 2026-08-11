@@ -39,6 +39,16 @@ describe('conversationStore', () => {
     expect(store.nextCursor).toBe('cur-1')
   })
 
+  it('F1:操作失败置 error,成功后清旧错误(短横幅语义)', async () => {
+    const store = useConversationStore()
+    mockApi.listConversations.mockRejectedValueOnce(new Error('[AUTHENTICATION_FAILED] 401'))
+    await store.list()
+    expect(store.error?.code).toBe('AUTHENTICATION_FAILED')
+    mockApi.listConversations.mockResolvedValueOnce({ items: [convA], hasMore: false })
+    await store.list()
+    expect(store.error).toBeUndefined()
+  })
+
   it('activate(id):api.activate + resetConversation + getMessages → loadPage', async () => {
     const store = useConversationStore()
     const messageStore = useMessageStore()

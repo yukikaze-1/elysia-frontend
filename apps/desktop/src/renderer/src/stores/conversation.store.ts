@@ -33,6 +33,7 @@ export const useConversationStore = defineStore('conversation', () => {
       items.value = p.items
       hasMore.value = p.hasMore
       nextCursor.value = p.nextCursor
+      error.value = undefined   // F1:成功清旧错误(短横幅语义,防残留)
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
     } finally {
@@ -93,6 +94,7 @@ export const useConversationStore = defineStore('conversation', () => {
       const p = await api.getMessages({ conversationId: id })
       if (myEpoch !== epoch) return
       messageStore.loadPage(p)
+      error.value = undefined   // F1:激活成功清旧错误
     } catch (e) {
       if (myEpoch !== epoch) return    // 被取代的请求失败不打扰
       error.value = parsePublicError(messageOf(e))
@@ -110,6 +112,7 @@ export const useConversationStore = defineStore('conversation', () => {
       items.value.push(...p.items)
       hasMore.value = p.hasMore
       nextCursor.value = p.nextCursor
+      error.value = undefined   // F1:成功清旧错误
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
     } finally {
@@ -124,6 +127,7 @@ export const useConversationStore = defineStore('conversation', () => {
       const c = await api.createConversation({})
       await safeList()
       currentId.value = c.id
+      error.value = undefined   // F1:成功清旧错误
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
     } finally {
@@ -137,6 +141,7 @@ export const useConversationStore = defineStore('conversation', () => {
     try {
       await api.renameConversation(input)
       await safeList()
+      error.value = undefined   // F1:成功清旧错误
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
     } finally {
@@ -156,6 +161,7 @@ export const useConversationStore = defineStore('conversation', () => {
         currentId.value = undefined
         useMessageStore().resetConversation(id)
       }
+      error.value = undefined   // F1:成功清旧错误
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
     } finally {
