@@ -58,13 +58,24 @@ describe('createCredentialsExecutors', () => {
     expect(config.clearBackendToken).toHaveBeenCalled()
     expect(store.clearCredential).not.toHaveBeenCalled()
   })
-  it('非 BACKEND_TOKEN_KEY → 通用 store 路径不变（config 未被调）', async () => {
+  it('非白名单 key → schema 拒绝（SCHEMA_VALIDATION_FAILED，不触 store/config）', async () => {
+    const config = { setBackendToken: vi.fn(async () => {}), clearBackendToken: vi.fn(async () => {}) }
+    const store = { getStatus: vi.fn(async () => 'available'), setCredential: vi.fn(async () => {}) }
+    const executors = createCredentialsExecutors(store as unknown as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize }, config as never)
+    const res = await executors.set({ key: 'app.foo', value: 'v' })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.code).toBe('SCHEMA_VALIDATION_FAILED')
+    expect(store.setCredential).not.toHaveBeenCalled()
+    expect(config.setBackendToken).not.toHaveBeenCalled()
+  })
+  it('BACKEND_TOKEN_ORIGIN_KEY → 拒绝（绑定 origin 仅经连接配置内部维护）', async () => {
     const config = { setBackendToken: vi.fn(async () => {}), clearBackendToken: vi.fn(async () => {}) }
     const store = { getStatus: vi.fn(async () => 'available'), setCredential: vi.fn(async () => {}) }
     const executors = createCredentialsExecutors(store as unknown as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize }, config as never)
     const res = await executors.set({ key: BACKEND_TOKEN_ORIGIN_KEY, value: 'https://a.example' })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.code).toBe('INVALID_INPUT')
+    expect(store.setCredential).not.toHaveBeenCalled()
     expect(config.setBackendToken).not.toHaveBeenCalled()
-    expect(store.setCredential).toHaveBeenCalledWith(BACKEND_TOKEN_ORIGIN_KEY, 'https://a.example')
-    expect(res).toEqual({ ok: true, data: { status: 'available', key: BACKEND_TOKEN_ORIGIN_KEY } })
   })
 })

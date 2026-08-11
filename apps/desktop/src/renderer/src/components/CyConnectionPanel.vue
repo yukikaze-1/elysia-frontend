@@ -7,6 +7,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import type { CredentialStatus } from '@shared/contracts'
 import { api } from '../stores/desktop-api'
+import { parsePublicError } from '../utils/public-error'
 
 const connection = useConnectionStore()
 const mode = ref<'real' | 'mock'>('real')
@@ -34,8 +35,10 @@ async function applyEndpoint(): Promise<void> {
   try {
     const r = await api.setEndpoint(endpointInput.value.trim())
     endpointInput.value = r.endpoint
+    // origin 变化 → Main 已自动清 token+binding,chip 同步刷新(最终 review 修复)
+    tokenStatus.value = await api.getCredentialStatus()
   } catch (e: unknown) {
-    endpointErr.value = e instanceof Error ? e.message : String(e)
+    endpointErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
   }
 }
 
@@ -46,7 +49,7 @@ async function applyToken(): Promise<void> {
   try {
     tokenStatus.value = await api.setBackendToken(t)
   } catch (e: unknown) {
-    tokenErr.value = e instanceof Error ? e.message : String(e)
+    tokenErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
   } finally {
     tokenInput.value = ''   // 提交后立即清空明文(spec 3.2.2)
   }

@@ -135,6 +135,7 @@ export const useMessageStore = defineStore('message', () => {
   async function send(text: string): Promise<void> {
     const conversationId = useConversationStore().currentId
     if (!conversationId) return
+    lastError.value = undefined   // 新发送清旧错误,避免失败横幅残留(最终 review 修复)
     const clientRequestId = crypto.randomUUID()
     const key = `local-${clientRequestId}`
     const optimistic: Message = {

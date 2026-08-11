@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import { IpcChannels, BACKEND_TOKEN_KEY, type IpcResult } from '@shared/contracts'
+import { IpcChannels, BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, type IpcResult } from '@shared/contracts'
 import type { CredentialStatus } from '@shared/contracts'
+import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type { Logger } from '../diagnostics/logger'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import { createIpcHandler } from '../ipc/executor'
@@ -39,6 +40,8 @@ export function createCredentialsExecutors(store: CredentialStore, opts: { logge
         const before = await store.getStatus(req.key)
         if (req.key === BACKEND_TOKEN_KEY && connConfig) {
           await connConfig.setBackendToken(req.value)   // 决策 9：token 走 connection-config（endpoint 校验 + origin 绑定）
+        } else if (req.key === BACKEND_TOKEN_ORIGIN_KEY) {
+          throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '绑定 origin 仅经连接配置内部维护')   // 纵深：绑定 origin 不开放通用写（最终 review 修复）
         } else {
           await store.setCredential(req.key, req.value)
         }
@@ -52,6 +55,8 @@ export function createCredentialsExecutors(store: CredentialStore, opts: { logge
         const before = await store.getStatus(req.key)
         if (req.key === BACKEND_TOKEN_KEY && connConfig) {
           await connConfig.clearBackendToken()   // 决策 9：clear 同理委派（token + 绑定同清）
+        } else if (req.key === BACKEND_TOKEN_ORIGIN_KEY) {
+          throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '绑定 origin 仅经连接配置内部维护')
         } else {
           await store.clearCredential(req.key)
         }
