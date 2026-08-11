@@ -20,5 +20,5 @@ export function registerHandlers(deps: { credentials: CredentialStore; logger: L
   })
   registerHandler(IpcChannels.appGetInfo, createIpcHandler(z.undefined(), appInfoSchema, () => getAppInfo(), { sanitize }), 0)
   registerCredentialsHandlers(deps.credentials, { logger: deps.logger, sanitize }, deps.connectionConfig)
-  registerChatHandlers({ svc: deps.chat, sanitize })
+  registerChatHandlers({ svc: deps.chat, sanitize, logger: deps.logger })
 }
