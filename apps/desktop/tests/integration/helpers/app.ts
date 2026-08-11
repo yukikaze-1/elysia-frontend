@@ -30,7 +30,8 @@ export async function launchApp(): Promise<LaunchedApp> {
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     [appDataKey]: userData,        // appData→userData 隔离(join(appData,'Cyrene'))
-    CYRENE_TEST_HARNESS: '1'
+    CYRENE_TEST_HARNESS: '1',
+    CYRENE_BACKEND: 'mock'         // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
   }
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
   const app = await _electron.launch({ executablePath: electronPath, args: [ROOT], cwd: ROOT, env, timeout: 30000 })

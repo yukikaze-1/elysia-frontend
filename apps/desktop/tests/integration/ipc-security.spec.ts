@@ -21,11 +21,12 @@ describe('IPC 安全', () => {
         hasProcess: typeof w.process
       }
     })
-    // 2C desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 = 18 键(排序断言)
+    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键(排序断言)
     expect(surface.keys).toEqual([
       'activate', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation',
-      'disconnect', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getMessages',
-      'listConversations', 'onChatEvent', 'onChatReplay', 'onChatState', 'renameConversation', 'send', 'setBackendToken'
+      'disconnect', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getMessages',
+      'getRuntimeInfo', 'listConversations', 'onChatEvent', 'onChatReplay', 'onChatState', 'renameConversation',
+      'send', 'setBackendToken', 'setEndpoint'
     ])
     expect(surface.hasIpc).toBe(false)
     expect(surface.hasRequire).toBe('undefined')
@@ -56,10 +57,11 @@ describe('IPC 安全', () => {
         const afterClear = await window.desktopApi.clearBackendToken()
         return { initial, setErr, afterClear }
       }
-      const s1 = await window.desktopApi.setBackendToken('sk-test-token')
-      const s2 = await window.desktopApi.getCredentialStatus()
-      const s3 = await window.desktopApi.clearBackendToken()
-      return { initial, setErr: null, s1, s2, s3 }
+      await window.desktopApi.setEndpoint('http://127.0.0.1:8765')   // 新规则：token 需先绑定 endpoint，否则 setBackendToken 抛 CREDENTIAL_UNAVAILABLE
+      const s2 = await window.desktopApi.setBackendToken('sk-test-token')
+      const s3 = await window.desktopApi.getCredentialStatus()
+      const s4 = await window.desktopApi.clearBackendToken()
+      return { initial, setErr: null, s1: s2, s2: s3, s3: s4 }
     })
     if (flow.initial === 'unavailable') {
       expect(flow.setErr).toContain('CREDENTIAL_UNAVAILABLE')
@@ -67,6 +69,23 @@ describe('IPC 安全', () => {
     } else {
       expect(flow.s1).toBe('available'); expect(flow.s2).toBe('available'); expect(flow.s3).toBe('empty')
     }
+  })
+  it('endpoint 变更后旧 token 不自动复用（绑定被清）', async () => {
+    const res = await page.evaluate(async () => {
+      const initial = await window.desktopApi.getCredentialStatus()
+      if (initial === 'unavailable') return { skipped: true }   // safeStorage 不可用环境跳过（与凭据往返用例同款分支）
+      await window.desktopApi.setEndpoint('http://127.0.0.1:8765')   // 先绑定本机
+      await window.desktopApi.setBackendToken('sk-test')
+      await window.desktopApi.setEndpoint('https://attacker.example') // origin 变 → 自动清 token 绑定
+      return { skipped: false, status: await window.desktopApi.getCredentialStatus() }
+    })
+    if (res.skipped) return
+    expect(res.status).toBe('empty')   // 集成套件跑 Mock（launchApp 设 CYRENE_BACKEND=mock）；真正禁止外发 token 的 connect 守卫在 Real 路径，由 chat-service 单测覆盖
+  })
+  it('getRuntimeInfo 返回装配模式', async () => {
+    const info = await page.evaluate(() => window.desktopApi.getRuntimeInfo())
+    expect(['real', 'mock']).toContain(info.mode)
+    expect(typeof info.packaged).toBe('boolean')
   })
   it('非主窗口 webContents invoke → 被 isTrustedSender 拒绝（来源校验）', async () => {
     const res = await app.evaluate(async ({ BrowserWindow }, preloadPath) => {
