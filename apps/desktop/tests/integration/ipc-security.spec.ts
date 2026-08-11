@@ -2,6 +2,7 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { join } from 'path'
 import type { ElectronApplication, Page } from 'playwright'
+import { IpcChannels, PushChannels } from '@shared/contracts'
 import { launchApp, closeApp } from './helpers/app'
 
 let app: ElectronApplication
@@ -21,16 +22,25 @@ describe('IPC 安全', () => {
         hasProcess: typeof w.process
       }
     })
-    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键(排序断言)
+    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键(排序断言:F4 onChatError 落于 listConversations 与 onChatEvent 之间)
     expect(surface.keys).toEqual([
       'activate', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation',
       'disconnect', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getMessages',
-      'getRuntimeInfo', 'listConversations', 'onChatEvent', 'onChatReplay', 'onChatState', 'renameConversation',
+      'getRuntimeInfo', 'listConversations', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'renameConversation',
       'send', 'setBackendToken', 'setEndpoint'
     ])
     expect(surface.hasIpc).toBe(false)
     expect(surface.hasRequire).toBe('undefined')
     expect(surface.hasProcess).toBe('undefined')
+  })
+  it('chat:error 是纯 push 通道:不入 IpcChannels invoke 枚举(M4)', async () => {
+    // Main→Renderer 推送通道只经 preload 的 ipcRenderer.on 订阅,绝无 invoke 语义;
+    // PushChannels.error 必须存在于推送集合,且不出现在任何命令式 invoke 通道枚举里。
+    expect(PushChannels.error).toBe('chat:error')
+    expect(Object.values(IpcChannels)).not.toContain('chat:error')
+    // 订阅面含 onChatError(纯 push 订阅方法;22 键白名单已含该键)
+    const hasSub = await page.evaluate(() => typeof window.desktopApi.onChatError === 'function')
+    expect(hasSub).toBe(true)
   })
   it('超大输入 → SCHEMA_VALIDATION_FAILED', async () => {
     const err = await page.evaluate(async () => {

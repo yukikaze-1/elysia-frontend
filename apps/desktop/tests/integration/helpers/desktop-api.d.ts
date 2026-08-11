@@ -17,6 +17,8 @@ declare global {
       getEndpoint(): Promise<{ endpoint?: string }>
       getRuntimeInfo(): Promise<RuntimeInfo>
       connect(): Promise<BackendSession>
+      // —— 聊天错误订阅(纯 push 通道,不入 invoke;与 src/preload/index.d.ts 同源窄声明) ——
+      onChatError(handler: (err: { code: string; message: string; backendCode?: string; retryable?: boolean; requestId?: string }) => void): () => void
     }
   }
 }
