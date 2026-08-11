@@ -2,7 +2,7 @@ import type { BackendSession, ConversationMessagesQuery, ConnectionState } from 
 import type { BackendAdapter } from '../transport/backend-adapter'
 import type { CreateConversationInput, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
-import type { SendMessageInput } from '@shared/contracts/message'
+import type { Message, SendMessageInput } from '@shared/contracts/message'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { PushChannels } from '@shared/contracts/ipc'
 
@@ -49,6 +49,10 @@ export function createChatService(deps: ChatServiceDeps) {
     getConnectionState: () => adapter.getConnectionState(),
     /** 连接状态变化主动推送(adapter.onConnectionStateChange 由装配方桥到此处) */
     pushState,
+    /** 会话历史回放推送(chat:replay);由装配方在 adapter 支持 onSessionReplay(RealBackend)时桥到此处,P1-1 */
+    pushReplay(conversationId: string, messages: Message[]): void {
+      deps.send(PushChannels.replay, { conversationId, messages })
+    },
     dispose(): void { unsub?.() }
   }
 }

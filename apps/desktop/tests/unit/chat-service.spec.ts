@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createChatService } from '../../src/main/chat/chat-service'
 import { MockBackend } from '../../src/main/transport/mock-backend'
+import type { Message } from '@shared/contracts/message'
 
 function makeDeps(overrides: Partial<Parameters<typeof createChatService>[0]> = {}) {
   const adapter = new MockBackend()
@@ -42,5 +43,23 @@ describe('chat-service', () => {
     const { deps } = makeDeps({ getToken: () => undefined, requireToken: true })
     const svc = createChatService(deps)
     await expect(svc.connect({ serverUrl: 'mock://test' })).rejects.toMatchObject({ code: 'CREDENTIAL_UNAVAILABLE' })
+  })
+
+  it('pushReplay 转发 chat:replay(会话回放生产侧桥)', () => {
+    const { deps, sent } = makeDeps()
+    const svc = createChatService(deps)
+    const messages: Message[] = [{
+      messageId: 'm-1',
+      conversationId: 'conv-1001',
+      role: 'assistant',
+      status: 'completed',
+      createdAt: '2026-08-10T00:00:00.000Z'
+    }]
+    svc.pushReplay('conv-1001', messages)
+    const replay = sent.find((s) => s.channel === 'chat:replay')
+    expect(replay).toBeDefined()
+    expect((replay?.payload as { conversationId: string; messages: Message[] }).conversationId).toBe('conv-1001')
+    expect((replay?.payload as { conversationId: string; messages: Message[] }).messages).toHaveLength(1)
+    svc.dispose()
   })
 })
