@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeAppMode, resolveAppConfig, shouldUseViteDevServer } from '../../src/main/config/env'
+import { resolveBackendMode } from '../../src/main/config/backend-mode'
 
 describe('normalizeAppMode', () => {
   it('development/test 原样保留', () => {
@@ -58,5 +59,22 @@ describe('shouldUseViteDevServer', () => {
     expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'http://' })).toBe(false)
     expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'not-a-url' })).toBe(false)
     expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'file:///x' })).toBe(false)
+  })
+})
+
+describe('resolveBackendMode', () => {
+  it('packaged → real（无视 env，mock env 不能翻成 mock）', () => {
+    expect(resolveBackendMode(true, { CYRENE_BACKEND: 'mock' })).toBe('real')
+    expect(resolveBackendMode(true, {})).toBe('real')
+  })
+  it('未打包 + CYRENE_BACKEND=mock → mock（显式演示模式）', () => {
+    expect(resolveBackendMode(false, { CYRENE_BACKEND: 'mock' })).toBe('mock')
+  })
+  it('未打包默认 → real（CYRENE_BACKEND=real 显式或缺失都 real）', () => {
+    expect(resolveBackendMode(false, {})).toBe('real')
+    expect(resolveBackendMode(false, { CYRENE_BACKEND: 'real' })).toBe('real')
+  })
+  it('未打包 + 未知值 → real（fail-safe，不识别即 real）', () => {
+    expect(resolveBackendMode(false, { CYRENE_BACKEND: 'staging' })).toBe('real')
   })
 })

@@ -2,7 +2,7 @@
 import { app, dialog, Menu, safeStorage } from 'electron'
 import { join } from 'path'
 import { realpath } from 'fs/promises'
-import { BACKEND_TOKEN_KEY, isKeyAllowed } from '@shared/contracts'
+import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
 import type { Message } from '@shared/contracts/message'
 import { installAppIdentity, expectedUserDataBase } from './app/lifecycle'
@@ -12,6 +12,8 @@ import { getMainWindow } from './ipc/registry'
 import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
 import { hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
+import { resolveBackendMode } from './config/backend-mode'
+import { ConnectionConfig } from './connection/connection-config'
 import { registerCyreneScheme, registerCyreneProtocolHandler } from './protocol'
 import { createDiagnostics } from './diagnostics'
 import { createShutdownHandler } from './shutdown'
@@ -97,24 +99,41 @@ async function main(): Promise<void> {
     const safeRoot = await realpath(expectedUserDataBase())
     const diagnostics = createDiagnostics({ logs: dirs.logs, audit: dirs.audit }, { logLevel: config.logLevel, retentionDays: 30, sanitize })
     const store = new CredentialStore(join(dirs.config, 'credentials.json'), safeStorage, isKeyAllowed, safeRoot)
-    // 装配 chat-service：MockBackend 默认(演示免 token)；B-01 联调时设 CYRENE_BACKEND=real 切 RealBackend。
+    // 装配 chat-service：装配策略（spec 决策 7）打包恒 Real；未打包默认 Real，仅 CYRENE_BACKEND=mock 显式 Mock（演示免 token）。
     // onConnectionStateChange → svc.pushState；onSessionReplay → svc.pushReplay(chat:replay 生产侧桥,P1-1)。
     // MockBackend 无 onSessionReplay 选项,回放桥仅 RealBackend 分支生效；
     // 用 const 桥容器打破 adapter→svc 环引用(adapter 构造在前、svc 在后,回调只在 connect/disconnect/会话回放时触发,此时已装配完)。
+    const useMock = resolveBackendMode(app.isPackaged, process.env) === 'mock'
     const chatBridge: { svc: ChatService | undefined } = { svc: undefined }
     const onState = (state: ConnectionState) => chatBridge.svc?.pushState(state)
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
-    const adapter: BackendAdapter = process.env['CYRENE_BACKEND'] === 'real'
-      ? new RealBackend({ onConnectionStateChange: onState, onSessionReplay: onReplay })
-      : new MockBackend({ onConnectionStateChange: onState })
+    const adapter: BackendAdapter = useMock
+      ? new MockBackend({ onConnectionStateChange: onState })
+      : new RealBackend({ onConnectionStateChange: onState, onSessionReplay: onReplay })
+    // connection-config：注入 CredentialStore 端口（token 与 origin 绑定同仓不同 key）——
+    // BACKEND_TOKEN_KEY 由 connection-config 的 set/clear 经 credentials IPC 特判委派（决策 9）。
+    // onEndpointChanged 审计：只记规范化 origin（不含 token/完整 URL 参数，spec 3.1.2）；AuditEvent 字段 ts/type/summary（无 data）。
+    const connConfig = new ConnectionConfig(
+      {
+        loadToken: () => store.getCredential(BACKEND_TOKEN_KEY).then((t) => t ?? undefined),
+        saveToken: (v) => store.setCredential(BACKEND_TOKEN_KEY, v),
+        clearToken: () => store.clearCredential(BACKEND_TOKEN_KEY),
+        loadBinding: () => store.getCredential(BACKEND_TOKEN_ORIGIN_KEY).then((t) => t ?? undefined),
+        saveBinding: (o) => store.setCredential(BACKEND_TOKEN_ORIGIN_KEY, o),
+        clearBinding: () => store.clearCredential(BACKEND_TOKEN_ORIGIN_KEY)
+      },
+      (e) => { void diagnostics.auditor.audit({ ts: new Date().toISOString(), type: 'endpoint:set', summary: e.origin }) }
+    )
     const chatSvc = createChatService({
       adapter,
       send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },   // P3:webContents 守卫(窗口未建不崩)
       getToken: () => store.getCredential(BACKEND_TOKEN_KEY).then((t) => t ?? undefined),   // R1:CredentialStore 是 async getCredential
-      requireToken: adapter instanceof MockBackend ? false : true
+      requireToken: !useMock,
+      connectionConfig: connConfig,
+      packaged: app.isPackaged
     })
     chatBridge.svc = chatSvc
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig })
     app.on('before-quit', createShutdownHandler({ closeAll: diagnostics.closeAll, quit: () => app.quit() }))
     diagnostics.logger.info('app:user-data-ready', { baseCreated, config: dirs.config, logs: dirs.logs, audit: dirs.audit })
     if (!shouldUseViteDevServer(app.isPackaged, process.env)) {
