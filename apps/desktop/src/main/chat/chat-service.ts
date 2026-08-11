@@ -1,16 +1,19 @@
-import type { BackendSession, ConversationMessagesQuery, ConnectionState } from '@shared/contracts/backend'
+import type { BackendSession, ConversationMessagesQuery, ConnectionState, RuntimeInfo } from '@shared/contracts/backend'
 import type { BackendAdapter } from '../transport/backend-adapter'
 import type { CreateConversationInput, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
 import type { Message, SendMessageInput } from '@shared/contracts/message'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { PushChannels } from '@shared/contracts/ipc'
+import type { ConnectionConfig } from '../connection/connection-config'
 
 export interface ChatServiceDeps {
   adapter: BackendAdapter
   send: (channel: string, payload: unknown) => void   // webContents.send 包装(PushChannels)
   getToken: () => string | undefined | Promise<string | undefined>   // 凭据读取(async;装配用 store.getCredential(key).then(t=>t??undefined),R1)
   requireToken?: boolean
+  connectionConfig: ConnectionConfig   // endpoint 规范化 + token-origin 绑定（connect 校验/设置都经它）
+  packaged?: boolean                   // 装配信息（getRuntimeInfo 展示用）
 }
 
 export type ChatService = ReturnType<typeof createChatService>
@@ -27,15 +30,31 @@ export function createChatService(deps: ChatServiceDeps) {
   const pushState = (s: ConnectionState) => deps.send(PushChannels.state, s)
 
   return {
-    async connect(input: { serverUrl: string }): Promise<BackendSession> {
-      let token: string | undefined
+    async connect(): Promise<BackendSession> {
+      const endpoint = deps.connectionConfig.getEndpoint()
       if (deps.requireToken !== false) {
-        token = await deps.getToken()
+        if (!endpoint) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '请先设置后端地址')
+        const binding = await deps.connectionConfig.getTokenBinding()
+        if (binding?.origin !== endpoint.origin) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置或与当前地址不匹配')
+        const token = await deps.getToken()
         if (!token) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置')
+        const session = await adapter.connect({ serverUrl: endpoint.baseUrl, token })
+        pushState(adapter.getConnectionState()); return session
       }
-      const session = await adapter.connect({ serverUrl: input.serverUrl, token })
-      pushState(adapter.getConnectionState())
-      return session
+      const session = await adapter.connect({ serverUrl: 'mock://local' })
+      pushState(adapter.getConnectionState()); return session
+    },
+    /** 设置后端地址：经 connection-config 规范化 + 校验（origin 变化自动清 token 绑定） */
+    async setEndpoint(rawUrl: string): Promise<{ endpoint: string }> {
+      const e = await deps.connectionConfig.setEndpoint(rawUrl)
+      return { endpoint: e.baseUrl }
+    },
+    getEndpoint(): { endpoint?: string } {
+      const e = deps.connectionConfig.getEndpoint()
+      return { endpoint: e?.baseUrl }
+    },
+    getRuntimeInfo(): RuntimeInfo {
+      return { mode: deps.requireToken !== false ? 'real' : 'mock', packaged: deps.packaged ?? false }
     },
     async disconnect(): Promise<void> { await adapter.disconnect(); pushState(adapter.getConnectionState()) },
     listConversations: (input: PageQuery) => adapter.listConversations(input),

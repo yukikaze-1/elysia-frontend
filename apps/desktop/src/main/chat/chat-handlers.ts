@@ -10,11 +10,16 @@ import {
   chatConnectSchema,
   chatCreateSchema,
   chatDeleteSchema,
+  chatGetEndpointSchema,
   chatGetMessagesSchema,
+  chatGetRuntimeInfoSchema,
   chatGetStateSchema,
   chatListConversationsSchema,
   chatRenameSchema,
-  chatSendSchema
+  chatSendSchema,
+  chatSetEndpointSchema,
+  endpointResponseSchema,
+  runtimeInfoResponseSchema
 } from '../ipc/channels'
 import type { ChatService } from './chat-service'
 
@@ -26,11 +31,15 @@ export function registerChatHandlers(opts: { svc: ChatService; sanitize: Message
   const { svc, sanitize } = opts
   const handle = <TReq>(
     requestSchema: z.ZodType<TReq>,
-    fn: (req: TReq) => unknown
+    fn: (req: TReq) => unknown,
+    responseSchema: z.ZodType<unknown> = responseEnvelope
   ): ((raw: unknown) => Promise<IpcResult<unknown>>) =>
-    createIpcHandler(requestSchema, responseEnvelope, fn, { sanitize })
+    createIpcHandler(requestSchema, responseSchema, fn, { sanitize })
 
-  registerHandler(IpcChannels.chatConnect, handle(chatConnectSchema, (req) => svc.connect(req)), 1)
+  registerHandler(IpcChannels.chatConnect, handle(chatConnectSchema, () => svc.connect()), 0)   // 无参：endpoint/token 由 connection-config 持有
+  registerHandler(IpcChannels.chatSetEndpoint, handle(chatSetEndpointSchema, (req) => svc.setEndpoint(req.serverUrl), endpointResponseSchema), 1)
+  registerHandler(IpcChannels.chatGetEndpoint, handle(chatGetEndpointSchema, () => svc.getEndpoint(), endpointResponseSchema), 0)
+  registerHandler(IpcChannels.chatGetRuntimeInfo, handle(chatGetRuntimeInfoSchema, () => svc.getRuntimeInfo(), runtimeInfoResponseSchema), 0)
   registerHandler(IpcChannels.chatDisconnect, handle(z.undefined(), () => svc.disconnect()), 0)
   registerHandler(IpcChannels.chatListConversations, handle(chatListConversationsSchema, (req) => svc.listConversations(req)), 1)
   registerHandler(IpcChannels.chatGetMessages, handle(chatGetMessagesSchema, (req) => svc.getMessages(req)), 1)
