@@ -61,6 +61,29 @@ describe('messageStore 流式应用', () => {
     expect(store.activeGenerationId).toBeUndefined()
   })
 
+  it('cancel 后同代迟到 completed 不复活 interrupted(P2-5)', async () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    await store.cancel()
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    // activeGenerationId 已清空,同代迟到 completed 丢弃(accumulator 仍在也不复活)
+    store.applyEvent({ ...started(), event: 'generation.completed', usage: { input: 1, output: 2, total: 3, source: 'provider_reported' }, model: 'm1', emotion: 'happy' })
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.byId['msg-1']?.usage).toBeUndefined()
+  })
+
+  it('断线后同代迟到 delta/completed 丢弃(P2-5)', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.handleConnectionStateChange({ status: 'reconnecting' })
+    // 迟到 delta:不追加分段
+    store.applyEvent(delta('seg-1', 0, '迟到'))
+    expect(store.byId['msg-1']?.assistantSegments).toHaveLength(0)
+    // 迟到 completed:不复活为 completed
+    store.applyEvent({ ...started(), event: 'generation.completed', usage: { input: 1, output: 2, total: 3, source: 'provider_reported' }, model: 'm1', emotion: 'happy' })
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+  })
+
   it('loadReplay 按 messageId 去重插入(P2-2)', () => {
     const store = useMessageStore()
     const m1 = { messageId: 'msg-r1', conversationId: 'conv-1', role: 'user', content: 'hi', status: 'completed', createdAt: 't' } as Message

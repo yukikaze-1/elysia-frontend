@@ -20,21 +20,26 @@ describe('connectionStore', () => {
     vi.resetAllMocks()
   })
 
-  it('connect 成功:调 api.connect;state.status 由 onChatState 推送更新', async () => {
+  it('connect 成功:调 api.connect;等待期间乐观 connecting,成功后状态由 onChatState 推送决定', async () => {
     const store = useConnectionStore()
-    mockApi.connect.mockResolvedValue({ sessionId: 's1', protocolVersion: '2.0', serverUrl: 'http://localhost:3000' })
-    await store.connect('http://localhost:3000')
+    let resolveConnect!: (v: { sessionId: string; protocolVersion: string; serverUrl: string }) => void
+    mockApi.connect.mockImplementation(() => new Promise((res) => { resolveConnect = res }))
+    const pending = store.connect('http://localhost:3000')
     expect(mockApi.connect).toHaveBeenCalledWith('http://localhost:3000')
+    // 成功前乐观 connecting(P1-2:置位于 await 之前,不被 invoke reply 覆写)
     expect(store.state.status).toBe('connecting')
+    expect(store.connecting).toBe(true)
+    resolveConnect({ sessionId: 's1', protocolVersion: '2.0', serverUrl: 'http://localhost:3000' })
+    await pending
     expect(store.connecting).toBe(false)
     expect(store.error).toBeUndefined()
-    // 连接建立后由 onChatState 推送 state(C-3 定死 push,不轮询)
+    // connect 成功后状态由 onChatState 推送的 connected 决定(C-3 定死 push,不轮询)
     store.setState({ status: 'connected', connectionId: 'cid-1' })
     expect(store.state.status).toBe('connected')
     expect(store.state.connectionId).toBe('cid-1')
   })
 
-  it('connect 失败:api.connect reject → error 置位,状态不前进', async () => {
+  it('connect 失败:api.connect reject → error 置位,状态复位 disconnected', async () => {
     const store = useConnectionStore()
     mockApi.connect.mockRejectedValue(new Error('boom'))
     await store.connect('http://localhost:3000')

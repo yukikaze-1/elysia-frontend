@@ -102,6 +102,8 @@ export const useMessageStore = defineStore('message', () => {
       case 'generation.segment.completed': {
         const acc = accumulator.value
         if (!acc || acc.getState().generationId !== event.generationId) break // 跨代/迟到事件丢弃(P2-2)
+        // P2-5:cancel/断线已清 activeGenerationId,同代迟到事件丢弃(accumulator 仍在,防覆盖 interrupted)
+        if (event.generationId !== activeGenerationId.value) break
         acc.apply(event)
         patchAssistant(acc.getState().messageId, acc)
         break
@@ -109,6 +111,8 @@ export const useMessageStore = defineStore('message', () => {
       case 'generation.completed': {
         const acc = accumulator.value
         if (!acc || acc.getState().generationId !== event.generationId) break
+        // P2-5:同上——activeGenerationId 清空后迟到 completed 不得把 interrupted 复活为 completed
+        if (event.generationId !== activeGenerationId.value) break
         acc.apply(event)
         finalizeAssistant(acc.getState().messageId, acc)
         activeGenerationId.value = undefined
@@ -117,6 +121,8 @@ export const useMessageStore = defineStore('message', () => {
       case 'generation.failed': {
         const acc = accumulator.value
         if (!acc || acc.getState().generationId !== event.generationId) break
+        // P2-5:同上——同代迟到 failed 丢弃(已断线/cancel 不应降级状态)
+        if (event.generationId !== activeGenerationId.value) break
         acc.apply(event)
         failAssistant(acc.getState().messageId, event)
         activeGenerationId.value = undefined

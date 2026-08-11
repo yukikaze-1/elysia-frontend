@@ -43,10 +43,11 @@ function isTextSegment(seg: AssistantSegment): boolean {
 </script>
 
 <template>
-  <!-- user 消息:右对齐;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html) -->
+  <!-- user 消息:右对齐;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html)。failed 加错误角标(P2-4) -->
   <div v-if="isUser" class="cy-message-row cy-user-row">
     <div class="cy-message cy-user-message">
       <p>{{ message.content }}</p>
+      <span v-if="message.status === 'failed'" class="cy-user-error-badge" title="发送失败">发送失败</span>
     </div>
   </div>
 
@@ -126,6 +127,17 @@ function isTextSegment(seg: AssistantSegment): boolean {
 
 .cy-user-message {
   background: var(--cy-user);
+}
+
+.cy-user-error-badge {
+  display: inline-block;
+  margin-top: 5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--cy-accent-text);
+  background: var(--cy-danger);
+  font-size: 10px;
+  line-height: 1.6;
 }
 
 .cy-dual-message {

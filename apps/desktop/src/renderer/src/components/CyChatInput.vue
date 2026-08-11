@@ -56,6 +56,12 @@ function stop(): void {
       <span>{{ bannerText }}</span>
     </div>
 
+    <!-- 发送/回复错误提示(P2-4):messageStore.lastError 非空时展示 -->
+    <div v-if="messageStore.lastError" class="cy-banner cy-error-banner" role="alert">
+      <span class="cy-banner-dot" />
+      <span>发送失败:{{ messageStore.lastError }}</span>
+    </div>
+
     <div class="cy-composer-box">
       <textarea
         v-model="draft"
@@ -114,6 +120,10 @@ function stop(): void {
   height: 8px;
   border-radius: 50%;
   background: var(--cy-danger);
+}
+
+.cy-error-banner {
+  border-style: dashed;
 }
 
 .cy-composer-box {

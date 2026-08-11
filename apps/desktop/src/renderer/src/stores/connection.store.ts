@@ -18,11 +18,15 @@ export const useConnectionStore = defineStore('connection', () => {
   async function connect(serverUrl: string): Promise<void> {
     connecting.value = true
     error.value = undefined
+    // P1-2:乐观置位——真实 IPC 时序里 Main 在 await 期间就可能推送 connected(C-3 push),
+    // 若在 await 之后再置 connecting,会把 onChatState 已定的 connected 覆写回「连接中…」。
+    state.value.status = 'connecting'
     try {
       await api.connect(serverUrl)
-      state.value.status = 'connecting'
     } catch (e) {
       error.value = messageOf(e)
+      // 失败复位:不残留乐观 connecting(C-3 push 未到,显式兜底)
+      state.value.status = 'disconnected'
     } finally {
       connecting.value = false
     }
