@@ -1,130 +1,123 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+// CyChatView:聊天主区——messageStore.byId/order 渲染 + 空态 + 流式占位「生成中…」;
+// conversationStore 激活/新建(F1:create 不 reset messageStore,新建后须显式 activate(c.id));
+// 连接控件:serverUrl 输入 + 连接按钮(connectionStore.connect,Mock 免 token)。
+import { computed, nextTick, ref, watch } from 'vue'
+import { useConnectionStore } from '../stores/connection.store'
+import { useConversationStore } from '../stores/conversation.store'
+import { useMessageStore } from '../stores/message.store'
+import CyChatInput from './CyChatInput.vue'
+import CyMessageBubble from './CyMessageBubble.vue'
 
-// Phase 0 静态演示:UI 壳与双通道消息示意。数据来自原型与 Mock 夹具;
-// 真实流式驱动由 messageStore + BackendAdapter(阶段 2)提供。
-const innerVoiceOpen = ref(true)
-const draft = ref('')
+const messageStore = useMessageStore()
+const conversationStore = useConversationStore()
+const connectionStore = useConnectionStore()
 
-const replyMeta = {
-  model: 'cyrene-llm-v1',
-  tokens: '208 / 会话 2100',
-  emotion: 'thinking'
+const serverUrl = ref('ws://localhost:8080')
+const messagesRef = ref<HTMLElement>()
+
+const visibleIds = computed(() => messageStore.order.filter((id) => !!messageStore.byId[id]))
+const isEmpty = computed(() => visibleIds.value.length === 0)
+const isStreaming = computed(() => !!messageStore.activeGenerationId)
+
+const convTitle = computed(() => {
+  const c = conversationStore.items.find((i) => i.id === conversationStore.currentId)
+  return c?.title ?? '新会话'
+})
+
+/** 连接状态展示:状态点 tone + 文案 */
+const statusTone = computed(() => {
+  switch (connectionStore.state.status) {
+    case 'connected':
+      return 'is-connected'
+    case 'connecting':
+    case 'reconnecting':
+      return 'is-connecting'
+    case 'error':
+      return 'is-error'
+    default:
+      return 'is-offline'
+  }
+})
+const statusLabel = computed(() => {
+  switch (connectionStore.state.status) {
+    case 'connected':
+      return '已连接'
+    case 'connecting':
+      return '连接中…'
+    case 'reconnecting':
+      return '重连中…'
+    case 'error':
+      return '连接错误'
+    default:
+      return '未连接'
+  }
+})
+
+async function connect(): Promise<void> {
+  const url = serverUrl.value.trim()
+  if (!url || connectionStore.connecting) return
+  await connectionStore.connect(url)
 }
 
-const publicSegments = [
-  '好的，我来回答你关于**流式回复**的问题。',
-  '一次 AI 回复只建立一个父消息。',
-  '第一，`deltaSequence` 只在分段内累计；第二，`segmentIndex` 决定全局展示顺序。'
-]
-
-const toolCall = {
-  name: 'desktop.file.read',
-  summary: '读取 ~/notes/example.txt',
-  status: '已完成'
+/** F1(Task 4 review):create 只设 currentId、不 reset messageStore——新建后显式 activate(c.id) 拉起空消息页 */
+async function newConversation(): Promise<void> {
+  await conversationStore.create()
+  const id = conversationStore.currentId
+  if (id) await conversationStore.activate(id)
 }
+
+/** 流式期间跟随滚动到底;切会话(visibleIds 长度变化)也回底 */
+watch([visibleIds, isStreaming], async () => {
+  await nextTick()
+  if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+})
 </script>
 
 <template>
   <section class="cy-chat">
-    <!-- 聊天头部 -->
     <header class="cy-chat-header">
       <div class="cy-chat-heading">
         <div class="cy-chat-title-line">
-          <span class="cy-online-dot" />
-          <h2>流式回复演示</h2>
-        </div>
-        <div class="cy-chat-meta">
-          <span class="cy-meta-chip">{{ replyMeta.model }}</span>
-          <span class="cy-meta-chip">{{ replyMeta.tokens }}</span>
-          <span class="cy-meta-chip">{{ replyMeta.emotion }}</span>
+          <span class="cy-online-dot" :class="statusTone" />
+          <h2>{{ convTitle }}</h2>
+          <span class="cy-status-text">{{ statusLabel }}</span>
         </div>
       </div>
       <div class="cy-header-actions">
-        <button class="cy-action-button">历史查看</button>
-        <button class="cy-action-button">清空</button>
+        <button class="cy-action-button" title="新建会话" @click="newConversation">新建</button>
+        <form class="cy-connect" @submit.prevent="connect">
+          <input
+            v-model="serverUrl"
+            class="cy-server-input"
+            type="text"
+            placeholder="服务器地址"
+            aria-label="服务器地址"
+            :disabled="connectionStore.connecting"
+          />
+          <button class="cy-action-button cy-connect-btn" type="submit" :disabled="connectionStore.connecting">
+            {{ connectionStore.connecting ? '连接中…' : '连接' }}
+          </button>
+        </form>
       </div>
     </header>
 
-    <!-- 消息区 -->
-    <div class="cy-messages">
-      <!-- 用户消息 -->
-      <div class="cy-message-row cy-user-row">
-        <div class="cy-message cy-user-message">
-          <p>能讲讲流式回复的分段与归组规则吗？</p>
-        </div>
+    <div ref="messagesRef" class="cy-messages" aria-live="polite">
+      <div v-if="isEmpty" class="cy-empty">
+        <p>新会话,开始对话</p>
       </div>
+      <template v-else>
+        <CyMessageBubble v-for="id in visibleIds" :key="id" :message="messageStore.byId[id]" />
+      </template>
 
-      <!-- 工具卡片 -->
-      <div class="cy-tool">
-        <div class="cy-tool-head">
-          <span class="cy-tool-title">
-            <span class="cy-tool-status is-complete">{{ toolCall.status }}</span>
-            <strong>{{ toolCall.name }}</strong>
-          </span>
-        </div>
-        <div class="cy-tool-details">{{ toolCall.summary }}</div>
-      </div>
-
-      <!-- Assistant 双通道消息:Inner Voice + Public Reply 同属一条消息 -->
-      <div class="cy-message-row">
-        <span class="cy-message-avatar">Cy</span>
-        <div class="cy-dual-message">
-          <details class="cy-inner-voice" :open="innerVoiceOpen" @toggle="innerVoiceOpen = ($event.target as HTMLDetailsElement).open">
-            <summary>
-              内心独白
-              <span class="cy-muted">inner_voice</span>
-            </summary>
-            <p>让我先整理一下回答思路。（要点：按 responseId 归组、segmentIndex 排序）</p>
-          </details>
-
-          <div class="cy-public-reply">
-            <div class="cy-response-cluster">
-              <div class="cy-response-head">
-                <strong>Cyrene</strong>
-                <span class="cy-muted">· 刚刚 · cyrene-llm-v1</span>
-              </div>
-              <div class="cy-response-segments">
-                <p
-                  v-for="(seg, i) in publicSegments"
-                  :key="i"
-                  class="cy-segment cy-segment-public"
-                  v-html="seg"
-                />
-              </div>
-              <div class="cy-response-footer">
-                <span>in 208 tokens</span>
-                <span>emotion: thinking</span>
-              </div>
-            </div>
-          </div>
-        </div>
+      <!-- 流式占位:activeGenerationId 存在时显示 -->
+      <div v-if="isStreaming" class="cy-streaming-placeholder">
+        <span class="cy-typing-dot" />
+        <span>生成中…</span>
       </div>
     </div>
 
-    <!-- 输入区 -->
-    <footer class="cy-composer">
-      <div class="cy-composer-box">
-        <button class="cy-composer-btn" title="表情" aria-label="表情">🙂</button>
-        <button class="cy-composer-btn" title="表情包" aria-label="表情包">🖼️</button>
-        <button class="cy-composer-btn" title="附件" aria-label="附件">📎</button>
-        <button class="cy-composer-btn" title="按住说话转文字" aria-label="按住说话转文字">🎤</button>
-        <textarea
-          v-model="draft"
-          placeholder="输入消息，Enter 发送"
-          rows="1"
-          aria-label="消息输入框"
-        />
-        <button class="cy-send-btn" title="发送" aria-label="发送">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 12h14M13 6l6 6-6 6" />
-          </svg>
-        </button>
-      </div>
-      <div class="cy-composer-status">
-        <span class="cy-muted">Phase 0 静态示意 · 无交互逻辑</span>
-      </div>
-    </footer>
+    <CyChatInput />
   </section>
 </template>
 
@@ -159,34 +152,37 @@ const toolCall = {
 }
 
 .cy-online-dot {
+  flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background: var(--cy-muted);
+}
+
+.cy-online-dot.is-connected {
   background: var(--cy-success);
 }
 
-.cy-chat-meta {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 5px;
+.cy-online-dot.is-connecting {
+  background: var(--cy-warning);
 }
 
-.cy-meta-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--cy-surface-soft);
-  border: 1px solid var(--cy-border);
+.cy-online-dot.is-error {
+  background: var(--cy-danger);
+}
+
+.cy-online-dot.is-offline {
+  background: var(--cy-muted);
+}
+
+.cy-status-text {
   color: var(--cy-muted);
-  font-size: 11px;
-  white-space: nowrap;
+  font-size: 12px;
 }
 
 .cy-header-actions {
   display: flex;
+  align-items: center;
   gap: 7px;
 }
 
@@ -197,10 +193,42 @@ const toolCall = {
   background: var(--cy-surface);
   color: var(--cy-muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .cy-action-button:hover {
   background: var(--cy-surface-hover);
+}
+
+.cy-action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cy-connect {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cy-server-input {
+  width: 180px;
+  padding: 7px 10px;
+  color: var(--cy-text);
+  background: var(--cy-surface);
+  border: 1px solid var(--cy-border);
+  border-radius: 10px;
+  outline: 0;
+  font-size: 12px;
+}
+
+.cy-server-input:focus {
+  border-color: var(--cy-accent-strong);
+}
+
+.cy-connect-btn {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
 }
 
 .cy-messages {
@@ -214,215 +242,46 @@ const toolCall = {
   background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%);
 }
 
-.cy-message-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-}
-
-.cy-user-row {
-  justify-content: flex-end;
-}
-
-.cy-message-avatar {
+.cy-empty {
   display: grid;
-  flex: 0 0 auto;
+  flex: 1;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
+  color: var(--cy-muted);
   font-size: 13px;
 }
 
-.cy-message {
-  max-width: 86%;
-  padding: 10px 12px;
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 14px;
-}
-
-.cy-message p {
+.cy-empty p {
   margin: 0;
 }
 
-.cy-user-message {
-  background: var(--cy-user);
-}
-
-.cy-dual-message {
-  display: grid;
-  gap: 9px;
-  max-width: 90%;
-  padding: 0;
-  overflow: hidden;
+.cy-streaming-placeholder {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 8px;
+  padding: 9px 13px;
+  color: var(--cy-muted);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 14px;
-}
-
-.cy-inner-voice {
-  padding: 10px 12px;
-  color: var(--cy-muted);
-  background: var(--cy-surface-soft);
-  border-bottom: 1px solid var(--cy-border);
-}
-
-.cy-inner-voice summary {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  cursor: pointer;
-  color: var(--cy-text);
-  font-weight: 500;
-}
-
-.cy-inner-voice p {
-  margin: 8px 0 0;
-  font-size: 13px;
-}
-
-.cy-public-reply {
-  padding: 0 12px 12px;
-}
-
-.cy-response-cluster {
-  display: grid;
-  gap: 7px;
-}
-
-.cy-response-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  color: var(--cy-muted);
+  border-radius: 13px;
   font-size: 12px;
 }
 
-.cy-response-segments {
-  display: grid;
-  gap: 6px;
+.cy-typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cy-accent-strong);
+  animation: cy-pulse 1s ease-in-out infinite;
 }
 
-.cy-segment {
-  width: fit-content;
-  max-width: 100%;
-  margin: 0;
-  padding: 8px 11px;
-  border-radius: 5px 13px 13px 13px;
-}
-
-.cy-segment-public {
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
-  border-left: 2px solid var(--cy-accent-strong);
-}
-
-.cy-response-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  color: var(--cy-muted);
-  font-size: 11px;
-}
-
-.cy-tool {
-  width: min(100%, 380px);
-  margin-left: 39px;
-  padding: 11px;
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 14px;
-}
-
-.cy-tool-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.cy-tool-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.cy-tool-status {
-  padding: 3px 7px;
-  border-radius: 999px;
-  color: var(--cy-success);
-  background: var(--cy-surface-soft);
-  font-size: 11px;
-  white-space: nowrap;
-}
-
-.cy-tool-details {
-  color: var(--cy-muted);
-  font-size: 12px;
-}
-
-.cy-composer {
-  padding: 10px 14px 14px;
-  background: var(--cy-pane);
-  border-top: 1px solid var(--cy-border);
-}
-
-.cy-composer-box {
-  display: grid;
-  grid-template-columns: auto auto auto auto 1fr auto;
-  align-items: end;
-  gap: 8px;
-  padding: 8px;
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 14px;
-}
-
-.cy-composer-btn {
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  color: var(--cy-muted);
-  font-size: 15px;
-}
-
-.cy-composer-btn:hover {
-  background: var(--cy-surface-hover);
-}
-
-.cy-composer textarea {
-  width: 100%;
-  min-width: 0;
-  min-height: 40px;
-  max-height: 72px;
-  resize: none;
-  padding: 7px 4px;
-  color: var(--cy-text);
-  background: transparent;
-  border: 0;
-  outline: 0;
-}
-
-.cy-send-btn {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9px;
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
-}
-
-.cy-composer-status {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 7px;
-  color: var(--cy-muted);
-  font-size: 11px;
+@keyframes cy-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 </style>
