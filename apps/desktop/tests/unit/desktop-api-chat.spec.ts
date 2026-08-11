@@ -3,7 +3,7 @@
 // env=node:mock 'electron' 模块的 ipcRenderer。invoke 由 vi.fn 注入返回值;on/removeListener 记录 handler,
 // 测试通过 mockIpc.emit 触发(语义对齐真实 ipcRenderer.on 回调签名 (event, ...args))。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BackendEvent } from '@shared/contracts'
+import { PushChannels, type BackendEvent } from '@shared/contracts'
 
 // vi.hoisted:vi.mock 工厂被提升到文件顶部执行,须先在此定义可供工厂引用的 mock 值(变量名以 mock 开头)
 const { mockIpc, mockHandlers } = vi.hoisted(() => {
@@ -102,6 +102,29 @@ describe('desktopApi chat 面', () => {
     unsub()
     mockIpc.emit('chat:replay', { conversationId: 'c2', messages: [] })
     expect(received).toEqual([{ conversationId: 'c1', messages: [] }])
+  })
+
+  it('PushChannels.error = chat:error', () => {
+    expect(PushChannels.error).toBe('chat:error')
+  })
+
+  it('onChatError 合法载荷送达 + PublicErrorShape 字段透传', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const handler = vi.fn()
+    const unsub = desktopApi.onChatError(handler)
+    mockIpc.emit(PushChannels.error, { code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true, requestId: 'r1' })
+    expect(handler).toHaveBeenCalledWith({ code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true, requestId: 'r1' })
+    unsub()
+  })
+
+  it('onChatError 非法载荷(缺 code/message)丢弃 + unsub 后不再收', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const handler = vi.fn()
+    const unsub = desktopApi.onChatError(handler)
+    mockIpc.emit(PushChannels.error, { foo: 1 })
+    unsub()
+    mockIpc.emit(PushChannels.error, { code: 'X', message: 'x' })
+    expect(handler).not.toHaveBeenCalled()
   })
 
   // —— 命令方法:通道 + 载荷 + 信封解包 ——

@@ -44,6 +44,7 @@ declare global {
       onChatEvent(handler: (event: BackendEvent) => void): () => void
       onChatState(handler: (state: ConnectionState) => void): () => void
       onChatReplay(handler: (payload: { conversationId: string; messages: Message[] }) => void): () => void
+      onChatError(handler: (err: import('./desktop-api').PublicErrorShape) => void): () => void
     }
   }
 }

@@ -192,6 +192,29 @@ function onChatReplay(handler: ChatReplayHandler): () => void {
   return () => ipcRenderer.removeListener(PushChannels.replay, listener)
 }
 
+/** 聊天错误推送载荷：结构化公开字段，与 IpcErrorBody 同形；导出于此供 Renderer 订阅 */
+export interface PublicErrorShape {
+  code: string
+  message: string
+  backendCode?: string
+  retryable?: boolean
+  requestId?: string
+}
+
+function isPublicErrorShape(v: unknown): v is PublicErrorShape {
+  return !!v && typeof v === 'object' && typeof (v as PublicErrorShape).code === 'string' && typeof (v as PublicErrorShape).message === 'string'
+}
+
+/** 订阅 chat:error；isPublicErrorShape 守卫，非法丢弃；返回取消函数 */
+function onChatError(handler: (err: PublicErrorShape) => void): () => void {
+  const listener = (_event: unknown, payload: unknown): void => {
+    if (isPublicErrorShape(payload)) handler(payload)
+    else console.warn('[desktopApi] chat:error 非法载荷已丢弃')
+  }
+  ipcRenderer.on(PushChannels.error, listener)
+  return () => ipcRenderer.removeListener(PushChannels.error, listener)
+}
+
 export const desktopApi = {
   getAppInfo,
   getCredentialStatus: async (): Promise<CredentialStatus> =>
@@ -217,7 +240,8 @@ export const desktopApi = {
   getConnectionState,
   onChatEvent,
   onChatState,
-  onChatReplay
+  onChatReplay,
+  onChatError
 }
 
 export type DesktopApi = typeof desktopApi
