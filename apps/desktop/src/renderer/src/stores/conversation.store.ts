@@ -50,8 +50,14 @@ export const useConversationStore = defineStore('conversation', () => {
   }
 
   async function remove(id: string): Promise<void> {
+    const wasActive = currentId.value === id
     await api.deleteConversation(id)
     await list()
+    // 删除当前激活会话:currentId 清空 + messageStore 清空(聊天区显示空态,避免残留旧消息/发送打到已删会话,L1)
+    if (wasActive) {
+      currentId.value = undefined
+      useMessageStore().resetConversation(id)
+    }
   }
 
   return { items, currentId, hasMore, nextCursor, list, activate, getMore, create, rename, remove }

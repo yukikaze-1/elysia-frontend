@@ -86,6 +86,19 @@ describe('conversationStore', () => {
     expect(store.items.map((c) => c.id)).toEqual(['c2'])
   })
 
+  it('remove 当前激活会话:currentId 清空 + messageStore 清空(不悬空,L1)', async () => {
+    const store = useConversationStore()
+    const messageStore = useMessageStore()
+    store.$patch({ currentId: 'c1' })
+    // 预置旧消息:删除激活会话后应被清空(聊天区显示空态)
+    messageStore.byId['stale-1'] = { messageId: 'stale-1', conversationId: 'c1', role: 'user', content: 'old', status: 'completed', createdAt: 't' }
+    mockApi.deleteConversation.mockResolvedValue(undefined)
+    mockApi.listConversations.mockResolvedValue({ items: [convB], hasMore: false })
+    await store.remove('c1')
+    expect(store.currentId).toBeUndefined()
+    expect(messageStore.byId['stale-1']).toBeUndefined()
+  })
+
   it('getMore:nextCursor 透传追加;无 cursor 早退不调 api', async () => {
     const store = useConversationStore()
     mockApi.listConversations.mockResolvedValue({ items: [convA], hasMore: true, nextCursor: 'cur-1' })

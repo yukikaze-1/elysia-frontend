@@ -37,6 +37,12 @@ function send(): void {
   draft.value = ''
 }
 
+/** 回车发送守卫:IME 组词确认期间(中文/日文输入法)Enter 是候选确认,不发送 */
+function onEnter(e: KeyboardEvent): void {
+  if (e.isComposing || e.keyCode === 229) return
+  send()
+}
+
 function stop(): void {
   messageStore.cancel()
 }
@@ -57,7 +63,7 @@ function stop(): void {
         placeholder="输入消息，Enter 发送"
         rows="1"
         aria-label="消息输入框"
-        @keydown.enter.exact.prevent="send"
+        @keydown.enter.exact.prevent="onEnter"
       />
       <button
         v-if="hasActiveGeneration"

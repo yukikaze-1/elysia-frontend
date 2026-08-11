@@ -14,4 +14,9 @@ describe('Markdown 渲染 + 消毒', () => {
     expect(renderMarkdown('<script>alert(1)</script>')).not.toContain('<script')
     expect(renderMarkdown('<img src=x onerror=alert(1)>')).not.toContain('onerror')
   })
+  it('XSS:entity/无引号编码的 javascript: 协议被剥离', () => {
+    // marked 对链接 href 不做 & 转义、对 raw HTML 透传:`&colon;`/`&#58;` 与无引号值都可能是协议注入载体
+    expect(renderMarkdown('[x](javascript&colon;alert(1))')).not.toContain('javascript')
+    expect(renderMarkdown('<a href=javascript:alert(1)>x</a>')).not.toContain('javascript:')
+  })
 })
