@@ -31,6 +31,8 @@
 
 ## 3. Store 划分
 
+> **实施注记（2026-08-11，阶段 2 块 C）：** `connectionStore`/`conversationStore`/`messageStore` 三 store 已落地（`renderer/src/stores/`），命名与职责遵循本节；`messageStore` 经 2A `StreamAccumulator` 应用领域事件、乐观发送用 `clientMessageId` key、断线 in-flight 置 `interrupted`、重连回放经 `onSessionReplay`→`loadReplay`。其余 store（tool/live2d/settings 等）随对应阶段落地。
+
 ### 3.1 `appStore`
 
 - 应用是否初始化；

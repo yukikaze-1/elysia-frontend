@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 块 A（领域契约 + raw wire 层）+ 块 B（RealBackend REST/WS Adapter）已落地（265 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 块 C（Store/UI）待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 三块（A 领域契约+raw wire / B RealBackend / C Store+IPC+UI）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 3 待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -33,7 +33,7 @@
   阶段 3/4/5/6 ──▶ 阶段 7 安全、稳定性与性能收敛 ──▶ 阶段 8 打包、跨平台与 Demo 验收
 ```
 
-**当前所处阶段：阶段 1 三块（块 A 安全加载与环境基线 + 块 B 主进程受信服务 + 块 C IPC/协议安全集成测试）全部落地并全量验证（182 单测 + 18 集成用例 + verify:artifact 冒烟全绿）；阶段 2 块 A（领域契约 + raw wire 层）与块 B（RealBackend REST/WS v2 Adapter：握手/会话/历史 `_id` cursor 分页/发送 ack/重连）已落地并全量验证（265 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」；下一块为阶段 2 块 C（Store + IPC 事件推送 + 聊天 UI 纵向闭环）。**
+**当前所处阶段：阶段 1 三块（安全加载 / 凭据·日志 / IPC 集成测试）全部落地并全量验证；阶段 2 三块（A 领域契约+raw wire、B RealBackend REST/WS Adapter、C Store+IPC+聊天 UI 纵向闭环）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿），标记「已开发、未联调」——「发送 → 流式 → 渲染」完整链路已打通（Mock 驱动）；下一块为阶段 3 完整聊天/历史/多媒体（含历史查看器、附件、代码复制）。**
 
 - 仓库与 git：已完成（初始化、分支 main、远程 origin、上游跟踪）
 - 开发环境：已完成（fnm + Node 22.23.0 + pnpm 11.20.0，`.nvmrc` / `.npmrc` / README）
@@ -233,13 +233,13 @@
 
 - [x] 连接、认证、心跳、重连与公开错误状态——2026-08-11（2B RealBackend：WS `/ws` 握手 `X-Protocol-Version:"2"`/`X-Client-Platform:electron`/Bearer、`server_info` 版本 fail-closed、心跳(pong)、断线指数退避重连 + `unexpected-response` fail-fast、`ConnectionState` 公开；**已开发、未联调**）
 - [x] 会话列表、当前会话、历史第一页与基本管理——2026-08-11（2B RealBackend REST：list/get/create/rename/delete + `activateConversation`、`getConversationMessages` `_id` cursor 分页、`session` 回放缓冲归属；**已开发、未联调**）
-- [~] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试——2026-08-11（2B 已落地 `sendMessage` → WS `text` + `user_message.ack` 关联(accepted/rejected/15s 超时)与 `clientRequestId` 幂等键语义；**乐观状态与 UI 幂等展示属 2C**，故标进行中）
-- [x] 合并 `generation.started/segment.started/delta/segment.completed/completed/failed`——2026-08-11（2A 逻辑层：领域契约 + raw wire schema + frame-mapper + Accumulator，`fixtures/wire-v2/` raw fixture 驱动；**已开发、未联调**）
-- [x] 按 `responseId` 归并有序 `AssistantSegment[]`——2026-08-11（2A Accumulator 权威 content 规则 + segmentIndex 排序；**已开发、未联调**）
-- [ ] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）（全局顺序由 2A Accumulator 保证；折叠 UI 属 2C）
-- [~] 回复级/会话级 Token、实际模型与心情落位——2026-08-11（2A 逻辑层：`usage.rounds`/`ConversationTokenUsage` 映射 + Accumulator 写入已落地；UI 落位属 2C；**已开发、未联调**）
-- [ ] Markdown、代码块、复制、停止生成与基础断线恢复（Markdown 渲染/复制/停止/断线恢复属 2C；停止生成协议侧经 `generation.failed{CANCELLED}` 已由 2A mapper 覆盖）
-- [~] Adapter、流式累加器与 Store 的契约测试——2026-08-11（2A：mapper/Accumulator/wire-fixtures 两层校验已落地；Store 契约测试属 2C）
+- [x] 用户发送、乐观状态、确认与 `clientRequestId` 幂等重试——2026-08-11（2B `sendMessage` + ack 关联；2C messageStore 乐观发送 pending→acknowledged/failed + `clientMessageId` key 迁移；**已开发、未联调**）
+- [x] 合并 `generation.started/segment.started/delta/segment.completed/completed/failed`——2026-08-11（2A 逻辑层：领域契约 + raw wire schema + frame-mapper + Accumulator；2C messageStore 经 `StreamAccumulator` 应用流式事件；**已开发、未联调**）
+- [x] 按 `responseId` 归并有序 `AssistantSegment[]`——2026-08-11（2A Accumulator 权威 content 规则 + segmentIndex 排序；2C 渲染；**已开发、未联调**）
+- [x] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）——2026-08-11（2C CyMessageBubble 双通道渲染：inner_voice 折叠 + public_reply markdown，segmentIndex 全局排序；**已开发、未联调**）
+- [x] 回复级/会话级 Token、实际模型与心情落位——2026-08-11（2A 逻辑层映射 + Accumulator 写入；2C UI chips 落位（completed 后显示）；**已开发、未联调**）
+- [~] Markdown、代码块、复制、停止生成与基础断线恢复——2026-08-11（2C 已落地 Markdown 渲染（marked+消毒）、停止生成（乐观 interrupted + `generation.failed{CANCELLED}` 幂等）、断线提示（chat:state 推送 + in-flight interrupted）；**代码块复制/语法高亮与基础断线恢复 UX 属阶段 3**）
+- [x] Adapter、流式累加器与 Store 的契约测试——2026-08-11（2A mapper/Accumulator/wire-fixtures 两层校验 + 2C 三 store 单测（mock desktopApi）+ IPC 链路；**已开发、未联调**）
 
 ### 验收门槛
 
@@ -454,3 +454,4 @@
 | 2026-08-10 | **阶段 1 块 C（IPC/协议安全集成测试）落地**：Playwright _electron 集成套件（协议 handler F1 403/404/逃逸/200+CSP、IPC API 面/超大输入/来源校验、外部链接受控、普通浏览器信任边界）+ test:integration(--mode test 构建) + CI xvfb-run | 已开发、未联调 |
 | 2026-08-11 | **阶段 2 块 A（领域契约修复 + raw wire 层）落地**：领域事件扩展（`GenerationSegmentStartedEvent`、`SegmentCompleted.kind/content`、Token 结构 `usage.rounds`/`ConversationTokenUsage`、`ProtocolWarning`）+ raw-types/raw-schemas（判别 `type` + strict，zod 4.4.3 双参 record）+ frame-mapper（status 过滤/fail-closed/告警）+ StreamAccumulator 权威 content 规则（docs/18 §4.3 七条）+ fixture 分离（`domain/` 领域 + `wire-v2/` raw wire + manifest 锚定 `beeba577`）+ wire-fixtures 两层校验；231 单测全绿 + typecheck/lint/build；spec/plan 见 superpowers 目录 | 已开发、未联调 |
 | 2026-08-11 | **阶段 2 块 B（RealBackend REST/WS v2 Adapter）落地**：`ws` 依赖 + REST wire 层（rest-types/rest-schemas 混合命名 + strict）+ rest-mapper（`Message.tool?` 元数据、`_id` cursor 分页、回放项 mood→emotion）+ raw 层扩展 `user_message.ack`/`error` + `BackendAdapter` 接口扩展（`getConversationMessages`/`activateConversation`/`renameConversation`）+ `RealBackend`（握手 header 精确/`server_info` 版本 fail-closed/session 回放缓冲/ack 关联 15s 超时/重连退避 + unexpected-response fail-fast/REST 会话·历史·激活 + Bearer + 错误映射）；告警码收编 `ProtocolWarningCode`；265 单测全绿 + typecheck/lint/build；spec/plan 见 superpowers 目录 | 已开发、未联调 |
+| 2026-08-11 | **阶段 2 块 C（Store + IPC 事件推送 + 聊天 UI 纵向闭环）落地**：`chat-service` + `chat:event/state/replay` 推送通道 + chat 命令（IpcResult 信封 + schema）+ `desktopApi` chat 面（unwrap + 订阅守卫 + 取消函数）+ Pinia 三 store（connection/conversation/message，messageStore 经 `StreamAccumulator` 流式应用 + 乐观发送 + 断线 interrupted）+ UI 动态化（`CyMarkdown`（marked+消毒 entity 加固）/`CyMessageBubble` 双通道折叠/chips/`CyChatInput` IME 守卫/`CyChatView` 空态·断线横幅·连接控件/`CyConversationList` 列表操作）；对 2B 加性修改（`ConnectionState` 迁 shared、`getConnectionState`、`onConnectionStateChange`、`MessageStatus.completing`）；312 单测全绿 + typecheck/lint/build；「发送 → 流式 → 渲染」链路打通（Mock 驱动）；spec/plan 见 superpowers 目录 | 已开发、未联调 |
