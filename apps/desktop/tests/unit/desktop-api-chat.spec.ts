@@ -106,12 +106,33 @@ describe('desktopApi chat 面', () => {
 
   // —— 命令方法:通道 + 载荷 + 信封解包 ——
 
-  it('connect:调 chat:connect 并解包 BackendSession', async () => {
+  it('connect 无参 invoke(arity 0,只传 channel)', async () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     const session = { sessionId: 's1', protocolVersion: '2.0', serverUrl: 'http://localhost:3000' }
     mockIpc.invoke.mockResolvedValue({ ok: true, data: session })
-    await expect(desktopApi.connect('http://localhost:3000')).resolves.toEqual(session)
-    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:connect', { serverUrl: 'http://localhost:3000' })
+    await expect(desktopApi.connect()).resolves.toEqual(session)
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:connect')
+  })
+
+  it('setEndpoint invoke chat:set-endpoint 载荷 {serverUrl}', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { endpoint: 'https://a.example' } })
+    await expect(desktopApi.setEndpoint('https://a.example/')).resolves.toEqual({ endpoint: 'https://a.example' })
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:set-endpoint', { serverUrl: 'https://a.example/' })
+  })
+
+  it('getEndpoint invoke chat:get-endpoint(0 参)', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { endpoint: 'https://a.example' } })
+    await expect(desktopApi.getEndpoint()).resolves.toEqual({ endpoint: 'https://a.example' })
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:get-endpoint')
+  })
+
+  it('getRuntimeInfo invoke chat:get-runtime-info(0 参)', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { mode: 'mock', packaged: false } })
+    await expect(desktopApi.getRuntimeInfo()).resolves.toEqual({ mode: 'mock', packaged: false })
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:get-runtime-info')
   })
 
   it('disconnect:调 chat:disconnect(void 信封)', async () => {
@@ -196,6 +217,22 @@ describe('desktopApi chat 面', () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     mockIpc.invoke.mockResolvedValue({ ok: false, error: { code: 'AUTHENTICATION_FAILED', message: 'token 无效' } })
     await expect(desktopApi.getConnectionState()).rejects.toThrow('[AUTHENTICATION_FAILED] token 无效')
+  })
+
+  it('unwrap 错误 → message 含 [code] 与 [backendCode=..] [retryable=..] 前缀', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({
+      ok: false, error: { code: 'BACKEND_REJECTED', message: '队列已满', backendCode: 'QUEUE_FULL', retryable: true }
+    })
+    await expect(desktopApi.getConnectionState()).rejects.toThrow('[BACKEND_REJECTED] [backendCode=QUEUE_FULL] [retryable=true] 队列已满')
+  })
+
+  it('unwrapStatus 错误同样带结构化前缀', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({
+      ok: false, error: { code: 'CREDENTIAL_UNAVAILABLE', message: '请先设置后端地址', requestId: 'r1' }
+    })
+    await expect(desktopApi.getCredentialStatus()).rejects.toThrow('[CREDENTIAL_UNAVAILABLE] [requestId=r1] 请先设置后端地址')
   })
 
   it('畸形信封(非 IpcResult)→ 抛 [IPC_ERROR] IPC 返回格式异常', async () => {

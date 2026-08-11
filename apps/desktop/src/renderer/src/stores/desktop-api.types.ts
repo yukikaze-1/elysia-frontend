@@ -11,15 +11,24 @@ import type {
   Conversation,
   ConversationMessagesQuery,
   CreateConversationInput,
+  CredentialStatus,
   Message,
   MessagePage,
   Page,
   PageQuery,
+  RuntimeInfo,
   SendMessageInput
 } from '@shared/contracts'
 
 export interface DesktopApiLike {
-  connect(serverUrl: string): Promise<BackendSession>
+  // —— 凭据/连接装配 ——
+  getCredentialStatus(): Promise<CredentialStatus>
+  setBackendToken(token: string): Promise<CredentialStatus>
+  clearBackendToken(): Promise<CredentialStatus>
+  setEndpoint(url: string): Promise<{ endpoint: string }>
+  getEndpoint(): Promise<{ endpoint?: string }>
+  getRuntimeInfo(): Promise<RuntimeInfo>
+  connect(): Promise<BackendSession>
   disconnect(): Promise<void>
   listConversations(input: PageQuery): Promise<Page<Conversation>>
   getMessages(input: ConversationMessagesQuery): Promise<MessagePage>

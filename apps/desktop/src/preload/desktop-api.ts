@@ -16,6 +16,7 @@ import type {
   MessagePage,
   Page,
   PageQuery,
+  RuntimeInfo,
   SendMessageInput
 } from '@shared/contracts'
 import { parseBackendEvent } from '@shared/schemas'
@@ -34,6 +35,19 @@ async function invokeWithArgs<T>(channel: IpcChannelName, payload?: unknown): Pr
   } catch { throw new Error('[IPC_ERROR] IPC 调用失败') }
 }
 
+/**
+ * 跨 contextBridge 错误 message 前缀：结构化字段并入 message（Electron contextBridge 只可靠保留 message，
+ * own property / instanceof 不保真）。Renderer 用 parsePublicError 反解。
+ * 格式：`[code] [backendCode=XX] [retryable=true] [requestId=..] message`
+ */
+function formatIpcError(error: { code: string; message: string; backendCode?: string; retryable?: boolean; requestId?: string }): Error {
+  const parts = [error.code]
+  if (error.backendCode) parts.push(`backendCode=${error.backendCode}`)
+  if (typeof error.retryable === 'boolean') parts.push(`retryable=${error.retryable}`)
+  if (error.requestId) parts.push(`requestId=${error.requestId}`)
+  return new Error(`[${parts.join('] [')}] ${error.message}`)
+}
+
 function isAppInfo(v: unknown): v is AppInfo {
   return !!v && typeof v === 'object' && !Array.isArray(v) &&
     typeof (v as AppInfo).name === 'string' && typeof (v as AppInfo).version === 'string' &&
@@ -46,7 +60,7 @@ async function getAppInfo(): Promise<AppInfo> {
   if (res && typeof res === 'object' && res.ok === true && res.data !== undefined && res.data !== null && isAppInfo(res.data)) return res.data
   if (res && typeof res === 'object' && res.ok === false &&
       res.error && typeof res.error.code === 'string' && typeof res.error.message === 'string') {
-    throw new Error(`[${res.error.code}] ${res.error.message}`)
+    throw formatIpcError(res.error)
   }
   throw new Error('[IPC_ERROR] IPC 返回格式异常')
 }
@@ -63,7 +77,7 @@ function unwrapStatus(res: IpcResult<CredentialStatusResponse>): CredentialStatu
       res.data && typeof res.data === 'object' && isCredentialStatus(res.data.status)) return res.data.status
   if (res && typeof res === 'object' && res.ok === false &&
       res.error && typeof res.error.code === 'string' && typeof res.error.message === 'string') {
-    throw new Error(`[${res.error.code}] ${res.error.message}`)
+    throw formatIpcError(res.error)
   }
   throw new Error('[IPC_ERROR] IPC 返回格式异常')
 }
@@ -75,7 +89,7 @@ function unwrap<T>(res: IpcResult<T>): T {
   if (res && typeof res === 'object' && res.ok === true) return res.data
   if (res && typeof res === 'object' && res.ok === false &&
       res.error && typeof res.error.code === 'string' && typeof res.error.message === 'string') {
-    throw new Error(`[${res.error.code}] ${res.error.message}`)
+    throw formatIpcError(res.error)
   }
   throw new Error('[IPC_ERROR] IPC 返回格式异常')
 }
@@ -99,8 +113,18 @@ function isReplayPayload(v: unknown): v is ReplayPayload {
     Array.isArray((v as ReplayPayload).messages)
 }
 
-async function connect(serverUrl: string): Promise<BackendSession> {
-  return unwrap(await invokeWithArgs<BackendSession>(IpcChannels.chatConnect, { serverUrl }))
+/** connect 无参：endpoint/token 由 Main 侧 connection-config 持有，renderer 不再传任意 URL */
+async function connect(): Promise<BackendSession> {
+  return unwrap(await invoke<BackendSession>(IpcChannels.chatConnect))
+}
+async function setEndpoint(url: string): Promise<{ endpoint: string }> {
+  return unwrap(await invokeWithArgs<{ endpoint: string }>(IpcChannels.chatSetEndpoint, { serverUrl: url }))
+}
+async function getEndpoint(): Promise<{ endpoint?: string }> {
+  return unwrap(await invoke<{ endpoint?: string }>(IpcChannels.chatGetEndpoint))
+}
+async function getRuntimeInfo(): Promise<RuntimeInfo> {
+  return unwrap(await invoke<RuntimeInfo>(IpcChannels.chatGetRuntimeInfo))
 }
 async function disconnect(): Promise<void> {
   unwrap(await invoke<void>(IpcChannels.chatDisconnect))
@@ -178,6 +202,9 @@ export const desktopApi = {
     unwrapStatus(await invokeWithArgs<CredentialStatusResponse>(IpcChannels.credentialsClear, { key: BACKEND_TOKEN_KEY })),
   // —— chat 面 ——
   connect,
+  setEndpoint,
+  getEndpoint,
+  getRuntimeInfo,
   disconnect,
   listConversations,
   getMessages,

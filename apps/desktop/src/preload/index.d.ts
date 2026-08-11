@@ -14,6 +14,7 @@ import type {
   MessagePage,
   Page,
   PageQuery,
+  RuntimeInfo,
   SendMessageInput
 } from '@shared/contracts'
 
@@ -24,8 +25,12 @@ declare global {
       getCredentialStatus(): Promise<CredentialStatus>
       setBackendToken(token: string): Promise<CredentialStatus>
       clearBackendToken(): Promise<CredentialStatus>
+      // —— 连接装配 ——
+      setEndpoint(url: string): Promise<{ endpoint: string }>
+      getEndpoint(): Promise<{ endpoint?: string }>
+      getRuntimeInfo(): Promise<RuntimeInfo>
       // —— chat 面 ——
-      connect(serverUrl: string): Promise<BackendSession>
+      connect(): Promise<BackendSession>
       disconnect(): Promise<void>
       listConversations(input: PageQuery): Promise<Page<Conversation>>
       getMessages(input: ConversationMessagesQuery): Promise<MessagePage>

@@ -13,6 +13,8 @@ const mockApi = {
   connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
   send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
   renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
+  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
+  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
   onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {})
 }
 // 注入机制定死(P1-3):stores/desktop-api.ts export let api + setDesktopApi;store 惰性 import { api };
