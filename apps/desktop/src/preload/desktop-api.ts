@@ -20,6 +20,19 @@ import type {
   SendMessageInput
 } from '@shared/contracts'
 import { parseBackendEvent } from '@shared/schemas'
+import { z } from 'zod'
+import {
+  ActivateConversationResultSchema,
+  BackendSessionSchema,
+  ClientRequestRefSchema,
+  ConnectionStateSchema,
+  ConversationSchema,
+  EndpointResponseSchema,
+  MessagePageSchema,
+  MessageSchema,
+  PageSchema,
+  RuntimeInfoSchema
+} from '@shared/schemas'
 
 async function invoke<T>(channel: IpcChannelName): Promise<IpcResult<T>> {
   try {
@@ -84,9 +97,16 @@ function unwrapStatus(res: IpcResult<CredentialStatusResponse>): CredentialStatu
 
 // —— chat 面：通用信封解包 + 方法 + 推送订阅 ——
 
-/** 信封解包：ok:true → data（void 方法的 data 为 undefined）；ok:false → throw `[code] message`；畸形 → throw。与 getAppInfo 同模式；data 形状由调用方/守卫负责 */
-function unwrap<T>(res: IpcResult<T>): T {
-  if (res && typeof res === 'object' && res.ok === true) return res.data
+/** 信封解包 + 防御性 data 校验：ok:true → schema.safeParse(data)，失败抛 SCHEMA_VALIDATION_FAILED；
+ *  ok:false → throw `[code] message`；畸形信封（ok:true 缺 data / ok:false 缺 error）→ throw。
+ *  data 形状由各方法传入的 responseSchema 绑定（镜像 spec §4.1.2 表格；void 命令 z.undefined()）。 */
+function unwrap<T>(res: IpcResult<T>, schema: z.ZodType<T>): T {
+  if (res && typeof res === 'object' && res.ok === true) {
+    if (!('data' in res)) throw new Error('[IPC_ERROR] IPC 返回格式异常')
+    const parsed = schema.safeParse(res.data)
+    if (!parsed.success) throw new Error('[SCHEMA_VALIDATION_FAILED] IPC 响应校验失败')
+    return parsed.data
+  }
   if (res && typeof res === 'object' && res.ok === false &&
       res.error && typeof res.error.code === 'string' && typeof res.error.message === 'string') {
     throw formatIpcError(res.error)
@@ -94,11 +114,9 @@ function unwrap<T>(res: IpcResult<T>): T {
   throw new Error('[IPC_ERROR] IPC 返回格式异常')
 }
 
-const CONNECTION_STATUSES = ['disconnected', 'connecting', 'connected', 'reconnecting', 'error'] as const
+/** ConnectionState 纯守卫：ConnectionStateSchema 全字段校验（status 必填 + optional 字段类型），非法返回 false */
 function isConnectionState(v: unknown): v is ConnectionState {
-  return !!v && typeof v === 'object' && !Array.isArray(v) &&
-    typeof (v as ConnectionState).status === 'string' &&
-    (CONNECTION_STATUSES as readonly string[]).includes((v as ConnectionState).status)
+  return ConnectionStateSchema.safeParse(v).success
 }
 
 /** 会话回放推送载荷：{conversationId, messages}（RealBackend onSessionReplay 桥接） */
@@ -113,48 +131,60 @@ function isReplayPayload(v: unknown): v is ReplayPayload {
     Array.isArray((v as ReplayPayload).messages)
 }
 
+/** 会话回放逐条过滤（E2：不整批拒绝）：MessageSchema.safeParse 逐条校验，非法条目丢弃 + warn，
+ *  合法条目保留；返回仅含合法 Message 的回放载荷（conversationId 原样保留）。 */
+function filterReplayMessages(payload: ReplayPayload): ReplayPayload {
+  const messages: Message[] = []
+  payload.messages.forEach((msg, index) => {
+    const parsed = MessageSchema.safeParse(msg)
+    if (parsed.success) messages.push(parsed.data)
+    else console.warn('cyrene:replay:drop-invalid-message', { conversationId: payload.conversationId, index })
+  })
+  return { conversationId: payload.conversationId, messages }
+}
+
 /** connect 无参：endpoint/token 由 Main 侧 connection-config 持有，renderer 不再传任意 URL */
 async function connect(): Promise<BackendSession> {
-  return unwrap(await invoke<BackendSession>(IpcChannels.chatConnect))
+  return unwrap(await invoke<BackendSession>(IpcChannels.chatConnect), BackendSessionSchema)
 }
 async function setEndpoint(url: string): Promise<{ endpoint: string }> {
-  return unwrap(await invokeWithArgs<{ endpoint: string }>(IpcChannels.chatSetEndpoint, { serverUrl: url }))
+  return unwrap(await invokeWithArgs<{ endpoint: string }>(IpcChannels.chatSetEndpoint, { serverUrl: url }), z.object({ endpoint: z.string() }))
 }
 async function getEndpoint(): Promise<{ endpoint?: string }> {
-  return unwrap(await invoke<{ endpoint?: string }>(IpcChannels.chatGetEndpoint))
+  return unwrap(await invoke<{ endpoint?: string }>(IpcChannels.chatGetEndpoint), EndpointResponseSchema)
 }
 async function getRuntimeInfo(): Promise<RuntimeInfo> {
-  return unwrap(await invoke<RuntimeInfo>(IpcChannels.chatGetRuntimeInfo))
+  return unwrap(await invoke<RuntimeInfo>(IpcChannels.chatGetRuntimeInfo), RuntimeInfoSchema)
 }
 async function disconnect(): Promise<void> {
-  unwrap(await invoke<void>(IpcChannels.chatDisconnect))
+  unwrap(await invoke<void>(IpcChannels.chatDisconnect), z.undefined())
 }
 async function listConversations(input: PageQuery): Promise<Page<Conversation>> {
-  return unwrap(await invokeWithArgs<Page<Conversation>>(IpcChannels.chatListConversations, input))
+  return unwrap(await invokeWithArgs<Page<Conversation>>(IpcChannels.chatListConversations, input), PageSchema(ConversationSchema))
 }
 async function getMessages(input: ConversationMessagesQuery): Promise<MessagePage> {
-  return unwrap(await invokeWithArgs<MessagePage>(IpcChannels.chatGetMessages, input))
+  return unwrap(await invokeWithArgs<MessagePage>(IpcChannels.chatGetMessages, input), MessagePageSchema)
 }
 async function send(input: SendMessageInput): Promise<ClientRequestRef> {
-  return unwrap(await invokeWithArgs<ClientRequestRef>(IpcChannels.chatSend, input))
+  return unwrap(await invokeWithArgs<ClientRequestRef>(IpcChannels.chatSend, input), ClientRequestRefSchema)
 }
 async function cancel(input: CancelGenerationInput): Promise<void> {
-  unwrap(await invokeWithArgs<void>(IpcChannels.chatCancel, input))
+  unwrap(await invokeWithArgs<void>(IpcChannels.chatCancel, input), z.undefined())
 }
 async function activate(id: string): Promise<ActivateConversationResult> {
-  return unwrap(await invokeWithArgs<ActivateConversationResult>(IpcChannels.chatActivate, { conversationId: id }))
+  return unwrap(await invokeWithArgs<ActivateConversationResult>(IpcChannels.chatActivate, { conversationId: id }), ActivateConversationResultSchema)
 }
 async function createConversation(input: CreateConversationInput): Promise<Conversation> {
-  return unwrap(await invokeWithArgs<Conversation>(IpcChannels.chatCreate, input))
+  return unwrap(await invokeWithArgs<Conversation>(IpcChannels.chatCreate, input), ConversationSchema)
 }
 async function renameConversation(input: { conversationId: string; title: string }): Promise<Conversation> {
-  return unwrap(await invokeWithArgs<Conversation>(IpcChannels.chatRename, input))
+  return unwrap(await invokeWithArgs<Conversation>(IpcChannels.chatRename, input), ConversationSchema)
 }
 async function deleteConversation(id: string): Promise<void> {
-  unwrap(await invokeWithArgs<void>(IpcChannels.chatDelete, { conversationId: id }))
+  unwrap(await invokeWithArgs<void>(IpcChannels.chatDelete, { conversationId: id }), z.undefined())
 }
 async function getConnectionState(): Promise<ConnectionState> {
-  return unwrap(await invoke<ConnectionState>(IpcChannels.chatGetState))
+  return unwrap(await invoke<ConnectionState>(IpcChannels.chatGetState), ConnectionStateSchema)
 }
 
 type ChatEventHandler = (event: BackendEvent) => void
@@ -182,10 +212,10 @@ function onChatState(handler: ChatStateHandler): () => void {
   return () => ipcRenderer.removeListener(PushChannels.state, listener)
 }
 
-/** 订阅 chat:replay；isReplayPayload 守卫，非法丢弃 + warn；返回取消函数 */
+/** 订阅 chat:replay；isReplayPayload 纯守卫（结构），通过后逐条过滤（filterReplayMessages）再达 handler；返回取消函数 */
 function onChatReplay(handler: ChatReplayHandler): () => void {
   const listener = (_event: unknown, payload: unknown): void => {
-    if (isReplayPayload(payload)) handler(payload)
+    if (isReplayPayload(payload)) handler(filterReplayMessages(payload))
     else console.warn('[desktopApi] chat:replay 非法载荷已丢弃')
   }
   ipcRenderer.on(PushChannels.replay, listener)

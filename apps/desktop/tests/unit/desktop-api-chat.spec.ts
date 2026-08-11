@@ -80,6 +80,9 @@ describe('desktopApi chat 面', () => {
     mockIpc.emit('chat:state', { status: 'connected', connectionId: 'cid' })
     mockIpc.emit('chat:state', { status: 'bogus-status' })
     mockIpc.emit('chat:state', null)
+    // 字段级校验(ConnectionStateSchema 升级后):optional 字段类型非法也丢弃
+    mockIpc.emit('chat:state', { status: 'connected', connectionId: 123 })
+    mockIpc.emit('chat:state', { status: 'error', lastError: 42 })
 
     expect(received).toEqual([{ status: 'connected', connectionId: 'cid' }])
 
@@ -102,6 +105,41 @@ describe('desktopApi chat 面', () => {
     unsub()
     mockIpc.emit('chat:replay', { conversationId: 'c2', messages: [] })
     expect(received).toEqual([{ conversationId: 'c1', messages: [] }])
+  })
+
+  it('onChatReplay:逐条过滤——非法消息丢弃 + warn(含 conversationId/index),合法保留达 handler', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const received: unknown[] = []
+    const unsub = desktopApi.onChatReplay((p) => received.push(p))
+
+    // C1 防误丢:assistant 无 content、assistantSegments 用 text?/completed 通过 MessageSchema
+    const validAssistant = {
+      messageId: 'm1', conversationId: 'c1', role: 'assistant', status: 'completed',
+      createdAt: '2026-08-11T00:00:00Z',
+      assistantSegments: [{ segmentId: 's1', segmentIndex: 0, channel: 'public_reply', kind: 'text', text: 'hi', completed: true }]
+    }
+    const invalidMissingRole = { messageId: 'm2', conversationId: 'c1', createdAt: '2026-08-11T00:00:00Z' } // 缺 role/status
+    const validUser = { messageId: 'm3', conversationId: 'c1', role: 'user', content: 'hello', status: 'completed', createdAt: '2026-08-11T00:00:00Z' }
+
+    mockIpc.emit('chat:replay', { conversationId: 'c1', messages: [validAssistant, invalidMissingRole, validUser] })
+
+    expect(received).toEqual([{ conversationId: 'c1', messages: [validAssistant, validUser] }])
+    expect(console.warn).toHaveBeenCalledWith('cyrene:replay:drop-invalid-message', { conversationId: 'c1', index: 1 })
+
+    unsub()
+  })
+
+  it('onChatReplay:整批 messages 非法 → 全部丢弃但 payload 仍达 handler(messages: [])', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const received: unknown[] = []
+    const unsub = desktopApi.onChatReplay((p) => received.push(p))
+
+    mockIpc.emit('chat:replay', { conversationId: 'c1', messages: [{ bogus: true }] })
+
+    expect(received).toEqual([{ conversationId: 'c1', messages: [] }])
+    expect(console.warn).toHaveBeenCalledWith('cyrene:replay:drop-invalid-message', { conversationId: 'c1', index: 0 })
+
+    unsub()
   })
 
   it('PushChannels.error = chat:error', () => {
@@ -268,5 +306,31 @@ describe('desktopApi chat 面', () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     mockIpc.invoke.mockRejectedValue(new Error('boom'))
     await expect(desktopApi.disconnect()).rejects.toThrow('[IPC_ERROR] IPC 调用失败')
+  })
+
+  // —— unwrap(res, schema) 防御性解析:ok:true data 形状校验 / 畸形信封兜底(M1) ——
+
+  it('unwrap 响应 schema 校验失败 → 抛 [SCHEMA_VALIDATION_FAILED] IPC 响应校验失败', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { status: 'bogus-status' } })
+    await expect(desktopApi.getConnectionState()).rejects.toThrow('[SCHEMA_VALIDATION_FAILED] IPC 响应校验失败')
+  })
+
+  it('unwrap schema 校验:getMessages 返回缺 hasMore → [SCHEMA_VALIDATION_FAILED]', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { items: [] } })
+    await expect(desktopApi.getMessages({ conversationId: 'c1' })).rejects.toThrow('[SCHEMA_VALIDATION_FAILED] IPC 响应校验失败')
+  })
+
+  it('unwrap 畸形信封:ok:true 缺 data → 抛 [IPC_ERROR] IPC 返回格式异常', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true })
+    await expect(desktopApi.getConnectionState()).rejects.toThrow('[IPC_ERROR] IPC 返回格式异常')
+  })
+
+  it('unwrap 畸形信封:ok:false 缺 error → 抛 [IPC_ERROR] IPC 返回格式异常', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: false })
+    await expect(desktopApi.disconnect()).rejects.toThrow('[IPC_ERROR] IPC 返回格式异常')
   })
 })

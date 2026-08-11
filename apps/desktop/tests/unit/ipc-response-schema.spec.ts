@@ -36,6 +36,20 @@ describe('IPC 领域响应 Schema', () => {
     ).toBe(true)
   })
 
+  it('tool 消息带 MessageToolInfo 通过(镜像契约),tool 非对象失败', () => {
+    const toolMsg = {
+      messageId: 'm4',
+      conversationId: 'c1',
+      role: 'tool',
+      content: 'ls 结果',
+      status: 'completed',
+      createdAt: 't',
+      tool: { callId: 'c1', name: 'desktop.command.run', success: true, durationMs: 12 }
+    }
+    expect(MessageSchema.safeParse(toolMsg).success).toBe(true)
+    expect(MessageSchema.safeParse({ ...toolMsg, tool: 'not-an-object' }).success).toBe(false)
+  })
+
   it('非法:缺 messageId / 缺 completed → 失败', () => {
     const noMessageId = { ...assistantMsg }
     delete (noMessageId as { messageId?: string }).messageId

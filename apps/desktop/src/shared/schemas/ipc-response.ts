@@ -50,6 +50,17 @@ export const AssistantSegmentSchema = z.object({
   completed: z.boolean()
 })
 
+/** 镜像 contracts/message.ts `MessageToolInfo`（全 optional；rest-mapper assemble 产出同形对象） */
+export const MessageToolInfoSchema = z.object({
+  callId: z.string().optional(),
+  name: z.string().optional(),
+  success: z.boolean().optional(),
+  error: z.string().optional(),
+  errorType: z.string().optional(),
+  durationMs: z.number().optional(),
+  truncated: z.boolean().optional()
+})
+
 export const MessageSchema = z.object({
   messageId: z.string().min(1),
   conversationId: z.string().min(1),
@@ -59,7 +70,7 @@ export const MessageSchema = z.object({
   createdAt: z.string(),
   clientMessageId: z.string().optional(),
   assistantSegments: z.array(AssistantSegmentSchema).optional(),
-  tool: z.unknown().optional(),
+  tool: MessageToolInfoSchema.optional(),   // 严格镜像 MessageToolInfo(rest-mapper assemble 产出;M4:输出须可赋值回 Message)
   usage: TokenUsageSchema.optional(),
   model: z.string().optional(),
   emotion: z.string().optional()
