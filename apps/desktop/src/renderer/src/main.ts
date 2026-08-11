@@ -5,6 +5,7 @@ import './tokens.css'
 import { setDesktopApi } from './stores/desktop-api'
 import { useConnectionStore } from './stores/connection.store'
 import { useMessageStore } from './stores/message.store'
+import { useConversationStore } from './stores/conversation.store'
 
 const app = createApp(App)
 app.use(createPinia())
@@ -16,12 +17,18 @@ if (window.desktopApi) {
   setDesktopApi(window.desktopApi)
   const connectionStore = useConnectionStore()
   const messageStore = useMessageStore()
+  const conversationStore = useConversationStore()
   window.desktopApi.onChatEvent((e) => messageStore.applyEvent(e))
   window.desktopApi.onChatState((s) => {
     connectionStore.setState(s)
     messageStore.handleConnectionStateChange(s)
+    if (s.status === 'connected') {
+      void conversationStore.onConnected(s.connectionId)
+      if (s.activeConversationId) void conversationStore.onActiveConversationAppeared(s.activeConversationId)
+    }
   })
   window.desktopApi.onChatReplay(({ conversationId, messages }) => messageStore.loadReplay(conversationId, messages))
+  window.desktopApi.onChatError((err) => connectionStore.setError(err))
 }
 
 app.mount('#app')

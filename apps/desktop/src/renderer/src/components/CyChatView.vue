@@ -25,6 +25,9 @@ const convTitle = computed(() => {
   return c?.title ?? '新会话'
 })
 
+/** 操作门控(批次B T9):connected + 会话就绪 + 不在操作中 */
+const canAct = computed(() => connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy)
+
 /** 连接状态展示:状态点 tone + 文案 */
 const statusTone = computed(() => {
   switch (connectionStore.state.status) {
@@ -79,7 +82,7 @@ watch([visibleIds, isStreaming], async () => {
         </div>
       </div>
       <div class="cy-header-actions">
-        <button class="cy-action-button" title="新建会话" @click="newConversation">新建</button>
+        <button class="cy-action-button" title="新建会话" :disabled="!canAct" @click="newConversation">新建</button>
         <CyConnectionPanel />
       </div>
     </header>

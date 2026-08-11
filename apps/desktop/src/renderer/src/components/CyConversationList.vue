@@ -1,14 +1,19 @@
 <script setup lang="ts">
 // CyConversationList:conversationStore.items 渲染(当前高亮)+ 新建/重命名/删除。
 // 新建后调 activate(c.id)(F1,Task 4 review——create 不 reset messageStore,须显式 activate 拉起空消息)。
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { Conversation } from '@shared/contracts'
+import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 
 const conversationStore = useConversationStore()
+const connectionStore = useConnectionStore()
 
 const items = computed(() => conversationStore.items)
 const currentId = computed(() => conversationStore.currentId)
+
+/** 操作门控(批次B T9):connected + 会话就绪 + 不在操作中;未就绪禁点新建/激活/重命名/删除 */
+const canAct = computed(() => connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy)
 
 const query = ref('')
 const filteredItems = computed(() => {
@@ -46,22 +51,21 @@ function cancelRename(): void {
 function remove(c: Conversation): void {
   if (window.confirm(`删除会话「${c.title}」?`)) void conversationStore.remove(c.id)
 }
-
-onMounted(() => {
-  void conversationStore.list()
-})
 </script>
 
 <template>
   <aside class="cy-conversations">
     <div class="cy-pane-heading">
       <h2>会话</h2>
-      <button class="cy-icon-button" title="新建会话" aria-label="新建会话" @click="create">
+      <button class="cy-icon-button" title="新建会话" aria-label="新建会话" :disabled="!canAct" @click="create">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
           <path d="M12 5v14M5 12h14" />
         </svg>
       </button>
     </div>
+
+    <!-- 会话操作错误短横幅(批次B T9):conversationStore.error 结构化展示 -->
+    <div v-if="conversationStore.error" class="cy-conversation-error" role="alert">{{ conversationStore.error.message }}</div>
 
     <div class="cy-search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -79,7 +83,7 @@ onMounted(() => {
         :class="{ 'is-active': currentId === c.id }"
       >
         <!-- 常规态:整行可点激活;重命名态:标题换输入框(按钮内不放 input) -->
-        <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" @click="conversationStore.activate(c.id)">
+        <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" :disabled="!canAct" @click="conversationStore.activate(c.id)">
           <span class="cy-conversation-avatar">{{ c.title.slice(0, 1) }}</span>
           <span class="cy-conversation-copy">
             <span class="cy-conversation-title">{{ c.title }}</span>
@@ -98,12 +102,12 @@ onMounted(() => {
           />
         </div>
         <div class="cy-conversation-actions">
-          <button class="cy-row-btn" title="重命名" aria-label="重命名" @click="startRename(c)">
+          <button class="cy-row-btn" title="重命名" aria-label="重命名" :disabled="!canAct" @click="startRename(c)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
             </svg>
           </button>
-          <button class="cy-row-btn" title="删除" aria-label="删除" @click="remove(c)">
+          <button class="cy-row-btn" title="删除" aria-label="删除" :disabled="!canAct" @click="remove(c)">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
             </svg>
@@ -151,6 +155,24 @@ onMounted(() => {
 
 .cy-icon-button:hover {
   background: var(--cy-surface-hover);
+}
+
+.cy-icon-button:disabled,
+.cy-conversation-main:disabled,
+.cy-row-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cy-conversation-error {
+  padding: 6px 9px;
+  margin-bottom: 8px;
+  color: var(--cy-danger);
+  background: var(--cy-surface-soft);
+  border: 1px dashed var(--cy-border);
+  border-radius: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
 
 .cy-search {

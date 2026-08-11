@@ -14,9 +14,10 @@ const draft = ref('')
 
 const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
-/** 发送条件:非空 + 未在发送(F3)+ 有激活会话(无会话 send 直接 return,按钮同步禁用避免假死) */
-const canSend = computed(
-  () => draft.value.trim().length > 0 && !messageStore.sending && !!conversationStore.currentId
+/** 发送条件:非空 + 未在发送(F3)+ 有激活会话 + 已连接且会话就绪(批次B T9 门控) */
+const canSend = computed(() =>
+  draft.value.trim().length > 0 && !messageStore.sending && !!conversationStore.currentId &&
+  connectionStore.state.status === 'connected' && conversationStore.ready
 )
 
 /** 断线横幅:reconnecting/error(流式不可继续,提示用户) */
@@ -27,7 +28,7 @@ const showBanner = computed(() => {
 const bannerText = computed(() => {
   const s = connectionStore.state.status
   if (s === 'reconnecting') return '连接已断开,正在重连…'
-  if (s === 'error') return `连接出错${connectionStore.state.lastError ? `: ${connectionStore.state.lastError}` : ''}`
+  if (s === 'error') return `连接出错${connectionStore.error?.message ? `: ${connectionStore.error.message}` : ''}`
   return ''
 })
 
