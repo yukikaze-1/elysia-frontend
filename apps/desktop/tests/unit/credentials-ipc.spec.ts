@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createCredentialsExecutors } from '../../src/main/credentials'
 import { CyreneError, CyreneErrorCode } from '../../src/shared/errors'
-import { BACKEND_TOKEN_KEY } from '../../src/shared/contracts'
+import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY } from '../../src/shared/contracts'
 import type { Logger } from '../../src/main/diagnostics/logger'
 import type { CredentialStore } from '../../src/main/credentials/credential-store'
 
@@ -40,5 +40,31 @@ describe('createCredentialsExecutors', () => {
     const store = { getStatus: vi.fn(async () => 'empty'), clearCredential: vi.fn(async () => {}) }
     const res = await makeExecutors(store).clear({ key: BACKEND_TOKEN_KEY })
     expect(res).toEqual({ ok: true, data: { status: 'empty', key: 'backend.token' } })
+  })
+  it('BACKEND_TOKEN_KEY → 委派 connConfig.setBackendToken（store.setCredential 未被调）', async () => {
+    const config = { setBackendToken: vi.fn(async () => {}), clearBackendToken: vi.fn(async () => {}) }
+    const store = { getStatus: vi.fn(async () => 'available'), setCredential: vi.fn(async () => {}) }
+    const executors = createCredentialsExecutors(store as unknown as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize }, config as never)
+    const res = await executors.set({ key: BACKEND_TOKEN_KEY, value: 't' })
+    expect(config.setBackendToken).toHaveBeenCalledWith('t')
+    expect(store.setCredential).not.toHaveBeenCalled()
+    expect(res).toEqual({ ok: true, data: { status: 'available', key: 'backend.token' } })
+  })
+  it('BACKEND_TOKEN_KEY clear → 委派 connConfig.clearBackendToken', async () => {
+    const config = { setBackendToken: vi.fn(async () => {}), clearBackendToken: vi.fn(async () => {}) }
+    const store = { getStatus: vi.fn(async () => 'empty'), clearCredential: vi.fn(async () => {}) }
+    const executors = createCredentialsExecutors(store as unknown as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize }, config as never)
+    await executors.clear({ key: BACKEND_TOKEN_KEY })
+    expect(config.clearBackendToken).toHaveBeenCalled()
+    expect(store.clearCredential).not.toHaveBeenCalled()
+  })
+  it('非 BACKEND_TOKEN_KEY → 通用 store 路径不变（config 未被调）', async () => {
+    const config = { setBackendToken: vi.fn(async () => {}), clearBackendToken: vi.fn(async () => {}) }
+    const store = { getStatus: vi.fn(async () => 'available'), setCredential: vi.fn(async () => {}) }
+    const executors = createCredentialsExecutors(store as unknown as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize }, config as never)
+    const res = await executors.set({ key: BACKEND_TOKEN_ORIGIN_KEY, value: 'https://a.example' })
+    expect(config.setBackendToken).not.toHaveBeenCalled()
+    expect(store.setCredential).toHaveBeenCalledWith(BACKEND_TOKEN_ORIGIN_KEY, 'https://a.example')
+    expect(res).toEqual({ ok: true, data: { status: 'available', key: BACKEND_TOKEN_ORIGIN_KEY } })
   })
 })

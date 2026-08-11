@@ -20,9 +20,12 @@ export const credentialsClearSchema = z.object({
 })
 
 // —— chat 命令 request schema(P0 精确字段;响应校验用 z.unknown() 信封,阶段 7 细化)——
-export const chatConnectSchema = z.object({
-  serverUrl: z.string().min(1)
-})
+export const chatConnectSchema = z.undefined()   // 无参:endpoint/token 由 connection-config 持有,connect 不再传 URL
+export const chatSetEndpointSchema = z.object({ serverUrl: z.string().min(1).max(4096) })
+export const chatGetEndpointSchema = z.undefined()
+export const chatGetRuntimeInfoSchema = z.undefined()
+export const endpointResponseSchema = z.object({ endpoint: z.string().optional() })
+export const runtimeInfoResponseSchema = z.object({ mode: z.enum(['real', 'mock']), packaged: z.boolean() })
 export const chatSendSchema = z.object({
   conversationId: z.string().min(1),
   text: z.string(),

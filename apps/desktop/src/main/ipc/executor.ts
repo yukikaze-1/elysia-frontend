@@ -32,7 +32,14 @@ export function createIpcHandler<TReq, TRes>(
     } catch (e: unknown) {
       if (e instanceof CyreneError && typeof e.code === 'string' && typeof e.message === 'string') {
         const msg = e.message.length > 65536 ? '<message-too-long>' : truncateCodepoints(options.sanitize(e.message), 500)
-        return { ok: false, error: { code: e.code, message: msg } }
+        // 结构化上提：details.backendCode/retryable/requestId 进入 IpcErrorBody（跨 contextBridge 仅 message 保真，前置拼接由 preload formatIpcError 负责）
+        const details = (e.details ?? {}) as { backendCode?: string; code?: string; retryable?: boolean; requestId?: string }
+        const backendCode = details.backendCode ?? details.code   // 兼容既有 error 帧路径 details.code
+        const error: { code: string; message: string; backendCode?: string; retryable?: boolean; requestId?: string } = { code: e.code, message: msg }
+        if (backendCode) error.backendCode = backendCode
+        if (typeof details.retryable === 'boolean') error.retryable = details.retryable
+        if (details.requestId) error.requestId = details.requestId
+        return { ok: false, error }
       }
       return { ok: false, error: { code: 'UNKNOWN', message: '内部错误' } }
     }

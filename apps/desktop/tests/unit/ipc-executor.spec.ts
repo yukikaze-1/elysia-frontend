@@ -37,4 +37,21 @@ describe('createIpcHandler', () => {
     const h = createIpcHandler(z.undefined(), z.string(), () => ({ bad: true }) as never, { sanitize: noopSanitize })
     expect(await h(undefined)).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
   })
+  it('CyreneError.details 的 backendCode/retryable/requestId 上提进 IpcErrorBody', async () => {
+    const fn = () => { throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列已满', { backendCode: 'QUEUE_FULL', retryable: true }) }
+    const handler = createIpcHandler(z.undefined(), z.unknown(), fn, { sanitize: (s: string) => s })
+    const res = await handler(undefined)
+    expect(res.ok).toBe(false)
+    if (!res.ok) {
+      expect(res.error.code).toBe('BACKEND_REJECTED')
+      expect(res.error.backendCode).toBe('QUEUE_FULL')
+      expect(res.error.retryable).toBe(true)
+    }
+  })
+  it('兼容 details.code（error 帧路径）', async () => {
+    const fn = () => { throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'x', { code: 'BAD_FRAME' }) }
+    const handler = createIpcHandler(z.undefined(), z.unknown(), fn, { sanitize: (s: string) => s })
+    const res = await handler(undefined)
+    if (!res.ok) expect(res.error.backendCode).toBe('BAD_FRAME')
+  })
 })

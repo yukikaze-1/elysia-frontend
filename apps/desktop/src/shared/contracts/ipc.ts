@@ -14,7 +14,10 @@ export const IpcChannels = {
   chatCreate: 'chat:create',
   chatRename: 'chat:rename',
   chatDelete: 'chat:delete',
-  chatGetState: 'chat:get-state'
+  chatGetState: 'chat:get-state',
+  chatSetEndpoint: 'chat:set-endpoint',
+  chatGetEndpoint: 'chat:get-endpoint',
+  chatGetRuntimeInfo: 'chat:get-runtime-info'
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
