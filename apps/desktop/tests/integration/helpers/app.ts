@@ -2,7 +2,8 @@ import { _electron, chromium, type ElectronApplication, type Page } from 'playwr
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'os'
-import { join, extname, resolve, sep } from 'path'
+import { join, extname, resolve, sep, dirname } from 'path'
+import { createRequire } from 'node:module'
 import { type AddressInfo } from 'node:net'
 
 export interface LaunchedApp { app: ElectronApplication; page: Page; userData: string }
@@ -11,6 +12,11 @@ const ROOT = join(__dirname, '../../..')        // apps/desktop（helpers → in
 const RENDERER_OUT = join(ROOT, 'out/renderer') // apps/desktop/out/renderer
 const PRELOAD_OUT = join(ROOT, 'out/preload/index.js')
 
+// electron 包位置按 require 解析链定位：pnpm hoisted 干净 install 下 electron 在根 node_modules，
+// apps/desktop/node_modules 整个不存在（本地该目录是历史残留），硬编码子目录路径在全新环境 ENOENT（doc 17 P-14）
+const require = createRequire(import.meta.url)
+const ELECTRON_EXEC = join(dirname(require.resolve('electron')), 'dist', process.platform === 'win32' ? 'electron.exe' : 'electron')
+
 const MIME: Record<string, string> = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json'
@@ -18,9 +24,7 @@ const MIME: Record<string, string> = {
 
 /** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env */
 export async function launchApp(): Promise<LaunchedApp> {
-  const electronPath = process.platform === 'win32'
-    ? join(ROOT, 'node_modules/electron/dist/electron.exe')
-    : join(ROOT, 'node_modules/electron/dist/electron')
+  const electronPath = ELECTRON_EXEC
   const userData = mkdtempSync(join(tmpdir(), 'cy-int-ud-'))
   const appDataKey = process.platform === 'win32' ? 'APPDATA' : process.platform === 'darwin' ? 'HOME' : 'XDG_CONFIG_HOME'
   const env: Record<string, string> = {
