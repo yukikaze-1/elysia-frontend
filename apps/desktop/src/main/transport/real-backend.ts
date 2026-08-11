@@ -61,6 +61,7 @@ export interface RealBackendOptions {
   onConnectionStateChange?: (state: ConnectionState) => void
   ackTimeoutMs?: number   // 默认 15000;测试注入小值
   reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
+  handshakeTimeoutMs?: number  // 默认 10000;握手(connect → server_info)超时,测试注入小值
 }
 
 /** ack 关联的 pending 发送(按 clientRequestId 幂等) */
@@ -75,6 +76,7 @@ const ACK_TIMEOUT_DEFAULT_MS = 15000
 const RECONNECT_BASE_DELAY_MS = 1000
 const RECONNECT_MAX_DELAY_MS = 30000
 const RECONNECT_MAX_ATTEMPTS = 6
+const HANDSHAKE_TIMEOUT_DEFAULT_MS = 10000
 
 /** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
  *  400 CONTRACT_VALIDATION → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
@@ -103,6 +105,7 @@ export class RealBackend implements BackendAdapter {
   private sessionBuffer: RawSessionMessageItem[] = []
   private reconnectAttempts = 0
   private reconnectTimer?: ReturnType<typeof setTimeout>
+  private handshakeTimer?: ReturnType<typeof setTimeout>
   private lastSocketClosedAt?: number
   private disconnected = false
   private serverUrl = ''
@@ -113,6 +116,11 @@ export class RealBackend implements BackendAdapter {
   constructor(options: RealBackendOptions = {}) { this.options = options }
 
   getConnectionState(): ConnectionState { return this.state }
+
+  /** 清除握手超时 timer(connect → server_info);server_info 到达/关闭/disconnect/非 101 响应/重连挂起手动 connect 均调用 */
+  private clearHandshakeTimer(): void {
+    if (this.handshakeTimer) { clearTimeout(this.handshakeTimer); this.handshakeTimer = undefined }
+  }
 
   /** 统一状态迁移入口:赋值 + 回调。加性改造——迁移前后各状态机路径产生的对象值不变;
    *  `this.state` 直接替换(非原地 Object.assign):getConnectionState 当前无外部调用方持引用依赖对象身份
@@ -167,6 +175,7 @@ export class RealBackend implements BackendAdapter {
   }
 
   private handleServerInfo(frame: RawServerInfo): void {
+    this.clearHandshakeTimer() // server_info 到达即握手完成,成功与版本不符两条路径都清(后者走 fail-closed)
     if (frame.protocol_version !== PROTOCOL_VERSION_WIRE) {
       const err = new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `后端协议版本 ${frame.protocol_version} 不兼容,要求 ${PROTOCOL_VERSION_WIRE}`)
       this.ws?.close() // 版本不符 fail-closed:关闭已建立的 socket,避免后续帧继续被分派/泄漏
@@ -239,6 +248,8 @@ export class RealBackend implements BackendAdapter {
     if (!input.token) {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '缺少 token: 2B 要求建立认证连接', { reason: 'token_missing' })
     }
+    this.clearHandshakeTimer() // m4:重连挂起时手动 connect 防双 socket(旧握手 timer 一并清)
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
     this.serverUrl = input.serverUrl
     this.token = input.token
     this.reconnectAttempts = 0
@@ -262,6 +273,22 @@ export class RealBackend implements BackendAdapter {
     const ws = factory ? factory(wsBase, headers) : new WebSocket(wsBase, { headers })
     this.ws = ws
     this.mapper = new FrameMapper({ connectionId: this.serverUrl, onProtocolWarning: this.options.onProtocolWarning })
+    // 握手超时:建 socket 后立即启动(先于 message 注册,保证同步推帧夹具的 server_info 也能在 handleServerInfo 清掉)。
+    // 超时按是否在用户 connect 流程分派:有 connect promise → fail-fast reject TIMEOUT + error;
+    // 自动重连(无 connect promise)→ 关闭后走指数退避继续。
+    const handshakeTimeoutMs = this.options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_DEFAULT_MS
+    this.handshakeTimer = setTimeout(() => {
+      this.handshakeTimer = undefined
+      this.ws?.close(); this.ws = undefined
+      if (this.connectReject) {
+        const err = new CyreneError(CyreneErrorCode.TIMEOUT, `等待 server_info 超时(${handshakeTimeoutMs}ms)`)
+        this.connectReject(err); this.connectResolve = undefined; this.connectReject = undefined
+        this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
+        this.options.onError?.(err)
+      } else {
+        this.onSocketClosed()   // 自动重连:关闭后走指数退避
+      }
+    }, handshakeTimeoutMs)
     ws.on('message', (arg?: unknown) => {
       if (arg === undefined) return
       const text = typeof arg === 'string' ? arg : arg instanceof Buffer ? arg.toString('utf8') : String(arg)
@@ -275,6 +302,7 @@ export class RealBackend implements BackendAdapter {
   /** 非 101 升级响应:仅 400/401/403 fail-fast(协议/认证硬错);429 RATE_LIMITED/503 超限等瞬态状态码 → 走重连退避,
    *  避免限流下全 fail-fast 让重连永久失效(F3,whole-branch review) */
   private onUnexpectedResponse(res: unknown): void {
+    this.clearHandshakeTimer() // 非 101 升级响应即握手失败,不再等超时
     const statusCode = typeof res === 'object' && res !== null && 'statusCode' in res
       ? (res as { statusCode?: number }).statusCode
       : undefined
@@ -298,6 +326,7 @@ export class RealBackend implements BackendAdapter {
   }
 
   private onSocketClosed(): void {
+    this.clearHandshakeTimer() // socket 关闭即当前握手结束,避免超时回调在退避期间误触发
     if (this.disconnected) return
     if (this.state.status === 'error') return // unexpected-response/版本不符 fail-fast 后,后续 close/error 不再翻回 reconnecting
     this.ws = undefined
@@ -336,6 +365,7 @@ export class RealBackend implements BackendAdapter {
 
   async disconnect(): Promise<void> {
     this.disconnected = true
+    this.clearHandshakeTimer() // 握手未完成时取消:清超时 timer,避免其后误触发
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
     for (const [, pending] of this.pendingAcks) {
       clearTimeout(pending.timer)

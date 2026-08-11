@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'http'
 import { WebSocketServer } from 'ws'
 import { AddressInfo } from 'net'
-import { RealBackend } from '../../src/main/transport/real-backend'
+import { RealBackend, type RealBackendOptions } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
 import { CyreneErrorCode } from '@shared/errors'
 
@@ -65,6 +65,11 @@ beforeAll(async () => {
 afterAll(async () => { wss.close(); server.close(); authServer.close() })
 
 function makeBackend(): RealBackend { return new RealBackend({ now: () => Date.now() }) }
+
+/** T2 夹具:内联 { now, wsFactory }(无 baseOpts);测试覆盖 wsFactory/handshakeTimeoutMs 等 */
+function makeOpts(o: Partial<RealBackendOptions> = {}): RealBackendOptions {
+  return { now: () => Date.now(), wsFactory: () => fakeWs(), ...o }
+}
 
 describe('RealBackend WS 连接', () => {
   it('握手头精确注入 X-Protocol-Version:"2"/X-Client-Platform/Authorization', async () => {
@@ -234,6 +239,68 @@ describe('RealBackend WS 连接', () => {
     await expect(first).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
     const ref = await second
     expect(ref.clientRequestId).toBe('c-dup')
+    await b.disconnect()
+  })
+
+  // —— T2:握手超时 + connect 清旧 timer ——
+  it('握手超时:建连但不发 server_info → connect reject TIMEOUT + state error', async () => {
+    const noFrameWs = () => ({ // 只触发 open,不推任何帧 → 握手永远不完成
+      on: (ev: string, cb: (arg?: unknown) => void) => { if (ev === 'open') cb() },
+      send: () => {}, close: () => {}, readyState: 1
+    })
+    const b = new RealBackend(makeOpts({ handshakeTimeoutMs: 20, wsFactory: noFrameWs }))
+    const p = b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' })
+    await expect(p).rejects.toMatchObject({ code: CyreneErrorCode.TIMEOUT })
+    expect(b.getConnectionState().status).toBe('error')
+  })
+
+  it('正常 server_info 到达 → 握手 timer 清除,不超时(I3 正向)', async () => {
+    const b = new RealBackend(makeOpts({ handshakeTimeoutMs: 50 }))
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' }) // fakeWs 同步推 session + server_info → resolve
+    expect(b.getConnectionState().status).toBe('connected')
+    await b.disconnect()
+  })
+
+  it('disconnect 清除握手 timer,不再触发超时回调', async () => {
+    const noFrameWs = () => ({
+      on: (ev: string, cb: (arg?: unknown) => void) => { if (ev === 'open') cb() },
+      send: () => {}, close: () => {}, readyState: 1
+    })
+    const b = new RealBackend(makeOpts({ handshakeTimeoutMs: 200, wsFactory: noFrameWs }))
+    const p = b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' })
+    await b.disconnect()
+    await expect(p).rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED }) // 由 disconnect 取消,非 TIMEOUT
+  })
+
+  it('重连挂起时手动 connect 清旧 reconnect/handshake timer(无双 socket)', async () => {
+    let wsCreateCount = 0
+    const b = new RealBackend(makeOpts({
+      wsFactory: () => {
+        wsCreateCount++
+        const id = wsCreateCount
+        return {
+          on: (ev: string, cb: (arg?: unknown) => void) => {
+            if (ev === 'message') {
+              cb(Buffer.from(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })))
+              cb(Buffer.from(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: 'v', features: {}, services: {}, connectionId: `conn-${id}` })))
+            }
+            if (ev === 'close' && id === 1) setTimeout(() => cb(), 0) // 首个 socket 握手完成后掉线 → 进入退避重连
+          },
+          send: () => {}, close: () => {}, readyState: 1
+        }
+      },
+      reconnectBaseDelayMs: 30, // 缩短退避:让旧 reconnectTimer 先排好,若未被清则会二次建 socket
+      handshakeTimeoutMs: 100
+    }))
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' }) // #1 握手成功
+    expect(wsCreateCount).toBe(1)
+    await new Promise((r) => setTimeout(r, 15)) // close 已触发 → reconnecting,旧 reconnectTimer(30ms)已排
+    expect(b.getConnectionState().status).toBe('reconnecting')
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' }) // 手动 connect:清旧 reconnect/handshake timer → 只建 #2
+    expect(wsCreateCount).toBe(2)
+    await new Promise((r) => setTimeout(r, 60)) // 越过旧 reconnectTimer 截止点:未被清则会再建 #3
+    expect(wsCreateCount).toBe(2)
+    expect(b.getConnectionState().status).toBe('connected')
     await b.disconnect()
   })
 })
