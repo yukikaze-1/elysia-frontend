@@ -24,6 +24,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # electron 43 无 postinstall，二进制改为 require('electron') 时懒下载；集成测试 helper 硬编码
+      # dist 路径（不走 require），全新环境必须在此显式触发 install.js，否则 electron.launch ENOENT
+      - name: Ensure Electron binary
+        run: pnpm --filter @cyrene/desktop ensure:electron
+
       - name: Typecheck
         run: pnpm typecheck
 

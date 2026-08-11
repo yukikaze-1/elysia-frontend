@@ -9,7 +9,9 @@ export default defineConfig(({ mode }) => ({
     resolve: { alias: { '@shared': resolve('src/shared') } }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    // 沙箱 preload 只能 require 有限模块，zod 必须 bundle 进产物（externalize → require('zod') 运行时报错，
+    // contextBridge 不执行 → window.desktopApi undefined）。main 非沙箱不受限。
+    plugins: [externalizeDepsPlugin({ exclude: ['zod'] })],
     resolve: { alias: { '@shared': resolve('src/shared') } }
   },
   renderer: {
