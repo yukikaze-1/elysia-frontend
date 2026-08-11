@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { RawFrame } from './raw-types'
 
@@ -178,4 +179,39 @@ export function parseRawFrame(input: unknown): {
   error: z.ZodError
 } {
   return RawFrameSchema.safeParse(input)
+}
+
+/** 各帧判别 type(zod v4 `_def.options` 推导,与 discriminatedUnion 一致) */
+export const RAW_FRAME_TYPES: readonly string[] = RawFrameSchema._def.options.map((o) => o.shape.type.value)
+
+/** 单字段签名: `k:_def.type:枚举成员(entries 排序):字面量值(_def.values/value)`;zod v4 判别 API(_def.type 小写、_def.entries、_def.values) */
+const fieldSig = ([k, s]: [string, unknown]): string => {
+  const d = s as { _def?: { type?: string; entries?: Record<string, unknown>; values?: unknown[]; value?: unknown } }
+  const vals = d._def?.entries ? Object.keys(d._def.entries).sort().join(',') : (d._def?.values ?? []).join(',')
+  const lit = d._def?.value !== undefined ? String(d._def.value) : ''
+  return `${k}:${d._def?.type}:${vals}:${lit}`
+}
+
+/** 指纹计算所需的 discriminatedUnion 最小结构(zod v4 `_def.options` + `_def.discriminator`) */
+interface FingerprintableDiscriminatedUnion {
+  _def: {
+    options: ReadonlyArray<{ shape: Record<string, unknown> }>
+    discriminator?: string
+  }
+}
+
+/** 对任意 discriminatedUnion 计算 sha256 指纹;同 schema 恒等,结构/枚举/字面量变化即变 */
+export function rawSchemasFingerprintFor(schema: FingerprintableDiscriminatedUnion): string {
+  // zod v4 discriminatedUnion `_def` 运行时含 discriminator(zod 类型 $ZodUnionDef 未暴露该字段,故按名取)
+  const disc = schema._def.discriminator ?? 'type'
+  const fields = schema._def.options.map((o) => ({
+    type: (o.shape[disc] as { value: unknown }).value,
+    fields: Object.entries(o.shape).map(fieldSig).sort()
+  }))
+  return createHash('sha256').update(JSON.stringify({ types: schema._def.options.map((o) => (o.shape[disc] as { value: unknown }).value).sort(), fields })).digest('hex')
+}
+
+/** RawFrameSchema 的 schemaHash 指纹(manifest 门禁用) */
+export function rawSchemasFingerprint(): string {
+  return rawSchemasFingerprintFor(RawFrameSchema)
 }

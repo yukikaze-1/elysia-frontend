@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { parseRawFrame } from '../../src/main/transport/protocol-v2/raw-schemas'
+import { z } from 'zod'
+import { parseRawFrame, RawFrameSchema, RAW_FRAME_TYPES, rawSchemasFingerprint, rawSchemasFingerprintFor } from '../../src/main/transport/protocol-v2/raw-schemas'
 
 const validCompleted = {
   type: 'generation.completed',
@@ -127,5 +128,30 @@ describe('raw schema ack/error 扩展(2B)', () => {
   it('accepted 正常通过', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: 'm1', clientRequestId: 'c1', receivedAt: 't', status: 'accepted' })
     expect(r.success).toBe(true)
+  })
+})
+
+describe('raw schemas fingerprint(2C)', () => {
+  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6)', () => {
+    const derived = RawFrameSchema._def.options.map((o) => o.shape.type.value).sort()
+    expect([...RAW_FRAME_TYPES].sort()).toEqual(derived)
+  })
+  it('rawSchemasFingerprint 同 schema 恒等', () => {
+    expect(rawSchemasFingerprint()).toBe(rawSchemasFingerprint())
+  })
+  it('枚举增减成员 → 指纹变化(敏感性,N6 样本)', () => {
+    const a = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), e: z.enum(['p', 'q']) })]))
+    const b = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), e: z.enum(['p', 'q', 'r']) })]))
+    expect(a).not.toBe(b)
+  })
+  it('字段类型 string→number → 指纹变化(敏感性)', () => {
+    const a = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), n: z.string() })]))
+    const b = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), n: z.number() })]))
+    expect(a).not.toBe(b)
+  })
+  it('非判别字面量值变更 → 指纹变化(_def.value,可执行性 6)', () => {
+    const a = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), c: z.literal('a') })]))
+    const b = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), c: z.literal('b') })]))
+    expect(a).not.toBe(b)
   })
 })
