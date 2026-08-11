@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { isKeyAllowed, type CredentialStatus } from '@shared/contracts'
+import { EndpointResponseSchema, RuntimeInfoSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
   name: z.string(),
@@ -24,8 +25,9 @@ export const chatConnectSchema = z.undefined()   // 无参:endpoint/token 由 co
 export const chatSetEndpointSchema = z.object({ serverUrl: z.string().min(1).max(4096) })
 export const chatGetEndpointSchema = z.undefined()
 export const chatGetRuntimeInfoSchema = z.undefined()
-export const endpointResponseSchema = z.object({ endpoint: z.string().optional() })
-export const runtimeInfoResponseSchema = z.object({ mode: z.enum(['real', 'mock']), packaged: z.boolean() })
+// 响应 schema:共享定义在 shared/schemas/ipc-response,此处别名保持 chat-handlers 引用兼容(M3)
+export const endpointResponseSchema = EndpointResponseSchema
+export const runtimeInfoResponseSchema = RuntimeInfoSchema
 export const chatSendSchema = z.object({
   conversationId: z.string().min(1),
   text: z.string(),
