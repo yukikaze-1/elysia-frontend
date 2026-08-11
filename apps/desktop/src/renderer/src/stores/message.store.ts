@@ -10,6 +10,7 @@ import type { BackendEvent, ConnectionState, Message, MessagePage } from '@share
 import { StreamAccumulator } from '@shared/domain'
 import { api } from './desktop-api'
 import { useConversationStore } from './conversation.store'
+import { parsePublicError, type PublicError } from '../utils/public-error'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -25,7 +26,7 @@ export const useMessageStore = defineStore('message', () => {
   const sending = ref(false)
   const activeGenerationId = ref<string>()
   const accumulator = ref<StreamAccumulator>()
-  const lastError = ref<string>()
+  const lastError = ref<PublicError>()
 
   /** 按 messageId 去重插入:新 key 追加 order;已存在则替换内容、保持位置 */
   function upsertMessage(msg: Message): void {
@@ -67,7 +68,7 @@ export const useMessageStore = defineStore('message', () => {
     const m = byId.value[messageId]
     if (!m) return
     m.status = event.error.code === 'CANCELLED' ? 'interrupted' : 'failed'
-    lastError.value = `[${event.error.code}] ${event.error.message}`
+    lastError.value = { code: event.error.code, message: event.error.message, backendCode: event.error.code, retryable: event.error.retryable }
   }
 
   function resetConversation(_conversationId: string): void {
@@ -153,7 +154,7 @@ export const useMessageStore = defineStore('message', () => {
       optimistic.status = 'acknowledged' // 无 serverMessageId 也 acknowledged(P2-1)
     } catch (e) {
       optimistic.status = 'failed'
-      lastError.value = messageOf(e)
+      lastError.value = parsePublicError(messageOf(e))
     } finally {
       sending.value = false
     }

@@ -56,10 +56,10 @@ function stop(): void {
       <span>{{ bannerText }}</span>
     </div>
 
-    <!-- 发送/回复错误提示(P2-4):messageStore.lastError 非空时展示 -->
+    <!-- 发送/回复错误提示(P2-4):messageStore.lastError 结构化(PublicError),展示 .message -->
     <div v-if="messageStore.lastError" class="cy-banner cy-error-banner" role="alert">
       <span class="cy-banner-dot" />
-      <span>发送失败:{{ messageStore.lastError }}</span>
+      <span>发送失败:{{ messageStore.lastError.message }}</span>
     </div>
 
     <div class="cy-composer-box">

@@ -22,12 +22,12 @@ describe('connectionStore', () => {
     vi.resetAllMocks()
   })
 
-  it('connect 成功:调 api.connect;等待期间乐观 connecting,成功后状态由 onChatState 推送决定', async () => {
+  it('connect 成功:调 api.connect(无参);等待期间乐观 connecting,成功后状态由 onChatState 推送决定', async () => {
     const store = useConnectionStore()
     let resolveConnect!: (v: { sessionId: string; protocolVersion: string; serverUrl: string }) => void
     mockApi.connect.mockImplementation(() => new Promise((res) => { resolveConnect = res }))
-    const pending = store.connect('http://localhost:3000')
-    expect(mockApi.connect).toHaveBeenCalledWith('http://localhost:3000')
+    const pending = store.connect()
+    expect(mockApi.connect).toHaveBeenCalledWith()
     // 成功前乐观 connecting(P1-2:置位于 await 之前,不被 invoke reply 覆写)
     expect(store.state.status).toBe('connecting')
     expect(store.connecting).toBe(true)
@@ -41,13 +41,21 @@ describe('connectionStore', () => {
     expect(store.state.connectionId).toBe('cid-1')
   })
 
-  it('connect 失败:api.connect reject → error 置位,状态复位 disconnected', async () => {
+  it('connect 失败:api.connect reject → error 结构化(parsePublicError 产出),状态复位 disconnected', async () => {
     const store = useConnectionStore()
-    mockApi.connect.mockRejectedValue(new Error('boom'))
-    await store.connect('http://localhost:3000')
-    expect(store.error).toBe('boom')
+    mockApi.connect.mockRejectedValue(new Error('[CREDENTIAL_UNAVAILABLE] 后端 Token 未设置'))
+    await store.connect()
+    expect(store.error).toEqual({ code: 'CREDENTIAL_UNAVAILABLE', message: '后端 Token 未设置' })
     expect(store.state.status).toBe('disconnected')
     expect(store.connecting).toBe(false)
+  })
+
+  it('connect 失败(无前缀)→ error code UNKNOWN', async () => {
+    const store = useConnectionStore()
+    mockApi.connect.mockRejectedValue(new Error('boom'))
+    await store.connect()
+    expect(store.error).toEqual({ code: 'UNKNOWN', message: 'boom' })
+    expect(store.state.status).toBe('disconnected')
   })
 
   it('setState 更新连接状态(onChatState 推送)', () => {

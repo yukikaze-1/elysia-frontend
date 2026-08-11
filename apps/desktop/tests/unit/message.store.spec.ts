@@ -102,4 +102,29 @@ describe('messageStore 流式应用', () => {
     const msgs = Object.values(store.byId)
     expect(msgs.some((m) => m.role === 'user' && m.status === 'acknowledged')).toBe(true)
   })
+
+  it('generation.failed → lastError 结构化(PublicError:code/message/backendCode/retryable)', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent({
+      eventId: 'e', sequence: 3, event: 'generation.failed', generationId: 'gen-1',
+      error: { code: 'BACKEND_REJECTED', message: '队列已满', retryable: true }
+    })
+    expect(store.lastError).toEqual({
+      code: 'BACKEND_REJECTED', message: '队列已满', backendCode: 'BACKEND_REJECTED', retryable: true
+    })
+    expect(store.byId['msg-1']?.status).toBe('failed')
+  })
+
+  it('send 失败 → lastError 结构化(parsePublicError 反解 IPC 前缀)', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.send.mockRejectedValueOnce(new Error('[AUTHENTICATION_FAILED] [backendCode=TOKEN_EXPIRED] token 无效'))
+    const store = useMessageStore()
+    await store.send('hi')
+    expect(store.lastError).toEqual({
+      code: 'AUTHENTICATION_FAILED', message: 'token 无效', backendCode: 'TOKEN_EXPIRED'
+    })
+    expect(Object.values(store.byId).some((m) => m.role === 'user' && m.status === 'failed')).toBe(true)
+  })
 })

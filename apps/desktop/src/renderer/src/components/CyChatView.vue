@@ -1,19 +1,19 @@
 <script setup lang="ts">
 // CyChatView:聊天主区——messageStore.byId/order 渲染 + 空态 + 流式占位「生成中…」;
 // conversationStore 激活/新建(F1:create 不 reset messageStore,新建后须显式 activate(c.id));
-// 连接控件:serverUrl 输入 + 连接按钮(connectionStore.connect,Mock 免 token)。
+// 连接装配(Endpoint/Token/连接按钮)在 CyConnectionPanel(Mock 演示 / Real 联调)。
 import { computed, nextTick, ref, watch } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import CyChatInput from './CyChatInput.vue'
+import CyConnectionPanel from './CyConnectionPanel.vue'
 import CyMessageBubble from './CyMessageBubble.vue'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
 
-const serverUrl = ref('ws://localhost:8080')
 const messagesRef = ref<HTMLElement>()
 
 const visibleIds = computed(() => messageStore.order.filter((id) => !!messageStore.byId[id]))
@@ -54,12 +54,6 @@ const statusLabel = computed(() => {
   }
 })
 
-async function connect(): Promise<void> {
-  const url = serverUrl.value.trim()
-  if (!url || connectionStore.connecting) return
-  await connectionStore.connect(url)
-}
-
 /** F1(Task 4 review):create 只设 currentId、不 reset messageStore——新建后显式 activate(c.id) 拉起空消息页 */
 async function newConversation(): Promise<void> {
   await conversationStore.create()
@@ -86,19 +80,7 @@ watch([visibleIds, isStreaming], async () => {
       </div>
       <div class="cy-header-actions">
         <button class="cy-action-button" title="新建会话" @click="newConversation">新建</button>
-        <form class="cy-connect" @submit.prevent="connect">
-          <input
-            v-model="serverUrl"
-            class="cy-server-input"
-            type="text"
-            placeholder="服务器地址"
-            aria-label="服务器地址"
-            :disabled="connectionStore.connecting"
-          />
-          <button class="cy-action-button cy-connect-btn" type="submit" :disabled="connectionStore.connecting">
-            {{ connectionStore.connecting ? '连接中…' : '连接' }}
-          </button>
-        </form>
+        <CyConnectionPanel />
       </div>
     </header>
 
@@ -203,32 +185,6 @@ watch([visibleIds, isStreaming], async () => {
 .cy-action-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.cy-connect {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.cy-server-input {
-  width: 180px;
-  padding: 7px 10px;
-  color: var(--cy-text);
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 10px;
-  outline: 0;
-  font-size: 12px;
-}
-
-.cy-server-input:focus {
-  border-color: var(--cy-accent-strong);
-}
-
-.cy-connect-btn {
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
 }
 
 .cy-messages {
