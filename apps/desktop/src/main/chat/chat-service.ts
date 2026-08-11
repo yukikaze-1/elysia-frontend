@@ -44,9 +44,13 @@ export function createChatService(deps: ChatServiceDeps) {
       const session = await adapter.connect({ serverUrl: 'mock://local' })
       pushState(adapter.getConnectionState()); return session
     },
-    /** 设置后端地址：经 connection-config 规范化 + 校验（origin 变化自动清 token 绑定） */
+    /** 设置后端地址：经 connection-config 规范化 + 校验（origin 变化自动清 token 绑定）;endpoint(origin/baseUrl) 变化时联动取消旧连接(D14) */
     async setEndpoint(rawUrl: string): Promise<{ endpoint: string }> {
+      const before = deps.connectionConfig.getEndpoint()
       const e = await deps.connectionConfig.setEndpoint(rawUrl)
+      if (before && (e.origin !== before.origin || e.baseUrl !== before.baseUrl)) {
+        await deps.adapter.disconnect()   // D14:旧 WS/REST 取消,面板新地址与真实连接一致
+      }
       return { endpoint: e.baseUrl }
     },
     getEndpoint(): { endpoint?: string } {

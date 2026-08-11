@@ -87,6 +87,26 @@ describe('chat-service', () => {
     expect(r).toEqual({ endpoint: 'https://a.example' })
   })
 
+  it('setEndpoint endpoint 变化 → adapter.disconnect 被调', async () => {
+    const adapter = { subscribe: () => () => {}, disconnect: vi.fn(async () => {}) }
+    const connConfig = {
+      getEndpoint: () => ({ origin: 'http://a', baseUrl: 'http://a' }),
+      setEndpoint: vi.fn(async () => ({ origin: 'http://b', baseUrl: 'http://b' }))
+    }
+    const svc = createChatService({ adapter: adapter as never, send: () => {}, getToken: () => undefined, connectionConfig: connConfig as never })
+    await svc.setEndpoint('http://b')
+    expect(connConfig.setEndpoint).toHaveBeenCalledWith('http://b')
+    expect(adapter.disconnect).toHaveBeenCalled()
+  })
+
+  it('setEndpoint 同 endpoint → 不 disconnect(幂等)', async () => {
+    const adapter = { subscribe: () => () => {}, disconnect: vi.fn(async () => {}) }
+    const connConfig = { getEndpoint: () => ({ origin: 'http://a', baseUrl: 'http://a' }), setEndpoint: async () => ({ origin: 'http://a', baseUrl: 'http://a' }) }
+    const svc = createChatService({ adapter: adapter as never, send: () => {}, getToken: () => undefined, connectionConfig: connConfig as never })
+    await svc.setEndpoint('http://a')
+    expect(adapter.disconnect).not.toHaveBeenCalled()
+  })
+
   it('getEndpoint → 当前已设 endpoint 的 baseUrl（未设则 endpoint 缺省）', async () => {
     const { deps, connectionConfig } = makeDeps()
     connectionConfig.getEndpoint.mockReturnValue({ origin: 'https://a.example', baseUrl: 'https://a.example', wsUrl: 'wss://a.example/ws' })
