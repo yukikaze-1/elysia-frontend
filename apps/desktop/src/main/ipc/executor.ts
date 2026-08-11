@@ -3,6 +3,7 @@ import { type ZodType } from 'zod'
 import { type IpcResult } from '@shared/contracts'
 import { CyreneError } from '@shared/errors'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
+import type { Logger } from '../diagnostics/logger'
 
 function truncateCodepoints(s: string, max: number): string {
   let count = 0
@@ -15,11 +16,13 @@ function truncateCodepoints(s: string, max: number): string {
   return out
 }
 
+export interface IpcHandlerOptions { sanitize: MessageSanitizer; channel?: string; logger?: Logger }
+
 export function createIpcHandler<TReq, TRes>(
   requestSchema: ZodType<TReq>,
   responseSchema: ZodType<TRes>,
   fn: (req: TReq) => TRes | Promise<TRes>,
-  options: { sanitize: MessageSanitizer }
+  options: IpcHandlerOptions
 ): (raw: unknown) => Promise<IpcResult<TRes>> {
   return async (raw: unknown): Promise<IpcResult<TRes>> => {
     const parsed = requestSchema.safeParse(raw)
@@ -27,7 +30,12 @@ export function createIpcHandler<TReq, TRes>(
     try {
       const data = await fn(parsed.data)
       const out = responseSchema.safeParse(data)
-      if (!out.success) return { ok: false, error: { code: 'UNKNOWN', message: '内部错误' } }
+      if (!out.success) {
+        const summary = out.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}:${i.message}`).join('; ')
+        // 摘要已限 3 条且只含 path+message，不含 data 全文；channel 可选，缺省时省略字段（LogFields 不允许 undefined）
+        options.logger?.error('ipc:response-invalid', { ...(options.channel !== undefined ? { channel: options.channel } : {}), summary })
+        return { ok: false, error: { code: 'SCHEMA_VALIDATION_FAILED', message: `响应校验失败: ${summary}` } }
+      }
       return { ok: true, data: out.data }
     } catch (e: unknown) {
       if (e instanceof CyreneError && typeof e.code === 'string' && typeof e.message === 'string') {
