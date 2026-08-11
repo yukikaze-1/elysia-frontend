@@ -21,7 +21,12 @@ describe('IPC 安全', () => {
         hasProcess: typeof w.process
       }
     })
-    expect(surface.keys).toEqual(['clearBackendToken', 'getAppInfo', 'getCredentialStatus', 'setBackendToken'])
+    // 2C desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 = 18 键(排序断言)
+    expect(surface.keys).toEqual([
+      'activate', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation',
+      'disconnect', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getMessages',
+      'listConversations', 'onChatEvent', 'onChatReplay', 'onChatState', 'renameConversation', 'send', 'setBackendToken'
+    ])
     expect(surface.hasIpc).toBe(false)
     expect(surface.hasRequire).toBe('undefined')
     expect(surface.hasProcess).toBe('undefined')
