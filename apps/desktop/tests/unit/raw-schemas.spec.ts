@@ -111,4 +111,21 @@ describe('raw schema ack/error 扩展(2B)', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: 'm', clientRequestId: 'c', receivedAt: 't', status: 'pending' })
     expect(r.success).toBe(false)
   })
+  it('rejected + 空 messageId + QUEUE_FULL 通过 parseRawFrame', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: '', clientRequestId: 'c1', receivedAt: 't', status: 'rejected', error: { code: 'QUEUE_FULL', message: '队列已满', retryable: true } })
+    expect(r.success).toBe(true)
+    if (r.success) expect((r.data as { status?: string }).status).toBe('rejected')
+  })
+  it('rejected 缺 error 通过（走退化分支）', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: '', clientRequestId: 'c1', receivedAt: 't', status: 'rejected' })
+    expect(r.success).toBe(true)
+  })
+  it('accepted + 空 messageId 拒为非法帧', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: '', clientRequestId: 'c1', receivedAt: 't', status: 'accepted' })
+    expect(r.success).toBe(false)
+  })
+  it('accepted 正常通过', () => {
+    const r = parseRawFrame({ type: 'user_message.ack', messageId: 'm1', clientRequestId: 'c1', receivedAt: 't', status: 'accepted' })
+    expect(r.success).toBe(true)
+  })
 })

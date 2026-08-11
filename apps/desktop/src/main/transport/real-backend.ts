@@ -208,10 +208,12 @@ export class RealBackend implements BackendAdapter {
     if (frame.status === 'accepted') {
       pending.resolve({ clientRequestId: frame.clientRequestId, serverMessageId: frame.messageId })
     } else {
-      const err = frame.error
-        ? new CyreneError(CyreneErrorCode.INVALID_INPUT, frame.error.message, { code: frame.error.code, retryable: frame.error.retryable })
-        : new CyreneError(CyreneErrorCode.INVALID_INPUT, '消息被后端拒绝')
-      pending.reject(err)
+      // rejected 结构化：BACKEND_REJECTED + backendCode/retryable 保留（缺 error 退化 INVALID_INPUT）
+      if (frame.error) {
+        pending.reject(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, frame.error.message, { backendCode: frame.error.code, retryable: frame.error.retryable }))
+      } else {
+        pending.reject(new CyreneError(CyreneErrorCode.INVALID_INPUT, '消息被后端拒绝'))
+      }
     }
   }
 

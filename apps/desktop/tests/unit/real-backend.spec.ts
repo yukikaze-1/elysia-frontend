@@ -38,6 +38,14 @@ beforeAll(async () => {
       receivedClientFrames.push(frame.type)
       if (frame.type === 'text') {
         if (frame.clientRequestId === 'c-timeout') return // 不发 ack → 触发超时
+        if (frame.clientRequestId === 'r1') { // rejected + 空 messageId + QUEUE_FULL（即时结构化）
+          ws.send(JSON.stringify({ type: 'user_message.ack', messageId: '', clientRequestId: frame.clientRequestId, receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected', error: { code: 'QUEUE_FULL', message: '队列已满', retryable: true } }))
+          return
+        }
+        if (frame.clientRequestId === 'r2') { // rejected 缺 error（走退化分支）
+          ws.send(JSON.stringify({ type: 'user_message.ack', messageId: '', clientRequestId: frame.clientRequestId, receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected' }))
+          return
+        }
         const ok = frame.clientRequestId === 'c-reject'
           ? { status: 'rejected', error: { code: 'CONTRACT_VALIDATION', message: 'bad', retryable: false } }
           : frame.clientRequestId === 'c-error'
@@ -91,6 +99,29 @@ describe('RealBackend WS 连接', () => {
     const b = makeBackend()
     await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
     await expect(b.sendMessage({ conversationId: 'conv-1', text: 'hi', clientRequestId: 'c-reject' })).rejects.toBeDefined()
+    await b.disconnect()
+  })
+
+  it('rejected ACK（空 messageId + QUEUE_FULL）→ BACKEND_REJECTED + backendCode/retryable 保留（不超时）', async () => {
+    const b = new RealBackend({ now: () => Date.now(), ackTimeoutMs: 200 })
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    try {
+      await b.sendMessage({ conversationId: 'conv-1', text: 'x', clientRequestId: 'r1' })
+      expect.unreachable()
+    } catch (e: unknown) {
+      const err = e as { code?: string; details?: { backendCode?: string; retryable?: boolean } }
+      expect(err.code).toBe(CyreneErrorCode.BACKEND_REJECTED)
+      expect(err.details?.backendCode).toBe('QUEUE_FULL')
+      expect(err.details?.retryable).toBe(true)
+    }
+    await b.disconnect()
+  })
+
+  it('rejected ACK 缺 error → INVALID_INPUT 立即 reject（不等 ackTimeout）', async () => {
+    const b = new RealBackend({ now: () => Date.now(), ackTimeoutMs: 200 })
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    await expect(b.sendMessage({ conversationId: 'conv-1', text: 'x', clientRequestId: 'r2' }))
+      .rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
     await b.disconnect()
   })
 

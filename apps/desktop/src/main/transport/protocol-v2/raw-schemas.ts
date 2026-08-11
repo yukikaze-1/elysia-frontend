@@ -134,14 +134,18 @@ const RawGenerationFailedSchema = z.object({
 
 const RawUserAckSchema = z.object({
   type: z.literal('user_message.ack'),
-  messageId: z.string().min(1),
+  messageId: z.string(),   // 不设 min(1)：rejected 允许 ''
   clientRequestId: z.string().min(1),
   clientMessageId: z.string().optional(),
   conversationId: z.string().optional(),
   receivedAt: z.string().min(1),
   status: z.enum(['accepted', 'rejected']),
   error: z.object({ code: z.string().min(1), message: z.string(), retryable: z.boolean().optional() }).optional()
-}).strict()
+}).strict().superRefine((v, ctx) => {
+  if (v.status === 'accepted' && v.messageId === '') {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'accepted ack 必须带非空 messageId', path: ['messageId'] })
+  }
+})
 
 const RawErrorMessageSchema = z.object({
   type: z.literal('error'),
