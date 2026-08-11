@@ -90,9 +90,9 @@ FE-P1-03 连接后会话初始化 ─▶ FE-P1-04 conversation/epoch 守卫 ─�
 
 **SDD 全分支最终 review（opus）：PASS。** 四项 FE 整改实现完整、跨层一致、无 Critical；独立复跑受影响单测 + typecheck 通过。唯一 Important（F1 conversationStore.error 只写不清）已修复（ab17294）并复查确认。
 
-**门禁实测：** typecheck ✅ / lint ✅ / **400 单测（40 files）** ✅ / **22 集成（5 files）** ✅ / build ✅。
+**第三方整改清单验收 agent：4/4 达成。** FE-P1-03 / FE-P1-04 / FE-P1-05 / FE-P2-01 逐条源码核对（给出文件:行号证据），每条「必须/建议修改」与「验收测试」均有实现与测试覆盖，无未达成项。
 
-第三方按整改清单批次 B 的验收见后续独立验收报告（docs/superpowers/2026-08-12-phase2-realconn-batchB-acceptance.md）。
+**门禁实测：** typecheck ✅ / lint ✅ / **400 单测（40 files）** ✅ / **22 集成（5 files）** ✅ / build ✅。
 
 ## 5. 已知限制（记录，待后续批次/联调）
 
