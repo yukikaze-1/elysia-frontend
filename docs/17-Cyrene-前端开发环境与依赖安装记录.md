@@ -199,7 +199,7 @@ ls ~/.cache/ms-playwright/*/INSTALLATION_COMPLETE   # 浏览器装全
 | P-9 | `pnpm package` 首次运行 electron-builder 需联网拉取 app-builder-bin/fuses | `--dir` 打包依赖在线解析构建器 | 首次打包前确认网络；本地受阻时退化为 `pnpm build` 只出 `out/`（不产未分发包），阶段 8 正式配置再处理 |
 | P-10 | 打包冒烟启动需 Playwright 注入 `--remote-debugging-port=0`/`--inspect=0` 控制通道，但生产默认拒绝 | 调试门连 `=0` 也拒（doc 07「任何构建都不得开放远程调试端口」）；Playwright `_electron` 用随机端口 CDP | 冒烟脚本显式设 `CYRENE_TEST_HARNESS=1` 放行 `=0`；不带该标记启动打包产物会被调试门 failStart 退出 |
 | P-11 | `verify:artifact` 冒烟在无显示环境直接判失败 | `--smoke` 需 Linux `DISPLAY` 或 `WAYLAND_DISPLAY`，否则无法启动 Electron 窗口 | 桌面会话/`xvfb-run` 下执行；无显示时脚本明确 `fail`，不会假绿 |
-| P-12 | CI `test:integration` 全部 launch Electron 用例 `spawn .../electron/dist/electron ENOENT`，本地却正常 | electron 43 无 postinstall，二进制懒下载；集成测试 helper 硬编码 `node_modules/electron/dist/electron` 路径不走 `require('electron')`，本地二进制是历史遗留，CI 全新环境缺失 | CI install 后显式 `pnpm --filter @cyrene/desktop ensure:electron`（脚本内部 `node -e "require('electron')"`）+ `actions/cache` 缓存 `~/.cache/electron` |
+| P-12 | CI `test:integration` 全部 launch Electron 用例 `spawn .../electron/dist/electron ENOENT`，本地却正常 | electron 43 无 postinstall，二进制懒下载；集成测试 helper 硬编码 `node_modules/electron/dist/electron` 路径不走 `require('electron')`，本地二进制/子包 symlink 是历史遗留，CI 全新环境缺失 | CI install 后显式 `pnpm --filter @cyrene/desktop ensure:electron`（`node -e "require('electron')"`，按 require 链定位到根 hoisted 区）+ `actions/cache` 缓存 `~/.cache/electron`；**helper 的 electronPath 也要用 `require.resolve('electron')` 定位**——硬编码 `join(ROOT,'node_modules/electron/dist/…')` 在干净布局下 `apps/desktop/node_modules` 整个不存在，ensure 成功也没用 |
 | P-13 | 本地集成测试 `window.desktopApi` undefined，contextBridge 未暴露 | `sandbox: true` 的 preload 只能 require 有限模块；electron-vite `externalizeDepsPlugin` 把 `dependencies`（zod）外部化 → 产物 `require("zod")` 在沙箱抛错 → contextBridge 中断。2C 引入 chat schema 后首次暴露（集成测试当时未跑） | preload 构建 `externalizeDepsPlugin({ exclude: ['zod'] })`，让 zod bundle 进 preload 产物（`out/preload/index.js` 只应剩 `require("electron")`） |
 | P-14 | CI `ensure:electron` 的 `node node_modules/electron/install.js` 报 `MODULE_NOT_FOUND`（`apps/desktop/node_modules/electron/install.js` 不存在） | pnpm **hoisted 干净 install 不创建 workspace 子包的 `node_modules`**（依赖全扁平在根 `node_modules`，子包目录无它）；本地 `apps/desktop/node_modules` 是历史残留，本地能跑是假象 | `ensure:electron` 改用 `node -e "require('electron')"`（Node 沿目录向上解析到根 `node_modules/electron`，任何布局都成立）；排查先 `node -e "console.log(require.resolve('electron'))"` |
 
@@ -276,11 +276,13 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 1. **electron 二进制缺失**：electron 43 无 postinstall，`pnpm install` 不拉二进制；集成测试 helper（`tests/integration/helpers/app.ts`）直接拼 `node_modules/electron/dist/electron` 路径给 `_electron.launch`，从不 `require('electron')`，懒下载永不触发 → CI ENOENT。修复：`ensure:electron` + CI 步骤。
 2. **preload 沙箱 require zod 失败**：`sandbox: true` 下 preload 只能 require 有限模块；electron-vite 默认把 `dependencies`（zod）外部化 → 产物 `require("zod")` 运行时抛错，`contextBridge` 中断 → `window.desktopApi` undefined。修复：`externalizeDepsPlugin({ exclude: ['zod'] })`。
 3. **ensure 脚本相对路径失效**：第一版 `ensure:electron` 用 `node node_modules/electron/install.js`，本地能跑但 CI 报 `MODULE_NOT_FOUND`——pnpm hoisted 干净 install 不创建 workspace 子包 `node_modules`（见 P-14）。修复：改用 `node -e "require('electron')"`。
+4. **helper 硬编码 electron 子目录路径**：ensure 用对路径后（`require('electron')` 解析到根 hoisted 区并下载成功），launch 仍 ENOENT——测试 helper（`tests/integration/helpers/app.ts`）写死 `join(ROOT,'node_modules/electron/dist/electron')`，而干净布局下 `apps/desktop/node_modules` 整个不存在（根因 3 的同源问题，ensure 成功也不改变这一点）。修复：helper 用 `createRequire(import.meta.url).resolve('electron')` + `dirname` 定位包目录，再拼 `dist/<exe>`。
 
 **CI 工作流拆分（同一批次）**：原单 job 顺序跑 typecheck→lint→install playwright→integration→unit，改为 3 个独立 job——`check`（typecheck+lint，纯 node）/ `unit`（vitest 单测）/ `integration`（electron+playwright+xvfb，含 `~/.cache/electron` 的 `actions/cache`，缓存 key 锚定 `pnpm-lock.yaml`）。失败各自定位、可并行，integration 不再阻塞静态检查。
 
 **排查要点（可复用）**：
 - 本地能跑 ≠ CI 能跑：`node_modules` 里的二进制/布局是累积态，全新环境才暴露"install 后缺什么"；
+- **模拟 CI 布局验证**：`mv apps/desktop/node_modules node_modules.bak` 移除历史残留的子包目录后再跑集成测试，即复现 hoisted 干净布局——本地"全绿"与 CI 全绿的最后一层差异常在这里；
 - `sandbox: true` 的 preload 产物应只剩 `require("electron")`——任何第三方 `require(...)` 都要检查是否被外部化；
 - 用 `grep -o 'require("[^"]*")' out/preload/index.js` 快速核验 preload 外部化列表；
-- 定位 electron 包不要用 `node_modules/<pkg>` 相对路径，先 `node -e "console.log(require.resolve('electron'))"` 看实际解析位置。
+- 定位 electron 包不要用 `node_modules/<pkg>` 相对路径，先 `node -e "console.log(require.resolve('electron'))"` 看实际解析位置；测试 helper 同理。
