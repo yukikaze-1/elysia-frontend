@@ -23,6 +23,7 @@ import type { BackendAdapter } from './transport/backend-adapter'
 import { MockBackend } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
+import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
 
 function failStart(message: string): void {
   dialog.showErrorBox('Cyrene 无法启动', message)
@@ -109,7 +110,24 @@ async function main(): Promise<void> {
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
       ? new MockBackend({ onConnectionStateChange: onState })
-      : new RealBackend({ onConnectionStateChange: onState, onSessionReplay: onReplay })
+      : (() => {
+          // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
+          // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,
+          // 回调只在 connect/帧到达后触发,此时 adapter 已赋值(同 chatBridge 打破环引用的模式)。
+          const errorHandlers = buildBackendErrorHandlers({
+            logger: diagnostics.logger,
+            sanitize,
+            send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },
+            mode: useMock ? 'mock' : 'real',
+            getBuild: () => ({ serverVersion: adapter.getConnectionState().serverVersion, protocolVersion: adapter.getConnectionState().protocolVersion })
+          })
+          return new RealBackend({
+            onConnectionStateChange: onState,
+            onSessionReplay: onReplay,
+            onProtocolWarning: errorHandlers.onProtocolWarning,
+            onError: errorHandlers.onError
+          })
+        })()
     // connection-config：注入 CredentialStore 端口（token 与 origin 绑定同仓不同 key）——
     // BACKEND_TOKEN_KEY 由 connection-config 的 set/clear 经 credentials IPC 特判委派（决策 9）。
     // onEndpointChanged 审计：只记规范化 origin（不含 token/完整 URL 参数，spec 3.1.2）；AuditEvent 字段 ts/type/summary（无 data）。
