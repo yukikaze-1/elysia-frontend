@@ -24,16 +24,22 @@ export const useConnectionStore = defineStore('connection', () => {
       // 连接结果由 chat:state push 更新（定死 push 不轮询），此处不主动拉
     } catch (e) {
       error.value = parsePublicError(e instanceof Error ? e.message : String(e))
-      // 失败复位:不残留乐观 connecting(C-3 push 未到,显式兜底)
-      state.value = { status: 'disconnected' }
+      // 失败保持 error 状态:不残留乐观 connecting,也不回 disconnected(整改必须修改5:错误可见)
+      state.value = { status: 'error', lastError: error.value.message }
     } finally {
       connecting.value = false
     }
   }
 
-  /** 由 onChatState 推送更新(C-3 定死 push,不轮询) */
+  /** 由 onChatState 推送更新(C-3 定死 push,不轮询);成功/重连清旧错误 */
   function setState(s: ConnectionState): void {
     state.value = s
+    if (s.status === 'connected' || s.status === 'reconnecting') error.value = undefined
+  }
+
+  /** onChatError 消费入口:显式置公开错误(Main 侧已结构化,renderer 仅保存展示) */
+  function setError(err: PublicError): void {
+    error.value = err
   }
 
   async function refreshState(): Promise<void> {
@@ -44,5 +50,5 @@ export const useConnectionStore = defineStore('connection', () => {
     await api.disconnect()
   }
 
-  return { state, connecting, error, connect, setState, refreshState, disconnect }
+  return { state, connecting, error, connect, setState, setError, refreshState, disconnect }
 })

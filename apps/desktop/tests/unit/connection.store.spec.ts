@@ -41,21 +41,45 @@ describe('connectionStore', () => {
     expect(store.state.connectionId).toBe('cid-1')
   })
 
-  it('connect 失败:api.connect reject → error 结构化(parsePublicError 产出),状态复位 disconnected', async () => {
+  it('connect 失败:api.connect reject → error 结构化(parsePublicError 产出),状态保持 error(不回 disconnected)', async () => {
     const store = useConnectionStore()
     mockApi.connect.mockRejectedValue(new Error('[CREDENTIAL_UNAVAILABLE] 后端 Token 未设置'))
     await store.connect()
     expect(store.error).toEqual({ code: 'CREDENTIAL_UNAVAILABLE', message: '后端 Token 未设置' })
-    expect(store.state.status).toBe('disconnected')
+    expect(store.state.status).toBe('error')
+    expect(store.state.lastError).toBe('后端 Token 未设置')
     expect(store.connecting).toBe(false)
   })
 
-  it('connect 失败(无前缀)→ error code UNKNOWN', async () => {
+  it('connect 失败(无前缀)→ error code UNKNOWN,状态 error', async () => {
     const store = useConnectionStore()
     mockApi.connect.mockRejectedValue(new Error('boom'))
     await store.connect()
     expect(store.error).toEqual({ code: 'UNKNOWN', message: 'boom' })
-    expect(store.state.status).toBe('disconnected')
+    expect(store.state.status).toBe('error')
+    expect(store.state.lastError).toBe('boom')
+  })
+
+  it('connect 失败 → state error(不回 disconnected) + lastError', async () => {
+    const store = useConnectionStore()
+    mockApi.connect.mockRejectedValue(new Error('[AUTHENTICATION_FAILED] 401'))
+    await store.connect()
+    expect(store.state.status).toBe('error')
+    expect(store.error?.code).toBe('AUTHENTICATION_FAILED')
+    expect(store.state.lastError).toBeDefined()
+  })
+
+  it('setState connected → 清 error', () => {
+    const store = useConnectionStore()
+    store.error = { code: 'X', message: 'x' }
+    store.setState({ status: 'connected' })
+    expect(store.error).toBeUndefined()
+  })
+
+  it('setError 设置公开错误', () => {
+    const store = useConnectionStore()
+    store.setError({ code: 'BACKEND_REJECTED', message: 'm', retryable: true })
+    expect(store.error?.retryable).toBe(true)
   })
 
   it('setState 更新连接状态(onChatState 推送)', () => {
