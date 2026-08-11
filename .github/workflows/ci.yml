@@ -5,9 +5,12 @@ on:
     branches: [main]
   pull_request:
 
+# 独立 job 拆分：静态检查 / 单测 / 集成测试互不杂糅，失败各自定位、可并行。
+# typecheck 与 lint 同属快速静态检查（无运行时依赖），合并为一个 job 省一次 install。
 jobs:
+  # 静态检查：typecheck + lint（纯 node，不需要 electron 二进制 / Playwright）
   check:
-    name: typecheck + lint + unit + integration
+    name: typecheck + lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,22 +27,68 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # electron 43 无 postinstall，二进制改为 require('electron') 时懒下载；集成测试 helper 硬编码
-      # dist 路径（不走 require），全新环境必须在此显式触发 install.js，否则 electron.launch ENOENT
-      - name: Ensure Electron binary
-        run: pnpm --filter @cyrene/desktop ensure:electron
-
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Lint
         run: pnpm lint
 
+  # 单元测试（node 环境，纯逻辑）
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests
+        run: pnpm test
+
+  # 集成测试：electron 二进制 + Playwright chromium + xvfb
+  integration:
+    name: integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # electron 43 无 postinstall，二进制靠 require('electron') 懒下载；
+      # 缓存 @electron/get 的下载目录，miss 时 ensure 从网络下载并自动存回缓存，命中时秒复
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            electron-cache-${{ runner.os }}-
+
+      - name: Ensure Electron binary
+        run: pnpm --filter @cyrene/desktop ensure:electron
+
       - name: Install Playwright (integration)
         run: pnpm --filter @cyrene/desktop exec playwright install --with-deps chromium
 
       - name: Integration tests (xvfb)
         run: xvfb-run -a pnpm test:integration
-
-      - name: Unit tests
-        run: pnpm test
