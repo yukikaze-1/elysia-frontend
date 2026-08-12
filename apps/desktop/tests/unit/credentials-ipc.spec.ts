@@ -10,6 +10,9 @@ const fakeLogger: Logger = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug
 function makeExecutors(store: unknown) {
   return createCredentialsExecutors(store as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize })
 }
+function makeExecutorsWithAudit(store: unknown, audit = vi.fn()) {
+  return { executors: createCredentialsExecutors(store as CredentialStore, { logger: fakeLogger, sanitize: noopSanitize, audit }), audit }
+}
 
 describe('createCredentialsExecutors', () => {
   it('get-status 固定查 BACKEND_TOKEN_KEY（0 参）', async () => {
@@ -77,5 +80,51 @@ describe('createCredentialsExecutors', () => {
     if (!res.ok) expect(res.error.code).toBe('INVALID_INPUT')
     expect(store.setCredential).not.toHaveBeenCalled()
     expect(config.setBackendToken).not.toHaveBeenCalled()
+  })
+})
+
+describe('审计（FE-S1-P1-01）', () => {
+  it('set 成功 → audit credential:set success', async () => {
+    const store = { getStatus: vi.fn(async () => 'available'), setCredential: vi.fn(async () => {}) }
+    const { executors, audit } = makeExecutorsWithAudit(store)
+    await executors.set({ key: BACKEND_TOKEN_KEY, value: 'sk-x' })
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'credential:set', status: 'success' }))
+  })
+  it('set 失败 → audit credential:set failed + 原错误仍返回（不吞错）', async () => {
+    const store = {
+      getStatus: vi.fn(async () => 'unavailable'),
+      setCredential: vi.fn(async () => { throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '钥匙串不可用') })
+    }
+    const { executors, audit } = makeExecutorsWithAudit(store)
+    const res = await executors.set({ key: BACKEND_TOKEN_KEY, value: 'sk-x' })
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'credential:set', status: 'failed', summary: expect.stringContaining('CREDENTIAL_UNAVAILABLE') }))
+    expect(res).toMatchObject({ ok: false, error: { code: 'CREDENTIAL_UNAVAILABLE' } })
+  })
+  it('set 后 status 变化 → audit credential:status-change', async () => {
+    const store = { getStatus: vi.fn(async () => 'available').mockResolvedValueOnce('empty'), setCredential: vi.fn(async () => {}) }
+    const { executors, audit } = makeExecutorsWithAudit(store)
+    await executors.set({ key: BACKEND_TOKEN_KEY, value: 'sk-x' })
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'credential:status-change', summary: expect.stringContaining('from=empty') }))
+  })
+  it('clear 成功 → audit credential:clear success', async () => {
+    const store = { getStatus: vi.fn(async () => 'empty'), clearCredential: vi.fn(async () => {}) }
+    const { executors, audit } = makeExecutorsWithAudit(store)
+    await executors.clear({ key: BACKEND_TOKEN_KEY })
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'credential:clear', status: 'success' }))
+  })
+  it('audit 抛错 → set 仍 ok:true（fail-open 不翻转操作结果）', async () => {
+    const store = { getStatus: vi.fn(async () => 'available'), setCredential: vi.fn(async () => {}) }
+    const { executors } = makeExecutorsWithAudit(store, vi.fn(() => { throw new Error('audit boom') }))
+    const res = await executors.set({ key: BACKEND_TOKEN_KEY, value: 'sk-x' })
+    expect(res).toEqual({ ok: true, data: { status: 'available', key: 'backend.token' } })
+  })
+  it('set 失败且 audit 抛错 → 仍返回原错误（audit 不替换错误）', async () => {
+    const store = {
+      getStatus: vi.fn(async () => 'unavailable'),
+      setCredential: vi.fn(async () => { throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '钥匙串不可用') })
+    }
+    const { executors } = makeExecutorsWithAudit(store, vi.fn(() => { throw new Error('audit boom') }))
+    const res = await executors.set({ key: BACKEND_TOKEN_KEY, value: 'sk-x' })
+    expect(res).toMatchObject({ ok: false, error: { code: 'CREDENTIAL_UNAVAILABLE' } })
   })
 })

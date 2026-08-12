@@ -17,6 +17,7 @@ import { resolveBackendMode } from './config/backend-mode'
 import { ConnectionConfig } from './connection/connection-config'
 import { registerCyreneScheme, registerCyreneProtocolHandler } from './protocol'
 import { createDiagnostics, type Diagnostics } from './diagnostics'
+import type { AuditEvent } from './diagnostics/audit'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
@@ -103,6 +104,14 @@ async function main(): Promise<void> {
     const sanitize = createSanitizePublicMessage({ home: app.getPath('home'), userData: expectedUserDataBase() })
     const safeRoot = await realpath(expectedUserDataBase())
     diagnostics = createDiagnostics({ logs: dirs.logs, audit: dirs.audit }, { logLevel: config.logLevel, retentionDays: 30, sanitize })
+    // 审计 fail-open（C1）：fire-and-forget；外层 try/catch 兜注入实现同步抛错；ts 统一注入；可选链防 TS18048
+    const audit = (event: Omit<AuditEvent, 'ts'>): void => {
+      try {
+        void diagnostics?.auditor?.audit({ ts: new Date().toISOString(), ...event }).catch((err) =>
+          diagnostics?.logger.error('audit:write-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) })
+        )
+      } catch { /* fail-open 恒成立 */ }
+    }
     // 启动门禁（B2/P0-02）：dev 模式下 ELECTRON_RENDERER_URL 必须指向受信地址（回环或 allowlist）。
     // 在 requestSingleInstanceLock 之后——只有持锁主实例评估（第二实例已在 lock 处 exit(0)）。
     // fatal exit 异步，故 untrusted 后必须 return，否则继续建窗/装配。
@@ -154,7 +163,7 @@ async function main(): Promise<void> {
         saveBinding: (o) => store.setCredential(BACKEND_TOKEN_ORIGIN_KEY, o),
         clearBinding: () => store.clearCredential(BACKEND_TOKEN_ORIGIN_KEY)
       },
-      (e) => { void diagnostics?.auditor.audit({ ts: new Date().toISOString(), type: 'endpoint:set', summary: e.origin }) }
+      (e) => { audit({ type: 'endpoint:set', summary: e.origin }) }
     )
     const chatSvc = createChatService({
       adapter,
@@ -165,7 +174,7 @@ async function main(): Promise<void> {
       packaged: app.isPackaged
     })
     chatBridge.svc = chatSvc
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
