@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repository is
 
-Cyrene — an Electron desktop AI-assistant chat app (Windows + Ubuntu) with Live2D character, streaming AI replies, voice input, and a desktop tool/authorization system. **This repo currently contains only design documentation** (`docs/`, all in Chinese, v0.2 as of 2026-08-04). There is no application code, `package.json`, README, or git repo yet.
+Cyrene — an Electron desktop AI-assistant chat app (Windows + Ubuntu) with Live2D character, streaming AI replies, voice input, and a desktop tool/authorization system. **This repo now contains code and design docs**: the implementation lives in `apps/desktop/` (Electron + Vue 3 + TypeScript + electron-vite, pnpm workspace), and phases 0–2 plus the 真实联调整改批次 A/B/C are landed and fully verified (433+ unit / 22+ integration tests). `docs/` (all in Chinese, v0.2 as of 2026-08-04) is the engineering contract.
 
 The docs are the engineering contract. Before writing code, read them; before changing behavior, update them (see "Document maintenance").
 
@@ -34,9 +34,9 @@ Upstream requirement docs (not numbered): `Cyrene-Desktop-Demo-产品需求文�
 
 Read [00](docs/00-Cyrene-前端文档索引与阅读顺序.md) first — it maps which docs each role should read. [13](docs/13-Cyrene-前端文档交叉Review与修订记录-v0.1.md) records the harmonized conventions (统一口径) that all docs now share; these are the single-source-of-truth rules below.
 
-## Tech baseline (planned — no tooling exists yet)
+## Tech baseline (tooling exists — versions locked in repo)
 
-Electron + Vue 3 + TypeScript + Vite, Electron Forge, pnpm, Vitest, Playwright. Versions locked in the repo, not hardcoded in docs. Only Electron/Vue/Vite supported-toolchain choices were confirmed; actual versions and repo conventions are still open decisions (doc 12 input list A-01…A-06).
+Electron + Vue 3 + TypeScript + Vite, Electron Forge, pnpm, Vitest, Playwright. Versions locked in the repo, not hardcoded in docs. Toolchain choices are confirmed and versions pinned (`package.json` / `pnpm-lock.yaml`); Electron Forge `make` and Playwright `test:e2e` are still placeholders for later phases (阶段 8 / 阶段 3).
 
 ### Vision MCP (available in this environment)
 
@@ -112,10 +112,11 @@ Definition of Done (both docs): typecheck+format pass; runtime schemas for all e
 
 ## Commands
 
-None exist yet — there is no `package.json` or build config. Doc 09 §5 specifies the *planned* script names to standardize on once scaffolding lands: `dev`, `typecheck`, `lint`, `test`, `test:integration`, `test:e2e`, `package`, `make`, `verify:artifact`.
+Run from the repo root (pnpm workspace shims; equivalently `pnpm -F @cyrene/desktop <script>`): `dev`, `typecheck`, `lint`, `test`, `test:integration`, `test:e2e`, `build`, `package`, `make`, `verify:artifact`, `check:contract`. `test:e2e` (Playwright) and `make` (Electron Forge) are still placeholders for later phases. `check:contract` is the local cross-repo wire-contract check: it reads `/home/yomu/elysia-agent/frontend_contract` when that repo is mounted (CI/other machines skip it).
 
 ## Current status / open decisions
 
-- Docs v0.2 (reviewed 2026-08-04); internal inconsistencies resolved, but **not yet an "开工" (kickoff) baseline**.
-- Still pending external inputs (doc 12 P0 list): real backend test env + auth, one full streaming reply event record, Inner Voice/Public Reply + Token/model/emotion fields, session/history/search interfaces, LLM/STT/TTS profile & credential ownership, voice/dictation round-trip semantics, tool registry & `callId` rules, primary platform (suggested Windows 11 x64), and two legally-usable Live2D models + SDK license classification.
-- No code scaffold, git repo, or Mock Backend exists yet — creating these is the work of phase 0.
+- Phases 0–2 landed and fully verified: **433+ unit tests / 22+ integration tests** + typecheck/lint/build green. 真实联调整改批次 A/B/C 已落地（连接凭据安全与装配策略、真实连接编排与守卫、IPC/replay 运行时 Schema + 夹具跨仓库门禁）。
+- **All Mock-driven work is marked "已开发、未联调" (developed, not integrated) — never "已完成" until a real backend passes.** Real integration has not started yet.
+- Doc 02 §19 alignment table is filled (backend contract confirmed via the handoff package `frontend-handoff-v2`).
+- Still pending external inputs (doc 12 P0 list): real backend test env + auth (B-01), primary acceptance platform (H-01), two legally-usable Live2D models + SDK license classification (G-01/G-02), signing certificate (H-04). Batch C turns B-01 into a gated integration: on arrival, ≥3 real raw frames (covering `server_info` / session / `user_message.ack` / generation) must pass `parseRawFrame` + mapper + `parseBackendEvent` assertions before 联调 is considered passed.
