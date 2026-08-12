@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档版本：** v0.1
-**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 三块（A 领域契约+raw wire / B RealBackend / C Store+IPC+UI）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 A（连接凭据安全 / 真实模式装配 / rejected ACK 结构化）三块落地并全量验证（360 单测 + 20 集成 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 B（真实连接编排：连接后会话初始化 / conversation·epoch 守卫 / 可见错误链与脱敏日志 / 超时·取消·门控）落地并全量验证（**399 单测 + 22 集成** + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 C（IPC/replay 运行时 Schema / 夹具场景补全 + manifest 门禁 + 跨仓库脚本 / 文档漂移同步）落地并全量验证（**433 单测 + 22 集成** + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 0/1 整改·批次 A（FE-S1-P0-01 Windows 安全文件首建/ENOENT 保留 / FE-S1-P1-02 非普通文件全拒 / FE-S1-P2-02 EMPTY_FILE 工厂化 / FE-S1-P1-03 CredentialStore 有序退出）落地并全量验证（**460 单测（42 files）+ 22 集成（5 files）** + typecheck/lint/build + check:contract(11/11) 全绿，**已开发、未联调**；Windows 联调仍阻塞，真 Windows 运行证据与 Windows CI 归后续批次 C）；阶段 0/1 整改·批次 B（FE-S1-P0-02 dev Renderer URL 回环白名单 + 启动报错退出 + 开发 CSP / FE-S1-P2-01 IPC 来源纵深）落地并全量验证（**483 单测（45 files）+ 22 集成（5 files）** + typecheck/lint/build + check:contract(11/11) + package + verify:artifact --smoke 全绿，**已开发、未联调**；**P0-02 关闭**（首次真实联调前最后 P0）；Windows 联调仍阻塞，真 Windows 运行证据与 Windows CI 归后续批次 C）；阶段 0/1 整改·批次 C（FE-S1-P1-01 审计接线（凭据生命周期 `credential:set/clear/status-change` + 连接生命周期 `connection:connect/disconnect/error` 接入 append-only audit；fail-open 语义 C1——审计失败不改变操作结果；真实应用装配集成测试：经 IPC set/clear 后 audit/ JSONL 出现预期行）+ FE-S1-P1-04 CI 持续门禁（新增 `artifact` job：clean + package + `verify:artifact --smoke` + SHA 证据；新增 `windows` job：构建级 typecheck/lint/unit/build，C3 不启动 Electron；POSIX 专属单测加平台守卫））落地并全量验证（**493 单测（45 files）+ 23 集成（6 files）** + typecheck/lint/build + check:contract(11/11) + package + verify:artifact --smoke 全绿，**已开发、未联调**；真实后端联调未进行，CI 两个新 job 需 push 触发 GHA 验证（本机沙箱无 GHA），Windows 联调仍阻塞（真 Windows 上启动 Electron + Token 冒烟仍留 B-01/后续，C3 明确构建级））；阶段 3 待推进；真实联调待外部输入（B-01/H-01/G-01/G-02）
+**文档状态：** 随实施持续更新 / 阶段 0 基线 + 阶段 1 三块（安全加载/凭据·日志/集成测试）已落地并全量验证（182 单测 + 18 集成）；阶段 2 三块（A 领域契约+raw wire / B RealBackend / C Store+IPC+UI）全部落地并全量验证（312 单测 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 A（连接凭据安全 / 真实模式装配 / rejected ACK 结构化）三块落地并全量验证（360 单测 + 20 集成 + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 B（真实连接编排：连接后会话初始化 / conversation·epoch 守卫 / 可见错误链与脱敏日志 / 超时·取消·门控）落地并全量验证（**399 单测 + 22 集成** + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 2 真实联调整改·批次 C（IPC/replay 运行时 Schema / 夹具场景补全 + manifest 门禁 + 跨仓库脚本 / 文档漂移同步）落地并全量验证（**433 单测 + 22 集成** + typecheck/lint/build 全绿，**已开发、未联调**）；阶段 0/1 整改·批次 A（FE-S1-P0-01 Windows 安全文件首建/ENOENT 保留 / FE-S1-P1-02 非普通文件全拒 / FE-S1-P2-02 EMPTY_FILE 工厂化 / FE-S1-P1-03 CredentialStore 有序退出）落地并全量验证（**460 单测（42 files）+ 22 集成（5 files）** + typecheck/lint/build + check:contract(11/11) 全绿，**已开发、未联调**；Windows 联调仍阻塞，真 Windows 运行证据与 Windows CI 归后续批次 C）；阶段 0/1 整改·批次 B（FE-S1-P0-02 dev Renderer URL 回环白名单 + 启动报错退出 + 开发 CSP / FE-S1-P2-01 IPC 来源纵深）落地并全量验证（**483 单测（45 files）+ 22 集成（5 files）** + typecheck/lint/build + check:contract(11/11) + package + verify:artifact --smoke 全绿，**已开发、未联调**；**P0-02 关闭**（首次真实联调前最后 P0）；Windows 联调仍阻塞，真 Windows 运行证据与 Windows CI 归后续批次 C）；阶段 0/1 整改·批次 C（FE-S1-P1-01 审计接线（凭据生命周期 `credential:set/clear/status-change` + 连接生命周期 `connection:connect/disconnect/error` 接入 append-only audit；fail-open 语义 C1——审计失败不改变操作结果；真实应用装配集成测试：经 IPC set/clear 后 audit/ JSONL 出现预期行）+ FE-S1-P1-04 CI 持续门禁（新增 `artifact` job：clean + package + `verify:artifact --smoke` + SHA 证据；新增 `windows` job：构建级 typecheck/lint/unit/build，C3 不启动 Electron；POSIX 专属单测加平台守卫））落地并全量验证（**493 单测（45 files）+ 23 集成（6 files）** + typecheck/lint/build + check:contract(11/11) + package + verify:artifact --smoke 全绿，**已开发、未联调**；真实后端联调未进行，CI 两个新 job 需 push 触发 GHA 验证（本机沙箱无 GHA），Windows 联调仍阻塞（真 Windows 上启动 Electron + Token 冒烟仍留 B-01/后续，C3 明确构建级））；阶段 3 待推进；真实联调待外部输入（B-01/H-01/H-07/G-01/G-02）；阶段 0 标「带已知豁免提前开发」（非「已验证」，三态状态源见 README「真实模式联调」小节）；Windows 为阶段 1 未通过项（真机运行证据未到，构建级 CI 不替代冒烟）
 **文档日期：** 2026-08-06
 **依据文档：** [10-Cyrene-前端实施路线与任务拆分-v0.2.md](10-Cyrene-前端实施路线与任务拆分-v0.2.md)、[12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md)
 
@@ -17,6 +17,7 @@
 - `[~]` 进行中 / 部分完成；
 - `[x]` 已完成并通过验证；
 - 仅由 Mock 驱动完成的任务必须标注 **“已开发、未联调”**，真实后端通过前不得标为“已完成”。
+- **三态状态源（见 README「真实模式联调」小节）**：**已开发**（Mock 驱动落地）/ **已验证**（typecheck/lint/test/build 全绿、未真实联调）/ **已真实联调**（真实后端 B-01 验收通过）；阶段 0 因外部输入未到位标「**带已知豁免提前开发**」（非「已验证」）。
 
 **更新规则：** 每个任务完成时在括号后补记日期与方式；新增需求进入变更清单，不直接插入当前阶段。
 
@@ -159,7 +160,7 @@
 
 ---
 
-## 3. 阶段 0：资料、协议与工程基线（进行中）
+## 3. 阶段 0：资料、协议与工程基线（带已知豁免提前开发）
 
 **进入条件：** 最低开工条件已基本满足（仓库、环境、README 就绪）；后端 B/C 组 P0 输入未到位，不影响本阶段脚手架与 Mock 推进。
 
@@ -433,7 +434,7 @@
 - 不包含明文凭据、未脱敏日志或未授权资源；
 - 相关文档与协议对齐表同步更新；
 - 已知限制与剩余风险被显式记录；
-- 真实后端未联调时，状态只能标记为“已开发、未联调”。
+- 真实后端未联调时，状态只能标记为“已开发、未联调”（三态：**已开发** / **已验证** / **已真实联调**，见 README「真实模式联调」小节；阶段 0 标「带已知豁免提前开发」）。
 
 ---
 
@@ -441,7 +442,7 @@
 
 | 日期 | 变更 | 状态 |
 |---|---|---|
-| 2026-08-06 | 创建本文；标记阶段 0 已完成项（仓库、环境、README）与待办项 | 进行中 |
+| 2026-08-06 | 创建本文；标记阶段 0 已落地项（仓库、环境、README）与待办项 | 进行中 |
 | 2026-08-08 | 阶段 0 工程推进：`apps/desktop/` 脚手架、领域契约、BackendAdapter 骨架 + Mock、设计 token 与四区 UI 壳、Vitest 单测与 CI 全部落地并通过验证；标注“已开发、未联调” | 进行中 |
 | 2026-08-08 | 依据后端交接包 frontend-handoff-v2 批次 7 填写 doc 02 §19 对齐表 + §19.1 字段差异桥接表；勾选阶段 0 对齐表相关项 | 进行中 |
 | 2026-08-08 | §2 输入清单逐行标注：契约已确认项标 `[~]`（B-02~B-06/B-08、C-01~C-09、E-01~E-06/E-08、F-01~F-05、G-04），A-01/A-04 勾 `[x]`；仍缺项列表补全；头部状态更新 | 进行中 |
