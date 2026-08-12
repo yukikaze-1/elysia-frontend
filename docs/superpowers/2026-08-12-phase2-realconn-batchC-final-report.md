@@ -66,7 +66,7 @@ FE-P2-02 IPC/response/replay 运行时 Schema ─▶ FE-P2-03 夹具跨仓库门
 
 **门禁实测（控制器复跑）：** typecheck ✅ / lint ✅ / **433 单测（42 files）** ✅ / **22 集成（5 files）** ✅ / build ✅ / check:contract 11/11 ✅。
 
-第三方按整改清单批次 C 的验收见 docs/16 变更记录（验收 agent 确认结论）。
+**第三方整改清单验收 agent：3/3 达成。** FE-P2-02 / FE-P2-03 / FE-P2-04 逐条源码核对（给出文件:行号证据），每条建议修改均有实现与测试覆盖，无未达成项。两点非阻塞观察：实际导出 13 个 schema（多 1 个 `MessageToolInfoSchema`，镜像契约增强）；`as IpcResult` 类型强转仍存在于 invoke（整改清单「不强制」），畸形信封由 unwrap 运行时兜底。
 
 ## 5. 已知限制（记录，待后续批次/联调）
 
