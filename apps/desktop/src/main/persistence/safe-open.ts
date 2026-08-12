@@ -16,7 +16,37 @@ export interface SafeOpenOptions {
 }
 export interface SafeOpenResult { fd: FileHandle; created: boolean }
 
-const isPosix = process.platform !== 'win32'
+/** 平台差异抽象（决策 A1）：Windows 语义可注入，Linux 单测覆盖两条分支 */
+export interface SafeOpenPlatform {
+  readonly kind: 'posix' | 'windows'
+  readonly createFlags: number        // O_CREAT|O_EXCL|O_WRONLY（posix 追加 O_NOFOLLOW）
+  readonly existingReadFlags: number  // O_RDONLY（posix 追加 O_NOFOLLOW|O_NONBLOCK）
+  readonly existingWriteFlags: number // O_WRONLY|O_APPEND（posix 追加 O_NOFOLLOW|O_NONBLOCK）
+  readonly preOpenLstat: boolean      // windows：open 前 lstat 拒 symlink（无 O_NOFOLLOW）
+  readonly checkModeMask: boolean     // posix：existing 校验权限位；windows 跳过（NTFS 合成）
+}
+
+export const posixPlatform: SafeOpenPlatform = {
+  kind: 'posix',
+  createFlags: constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+  existingReadFlags: constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  existingWriteFlags: constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+  preOpenLstat: false,
+  checkModeMask: true
+}
+
+export const windowsPlatform: SafeOpenPlatform = {
+  kind: 'windows',
+  createFlags: constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+  existingReadFlags: constants.O_RDONLY,
+  existingWriteFlags: constants.O_WRONLY | constants.O_APPEND,
+  preOpenLstat: true,
+  checkModeMask: false
+}
+
+export function defaultSafeOpenPlatform(): SafeOpenPlatform {
+  return process.platform === 'win32' ? windowsPlatform : posixPlatform
+}
 
 async function assertContained(filePath: string, safeRoot: string): Promise<void> {
   const real = await realpath(filePath).catch(() => { throw new SafeOpenError(`${filePath} 无法解析真实路径`) })
@@ -24,80 +54,62 @@ async function assertContained(filePath: string, safeRoot: string): Promise<void
   if (rel.startsWith('..') || rel.includes('..')) throw new SafeOpenError(`${filePath} 逃逸安全根`)
 }
 
-/**
- * 文件形态安全打开（地基 spec §5.2 step 5）：
- * create+append = O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW + fchmod 0600（首建）；
- * existing+append 复核 (mode&0o600)===0o600 && (mode&0o077)===0；existing+read 复核 (mode&0o400)===0o400。
- * 打开后 realpath 包含性复核。POSIX 用 O_NOFOLLOW 拦最后一段；Windows 无该常量 → lstat 拒 symlink + realpath。
- */
-export async function openSafeFile(filePath: string, opts: SafeOpenOptions): Promise<SafeOpenResult> {
-  const onConflict = opts.onConflict ?? 'fallback'
-  if (isPosix) {
-    const flags = opts.mode === 'create'
-      ? constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW
-      : opts.purpose === 'read'
-        ? constants.O_RDONLY | constants.O_NOFOLLOW
-        : constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW
-    let fd: FileHandle
-    let created = false
-    try {
-      if (opts.mode === 'create') {
-        try {
-          fd = await open(filePath, flags, 0o600)
-          created = true
-        } catch (e: unknown) {
-          if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
-            if (onConflict === 'error') throw new SafeOpenConflictError(`${filePath} 已存在`)
-            fd = await open(filePath, constants.O_WRONLY | constants.O_APPEND | constants.O_NOFOLLOW)
-          } else throw new SafeOpenError(`${filePath} 打开失败（可能是符号链接）`)
-        }
-      } else {
-        fd = await open(filePath, flags)
-      }
-    } catch (e: unknown) {
-      if (e instanceof SafeOpenError) throw e
-      if (opts.mode === 'existing' && (e as NodeJS.ErrnoException).code === 'ENOENT') throw e // 保留 ENOENT：调用方（credential-store readFile）据此判「文件不存在」
-      throw new SafeOpenError(`${filePath} 打开失败`)
+/** pre-open lstat（windows）：ENOENT 按模式分流、symlink 拒、其他转安全错误 */
+async function preOpenCheck(filePath: string, mode: SafeOpenOptions['mode']): Promise<void> {
+  let st
+  try {
+    st = await lstat(filePath)
+  } catch (e: unknown) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+      if (mode === 'create') return // create+ENOENT：放行进入 O_CREAT|O_EXCL
+      throw e // existing+ENOENT：原样抛原始 errno（不得包 SafeOpenError，readFile 据此判「文件不存在」）
     }
-    try {
-      if (created) await fd.chmod(0o600) // 兜底修正 umask（open mode 参数已被掩，fchmod 直接到 inode）
-      else {
-        const st = await fd.stat()
-        const mask = opts.purpose === 'read' ? 0o400 : 0o600
-        if ((st.mode & mask) !== mask || (st.mode & 0o077) !== 0) {
-          throw new SafeOpenError(`${filePath} 权限不正确（需 ${opts.purpose === 'read' ? '0400' : '0600'}，无 group/other 位）`)
-        }
-      }
-      await assertContained(filePath, opts.safeRoot)
-      return { fd, created }
-    } catch (e: unknown) {
-      await fd.close().catch(() => {})
-      throw e
-    }
+    throw new SafeOpenError(`${filePath} 无法检查`)
   }
-  // Windows：无 O_NOFOLLOW——lstat 拒 symlink + open + realpath 包含性（不校验 mode，NTFS 合成值）
-  const st = await lstat(filePath).catch(() => { throw new SafeOpenError(`${filePath} 无法检查`) })
   if (st.isSymbolicLink()) throw new SafeOpenError(`${filePath} 为符号链接`)
+}
+
+export async function openSafeFile(filePath: string, opts: SafeOpenOptions, platform: SafeOpenPlatform = defaultSafeOpenPlatform()): Promise<SafeOpenResult> {
+  const onConflict = opts.onConflict ?? 'fallback'
+  if (platform.preOpenLstat) await preOpenCheck(filePath, opts.mode)
   const flags = opts.mode === 'create'
-    ? constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY
-    : opts.purpose === 'read' ? constants.O_RDONLY : constants.O_WRONLY | constants.O_APPEND
-  let created = false
+    ? platform.createFlags
+    : opts.purpose === 'read' ? platform.existingReadFlags : platform.existingWriteFlags
   let fd: FileHandle
+  let created = false
   try {
     if (opts.mode === 'create') {
-      try { fd = await open(filePath, flags, 0o600); created = true }
-      catch (e: unknown) {
+      try {
+        fd = await open(filePath, flags, 0o600)
+        created = true
+      } catch (e: unknown) {
         if ((e as NodeJS.ErrnoException).code === 'EEXIST') {
           if (onConflict === 'error') throw new SafeOpenConflictError(`${filePath} 已存在`)
-          fd = await open(filePath, opts.purpose === 'read' ? constants.O_RDONLY : constants.O_WRONLY | constants.O_APPEND)
-        } else throw new SafeOpenError(`${filePath} 打开失败`)
+          fd = await open(filePath, opts.purpose === 'read' ? platform.existingReadFlags : platform.existingWriteFlags)
+        } else throw new SafeOpenError(`${filePath} 打开失败（可能是符号链接）`)
       }
-    } else fd = await open(filePath, flags)
+    } else {
+      fd = await open(filePath, flags)
+    }
   } catch (e: unknown) {
     if (e instanceof SafeOpenError) throw e
-    if (opts.mode === 'existing' && (e as NodeJS.ErrnoException).code === 'ENOENT') throw e // 保留 ENOENT（同 POSIX 分支）
+    if (opts.mode === 'existing' && (e as NodeJS.ErrnoException).code === 'ENOENT') throw e // 保留 ENOENT
     throw new SafeOpenError(`${filePath} 打开失败`)
   }
-  try { await assertContained(filePath, opts.safeRoot); return { fd, created } }
-  catch (e: unknown) { await fd.close().catch(() => {}); throw e }
+  try {
+    const st = await fd.stat()
+    if (!st.isFile()) throw new SafeOpenError(`${filePath} 非普通文件`) // 统一不变量：拒 FIFO/socket/目录/device
+    if (created) await fd.chmod(0o600) // 兜底修正 umask
+    else if (platform.checkModeMask) {
+      const mask = opts.purpose === 'read' ? 0o400 : 0o600
+      if ((st.mode & mask) !== mask || (st.mode & 0o077) !== 0) {
+        throw new SafeOpenError(`${filePath} 权限不正确（需 ${opts.purpose === 'read' ? '0400' : '0600'}，无 group/other 位）`)
+      }
+    }
+    await assertContained(filePath, opts.safeRoot)
+    return { fd, created }
+  } catch (e: unknown) {
+    await fd.close().catch(() => {})
+    throw e
+  }
 }
