@@ -29,8 +29,9 @@ const { mockIpcMain, getListeners } = vi.hoisted(() => {
 })
 vi.mock('electron', () => ({ BrowserWindow: class {}, ipcMain: mockIpcMain }))
 
-const fakeWindow = { isDestroyed: () => false, webContents: { id: 1 } }
-const fakeEvent = { sender: fakeWindow.webContents, senderFrame: {} }
+const fakeMainFrame = { url: 'cyrene://renderer/index.html' } // P2-01:isTrustedSenderFor 要求 senderFrame === webContents.mainFrame 且 URL 受信
+const fakeWindow = { isDestroyed: () => false, webContents: { id: 1, mainFrame: fakeMainFrame } }
+const fakeEvent = { sender: fakeWindow.webContents, senderFrame: fakeMainFrame }
 
 beforeEach(() => {
   getListeners().clear()
