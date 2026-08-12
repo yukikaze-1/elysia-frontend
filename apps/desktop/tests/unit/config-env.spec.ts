@@ -60,6 +60,13 @@ describe('shouldUseViteDevServer', () => {
     expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'not-a-url' })).toBe(false)
     expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'file:///x' })).toBe(false)
   })
+  it('https/远程 host 无 allowlist → false（B1/B2 语义变化）', () => {
+    expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'https://example.test/' })).toBe(false)
+    expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'http://192.168.1.5:5173' })).toBe(false)
+  })
+  it('allowlist 附加 origin → true', () => {
+    expect(shouldUseViteDevServer(false, { ELECTRON_RENDERER_URL: 'http://192.168.1.5:5173', CYRENE_DEV_RENDERER_ORIGINS: 'http://192.168.1.5:5173' })).toBe(true)
+  })
 })
 
 describe('resolveBackendMode', () => {
