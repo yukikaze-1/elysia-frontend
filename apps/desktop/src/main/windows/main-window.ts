@@ -3,6 +3,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { getMainWindow, setMainWindow } from '../ipc/registry'
 import { getAppConfig, shouldUseViteDevServer } from '../config'
+import { evaluateDevRendererUrl } from '../config/trusted-renderer-origin'
 import { PROTOCOL_SCHEME, RENDERER_HOST } from '../protocol'
 import { classifyNavigation } from './navigation'
 
@@ -19,11 +20,8 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
   // dev（electron-vite dev，含 --mode test）→ http；打包恒 cyrene://（残留 dev env 无法劫持）；
   // 无 dev server（test/production 构建、--mode development 直启）→ cyrene://。
   const usingDevServer = shouldUseViteDevServer(app.isPackaged, process.env)
-  // devOrigin 仅在 usingDevServer 下解析，且 try/catch——打包/残留畸形 ELECTRON_RENDERER_URL 不崩建窗（导航门 deny 兜底）
-  let devOrigin: URL | undefined
-  if (usingDevServer && devUrl) {
-    try { devOrigin = new URL(devUrl) } catch { devOrigin = undefined }
-  }
+  const devEval = evaluateDevRendererUrl(devUrl, process.env)
+  const devOrigin = usingDevServer && devEval.status === 'trusted' ? devEval.url : undefined
   const win = new BrowserWindow({
     width: 1200,
     height: 760,
@@ -75,8 +73,8 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
     })
   }
 
-  if (usingDevServer && devUrl) {
-    win.loadURL(devUrl).catch((err) => { loadErrorSink?.(err) })
+  if (usingDevServer && devOrigin) {
+    win.loadURL(devOrigin.toString()).catch((err) => { loadErrorSink?.(err) })
   } else {
     // 打包/直启 cyrene://：失败必须留诊断（handler 缺失→404 空白窗）
     win.loadURL(`${PROTOCOL_SCHEME}://${RENDERER_HOST}/index.html`).catch((err) => { loadErrorSink?.(err) })

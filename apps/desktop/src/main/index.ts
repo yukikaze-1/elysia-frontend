@@ -12,6 +12,7 @@ import { getMainWindow } from './ipc/registry'
 import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
 import { hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
+import { evaluateDevRendererUrl } from './config/trusted-renderer-origin'
 import { resolveBackendMode } from './config/backend-mode'
 import { ConnectionConfig } from './connection/connection-config'
 import { registerCyreneScheme, registerCyreneProtocolHandler } from './protocol'
@@ -102,6 +103,16 @@ async function main(): Promise<void> {
     const sanitize = createSanitizePublicMessage({ home: app.getPath('home'), userData: expectedUserDataBase() })
     const safeRoot = await realpath(expectedUserDataBase())
     diagnostics = createDiagnostics({ logs: dirs.logs, audit: dirs.audit }, { logLevel: config.logLevel, retentionDays: 30, sanitize })
+    // 启动门禁（B2/P0-02）：dev 模式下 ELECTRON_RENDERER_URL 必须指向受信地址（回环或 allowlist）。
+    // 在 requestSingleInstanceLock 之后——只有持锁主实例评估（第二实例已在 lock 处 exit(0)）。
+    // fatal exit 异步，故 untrusted 后必须 return，否则继续建窗/装配。
+    if (!app.isPackaged) {
+      const devEval = evaluateDevRendererUrl(process.env['ELECTRON_RENDERER_URL'], process.env)
+      if (devEval.status === 'untrusted') {
+        fatal(`ELECTRON_RENDERER_URL 指向不受信地址：${devEval.reason}（仅允许回环或 CYRENE_DEV_RENDERER_ORIGINS 白名单 http 地址）`)
+        return
+      }
+    }
     const store = new CredentialStore(join(dirs.config, 'credentials.json'), safeStorage, isKeyAllowed, safeRoot)
     // 装配 chat-service：装配策略（spec 决策 7）打包恒 Real；未打包默认 Real，仅 CYRENE_BACKEND=mock 显式 Mock（演示免 token）。
     // onConnectionStateChange → svc.pushState；onSessionReplay → svc.pushReplay(chat:replay 生产侧桥,P1-1)。
