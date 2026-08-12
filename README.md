@@ -76,7 +76,7 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 | `pnpm test:e2e` | 端到端测试(Playwright) |
 | `pnpm package` / `pnpm make` | 打包(electron-builder `dir` 未分发包,产物在 `dist/linux-unpacked/`) / 生成安装产物(占位,阶段 8) |
 | `pnpm verify:artifact` | 校验产物内容与安全配置(静态检查;`-- --smoke` 追加 Playwright 启动冒烟) |
-| `pnpm check:contract` | 跨仓库 wire 契约检查(读 `elysia-agent/frontend_contract`,后端仓库未挂载时自动跳过) |
+| `pnpm -F @cyrene/desktop check:contract` | 跨仓库 wire 契约检查(读 `elysia-agent/frontend_contract`,后端仓库未挂载时自动跳过) |
 
 ## 真实模式联调
 
@@ -96,7 +96,7 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 
 联调前置链路均已就绪（`chat-service` connect 无参 + `setEndpoint/getEndpoint/getRuntimeInfo`、desktopApi 三新方法、rejected ACK 结构化 `BACKEND_REJECTED`/`backendCode`/`retryable`），真实后端环境（B-01）到位即可进入联调；此前相关能力标注“已开发、未联调”。
 
-**B-01 联调门禁（批次 C 定，spec §4.2.3）：** 真实后端环境（B-01）到位后，联调首日从真实后端抓取 **≥3 条真实 raw frame 样例**（覆盖 `server_info` / session / `user_message.ack` / generation 流），过前端 `parseRawFrame` + frame/rest mapper + `parseBackendEvent` 断言**全部通过**，作为 B-01 联调验收门禁；随后按后端实际 SHA 更新夹具 manifest（替换新增 7 组的 `verified:false` 占位）。此门禁与跨仓库契约脚本（`pnpm check:contract`，读 `elysia-agent/frontend_contract`）共同构成「双方各自单测都绿但 wire 不兼容」的显式防线。
+**B-01 联调门禁（批次 C 定，spec §4.2.3）：** 真实后端环境（B-01）到位后，联调首日从真实后端抓取 **≥3 条真实 raw frame 样例**（覆盖 `server_info` / session / `user_message.ack` / generation 流），过前端 `parseRawFrame` + frame/rest mapper + `parseBackendEvent` 断言**全部通过**，作为 B-01 联调验收门禁；随后按后端实际 SHA 更新夹具 manifest（替换新增 7 组的 `verified:false` 占位）。此门禁与跨仓库契约脚本（`pnpm -F @cyrene/desktop check:contract`，读 `elysia-agent/frontend_contract`）共同构成「双方各自单测都绿但 wire 不兼容」的显式防线。
 
 ## 协作约定
 

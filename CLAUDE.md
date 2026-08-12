@@ -112,7 +112,7 @@ Definition of Done (both docs): typecheck+format pass; runtime schemas for all e
 
 ## Commands
 
-Run from the repo root (pnpm workspace shims; equivalently `pnpm -F @cyrene/desktop <script>`): `dev`, `typecheck`, `lint`, `test`, `test:integration`, `test:e2e`, `build`, `package`, `make`, `verify:artifact`, `check:contract`. `test:e2e` (Playwright) and `make` (Electron Forge) are still placeholders for later phases. `check:contract` is the local cross-repo wire-contract check: it reads `/home/yomu/elysia-agent/frontend_contract` when that repo is mounted (CI/other machines skip it).
+Run from the repo root (pnpm workspace shims; equivalently `pnpm -F @cyrene/desktop <script>`): `dev`, `typecheck`, `lint`, `test`, `test:integration`, `test:e2e`, `build`, `package`, `make`, `verify:artifact`. `test:e2e` (Playwright) and `make` (Electron Forge) are still placeholders for later phases. `check:contract` (no root shim — run as `pnpm -F @cyrene/desktop check:contract`) is the local cross-repo wire-contract check: it reads `/home/yomu/elysia-agent/frontend_contract` when that repo is mounted (CI/other machines skip it).
 
 ## Current status / open decisions
 
