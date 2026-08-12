@@ -33,7 +33,7 @@ export function createShutdownHandler(deps: ShutdownDeps): (e: { preventDefault(
     const runAll = async (): Promise<void> => {
       for (const s of deps.steps) {
         if (timedOut) return
-        try { await s.run() } catch (err) { deps.onError?.(s.name, err) }
+        try { await s.run() } catch (err) { if (!timedOut) deps.onError?.(s.name, err) } // 超时后挂起 step 迟到 reject 不再调 onError
       }
     }
     void Promise.race([runAll(), timeoutPromise])

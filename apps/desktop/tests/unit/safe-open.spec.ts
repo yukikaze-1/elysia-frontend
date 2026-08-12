@@ -115,7 +115,9 @@ describe('openSafeFile（非普通文件拒绝 / 平台注入）', () => {
     const p = join(root, 'sub', 'win-new.log')
     const r = await openSafeFile(p, { mode: 'create', purpose: 'append', safeRoot }, windowsPlatform)
     expect(r.created).toBe(true)
-    expect((await r.fd.stat()).isFile()).toBe(true)
+    const st = await r.fd.stat()
+    expect(st.isFile()).toBe(true)
+    expect(st.mode & 0o777).toBe(0o600) // spec §4.1 验收：create+ENOENT 首建 0600
     await r.fd.close()
   })
   it('windowsPlatform 注入：existing+ENOENT 原样抛 ENOENT', async () => {
