@@ -92,3 +92,81 @@ jobs:
 
       - name: Integration tests (xvfb)
         run: xvfb-run -a pnpm test:integration
+
+  # 打包态安全冒烟：clean → package（内含 electron-vite build）→ verify:artifact --smoke（P0-02 验收 A6 持续化）
+  artifact:
+    name: packaged artifact smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/electron
+          key: electron-cache-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: electron-cache-${{ runner.os }}-
+
+      - name: Ensure Electron binary
+        run: pnpm --filter @cyrene/desktop ensure:electron
+
+      - name: Install Playwright (artifact smoke)
+        run: pnpm --filter @cyrene/desktop exec playwright install --with-deps chromium
+
+      - name: Clean + package (fresh out/dist)
+        run: rm -rf out dist && pnpm --filter @cyrene/desktop package
+
+      - name: Record app SHA
+        run: git rev-parse HEAD > app-sha.txt
+
+      - name: Upload SHA evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-sha
+          path: app-sha.txt
+
+      - name: Artifact smoke (xvfb)
+        run: xvfb-run -a pnpm --filter @cyrene/desktop verify:artifact -- --smoke
+
+  # Windows 构建级门禁（C3：不启动 Electron）——unit 是 node 环境 + build 是打包器，均不需 electron 二进制
+  windows:
+    name: windows build-level
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck + lint + unit + build
+        run: pnpm typecheck && pnpm lint && pnpm test && pnpm build
+
+      - name: Record commit SHA (Windows evidence)
+        run: git rev-parse HEAD > app-sha-win.txt
+
+      - name: Upload SHA evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-sha-win
+          path: app-sha-win.txt

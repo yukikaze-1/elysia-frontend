@@ -14,7 +14,7 @@ function makeDir(): string {
 const root = makeDir()
 const safeRoot = root // 测试锚点 = 临时根
 
-describe('openSafeFile', () => {
+describe.skipIf(process.platform === 'win32')('openSafeFile', () => {
   it('create 模式：新文件 0600 首建（fchmod 修正 umask）', async () => {
     const p = join(root, 'sub', 'app.log')
     const r = await openSafeFile(p, { mode: 'create', purpose: 'append', safeRoot })
@@ -78,19 +78,19 @@ describe('openSafeFile', () => {
 })
 
 describe('openSafeFile（非普通文件拒绝 / 平台注入）', () => {
-  it('0600 FIFO existing+read 立即拒绝不阻塞', async () => {
+  it.skipIf(process.platform === 'win32')('0600 FIFO existing+read 立即拒绝不阻塞', async () => {
     const p = join(root, 'sub', 'fifo.log')
     spawnSync('mkfifo', [p])
     chmodSync(p, 0o600)
     await expect(openSafeFile(p, { mode: 'existing', purpose: 'read', safeRoot })).rejects.toThrow()
   })
-  it('0600 FIFO existing+append 立即拒绝不阻塞', async () => {
+  it.skipIf(process.platform === 'win32')('0600 FIFO existing+append 立即拒绝不阻塞', async () => {
     const p = join(root, 'sub', 'fifo2.log')
     spawnSync('mkfifo', [p])
     chmodSync(p, 0o600)
     await expect(openSafeFile(p, { mode: 'existing', purpose: 'append', safeRoot })).rejects.toThrow()
   })
-  it('Unix socket 立即拒绝', async () => {
+  it.skipIf(process.platform === 'win32')('Unix socket 立即拒绝', async () => {
     const p = join(root, 'sub', 'sock.sock')
     await new Promise<void>((resolve, reject) => {
       const srv = createServer()
@@ -102,10 +102,10 @@ describe('openSafeFile（非普通文件拒绝 / 平台注入）', () => {
   it('目录立即拒绝（open 成功但 isFile false）', async () => {
     await expect(openSafeFile(join(root, 'sub'), { mode: 'existing', purpose: 'read', safeRoot })).rejects.toThrow()
   })
-  it('/dev/null（char device）立即拒绝', async () => {
+  it.skipIf(process.platform === 'win32')('/dev/null（char device）立即拒绝', async () => {
     await expect(openSafeFile('/dev/null', { mode: 'existing', purpose: 'read', safeRoot: '/dev' })).rejects.toThrow()
   })
-  it('create 遇既有 FIFO → fallback 重开 existing → 拒绝不阻塞', async () => {
+  it.skipIf(process.platform === 'win32')('create 遇既有 FIFO → fallback 重开 existing → 拒绝不阻塞', async () => {
     const p = join(root, 'sub', 'fifo3.log')
     spawnSync('mkfifo', [p])
     chmodSync(p, 0o600)
@@ -117,7 +117,7 @@ describe('openSafeFile（非普通文件拒绝 / 平台注入）', () => {
     expect(r.created).toBe(true)
     const st = await r.fd.stat()
     expect(st.isFile()).toBe(true)
-    expect(st.mode & 0o777).toBe(0o600) // spec §4.1 验收：create+ENOENT 首建 0600
+    if (process.platform !== 'win32') expect(st.mode & 0o777).toBe(0o600) // Windows stat.mode 报 0666，0600 仅 POSIX 有意义
     await r.fd.close()
   })
   it('windowsPlatform 注入：existing+ENOENT 原样抛 ENOENT', async () => {

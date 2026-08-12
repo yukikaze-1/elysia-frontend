@@ -17,7 +17,7 @@ describe('atomicWriteFile', () => {
     const p = join(root, 'config', 'credentials.json')
     await atomicWriteFile(p, '{"version":1}', { safeRoot: root })
     expect(readFileSync(p, 'utf8')).toBe('{"version":1}')
-    expect((await import('fs')).statSync(p).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect((await import('fs')).statSync(p).mode & 0o777).toBe(0o600) // Windows stat.mode 报 0666，0600 仅 POSIX 有意义
   })
   it('覆盖既有文件（rename 原子，无 .tmp 残留）', async () => {
     const root = makeDir()

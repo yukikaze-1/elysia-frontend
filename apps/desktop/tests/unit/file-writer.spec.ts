@@ -33,7 +33,7 @@ describe('createFileWriter 集成', () => {
     await w.close()
     const p = join(dir, 'app.log')
     expect(readFileSync(p, 'utf8')).toBe('{"a":1}\n')
-    expect((await import('fs')).statSync(p).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect((await import('fs')).statSync(p).mode & 0o777).toBe(0o600) // Windows stat.mode 报 0666，0600 仅 POSIX 有意义
   })
   it('daily：换日开新文件', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cy-fw-d-'))

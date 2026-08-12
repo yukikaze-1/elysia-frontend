@@ -89,7 +89,7 @@ describe('setCredential', () => {
     expect(raw.version).toBe(1)
     expect(raw.keys['backend.token'].algo).toBe('safeStorage')
     expect(raw.keys['backend.token'].enc).toBe(Buffer.from('enc:tok').toString('base64'))
-    expect((await import('fs')).statSync(filePathOf(s)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') expect((await import('fs')).statSync(filePathOf(s)).mode & 0o777).toBe(0o600) // Windows stat.mode 报 0666，0600 仅 POSIX 有意义
   })
   it('safeStorage 不可用 → 抛 CREDENTIAL_UNAVAILABLE 且不落盘明文', async () => {
     const s = makeStore({ safe: fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }) })

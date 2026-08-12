@@ -44,7 +44,7 @@ describe('ensureUserDataDirs', () => {
     symlinkSync(target, logs)
     await expect(ensureUserDataDirs(base, { baseCreated: true })).rejects.toBeInstanceOf(UserDataDirError)
   })
-  it('既有 base/叶子非 0700（group/other 位）→ 拒绝', async () => {
+  it.skipIf(process.platform === 'win32')('既有 base/叶子非 0700（group/other 位）→ 拒绝', async () => {
     const base = tmpBase()
     mkdirSync(base, { mode: 0o700 }) // 先建 0700，再显式 chmod 0755——mkdirSync 的 mode 受 umask 掩码，直接 0755 在 restrictive umask 下会变 0700，测试不确定
     chmodSync(base, 0o755)
