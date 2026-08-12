@@ -1,3 +1,9 @@
-# diagnostics — 日志/审计与脱敏（占位）
+# diagnostics — 日志 / 审计 / 脱敏
 
-阶段 1 填充：`sanitize.ts`（sanitizePublicMessage 公开消息路径脱敏，handlers 接线）。后续块填充：logger/audit 落盘——仅经 sanitize 后的公开信息可出主进程，敏感数据永不落盘、永不进诊断导出。
+本目录是 Main 进程运行日志与合规审计的落盘出口，遵循「敏感值永不落盘、不进出诊断导出」的红线。
+
+- **rotate 运行日志**：`app.log` 按 5MB×3 轮转，定时 flush + 退出 flush，记录运行期信息，可改可删。
+- **append-only 审计**：`audit-YYYY-MM-DD.jsonl` 按日追加、逐行 fsync、30 天自动清理，作为合规证据只增不改。
+- **双净化**：`sanitize` / `redact` 两道净化确保敏感值（inner_voice / public_reply / 转录音频 / 凭据）永不落盘、不进诊断导出。
+- **有序关闭**：退出顺序为凭据 → adapter → diagnostics（批次 A/C），超时标记经同步审计落盘。
+- 运行日志与审计用途严格区分：前者可改删，后者是证据。

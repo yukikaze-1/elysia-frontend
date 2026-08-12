@@ -54,7 +54,7 @@ docs/                设计文档(18 份,中文,工程契约)
 ref/                 UI 原型与预览图
 apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / shared)
   ├── src/main/      主进程:入口、transport(BackendAdapter + MockBackend)、夹具
-  ├── src/preload/   具名 DesktopApi 占位(contextBridge)
+  ├── src/preload/   具名窄 desktopApi(contextBridge, schema 校验)
   ├── src/shared/    领域契约 / 运行时 Schema(zod) / 纯逻辑 / 错误模型(跨进程共享)
   ├── src/renderer/  Vue 3 界面:设计 token、四区布局壳、双通道消息示意
   ├── tests/         unit / integration(Vitest)
@@ -64,7 +64,7 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 
 ## 开发命令
 
-> 命令语义见 [docs/09 §5](docs/09-Cyrene-前端构建打包与发布设计-v0.2.md)。阶段 0 已实现 dev / build / typecheck / lint / test / test:integration;阶段 1 块 A 已实现 `package`(electron-builder `dir` 未分发包)与 `verify:artifact`(产物检查,`--smoke` 启动冒烟);阶段 2 真实联调整改·批次 C 新增 `check:contract`(跨仓库契约脚本);`test:e2e`(Playwright)、`make`(Forge 打包)仍为占位,留后续阶段。
+> 命令语义见 [docs/09 §5](docs/09-Cyrene-前端构建打包与发布设计-v0.2.md)。阶段 0 已实现 dev / build / typecheck / lint / test / test:integration;阶段 1 块 A 已实现 `package`(electron-builder `dir` 未分发包)与 `verify:artifact`(产物检查,`--smoke` 启动冒烟);阶段 2 真实联调整改·批次 C 新增 `check:contract`(跨仓库契约脚本);`test:e2e`(Playwright)、`make`(Forge 打包)为占位命令，未实现，非零退出防假绿。
 
 | 命令 | 说明 |
 |---|---|
@@ -73,8 +73,8 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 | `pnpm lint` | 静态检查 |
 | `pnpm test` | 单元测试(Vitest) |
 | `pnpm test:integration` | 集成测试 |
-| `pnpm test:e2e` | 端到端测试(Playwright) |
-| `pnpm package` / `pnpm make` | 打包(electron-builder `dir` 未分发包,产物在 `dist/linux-unpacked/`) / 生成安装产物(占位,阶段 8) |
+| `pnpm test:e2e` | 占位命令，未实现，非零退出防假绿 |
+| `pnpm package` / `pnpm make` | 打包(electron-builder `dir` 未分发包,产物在 `dist/linux-unpacked/`) / 占位命令，未实现，非零退出防假绿 |
 | `pnpm verify:artifact` | 校验产物内容与安全配置(静态检查;`-- --smoke` 追加 Playwright 启动冒烟) |
 | `pnpm -F @cyrene/desktop check:contract` | 跨仓库 wire 契约检查(读 `elysia-agent/frontend_contract`,后端仓库未挂载时自动跳过) |
 
