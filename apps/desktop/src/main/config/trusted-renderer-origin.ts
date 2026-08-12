@@ -4,7 +4,9 @@
 import { RENDERER_HOST } from '../protocol/constants'
 
 export function isLoopbackHostname(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '[::1]' || /^127\./.test(hostname)
+  // 回环仅限字面 localhost / IPv6 [::1] / IPv4 127.0.0.0/8（完整四段点分）；
+  // 用 ^127\. 前缀会误判 127.0.0.1.evil.example 这类普通域名（最终 review 收紧）
+  return hostname === 'localhost' || hostname === '[::1]' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
 }
 
 export function normalizeOrigin(url: URL): string {
@@ -43,7 +45,8 @@ export function isTrustedDevUrl(url: URL, trusted: ReadonlySet<string>): boolean
 export function isAppRendererUrl(rawUrl: string, trusted: ReadonlySet<string>): boolean {
   try {
     const url = new URL(rawUrl)
-    if (url.protocol === 'cyrene:' && url.host === RENDERER_HOST) return true
+    // cyrene 分支也拒 userinfo（cyrene://evil@renderer 不因 host 匹配而放行）
+    if (url.protocol === 'cyrene:' && url.host === RENDERER_HOST && !url.username && !url.password) return true
     return isTrustedDevUrl(url, trusted)
   } catch {
     return false

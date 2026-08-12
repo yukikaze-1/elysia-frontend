@@ -14,6 +14,7 @@ describe('isLoopbackHostname', () => {
     expect(isLoopbackHostname('192.168.1.10')).toBe(false)
     expect(isLoopbackHostname('example.com')).toBe(false)
     expect(isLoopbackHostname('10.0.0.1')).toBe(false)
+    expect(isLoopbackHostname('127.0.0.1.evil.example')).toBe(false) // 前缀 127. 的普通域名非回环（最终 review 收紧）
   })
 })
 
@@ -71,6 +72,7 @@ describe('isAppRendererUrl', () => {
   it('cyrene://renderer → true；错误 cyrene host → false', () => {
     expect(isAppRendererUrl('cyrene://renderer/index.html', trusted)).toBe(true)
     expect(isAppRendererUrl('cyrene://evil/index.html', trusted)).toBe(false)
+    expect(isAppRendererUrl('cyrene://evil@renderer/index.html', trusted)).toBe(false) // cyrene 分支拒 userinfo
   })
   it('受信 http → true；异源/畸形 → false', () => {
     expect(isAppRendererUrl('http://localhost:5173/', trusted)).toBe(true)
