@@ -22,7 +22,8 @@
     "test:e2e": "echo 'E2E(Playwright) 留待阶段 3 配置' && exit 0",
     "make": "echo 'Forge 打包留待阶段 8 配置' && exit 0",
     "package": "electron-vite build && electron-builder --dir",
-    "verify:artifact": "node scripts/verify-artifact.cjs"
+    "verify:artifact": "node scripts/verify-artifact.cjs",
+    "check:contract": "node scripts/check-backend-contract.mjs"
   },
   "dependencies": {
     "marked": "^18.0.9",
