@@ -14,8 +14,8 @@ describe('buildDevCsp', () => {
     const connect = buildDevCsp(resolveTrustedDevOrigins({})).split('; ').find((d) => d.startsWith('connect-src'))!
     expect(connect).toContain('ws://localhost:*')
     expect(connect).toContain('ws://127.0.0.1:*')
-    expect(connect).toContain('ws://[::1]:*')
     expect(connect).toContain('wss://localhost:*')
+    expect(connect).not.toContain('ws://[::1]:*') // Chromium 拒 IPv6+端口通配源；同源 ws 由 'self' 覆盖
     expect(connect.split(' ')).not.toContain('ws:')
     expect(connect.split(' ')).not.toContain('wss:')
   })
