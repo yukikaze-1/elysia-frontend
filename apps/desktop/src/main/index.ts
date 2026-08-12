@@ -44,7 +44,7 @@ function applyProductionMenu(): void {
 }
 
 // main() 最前：Chromium 的 CDP 端口在 whenReady 前已绑定，门必须同步生效。
-// 命中即 failStart + 返回 true，main() 检测后停止后续执行（不落到 scheme/身份副作用）。
+// 命中即 fatal + 返回 true，main() 检测后停止后续执行（不落到 scheme/身份副作用）。
 function rejectForbiddenDebugSwitches(): boolean {
   const getSwitch = (n: string): { present: boolean; value: string } => ({
     present: app.commandLine.hasSwitch(n),
