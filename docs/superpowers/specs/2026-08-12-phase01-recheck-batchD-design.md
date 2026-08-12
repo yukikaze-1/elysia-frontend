@@ -105,7 +105,7 @@
 - 新增 `apps/desktop/scripts/check-node-version.mjs`：**用 `import.meta.dirname` 锚定**读 `../package.json`（`new URL('../package.json', import.meta.url)`）的 `engines.node`——**禁裸 `../package.json` 相对路径**（pnpm `-F` 下 cwd=apps/desktop 会读到根 package.json，根 `check:node` 在仓库根跑会读仓库外，双二义）；用 semver 比较 `process.version`，匹配则 exit 0，不匹配打印「Node 版本需满足 <range>（当前 vX.Y.Z）」exit 1；
 - `semver` 加为 `@cyrene/desktop`（或根）的**显式 devDependency**（现为传递依赖，hoisted 下可解析但契约未显式化）；
 - `apps/desktop/package.json` 增 `check:node` script + `predev`/`prebuild`/`pretest` hook 调用它——**pnpm 11.20 默认执行 pre/post scripts**（已实测：`pnpm run dev` 先跑 predev、pre exit 3 会 fail-fast 拦截主脚本），方案生效；可选加 `prepackage` 覆盖 `pnpm package` 路径；
-- 根 package.json 也增 `check:node`（读根 engines，同样锚定根 package.json）；
+- 根 package.json 也增 `check:node`（复用桌面脚本——其 import.meta 锚定 apps/desktop engines；根与 desktop 两处 engines 同值，检查任一等价）；
 - **CI 版本同源声明**：CI 各 job 用 `actions/setup-node node-version-file: .nvmrc`（22.23.0）+ `engineStrict: true`（install 时 engines 兜底）——与新的 `>=22.23.0 <23` 一致，无需改 CI 配置，文档重申即可。
 
 **验收测试**：`apps/desktop/scripts/check-node-version.mjs` 在当前 Node 22.23.0 下 exit 0；逻辑抽纯函数 `nodeVersionOk`（若可行）供单测（`>=22.23.0 <23` 对 22.23.0 true / 23.0.0 false / 22.22.0 false）；`pnpm -F @cyrene/desktop predev` 非零/零退出验证。
