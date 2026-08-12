@@ -2,6 +2,7 @@
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { atomicWriteFile } from './atomic-write'
 import { decryptCredential, encryptCredential, isSafeStorageUsable, isValidBase64, type SafeStorageLike } from './safe-storage'
+import type { SafeOpenPlatform } from '../persistence/safe-open'
 
 export const CREDENTIAL_FILE_VERSION = 1 as const
 export interface CredentialFileSchemaV1 {
@@ -24,13 +25,26 @@ function hasKeysShape(v: unknown): v is { version: number; keys: Record<string, 
 export class CredentialStore {
   private queue: Promise<unknown> = Promise.resolve()
   private cache = new Map<string, string>()
+  private closed = false
+  private closePromise: Promise<void> | null = null
 
   constructor(
     private readonly filePath: string,
     private readonly safe: SafeStorageLike,
     private readonly isKeyAllowed: (key: string) => boolean,
-    private readonly safeRoot: string
+    private readonly safeRoot: string,
+    private readonly platform?: SafeOpenPlatform
   ) {}
+
+  /** 关闭：拒绝新写 → 等待已接纳操作落盘 → 清明文 cache；幂等 */
+  close(): Promise<void> {
+    this.closePromise ??= (async () => {
+      this.closed = true
+      await this.queue
+      this.cache.clear()
+    })()
+    return this.closePromise
+  }
 
   /** 串行队列：.then(op, op) 两个参——任一 op reject 只影响该次，不毒化后续 op */
   private enqueue<T>(op: () => Promise<T>): Promise<T> {
@@ -43,7 +57,7 @@ export class CredentialStore {
     const { openSafeFile } = await import('../persistence/safe-open')
     let fd
     try {
-      const r = await openSafeFile(this.filePath, { mode: 'existing', purpose: 'read', safeRoot: this.safeRoot })
+      const r = await openSafeFile(this.filePath, { mode: 'existing', purpose: 'read', safeRoot: this.safeRoot }, this.platform)
       fd = r.fd
       const text = await fd.readFile('utf8')
       const parsed = JSON.parse(text) as unknown
@@ -58,6 +72,7 @@ export class CredentialStore {
   }
 
   async getStatus(key: string): Promise<'unavailable' | 'locked' | 'empty' | 'available'> {
+    if (this.closed) return 'unavailable'
     if (!this.isKeyAllowed(key)) return 'unavailable' // fail-closed（IPC zod 已拦，store 防御兜底）
     let file: CredentialFileSchemaV1 | null
     try { file = await this.readFile() } catch { return 'unavailable' } // JSON 损坏 / 权限
@@ -79,6 +94,7 @@ export class CredentialStore {
   }
 
   async setCredential(key: string, plaintext: string): Promise<void> {
+    if (this.closed) throw new CyreneError(CyreneErrorCode.CREDENTIAL_STORE_CLOSED, '凭据存储已关闭')
     if (!this.isKeyAllowed(key)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'key 不在白名单')
     await this.enqueue(async () => {
       if (!isSafeStorageUsable(this.safe)) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '系统钥匙串不可用')
@@ -93,6 +109,7 @@ export class CredentialStore {
   }
 
   async getCredential(key: string): Promise<string | null> {
+    if (this.closed) return null
     if (!this.isKeyAllowed(key)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'key 不在白名单')
     const cached = this.cache.get(key)
     if (cached !== undefined) return cached
@@ -101,6 +118,7 @@ export class CredentialStore {
   }
 
   async clearCredential(key: string): Promise<void> {
+    if (this.closed) throw new CyreneError(CyreneErrorCode.CREDENTIAL_STORE_CLOSED, '凭据存储已关闭')
     if (!this.isKeyAllowed(key)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'key 不在白名单')
     await this.enqueue(async () => {
       let file: CredentialFileSchemaV1

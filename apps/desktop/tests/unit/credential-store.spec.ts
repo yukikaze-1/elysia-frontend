@@ -7,6 +7,7 @@ import { CredentialStore, createEmptyFile } from '../../src/main/credentials/cre
 import type { SafeStorageLike } from '../../src/main/credentials/safe-storage'
 import { CyreneErrorCode } from '../../src/shared/errors'
 import { isKeyAllowed } from '../../src/shared/contracts'
+import { windowsPlatform } from '../../src/main/persistence/safe-open'
 
 /** 测试直读私有 filePath（避免为测试改公开 API） */
 function filePathOf(s: CredentialStore): string { return (s as unknown as { filePath: string }).filePath }
@@ -208,5 +209,49 @@ describe('EMPTY_FILE 工厂', () => {
     await storeB.clearCredential('backend.token')
     const raw = JSON.parse(readFileSync(file, 'utf8'))
     expect(raw).toEqual({ version: 1, keys: {} })
+  })
+})
+
+describe('close / drain + platform 注入', () => {
+  it('close 后 setCredential 抛 CREDENTIAL_STORE_CLOSED', async () => {
+    const s = makeStore()
+    await s.close()
+    await expect(s.setCredential('backend.token', 'x')).rejects.toMatchObject({ code: CyreneErrorCode.CREDENTIAL_STORE_CLOSED })
+  })
+  it('close 等待在途写完成后返回且重启可读', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cy-creds-drain-'))
+    const file = join(root, 'credentials.json')
+    const s = new CredentialStore(file, fakeSafe(), isKeyAllowed, root)
+    const p = s.setCredential('backend.token', 'tok') // 已接纳入队
+    await s.close() // 等待落盘
+    await p
+    const s2 = new CredentialStore(file, fakeSafe(), isKeyAllowed, root) // 同文件新实例
+    expect(await s2.getCredential('backend.token')).toBe('tok')
+  })
+  it('close 清缓存 → close 后 getCredential 为 null', async () => {
+    const s = makeStore()
+    await s.setCredential('backend.token', 'tok')
+    await s.close()
+    expect(await s.getCredential('backend.token')).toBe(null)
+  })
+  it('close 幂等（二次调用同一 promise）', async () => {
+    const s = makeStore()
+    const c1 = s.close()
+    const c2 = s.close()
+    expect(c1).toBe(c2)
+    await c1
+  })
+  it('windowsPlatform 注入端到端：干净文件 getStatus empty', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cy-creds-win-'))
+    const s = new CredentialStore(join(root, 'credentials.json'), fakeSafe(), isKeyAllowed, root, windowsPlatform)
+    expect(await s.getStatus('backend.token')).toBe('empty')
+  })
+  it('windowsPlatform 注入端到端：set 后新 Store 实例可读回', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cy-creds-win2-'))
+    const file = join(root, 'credentials.json')
+    const s = new CredentialStore(file, fakeSafe(), isKeyAllowed, root, windowsPlatform)
+    await s.setCredential('backend.token', 'tok')
+    const s2 = new CredentialStore(file, fakeSafe(), isKeyAllowed, root, windowsPlatform)
+    expect(await s2.getCredential('backend.token')).toBe('tok')
   })
 })
