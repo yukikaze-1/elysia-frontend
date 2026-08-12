@@ -31,6 +31,9 @@ export interface IpcErrorBody {
   backendCode?: string
   retryable?: boolean
   requestId?: string
+  clientRequestId?: string
+  retryAfterMs?: number
+  idempotencyDurable?: boolean
 }
 
 /** IPC 结果信封：ok:true 带 data；ok:false 带公开错误 */

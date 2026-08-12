@@ -24,9 +24,11 @@ export const useConversationStore = defineStore('conversation', () => {
   const error = ref<PublicError>()       // 会话操作错误(供 UI 展示,§4.2.4/I2)
   const busy = ref(false)                // 会话操作进行中(D22,供按钮 loading/防重复)
   let epoch = 0                          // 激活竞态守卫(§4.2.3/D6):数字递增,最新请求才提交
+  let initializingFor: string | undefined
+  let initializationPromise: Promise<void> | undefined
 
   /** §4.2.4:list 包 try/catch 写 error 不抛 + busy */
-  async function list(): Promise<void> {
+  async function list(): Promise<boolean> {
     busy.value = true
     try {
       const p = await api.listConversations({})
@@ -34,42 +36,66 @@ export const useConversationStore = defineStore('conversation', () => {
       hasMore.value = p.hasMore
       nextCursor.value = p.nextCursor
       error.value = undefined   // F1:成功清旧错误(短横幅语义,防残留)
+      return true
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
+      return false
     } finally {
       busy.value = false
     }
   }
 
   /** §4.2.4:safeList —— busy 包裹 list;list 已吞错,safeList catch 为兜底 */
-  async function safeList(): Promise<void> {
+  async function safeList(): Promise<boolean> {
     busy.value = true
-    try { await list() } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { busy.value = false }
+    try { return await list() } catch (e) { error.value = parsePublicError(messageOf(e)); return false } finally { busy.value = false }
   }
 
-  /** §4.1.1 onConnected:幂等 + 首次/重连分支 + 就绪门控 */
-  async function onConnected(connectionId?: string): Promise<void> {
-    if (connectionId && initializedFor.value === connectionId) return   // 同一连接幂等
-    if (connectionId === undefined && initializedFor.value !== undefined) return  // Mock 无 connectionId:只初始化一次(m3)
-    initializedFor.value = connectionId ?? ''
+  async function initializeConnected(key: string): Promise<void> {
+    ready.value = false
     try {
       if (currentId.value) {
         // 重连/已有活动会话:只刷新列表 + reconcile 活动会话,不动已有历史(replay 按 messageId 去重合并)
-        await safeList()
+        if (!await safeList()) return
         const activeId = useConnectionStore().state.activeConversationId
         if (activeId && activeId !== currentId.value) await activate(activeId)   // I4:后端活动会话变了 → 切过去
+        initializedFor.value = key
         ready.value = true
         return
       }
       // 首次:完整初始化
-      await safeList()
-      ready.value = true            // 就绪门控(D13):safeList 完成后即就绪(N1:不依赖 activate)
+      if (!await safeList()) return
+      initializedFor.value = key
+      ready.value = true            // 就绪门控(D13):列表成功后才就绪(N1:不依赖 activate)
       if (currentId.value) return   // m6:safeList 期间用户已手动切会话,不再覆盖
       const activeId = useConnectionStore().state.activeConversationId
       if (activeId) await activate(activeId)   // 同步出现的 active:activate(applyPendingReplay + getMessages 首屏)
       // active 晚到(session 帧晚于 safeList):由 onActiveConversationAppeared 补激活(§4.1.3),此处不设 currentId
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
+      initializedFor.value = undefined
+      ready.value = false
+    }
+  }
+
+  /** §4.1.1 onConnected:成功后幂等；失败不写 initializedFor，同 connectionId 可重试。 */
+  async function onConnected(connectionId?: string): Promise<void> {
+    const key = connectionId ?? ''
+    if (initializedFor.value === key && ready.value) return
+    if (initializingFor === key && initializationPromise !== undefined) {
+      await initializationPromise
+      return
+    }
+    const promise = initializeConnected(key)
+    initializingFor = key
+    initializationPromise = promise
+    try {
+      await promise
+    } finally {
+      if (initializationPromise === promise) {
+        initializingFor = undefined
+        initializationPromise = undefined
+      }
     }
   }
 

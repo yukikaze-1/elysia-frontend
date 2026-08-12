@@ -100,13 +100,33 @@ describe('raw schema ack/error 扩展(2B)', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: 'msg-1', clientRequestId: 'c1', receivedAt: '2026-08-11T00:00:00.000Z', status: 'accepted' })
     expect(r.success).toBe(true)
   })
-  it('user_message.ack rejected 带 error 通过', () => {
-    const r = parseRawFrame({ type: 'user_message.ack', messageId: 'msg-1', clientRequestId: 'c1', receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected', error: { code: 'CONTRACT_VALIDATION', message: 'bad', retryable: false } })
+  it('user_message.ack rejected 带完整 error 通过且字段不丢失', () => {
+    const r = parseRawFrame({
+      type: 'user_message.ack', messageId: '', clientRequestId: 'c1',
+      receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected',
+      error: {
+        code: 'STORAGE_UNAVAILABLE', message: 'bad', retryable: true,
+        retryAfterMs: 1000, details: { idempotency_durable: false }
+      }
+    })
     expect(r.success).toBe(true)
+    if (r.success && r.data.type === 'user_message.ack' && r.data.status === 'rejected') {
+      expect(r.data.error.retryAfterMs).toBe(1000)
+      expect(r.data.error.details).toEqual({ idempotency_durable: false })
+    }
   })
-  it('error 帧通过', () => {
-    const r = parseRawFrame({ type: 'error', message: '会话不存在', code: 'SESSION_NOT_FOUND', requestId: 'req-1', retryable: false })
+  it('error 帧的 clientRequestId/retryAfterMs/details 通过且完整保留', () => {
+    const r = parseRawFrame({
+      type: 'error', message: '请求过于频繁', code: 'RATE_LIMITED', requestId: 'req-1',
+      clientRequestId: 'client-1', retryable: true, retryAfterMs: 1000,
+      details: { scope: 'command' }
+    })
     expect(r.success).toBe(true)
+    if (r.success && r.data.type === 'error') {
+      expect(r.data.clientRequestId).toBe('client-1')
+      expect(r.data.retryAfterMs).toBe(1000)
+      expect(r.data.details).toEqual({ scope: 'command' })
+    }
   })
   it('ack status 非法拒绝', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: 'm', clientRequestId: 'c', receivedAt: 't', status: 'pending' })
@@ -117,9 +137,9 @@ describe('raw schema ack/error 扩展(2B)', () => {
     expect(r.success).toBe(true)
     if (r.success) expect((r.data as { status?: string }).status).toBe('rejected')
   })
-  it('rejected 缺 error 通过（走退化分支）', () => {
+  it('rejected 缺 error 拒绝（后端判别联合要求必填）', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: '', clientRequestId: 'c1', receivedAt: 't', status: 'rejected' })
-    expect(r.success).toBe(true)
+    expect(r.success).toBe(false)
   })
   it('accepted + 空 messageId 拒为非法帧', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: '', clientRequestId: 'c1', receivedAt: 't', status: 'accepted' })
@@ -129,12 +149,36 @@ describe('raw schema ack/error 扩展(2B)', () => {
     const r = parseRawFrame({ type: 'user_message.ack', messageId: 'm1', clientRequestId: 'c1', receivedAt: 't', status: 'accepted' })
     expect(r.success).toBe(true)
   })
+  it('rejected 允许空 clientRequestId（缺字段的契约拒绝回显）', () => {
+    const r = parseRawFrame({
+      type: 'user_message.ack', messageId: '', clientRequestId: '', receivedAt: 't',
+      status: 'rejected', error: { code: 'CONTRACT_VALIDATION', message: 'missing', retryable: false }
+    })
+    expect(r.success).toBe(true)
+  })
+  it('accepted 带 error / rejected 带非空 messageId 都拒绝', () => {
+    expect(parseRawFrame({
+      type: 'user_message.ack', messageId: 'm1', clientRequestId: 'c1', receivedAt: 't',
+      status: 'accepted', error: { code: 'X', message: 'bad', retryable: false }
+    }).success).toBe(false)
+    expect(parseRawFrame({
+      type: 'user_message.ack', messageId: 'm1', clientRequestId: 'c1', receivedAt: 't',
+      status: 'rejected', error: { code: 'X', message: 'bad', retryable: false }
+    }).success).toBe(false)
+  })
 })
 
 describe('raw schemas fingerprint(2C)', () => {
   it('RAW_FRAME_TYPES 与 union 推导集合一致(I6)', () => {
-    const derived = RawFrameSchema._def.options.map((o) => o.shape.type.value).sort()
-    expect([...RAW_FRAME_TYPES].sort()).toEqual(derived)
+    expect([...RAW_FRAME_TYPES].sort()).toEqual([
+      'error', 'expression', 'generation.completed', 'generation.delta',
+      'generation.failed', 'generation.segment.completed', 'generation.segment.started',
+      'generation.started', 'server_info', 'session', 'user_message.ack'
+    ])
+    expect(RawFrameSchema.safeParse({
+      type: 'user_message.ack', messageId: '', clientRequestId: '', receivedAt: 't',
+      status: 'rejected', error: { code: 'X', message: 'x', retryable: false }
+    }).success).toBe(true)
   })
   it('rawSchemasFingerprint 同 schema 恒等', () => {
     expect(rawSchemasFingerprint()).toBe(rawSchemasFingerprint())

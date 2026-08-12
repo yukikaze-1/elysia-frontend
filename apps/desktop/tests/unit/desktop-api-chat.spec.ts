@@ -150,8 +150,9 @@ describe('desktopApi chat 面', () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     const handler = vi.fn()
     const unsub = desktopApi.onChatError(handler)
-    mockIpc.emit(PushChannels.error, { code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true, requestId: 'r1' })
-    expect(handler).toHaveBeenCalledWith({ code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true, requestId: 'r1' })
+    const payload = { code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true, requestId: 'r1', clientRequestId: 'cr-1', retryAfterMs: 1000, idempotencyDurable: false }
+    mockIpc.emit(PushChannels.error, payload)
+    expect(handler).toHaveBeenCalledWith(payload)
     unsub()
   })
 
@@ -280,12 +281,12 @@ describe('desktopApi chat 面', () => {
     await expect(desktopApi.getConnectionState()).rejects.toThrow('[AUTHENTICATION_FAILED] token 无效')
   })
 
-  it('unwrap 错误 → message 含 [code] 与 [backendCode=..] [retryable=..] 前缀', async () => {
+  it('unwrap 错误 → message 完整携带公开结构化字段前缀', async () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     mockIpc.invoke.mockResolvedValue({
-      ok: false, error: { code: 'BACKEND_REJECTED', message: '队列已满', backendCode: 'QUEUE_FULL', retryable: true }
+      ok: false, error: { code: 'BACKEND_REJECTED', message: '队列已满', backendCode: 'QUEUE_FULL', retryable: true, clientRequestId: 'cr-1', retryAfterMs: 1000, idempotencyDurable: false }
     })
-    await expect(desktopApi.getConnectionState()).rejects.toThrow('[BACKEND_REJECTED] [backendCode=QUEUE_FULL] [retryable=true] 队列已满')
+    await expect(desktopApi.getConnectionState()).rejects.toThrow('[BACKEND_REJECTED] [backendCode=QUEUE_FULL] [retryable=true] [clientRequestId=cr-1] [retryAfterMs=1000] [idempotencyDurable=false] 队列已满')
   })
 
   it('unwrapStatus 错误同样带结构化前缀', async () => {

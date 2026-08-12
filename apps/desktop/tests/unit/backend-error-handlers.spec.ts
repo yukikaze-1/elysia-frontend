@@ -20,9 +20,10 @@ describe('buildBackendErrorHandlers', () => {
     const logger = makeLogger()
     const send = vi.fn()
     const h = buildBackendErrorHandlers({ logger, sanitize: noopSanitize, send, mode: 'real', getBuild: () => ({}) })
-    h.onError(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列满', { backendCode: 'QUEUE_FULL', retryable: true }))
-    expect(logger.error).toHaveBeenCalledWith('backend:error', { code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true })
-    expect(send).toHaveBeenCalledWith('chat:error', { code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true })
+    h.onError(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列满', { backendCode: 'QUEUE_FULL', retryable: true, clientRequestId: 'cr-1', retryAfterMs: 1000, idempotencyDurable: false }))
+    const expected = { code: 'BACKEND_REJECTED', message: '队列满', backendCode: 'QUEUE_FULL', retryable: true, clientRequestId: 'cr-1', retryAfterMs: 1000, idempotencyDurable: false }
+    expect(logger.error).toHaveBeenCalledWith('backend:error', expected)
+    expect(send).toHaveBeenCalledWith('chat:error', expected)
   })
   it('onError message 经 sanitize;details 兼容 {code} 写法', () => {
     const sanitize = (m: string) => m.replace(/sk-\w+/g, '[REDACTED]')

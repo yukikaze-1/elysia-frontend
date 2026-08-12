@@ -224,9 +224,25 @@ describe('conversationStore', () => {
   it('safeList 失败写 error 不抛', async () => {
     const store = useConversationStore()
     mockApi.listConversations.mockRejectedValue(new Error('list boom'))
-    await expect(store.safeList()).resolves.toBeUndefined()
+    await expect(store.safeList()).resolves.toBe(false)
     expect(store.error?.message).toContain('list boom')
     expect(store.busy).toBe(false)
+  })
+
+  it('onConnected 列表失败不进 ready，同 connectionId 可重试成功', async () => {
+    const store = useConversationStore()
+    mockApi.listConversations.mockRejectedValueOnce(new Error('temporary list failure'))
+    await store.onConnected('conn-retry')
+    expect(store.ready).toBe(false)
+    expect(store.initializedFor).toBeUndefined()
+    expect(store.error?.message).toContain('temporary list failure')
+
+    mockApi.listConversations.mockResolvedValueOnce({ items: [convA], hasMore: false })
+    await store.onConnected('conn-retry')
+    expect(mockApi.listConversations).toHaveBeenCalledTimes(2)
+    expect(store.ready).toBe(true)
+    expect(store.initializedFor).toBe('conn-retry')
+    expect(store.items).toEqual([convA])
   })
 
   it('ready 初始 false,onConnected(safeList) 后 true(N1)', async () => {

@@ -51,13 +51,16 @@ async function invokeWithArgs<T>(channel: IpcChannelName, payload?: unknown): Pr
 /**
  * 跨 contextBridge 错误 message 前缀：结构化字段并入 message（Electron contextBridge 只可靠保留 message，
  * own property / instanceof 不保真）。Renderer 用 parsePublicError 反解。
- * 格式：`[code] [backendCode=XX] [retryable=true] [requestId=..] message`
+ * 格式：`[code] [backendCode=XX] [retryable=true] [retryAfterMs=1000] ... message`
  */
-function formatIpcError(error: { code: string; message: string; backendCode?: string; retryable?: boolean; requestId?: string }): Error {
+function formatIpcError(error: import('@shared/contracts').IpcErrorBody): Error {
   const parts = [error.code]
   if (error.backendCode) parts.push(`backendCode=${error.backendCode}`)
   if (typeof error.retryable === 'boolean') parts.push(`retryable=${error.retryable}`)
   if (error.requestId) parts.push(`requestId=${error.requestId}`)
+  if (error.clientRequestId) parts.push(`clientRequestId=${error.clientRequestId}`)
+  if (typeof error.retryAfterMs === 'number') parts.push(`retryAfterMs=${error.retryAfterMs}`)
+  if (typeof error.idempotencyDurable === 'boolean') parts.push(`idempotencyDurable=${error.idempotencyDurable}`)
   return new Error(`[${parts.join('] [')}] ${error.message}`)
 }
 
@@ -229,6 +232,9 @@ export interface PublicErrorShape {
   backendCode?: string
   retryable?: boolean
   requestId?: string
+  clientRequestId?: string
+  retryAfterMs?: number
+  idempotencyDurable?: boolean
 }
 
 function isPublicErrorShape(v: unknown): v is PublicErrorShape {

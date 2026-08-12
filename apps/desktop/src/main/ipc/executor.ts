@@ -40,13 +40,19 @@ export function createIpcHandler<TReq, TRes>(
     } catch (e: unknown) {
       if (e instanceof CyreneError && typeof e.code === 'string' && typeof e.message === 'string') {
         const msg = e.message.length > 65536 ? '<message-too-long>' : truncateCodepoints(options.sanitize(e.message), 500)
-        // 结构化上提：details.backendCode/retryable/requestId 进入 IpcErrorBody（跨 contextBridge 仅 message 保真，前置拼接由 preload formatIpcError 负责）
-        const details = (e.details ?? {}) as { backendCode?: string; code?: string; retryable?: boolean; requestId?: string }
+        // 结构化上提仅允许公开白名单字段；原始 backendDetails 不跨 contextBridge。
+        const details = (e.details ?? {}) as {
+          backendCode?: string; code?: string; retryable?: boolean; requestId?: string
+          clientRequestId?: string; retryAfterMs?: number; idempotencyDurable?: boolean
+        }
         const backendCode = details.backendCode ?? details.code   // 兼容既有 error 帧路径 details.code
-        const error: { code: string; message: string; backendCode?: string; retryable?: boolean; requestId?: string } = { code: e.code, message: msg }
+        const error: import('@shared/contracts').IpcErrorBody = { code: e.code, message: msg }
         if (backendCode) error.backendCode = backendCode
         if (typeof details.retryable === 'boolean') error.retryable = details.retryable
         if (details.requestId) error.requestId = details.requestId
+        if (details.clientRequestId) error.clientRequestId = details.clientRequestId
+        if (typeof details.retryAfterMs === 'number') error.retryAfterMs = details.retryAfterMs
+        if (typeof details.idempotencyDurable === 'boolean') error.idempotencyDurable = details.idempotencyDurable
         return { ok: false, error }
       }
       return { ok: false, error: { code: 'UNKNOWN', message: '内部错误' } }

@@ -11,12 +11,18 @@ import type { AuditEvent } from '../diagnostics/audit'
  * 从 CyreneError.details 提取可公开字段(兼容 backendCode 与 code 两种后端写法)。
  * 只上提白名单字段,其余 details 一律不进日志/推送(防泄漏原始协议载荷)。
  */
-const extractPublic = (d: unknown): { backendCode?: string; retryable?: boolean; requestId?: string } => {
+const extractPublic = (d: unknown): {
+  backendCode?: string; retryable?: boolean; requestId?: string; clientRequestId?: string
+  retryAfterMs?: number; idempotencyDurable?: boolean
+} => {
   const o = (d ?? {}) as Record<string, unknown>
   return {
     backendCode: typeof o.backendCode === 'string' ? o.backendCode : typeof o.code === 'string' ? o.code : undefined,
     retryable: typeof o.retryable === 'boolean' ? o.retryable : undefined,
-    requestId: typeof o.requestId === 'string' ? o.requestId : undefined
+    requestId: typeof o.requestId === 'string' ? o.requestId : undefined,
+    clientRequestId: typeof o.clientRequestId === 'string' ? o.clientRequestId : undefined,
+    retryAfterMs: typeof o.retryAfterMs === 'number' ? o.retryAfterMs : undefined,
+    idempotencyDurable: typeof o.idempotencyDurable === 'boolean' ? o.idempotencyDurable : undefined
   }
 }
 

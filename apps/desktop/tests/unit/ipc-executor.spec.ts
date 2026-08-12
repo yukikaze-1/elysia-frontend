@@ -53,8 +53,8 @@ describe('createIpcHandler', () => {
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.error.code).toBe('SCHEMA_VALIDATION_FAILED')
   })
-  it('CyreneError.details 的 backendCode/retryable/requestId 上提进 IpcErrorBody', async () => {
-    const fn = () => { throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列已满', { backendCode: 'QUEUE_FULL', retryable: true }) }
+  it('CyreneError.details 的公开契约字段上提进 IpcErrorBody', async () => {
+    const fn = () => { throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列已满', { backendCode: 'QUEUE_FULL', retryable: true, clientRequestId: 'cr-1', retryAfterMs: 1000, idempotencyDurable: false, backendDetails: { secret: 'not-forwarded' } }) }
     const handler = createIpcHandler(z.undefined(), z.unknown(), fn, { sanitize: (s: string) => s })
     const res = await handler(undefined)
     expect(res.ok).toBe(false)
@@ -62,6 +62,10 @@ describe('createIpcHandler', () => {
       expect(res.error.code).toBe('BACKEND_REJECTED')
       expect(res.error.backendCode).toBe('QUEUE_FULL')
       expect(res.error.retryable).toBe(true)
+      expect(res.error.clientRequestId).toBe('cr-1')
+      expect(res.error.retryAfterMs).toBe(1000)
+      expect(res.error.idempotencyDurable).toBe(false)
+      expect(res.error).not.toHaveProperty('backendDetails')
     }
   })
   it('兼容 details.code（error 帧路径）', async () => {

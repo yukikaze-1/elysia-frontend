@@ -10,6 +10,13 @@ describe('parsePublicError', () => {
       code: 'BACKEND_REJECTED', message: '队列已满', backendCode: 'QUEUE_FULL', retryable: true
     })
   })
+
+  it('解析 clientRequestId/retryAfterMs/idempotencyDurable 公开字段', () => {
+    expect(parsePublicError('[BACKEND_REJECTED] [clientRequestId=cr-1] [retryAfterMs=1000] [idempotencyDurable=false] 存储不可用')).toEqual({
+      code: 'BACKEND_REJECTED', message: '存储不可用', clientRequestId: 'cr-1',
+      retryAfterMs: 1000, idempotencyDurable: false
+    })
+  })
   it('无前缀回退 UNKNOWN', () => {
     expect(parsePublicError('plain error')).toEqual({ code: 'UNKNOWN', message: 'plain error' })
   })

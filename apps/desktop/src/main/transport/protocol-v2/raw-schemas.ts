@@ -133,27 +133,49 @@ const RawGenerationFailedSchema = z.object({
   conversationId: z.string().optional()
 }).strict()
 
-const RawUserAckSchema = z.object({
+const RawAckErrorSchema = z.object({
+  code: z.string().min(1),
+  message: z.string(),
+  retryable: z.boolean(),
+  details: z.record(z.string(), z.unknown()).optional(),
+  retryAfterMs: z.number().int().optional()
+}).strict()
+
+const RawAcceptedUserAckSchema = z.object({
   type: z.literal('user_message.ack'),
-  messageId: z.string(),   // 不设 min(1)：rejected 允许 ''
+  messageId: z.string().min(1),
   clientRequestId: z.string().min(1),
   clientMessageId: z.string().optional(),
   conversationId: z.string().optional(),
   receivedAt: z.string().min(1),
-  status: z.enum(['accepted', 'rejected']),
-  error: z.object({ code: z.string().min(1), message: z.string(), retryable: z.boolean().optional() }).optional()
-}).strict().superRefine((v, ctx) => {
-  if (v.status === 'accepted' && v.messageId === '') {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'accepted ack 必须带非空 messageId', path: ['messageId'] })
-  }
-})
+  status: z.literal('accepted')
+}).strict()
+
+const RawRejectedUserAckSchema = z.object({
+  type: z.literal('user_message.ack'),
+  messageId: z.literal(''),
+  clientRequestId: z.string(), // 缺 clientRequestId 的契约拒绝回显空串
+  clientMessageId: z.string().optional(),
+  conversationId: z.string().optional(),
+  receivedAt: z.string().min(1),
+  status: z.literal('rejected'),
+  error: RawAckErrorSchema
+}).strict()
+
+/** 与后端 UserAckMessage 一致：status 判别联合，两分支的 messageId/error 不变量由 schema 直接表达。 */
+const RawUserAckSchema = z.discriminatedUnion('status', [
+  RawAcceptedUserAckSchema,
+  RawRejectedUserAckSchema
+])
 
 const RawErrorMessageSchema = z.object({
   type: z.literal('error'),
   message: z.string().min(1),
   code: z.string().optional(),
   requestId: z.string().optional(),
+  clientRequestId: z.string().optional(),
   retryable: z.boolean().optional(),
+  retryAfterMs: z.number().int().optional(),
   details: z.record(z.string(), z.unknown()).optional()
 }).strict()
 
@@ -181,8 +203,20 @@ export function parseRawFrame(input: unknown): {
   return RawFrameSchema.safeParse(input)
 }
 
-/** 各帧判别 type(zod v4 `_def.options` 推导,与 discriminatedUnion 一致) */
-export const RAW_FRAME_TYPES: readonly string[] = RawFrameSchema._def.options.map((o) => o.shape.type.value)
+/** 递归展平 zod union：ACK 在外层按 type、内层按 status 判别。 */
+const objectOptions = (schema: unknown): Array<{ shape: Record<string, unknown> }> => {
+  const candidate = schema as {
+    shape?: Record<string, unknown>
+    _def?: { options?: ReadonlyArray<unknown>; discriminator?: string }
+  }
+  if (candidate.shape !== undefined) return [{ shape: candidate.shape }]
+  return (candidate._def?.options ?? []).flatMap(objectOptions)
+}
+
+/** 各帧判别 type（递归从 RawFrameSchema 推导，重复 ACK type 去重） */
+export const RAW_FRAME_TYPES: readonly string[] = [...new Set(
+  objectOptions(RawFrameSchema).map((o) => String((o.shape.type as { value: unknown }).value))
+)]
 
 /** 单字段签名: `k:_def.type:枚举成员(entries 排序):字面量值(_def.values/value)`;zod v4 判别 API(_def.type 小写、_def.entries、_def.values) */
 const fieldSig = ([k, s]: [string, unknown]): string => {
@@ -193,22 +227,17 @@ const fieldSig = ([k, s]: [string, unknown]): string => {
 }
 
 /** 指纹计算所需的 discriminatedUnion 最小结构(zod v4 `_def.options` + `_def.discriminator`) */
-interface FingerprintableDiscriminatedUnion {
-  _def: {
-    options: ReadonlyArray<{ shape: Record<string, unknown> }>
-    discriminator?: string
-  }
-}
-
-/** 对任意 discriminatedUnion 计算 sha256 指纹;同 schema 恒等,结构/枚举/字面量变化即变 */
-export function rawSchemasFingerprintFor(schema: FingerprintableDiscriminatedUnion): string {
+/** 对任意（可嵌套）union 计算 sha256 指纹;同 schema 恒等,结构/枚举/字面量变化即变 */
+export function rawSchemasFingerprintFor(schema: unknown): string {
   // zod v4 discriminatedUnion `_def` 运行时含 discriminator(zod 类型 $ZodUnionDef 未暴露该字段,故按名取)
-  const disc = schema._def.discriminator ?? 'type'
-  const fields = schema._def.options.map((o) => ({
+  const disc = (schema as { _def?: { discriminator?: string } })._def?.discriminator ?? 'type'
+  const options = objectOptions(schema)
+  const fields = options.map((o) => ({
     type: (o.shape[disc] as { value: unknown }).value,
     fields: Object.entries(o.shape).map(fieldSig).sort()
-  }))
-  return createHash('sha256').update(JSON.stringify({ types: schema._def.options.map((o) => (o.shape[disc] as { value: unknown }).value).sort(), fields })).digest('hex')
+  })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+  const types = [...new Set(options.map((o) => (o.shape[disc] as { value: unknown }).value))].sort()
+  return createHash('sha256').update(JSON.stringify({ types, fields })).digest('hex')
 }
 
 /** RawFrameSchema 的 schemaHash 指纹(manifest 门禁用) */

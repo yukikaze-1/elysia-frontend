@@ -39,7 +39,7 @@ beforeAll(async () => {
       if (frame.type === 'text') {
         if (frame.clientRequestId === 'c-timeout') return // 不发 ack → 触发超时
         if (frame.clientRequestId === 'r1') { // rejected + 空 messageId + QUEUE_FULL（即时结构化）
-          ws.send(JSON.stringify({ type: 'user_message.ack', messageId: '', clientRequestId: frame.clientRequestId, receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected', error: { code: 'QUEUE_FULL', message: '队列已满', retryable: true } }))
+          ws.send(JSON.stringify({ type: 'user_message.ack', messageId: '', clientRequestId: frame.clientRequestId, receivedAt: '2026-08-11T00:00:00.000Z', status: 'rejected', error: { code: 'QUEUE_FULL', message: '队列已满', retryable: true, retryAfterMs: 1000, details: { idempotency_durable: false } } }))
           return
         }
         if (frame.clientRequestId === 'r2') { // rejected 缺 error（走退化分支）
@@ -49,9 +49,9 @@ beforeAll(async () => {
         const ok = frame.clientRequestId === 'c-reject'
           ? { status: 'rejected', error: { code: 'CONTRACT_VALIDATION', message: 'bad', retryable: false } }
           : frame.clientRequestId === 'c-error'
-            ? (ws.send(JSON.stringify({ type: 'error', message: '限流', code: 'RATE_LIMITED', requestId: 'req-1', retryable: true })), { status: 'accepted' })
+            ? (ws.send(JSON.stringify({ type: 'error', message: '限流', code: 'RATE_LIMITED', requestId: 'req-1', clientRequestId: frame.clientRequestId, retryable: true, retryAfterMs: 1200, details: { scope: 'command' } })), { status: 'accepted' })
             : { status: 'accepted' }
-        ws.send(JSON.stringify({ type: 'user_message.ack', messageId: 'msg-ack', clientRequestId: frame.clientRequestId, receivedAt: '2026-08-11T00:00:00.000Z', ...ok }))
+        ws.send(JSON.stringify({ type: 'user_message.ack', messageId: ok.status === 'rejected' ? '' : 'msg-ack', clientRequestId: frame.clientRequestId, receivedAt: '2026-08-11T00:00:00.000Z', ...ok }))
       }
     })
   })
@@ -114,19 +114,22 @@ describe('RealBackend WS 连接', () => {
       await b.sendMessage({ conversationId: 'conv-1', text: 'x', clientRequestId: 'r1' })
       expect.unreachable()
     } catch (e: unknown) {
-      const err = e as { code?: string; details?: { backendCode?: string; retryable?: boolean } }
+      const err = e as { code?: string; details?: { backendCode?: string; retryable?: boolean; retryAfterMs?: number; idempotencyDurable?: boolean; backendDetails?: unknown } }
       expect(err.code).toBe(CyreneErrorCode.BACKEND_REJECTED)
       expect(err.details?.backendCode).toBe('QUEUE_FULL')
       expect(err.details?.retryable).toBe(true)
+      expect(err.details?.retryAfterMs).toBe(1000)
+      expect(err.details?.idempotencyDurable).toBe(false)
+      expect(err.details?.backendDetails).toEqual({ idempotency_durable: false })
     }
     await b.disconnect()
   })
 
-  it('rejected ACK 缺 error → INVALID_INPUT 立即 reject（不等 ackTimeout）', async () => {
-    const b = new RealBackend({ now: () => Date.now(), ackTimeoutMs: 200 })
+  it('非法 rejected ACK 缺 error → raw 层丢弃，pending 按 TIMEOUT 收口', async () => {
+    const b = new RealBackend({ now: () => Date.now(), ackTimeoutMs: 30 })
     await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
     await expect(b.sendMessage({ conversationId: 'conv-1', text: 'x', clientRequestId: 'r2' }))
-      .rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
+      .rejects.toMatchObject({ code: CyreneErrorCode.TIMEOUT })
     await b.disconnect()
   })
 
@@ -163,6 +166,12 @@ describe('RealBackend WS 连接', () => {
     await b.sendMessage({ conversationId: 'conv-1', text: 'x', clientRequestId: 'c-error' }).catch(() => {})
     await new Promise((r) => setTimeout(r, 50))
     expect(errs.length).toBeGreaterThan(0)
+    expect(errs[0]).toMatchObject({
+      details: {
+        code: 'RATE_LIMITED', requestId: 'req-1', clientRequestId: 'c-error',
+        retryable: true, retryAfterMs: 1200, backendDetails: { scope: 'command' }
+      }
+    })
     await b.disconnect()
   })
 

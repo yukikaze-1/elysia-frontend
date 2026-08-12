@@ -223,12 +223,16 @@ export class RealBackend implements BackendAdapter {
     if (frame.status === 'accepted') {
       pending.resolve({ clientRequestId: frame.clientRequestId, serverMessageId: frame.messageId })
     } else {
-      // rejected 结构化：BACKEND_REJECTED + backendCode/retryable 保留（缺 error 退化 INVALID_INPUT）
-      if (frame.error) {
-        pending.reject(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, frame.error.message, { backendCode: frame.error.code, retryable: frame.error.retryable }))
-      } else {
-        pending.reject(new CyreneError(CyreneErrorCode.INVALID_INPUT, '消息被后端拒绝'))
-      }
+      const backendDetails = frame.error.details
+      pending.reject(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, frame.error.message, {
+        backendCode: frame.error.code,
+        retryable: frame.error.retryable,
+        ...(frame.error.retryAfterMs !== undefined ? { retryAfterMs: frame.error.retryAfterMs } : {}),
+        ...(backendDetails !== undefined ? { backendDetails } : {}),
+        ...(typeof backendDetails?.idempotency_durable === 'boolean'
+          ? { idempotencyDurable: backendDetails.idempotency_durable }
+          : {})
+      }))
     }
   }
 
@@ -236,8 +240,13 @@ export class RealBackend implements BackendAdapter {
     const err = new CyreneError(CyreneErrorCode.UNKNOWN, frame.message, {
       code: frame.code,
       requestId: frame.requestId,
+      clientRequestId: frame.clientRequestId,
       retryable: frame.retryable,
-      ...(frame.details !== undefined ? { details: frame.details } : {})
+      retryAfterMs: frame.retryAfterMs,
+      ...(frame.details !== undefined ? { backendDetails: frame.details } : {}),
+      ...(typeof frame.details?.idempotency_durable === 'boolean'
+        ? { idempotencyDurable: frame.details.idempotency_durable }
+        : {})
     })
     this.warn('WS_ERROR_FRAME', `后端 error 帧: ${frame.code ?? '(无 code)'} ${frame.message}`)
     this.options.onError?.(err)

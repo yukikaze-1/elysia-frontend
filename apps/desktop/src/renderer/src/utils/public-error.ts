@@ -8,6 +8,9 @@ export interface PublicError {
   backendCode?: string
   retryable?: boolean
   requestId?: string
+  clientRequestId?: string
+  retryAfterMs?: number
+  idempotencyDurable?: boolean
 }
 
 export function parsePublicError(message: string): PublicError {
@@ -24,6 +27,11 @@ export function parsePublicError(message: string): PublicError {
     if (m[1] === 'backendCode') out.backendCode = m[2]
     else if (m[1] === 'retryable') out.retryable = m[2] === 'true'
     else if (m[1] === 'requestId') out.requestId = m[2]
+    else if (m[1] === 'clientRequestId') out.clientRequestId = m[2]
+    else if (m[1] === 'retryAfterMs') {
+      const value = Number(m[2])
+      if (Number.isFinite(value)) out.retryAfterMs = value
+    } else if (m[1] === 'idempotencyDurable') out.idempotencyDurable = m[2] === 'true'
   }
   out.message = stripped.trim() || rest   // 无 kv 段时 rest 原样
   return out

@@ -26,7 +26,7 @@
     "make": "echo 'Forge 打包留待阶段 8 配置——本命令未实现，非零退出防假绿' && exit 1",
     "package": "electron-vite build && electron-builder --dir",
     "verify:artifact": "node scripts/verify-artifact.cjs",
-    "check:contract": "node scripts/check-backend-contract.mjs",
+    "check:contract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/check-backend-contract.mjs",
     "check:node": "node scripts/check-node-version.mjs"
   },
   "dependencies": {
