@@ -9,7 +9,8 @@ export interface CredentialFileSchemaV1 {
   keys: Record<string, { enc: string; algo: 'safeStorage' }>
 }
 
-const EMPTY_FILE: CredentialFileSchemaV1 = { version: 1, keys: {} }
+/** 工厂化（整改 FE-S1-P2-02）：每次全新对象，损坏重建不污染模块单例/其他 Store */
+export function createEmptyFile(): CredentialFileSchemaV1 { return { version: 1, keys: {} } }
 
 /** 顶层形状守卫：JSON 可解析但 keys 缺失/非对象（如 {"version":1}、keys:null）→ 视为损坏
  *  （version 值留待调用方判定——未知版本须走 UNSUPPORTED_VERSION，不能被当作损坏重建） */
@@ -82,7 +83,7 @@ export class CredentialStore {
     await this.enqueue(async () => {
       if (!isSafeStorageUsable(this.safe)) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '系统钥匙串不可用')
       let file: CredentialFileSchemaV1
-      try { file = (await this.readFile()) ?? EMPTY_FILE } catch { file = EMPTY_FILE } // 损坏 → 整文件重建
+      try { file = (await this.readFile()) ?? createEmptyFile() } catch { file = createEmptyFile() } // 损坏 → 整文件重建
       if (file.version !== CREDENTIAL_FILE_VERSION) throw new CyreneError(CyreneErrorCode.UNSUPPORTED_VERSION, '凭据文件版本不受支持')
       const enc = encryptCredential(this.safe, plaintext).toString('base64')
       file.keys[key] = { enc, algo: 'safeStorage' }
@@ -103,7 +104,7 @@ export class CredentialStore {
     if (!this.isKeyAllowed(key)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'key 不在白名单')
     await this.enqueue(async () => {
       let file: CredentialFileSchemaV1
-      try { file = (await this.readFile()) ?? EMPTY_FILE } catch { file = EMPTY_FILE } // 损坏 → 整文件重建（丢其他键，契约注明）
+      try { file = (await this.readFile()) ?? createEmptyFile() } catch { file = createEmptyFile() } // 损坏 → 整文件重建（丢其他键，契约注明）
       if (file.version !== CREDENTIAL_FILE_VERSION) throw new CyreneError(CyreneErrorCode.UNSUPPORTED_VERSION, '凭据文件版本不受支持')
       delete file.keys[key]
       await atomicWriteFile(this.filePath, JSON.stringify(file, null, 2), { safeRoot: this.safeRoot })

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { CredentialStore } from '../../src/main/credentials/credential-store'
+import { CredentialStore, createEmptyFile } from '../../src/main/credentials/credential-store'
 import type { SafeStorageLike } from '../../src/main/credentials/safe-storage'
 import { CyreneErrorCode } from '../../src/shared/errors'
 import { isKeyAllowed } from '../../src/shared/contracts'
@@ -161,5 +161,52 @@ describe('getCredential / clearCredential', () => {
     await s.clearCredential('backend.token')
     const raw = JSON.parse(readFileSync(filePathOf(s), 'utf8'))
     expect(raw.keys['backend.token']).toBeUndefined()
+  })
+})
+
+describe('EMPTY_FILE 工厂', () => {
+  it('createEmptyFile 每次返回全新对象', () => {
+    const a = createEmptyFile()
+    const b = createEmptyFile()
+    expect(a).not.toBe(b)
+    a.keys['backend.token'] = { enc: 'x', algo: 'safeStorage' }
+    expect(b.keys).toEqual({})
+  })
+  it('多 key 损坏重建互不污染（自定义 allowlist）', async () => {
+    const allow = (k: string) => k === 'backend.token' || k.startsWith('model.')
+    const root = mkdtempSync(join(tmpdir(), 'cy-creds-mk-'))
+    const file = join(root, 'credentials.json')
+    const storeA = new CredentialStore(file, fakeSafe(), allow, root)
+    const storeB = new CredentialStore(file, fakeSafe(), allow, root)
+    await storeA.setCredential('backend.token', 'a')
+    await storeA.setCredential('model.llm.key', 'llm')
+    writeFileSync(file, '{corrupt', { mode: 0o600 })
+    await storeB.setCredential('model.stt.key', 'stt')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    expect(raw.keys['model.stt.key']).toBeTruthy()
+    expect(raw.keys['backend.token']).toBeUndefined()
+    expect(raw.keys['model.llm.key']).toBeUndefined()
+  })
+  it('两个 Store 单 key 损坏重建回归守卫', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cy-creds-2s-'))
+    const file = join(root, 'credentials.json')
+    const storeA = new CredentialStore(file, fakeSafe(), isKeyAllowed, root)
+    const storeB = new CredentialStore(file, fakeSafe(), isKeyAllowed, root)
+    await storeA.setCredential('backend.token', 'a')
+    writeFileSync(file, '{corrupt', { mode: 0o600 })
+    await storeB.setCredential('backend.token', 'b')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    expect(raw.keys['backend.token'].enc).toBe(Buffer.from('enc:b').toString('base64'))
+  })
+  it('两个 Store 单 key 损坏重建回归守卫（clear 变体）', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'cy-creds-cl-'))
+    const file = join(root, 'credentials.json')
+    const storeA = new CredentialStore(file, fakeSafe(), isKeyAllowed, root)
+    const storeB = new CredentialStore(file, fakeSafe(), isKeyAllowed, root)
+    await storeA.setCredential('backend.token', 'a')
+    writeFileSync(file, '{corrupt', { mode: 0o600 })
+    await storeB.clearCredential('backend.token')
+    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    expect(raw).toEqual({ version: 1, keys: {} })
   })
 })
