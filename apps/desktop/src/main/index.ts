@@ -185,7 +185,7 @@ async function main(): Promise<void> {
       ],
       quit: () => app.quit(),
       onTimeout: () => {
-        void diagnostics?.auditor.audit({ ts: new Date().toISOString(), type: 'shutdown:timed-out', summary: '退出超时，最后一批写入可能丢失' })
+        audit({ type: 'shutdown:timed-out', summary: '退出超时，最后一批写入可能丢失' }) // 走统一 fail-open 包装（ts 注入 + write-failed 日志，批次 C 最终 review 收口）
         diagnostics?.logger.warn('shutdown:timed-out', { message: '退出超时，最后一批写入可能丢失' })
       },
       onError: (step, err) => diagnostics?.logger.error('shutdown:step-failed', { step, message: sanitize(err instanceof Error ? err.message : String(err)) })
