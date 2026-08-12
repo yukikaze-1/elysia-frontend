@@ -1,6 +1,23 @@
 import { resolve } from 'path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
+import type { Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
+import { buildDevCsp } from './src/main/config/dev-csp'
+import { getTrustedDevOrigins } from './src/main/config/trusted-renderer-origin'
+
+/** 开发 CSP 中间件（B3）：serve 下对全部响应注入 CSP 头——frame-ancestors 只能经响应头（meta 不支持） */
+function devCspPlugin(): Plugin {
+  return {
+    name: 'cyrene:dev-csp',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use((_req, res, next) => {
+        res.setHeader('Content-Security-Policy', buildDevCsp(getTrustedDevOrigins()))
+        next()
+      })
+    }
+  }
+}
 
 export default defineConfig(({ mode }) => ({
   main: {
@@ -15,7 +32,7 @@ export default defineConfig(({ mode }) => ({
     resolve: { alias: { '@shared': resolve('src/shared') } }
   },
   renderer: {
-    plugins: [vue()],
+    plugins: [vue(), devCspPlugin()],
     resolve: { alias: { '@renderer': resolve('src/renderer/src'), '@shared': resolve('src/shared') } }
   }
 }))
