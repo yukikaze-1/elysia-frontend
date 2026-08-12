@@ -44,4 +44,13 @@ describe('buildBackendErrorHandlers', () => {
     h.onProtocolWarning({ code: 'RAW_FRAME_INVALID', message: 'token sk-abc123 校验失败' })
     expect(logger.warn).toHaveBeenCalledWith('protocol:warning', { code: 'RAW_FRAME_INVALID', message: 'token [REDACTED] 校验失败', mode: 'mock' })
   })
+  it('onError → audit connection:error（含 backendCode/retryable，summary 无原始 details）', () => {
+    const logger = makeLogger()
+    const audit = vi.fn()
+    const h = buildBackendErrorHandlers({ logger, sanitize: noopSanitize, send: vi.fn(), mode: 'real', getBuild: () => ({}), audit })
+    h.onError(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列满', { backendCode: 'QUEUE_FULL', retryable: true }))
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'connection:error', summary: expect.stringContaining('BACKEND_REJECTED') }))
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ summary: expect.stringContaining('QUEUE_FULL') }))
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ summary: expect.stringContaining('retryable') }))
+  })
 })

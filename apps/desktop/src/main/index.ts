@@ -142,7 +142,8 @@ async function main(): Promise<void> {
             sanitize,
             send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },
             mode: useMock ? 'mock' : 'real',
-            getBuild: () => ({ serverVersion: adapter.getConnectionState().serverVersion, protocolVersion: adapter.getConnectionState().protocolVersion })
+            getBuild: () => ({ serverVersion: adapter.getConnectionState().serverVersion, protocolVersion: adapter.getConnectionState().protocolVersion }),
+            audit   // C2:连接错误审计（fail-open）
           })
           return new RealBackend({
             onConnectionStateChange: onState,
@@ -171,7 +172,8 @@ async function main(): Promise<void> {
       getToken: () => store.getCredential(BACKEND_TOKEN_KEY).then((t) => t ?? undefined),   // R1:CredentialStore 是 async getCredential
       requireToken: !useMock,
       connectionConfig: connConfig,
-      packaged: app.isPackaged
+      packaged: app.isPackaged,
+      audit   // C2:连接生命周期审计（connect/disconnect;fail-open）
     })
     chatBridge.svc = chatSvc
     registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, audit })

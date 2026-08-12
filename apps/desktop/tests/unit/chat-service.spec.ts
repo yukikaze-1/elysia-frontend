@@ -144,4 +144,25 @@ describe('chat-service', () => {
     expect((replay?.payload as { conversationId: string; messages: Message[] }).messages).toHaveLength(1)
     svc.dispose()
   })
+
+  it('connect 成功 → audit connection:connect connected', async () => {
+    const { deps } = makeDeps({ audit: vi.fn() })
+    const svc = createChatService(deps)
+    await svc.connect()
+    expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'connection:connect', status: 'connected', summary: 'mode=mock' }))
+    svc.dispose()
+  })
+  it('connect 失败 → audit connection:connect failed + rethrow', async () => {
+    const { deps } = makeDeps({ requireToken: true, audit: vi.fn() })
+    const svc = createChatService(deps)
+    await expect(svc.connect()).rejects.toMatchObject({ code: CyreneErrorCode.CREDENTIAL_UNAVAILABLE })
+    expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'connection:connect', status: 'failed' }))
+  })
+  it('disconnect → audit connection:disconnect', async () => {
+    const { deps } = makeDeps({ audit: vi.fn() })
+    const svc = createChatService(deps)
+    await svc.disconnect()
+    expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'connection:disconnect', summary: 'mode=mock' }))
+    svc.dispose()
+  })
 })

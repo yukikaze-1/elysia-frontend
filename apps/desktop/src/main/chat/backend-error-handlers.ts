@@ -4,6 +4,8 @@ import { PushChannels } from '@shared/contracts/ipc'
 import type { CyreneError } from '@shared/errors'
 import type { Logger } from '../diagnostics/logger'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
+import { safeAudit } from '../diagnostics/safe-audit'
+import type { AuditEvent } from '../diagnostics/audit'
 
 /**
  * 从 CyreneError.details 提取可公开字段(兼容 backendCode 与 code 两种后端写法)。
@@ -24,6 +26,7 @@ export interface BackendErrorHandlerDeps {
   send: (channel: string, payload: unknown) => void   // webContents.send 包装
   mode: 'real' | 'mock'
   getBuild: () => { serverVersion?: string; protocolVersion?: string }
+  audit?: (event: Omit<AuditEvent, 'ts'>) => void   // 连接错误审计（C2;fail-open,safeAudit 调用）
 }
 
 /**
@@ -49,6 +52,11 @@ export function buildBackendErrorHandlers(deps: BackendErrorHandlerDeps): {
       const pub = extractPublic(err.details)
       deps.logger.error('backend:error', { code: err.code, message: deps.sanitize(err.message), ...pub })
       deps.send(PushChannels.error, { code: err.code, message: err.message, ...pub })
+      // C2:审计只上提白名单字段（code/backendCode/retryable),summary 不含原始 details 防泄漏
+      safeAudit(deps.audit, {
+        type: 'connection:error',
+        summary: `code=${err.code}` + (pub.backendCode ? ` backend=${pub.backendCode}` : '') + (pub.retryable ? ' retryable' : '')
+      })
     }
   }
 }
