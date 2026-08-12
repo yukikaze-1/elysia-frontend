@@ -3,10 +3,11 @@
   "private": true,
   "description": "Cyrene —— Electron 桌面 AI 助手客户端前端(设计文档见 docs/,工程在 apps/desktop)",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.23.0 <23"
   },
   "packageManager": "pnpm@11.20.0",
   "scripts": {
+    "check:node": "node apps/desktop/scripts/check-node-version.mjs",
     "dev": "pnpm --filter @cyrene/desktop dev",
     "build": "pnpm --filter @cyrene/desktop build",
     "typecheck": "pnpm --filter @cyrene/desktop typecheck",
