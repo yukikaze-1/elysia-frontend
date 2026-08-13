@@ -6,7 +6,7 @@ import {
   CHAT_MIN_WIDTH, CONVERSATION_WIDTH, LAYOUT_CONSTANTS, LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH, NAV_WIDTH
 } from '../../src/renderer/src/layout/constants'
 import {
-  computeEffectiveLayout, type LayoutOverrides, type LayoutPrefs
+  computeEffectiveLayout, gridTemplateFor, type LayoutOverrides, type LayoutPrefs
 } from '../../src/renderer/src/layout/effective-layout'
 
 const C = LAYOUT_CONSTANTS
@@ -200,4 +200,41 @@ describe('computeEffectiveLayout 宽度扫描不变式（W=320..1600 步进10 ×
       })
     }
   }
+})
+
+describe('gridTemplateFor（D10：grid-template-areas 按有效布局切换，spec §4.6）', () => {
+  it('会话栏 + Live2D 均显（W=1160 默认）', () => {
+    const g = gridTemplateFor(computeEffectiveLayout(1160, prefs(), overrides(), C))
+    expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr) 340px')
+    expect(g.gridTemplateAreas).toBe('"title title title title" "nav conv chat live"')
+  })
+  it('仅会话栏（W=1200、live2dVisible=false）', () => {
+    const g = gridTemplateFor(computeEffectiveLayout(1200, prefs({ live2dVisible: false }), overrides(), C))
+    expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr)')
+    expect(g.gridTemplateAreas).toBe('"title title title" "nav conv chat"')
+  })
+  it('仅 Live2D（W=1100 默认：会话栏被自动折叠）', () => {
+    const g = gridTemplateFor(computeEffectiveLayout(1100, prefs(), overrides(), C))
+    expect(g.gridTemplateColumns).toBe('60px minmax(0, 1fr) 340px')
+    expect(g.gridTemplateAreas).toBe('"title title title" "nav chat live"')
+  })
+  it('均隐藏（W=320 防御档）', () => {
+    const g = gridTemplateFor(computeEffectiveLayout(320, prefs(), overrides(), C))
+    expect(g.gridTemplateColumns).toBe('60px minmax(0, 1fr)')
+    expect(g.gridTemplateAreas).toBe('"title title" "nav chat"')
+  })
+  it('live2dWidth=420 时列宽用有效栏宽（W=1240、宽度 420 全四区）', () => {
+    const g = gridTemplateFor(computeEffectiveLayout(1240, prefs({ live2dWidth: 420 }), overrides(), C))
+    expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr) 420px')
+  })
+  it('列数 = areas 每行列数（一致性）', () => {
+    for (const w of [320, 520, 736, 900, 1100, 1200, 1240, 1600]) {
+      const g = gridTemplateFor(computeEffectiveLayout(w, prefs(), overrides(), C))
+      // 列数统计对括号内空格免疫：minmax(0, 1fr) 内的空格不参与 split（否则 60px 260px minmax(0, 1fr) 340px 会被拆成 5 token 而非 4 列）
+      const nCols = g.gridTemplateColumns.replace(/\([^)]*\)/g, '()').split(' ').length
+      for (const row of g.gridTemplateAreas.match(/"([^"]*)"/g)!) {
+        expect(row.replace(/"/g, '').trim().split(/\s+/).length).toBe(nCols)
+      }
+    }
+  })
 })

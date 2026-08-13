@@ -88,3 +88,22 @@ export function computeEffectiveLayout(
     droppedConversationOverride: droppedConvOverride, droppedLive2dOverride: droppedLiveOverride
   }
 }
+
+export interface GridTemplate {
+  gridTemplateColumns: string
+  gridTemplateAreas: string
+}
+
+/** spec §4.6（决策 D10）：按有效布局生成 grid-template-*；隐藏区不生成对应列，
+ *  组件用 v-show（display:none）配合，杜绝「隐藏列占位把聊天排进错误列」。 */
+export function gridTemplateFor(effective: EffectiveLayout): GridTemplate {
+  const conv = effective.conversationShown ? `${effective.conversationWidth}px` : null
+  const live = effective.live2dShown ? `${effective.live2dWidth}px` : null
+  const cols = [`${effective.navWidth}px`, ...(conv ? [conv] : []), 'minmax(0, 1fr)', ...(live ? [live] : [])]
+  const rowTitle = Array(cols.length).fill('title').join(' ')
+  const rowMain = ['nav', ...(conv ? ['conv'] : []), 'chat', ...(live ? ['live'] : [])].join(' ')
+  return {
+    gridTemplateColumns: cols.join(' '),
+    gridTemplateAreas: `"${rowTitle}" "${rowMain}"`
+  }
+}
