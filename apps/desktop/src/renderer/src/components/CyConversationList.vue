@@ -122,6 +122,7 @@ function remove(c: Conversation): void {
 
 <style scoped>
 .cy-conversations {
+  grid-area: conv;
   min-width: 0;
   padding: 14px 10px;
   background: var(--cy-pane);

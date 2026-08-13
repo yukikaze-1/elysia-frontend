@@ -6,10 +6,14 @@ import { setDesktopApi } from './stores/desktop-api'
 import { useConnectionStore } from './stores/connection.store'
 import { useMessageStore } from './stores/message.store'
 import { useConversationStore } from './stores/conversation.store'
+import { useLayoutStore } from './stores/layout.store'
 import { createRendererBootstrap } from './bootstrap'
 
 const app = createApp(App)
 app.use(createPinia())
+
+// G1（spec §4.5/P2-2）：createPinia 之后、mount 之前同步 hydrate 布局偏好，避免首帧闪默认布局
+useLayoutStore().hydrate()
 
 // P2-1 + R3:Pinia install 之后接线(Pinia 已 setActivePinia,use*Store() 才可用)——注入 api + 常驻订阅(store 级,组件卸载无关)。
 // P0-01:订阅与启动 snapshot 水合编排收敛到 bootstrap(epoch 防迟到 snapshot 覆盖新 push)。

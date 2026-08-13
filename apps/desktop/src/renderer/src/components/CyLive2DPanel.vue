@@ -27,6 +27,7 @@
 
 <style scoped>
 .cy-live {
+  grid-area: live;
   position: relative;
   display: flex;
   flex-direction: column;

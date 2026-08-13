@@ -12,7 +12,7 @@
 
 <style scoped>
 .cy-titlebar {
-  grid-column: 1 / -1;
+  grid-area: title;
   display: flex;
   align-items: center;
   gap: 12px;

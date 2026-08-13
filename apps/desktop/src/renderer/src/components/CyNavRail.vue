@@ -54,6 +54,7 @@ const items: Array<{ key: NavKey; label: string; icon: string }> = [
 
 <style scoped>
 .cy-nav {
+  grid-area: nav;
   display: flex;
   flex-direction: column;
   align-items: center;
