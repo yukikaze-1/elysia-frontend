@@ -42,11 +42,27 @@ export function computeEffectiveLayout(
   const liveDesired = prefs.live2dVisible ? clampLive2dWidth(prefs.live2dWidth, constants) : 0
   const nav = NAV
 
-  // 步骤 0）override 生效性兜底（P1-1）——Task 3 在此插入；Task 2 直接采纳 override 标记
-  const effConvOverride = overrides.explicitOpenConversation
-  const effLiveOverride = overrides.explicitOpenLive2d
-  const droppedConvOverride = false
-  const droppedLiveOverride = false
+  // 0) override 生效性兜底（P1-1）：override 只在「当前宽度能同时容纳对应栏」时生效，
+  //    否则按优先序回退——先回退会话栏 override（保留 Live2D），仍不够再回退 Live2D override。
+  //    回退掉的 override 本轮推导中视为未置位，并经 dropped* 字段通知 store 同步清除会话期标记。
+  let effConvOverride = overrides.explicitOpenConversation
+  let effLiveOverride = overrides.explicitOpenLive2d
+  let droppedConvOverride = false
+  let droppedLiveOverride = false
+  if (effConvOverride && effLiveOverride && viewportWidth < NAV + CONV + liveDesired) {
+    // 双 override 并存但宽度不足：优先保留 Live2D override
+    if (viewportWidth >= NAV + liveDesired) {
+      effConvOverride = false; droppedConvOverride = true
+    } else {
+      // 连 Live2D 单栏都装不下（W < NAV + liveDesired）→ 全部回退
+      effConvOverride = false; effLiveOverride = false
+      droppedConvOverride = true; droppedLiveOverride = true
+    }
+  } else {
+    // 单 override 各自仍需能放下：会话栏需 W ≥ NAV+CONV；Live2D 需 W ≥ NAV+liveDesired
+    if (effConvOverride && viewportWidth < NAV + CONV) { effConvOverride = false; droppedConvOverride = true }
+    if (effLiveOverride && viewportWidth < NAV + liveDesired) { effLiveOverride = false; droppedLiveOverride = true }
+  }
 
   // 1) 目标布局（偏好）
   let conv = prefs.conversationCollapsed ? 0 : CONV
