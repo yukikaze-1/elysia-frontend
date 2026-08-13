@@ -28,6 +28,7 @@ vi.spyOn(console, 'warn').mockImplementation(() => {})
 // 的联合展开会在缺少 responseId 的成员上无法赋给 BackendEvent,typecheck:node 需精确类型。
 function started(): GenerationStartedEvent { return { eventId: 'e', sequence: 1, event: 'generation.started', generationId: 'gen-1', messageId: 'msg-1', responseId: 'gen-1', conversationId: 'conv-1', model: 'm1' } }
 function delta(seg: string, seq: number, text: string): BackendEvent { return { eventId: 'e', sequence: 2, event: 'generation.delta', generationId: 'gen-1', segmentId: seg, segmentIndex: 0, channel: 'public_reply', kind: 'markdown', deltaSequence: seq, text } }
+function failed(code: string, message: string, retryable?: boolean): BackendEvent { return { eventId: 'e', sequence: 3, event: 'generation.failed', generationId: 'gen-1', error: { code, message, retryable } } }
 
 /** F2:归属守卫依赖 currentId——默认注入当前会话;显式改状态用 setCurrent */
 function setCurrent(id: string | undefined): void {
@@ -301,5 +302,82 @@ describe('messageStore 流式应用', () => {
     expect(Object.keys(store.byId)).toHaveLength(2)   // byId 两条,不覆盖
     expect(store.byId['msg_t1']?.tool?.callId).toBe('call_1')
     expect(store.byId['msg_t2']?.tool?.callId).toBe('call_2')
+  })
+
+  // ---------- D3(二次真实联调):取消码统一 GENERATION_CANCELLED + 取消终态不设 lastError ----------
+
+  it('generation.failed{code:GENERATION_CANCELLED} → interrupted + 无 lastError（D3 正式码）', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(failed('GENERATION_CANCELLED', '用户取消了本次生成', false))
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError).toBeUndefined()
+    expect(store.activeGenerationId).toBeUndefined()
+  })
+
+  it('failed 在 cancel IPC resolve 前到达（交错时序）→ 最终仍 interrupted + 无 lastError', async () => {
+    let resolveCancel!: (v?: unknown) => void
+    mockApi.cancel.mockImplementationOnce(() => new Promise((res) => { resolveCancel = res }))
+    const store = useMessageStore()
+    store.applyEvent(started())
+    const p = store.cancel()   // cancel IPC 未 resolve,activeGenerationId 仍在
+    // 不依赖乐观 cancel:failed 先到,经 failed 路径置 interrupted
+    store.applyEvent(failed('GENERATION_CANCELLED', '用户取消了本次生成', false))
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError).toBeUndefined()
+    resolveCancel()
+    await p
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError).toBeUndefined()
+    expect(store.activeGenerationId).toBeUndefined()
+  })
+
+  it('本地乐观 cancel 先完成、failed 后到 → 状态不变 + 无错误横幅', async () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    await store.cancel()   // 乐观置 interrupted + 清 activeGenerationId
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    // failed 后到:activeGenerationId 已清,被守卫丢弃(P2-5),不降级 failed
+    store.applyEvent(failed('GENERATION_CANCELLED', '用户取消了本次生成', false))
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError).toBeUndefined()
+    expect(store.activeGenerationId).toBeUndefined()
+  })
+
+  it('已收 partial segments 取消后保留', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(delta('seg-1', 0, '部分内容'))
+    store.applyEvent(failed('GENERATION_CANCELLED', '用户取消了本次生成', false))
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.byId['msg-1']?.assistantSegments?.[0]?.text).toBe('部分内容')
+  })
+
+  it('迟到 completed 不把 interrupted 改回 completed', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(failed('GENERATION_CANCELLED', '用户取消了本次生成', false))
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    // 迟到 completed:activeGenerationId 已清,被守卫丢弃(P2-5)
+    store.applyEvent({ ...started(), event: 'generation.completed', usage: { input: 1, output: 2, total: 3, source: 'provider_reported' }, model: 'm1', emotion: 'happy' })
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+  })
+
+  it('legacy code CANCELLED 仍识别（helper 兼容）', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(failed('CANCELLED', '用户取消了本次生成', false))
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError).toBeUndefined()
+  })
+
+  it('非取消错误 GENERATION_TIMEOUT → failed + lastError', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(failed('GENERATION_TIMEOUT', '生成超时', true))
+    expect(store.byId['msg-1']?.status).toBe('failed')
+    expect(store.lastError).toEqual({
+      code: 'GENERATION_TIMEOUT', message: '生成超时', backendCode: 'GENERATION_TIMEOUT', retryable: true
+    })
   })
 })

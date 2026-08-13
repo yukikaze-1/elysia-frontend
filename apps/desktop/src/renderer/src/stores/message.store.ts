@@ -23,6 +23,11 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/** 正式取消码 GENERATION_CANCELLED + legacy CANCELLED 兼容（D3，二次联调 §6.3） */
+export function isCancellationCode(code: string | undefined): boolean {
+  return code === 'GENERATION_CANCELLED' || code === 'CANCELLED'
+}
+
 export const useMessageStore = defineStore('message', () => {
   const byId = ref<Record<string, Message>>({})
   const order = ref<string[]>([])
@@ -85,12 +90,18 @@ export const useMessageStore = defineStore('message', () => {
     if (s.emotion) m.emotion = s.emotion
   }
 
-  /** 回复失败:CANCELLED → interrupted(幂等不降级 failed,C-9),其余 → failed + 错误展示 */
+  /** 回复失败:取消码(GENERATION_CANCELLED/legacy CANCELLED,D3)→ interrupted + 不设 lastError,其余 → failed + 错误展示 */
   function failAssistant(messageId: string, event: Extract<BackendEvent, { event: 'generation.failed' }>): void {
     const m = byId.value[messageId]
-    if (!m) return
-    m.status = event.error.code === 'CANCELLED' ? 'interrupted' : 'failed'
-    lastError.value = { code: event.error.code, message: event.error.message, backendCode: event.error.code, retryable: event.error.retryable }
+    if (!m || m.role !== 'assistant') return
+    if (isCancellationCode(event.error.code)) {
+      m.status = 'interrupted' // 取消终态：interrupted（不降级 failed）
+      // 不设 lastError：用户主动取消不展示「发送失败」（§6.2 UX 不一致，D3）
+    } else {
+      m.status = 'failed'
+      lastError.value = { code: event.error.code, message: event.error.message, backendCode: event.error.code, retryable: event.error.retryable }
+    }
+    activeGenerationId.value = undefined
   }
 
   function resetConversation(_conversationId: string): void {

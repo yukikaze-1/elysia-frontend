@@ -1,4 +1,4 @@
 {"type":"generation.started","generationId":"gen-cancelled-1","messageId":"msg-cancelled-1","conversationId":"conv-1","requestId":"req-cancelled-1","model":"cyrene-llm-v1"}
 {"type":"generation.segment.started","generationId":"gen-cancelled-1","segmentId":"seg-cancelled-1","segmentIndex":0,"channel":"public_reply","kind":"text","conversationId":"conv-1"}
 {"type":"generation.delta","generationId":"gen-cancelled-1","segmentId":"seg-cancelled-1","segmentIndex":0,"deltaSequence":0,"delta":"已生成的部分内容","conversationId":"conv-1"}
-{"type":"generation.failed","generationId":"gen-cancelled-1","messageId":"msg-cancelled-1","model":"cyrene-llm-v1","code":"CANCELLED","message":"用户取消了本次生成","retryable":false,"details":{"reason":"user_cancel"},"conversationId":"conv-1"}
+{"type":"generation.failed","generationId":"gen-cancelled-1","messageId":"msg-cancelled-1","model":"cyrene-llm-v1","code":"GENERATION_CANCELLED","message":"用户取消了本次生成","retryable":false,"details":{"reason":"user_cancel"},"conversationId":"conv-1"}
