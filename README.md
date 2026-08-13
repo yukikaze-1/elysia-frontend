@@ -101,6 +101,8 @@ apps/desktop/        Electron 工程(electron-vite:main / preload / renderer / s
 
 **B-01 联调门禁（批次 C 定，spec §4.2.3）：** 真实后端环境（B-01）到位后，联调首日从真实后端抓取 **≥3 条真实 raw frame 样例**（覆盖 `server_info` / session / `user_message.ack` / generation 流），过前端 `parseRawFrame` + frame/rest mapper + `parseBackendEvent` 断言**全部通过**，作为 B-01 联调验收门禁；随后按后端实际 SHA 更新夹具 manifest（替换新增 7 组的 `verified:false` 占位）。此门禁与跨仓库契约脚本（`pnpm -F @cyrene/desktop check:contract`，读 `elysia-agent/frontend_contract`）共同构成「双方各自单测都绿但 wire 不兼容」的显式防线。
 
+> **单活动桌面客户端/单写者约束（FE-INT-RISK-01，首次联调确认）：** 同会话由多个客户端同时写入不在当前产品范围。其他客户端对当前活动会话的写入（本端无本地 optimistic user 消息的 generation）保留现状到达序渲染，不保证跨客户端因果顺序。多客户端支持需前后端共同设计因果链（后端 generation.started 前广播 user committed / generation 携带 user 引用 / 会话级单调 sequence），当前不做；「低级别诊断」与「提示来自其他客户端」两选项均否决（单写者下跨客户端 generation 属罕见异常，额外诊断/提示引入 renderer 逻辑与文案成本，且不改变「不保证因果顺序」的事实）；本项不纳入首次单客户端 B-01 阻断门禁。
+
 **阶段 0 门禁口径（批次 D 冻结，spec §4.4）：** 状态源为三态 **已开发**（代码落地、Mock 驱动）/ **已验证**（typecheck/lint/test/build/package/verify:artifact 全绿、未真实联调）/ **已真实联调**（真实后端 B-01 验收通过）；阶段 0 因外部输入未到位标「**带已知豁免提前开发**」（非「已验证」）。**首次联调 = Linux 本机文本聊天最小闭环**，13 项用例：启动 / 设置 Token / 连接 / 列会话 / 激活新建 / 发送 / ACK / 双通道流式 / completed / 取消 / 断线重连 / 错误展示 / 日志定位；后端 SHA / URL / 认证方式 / `SERVE_CHAT`（保持 0，`/` 404 ≠ Electron API 不可用）留 B-01 填。**Windows 为阶段 1 未通过项**（真 Windows 运行证据未到；构建级 CI 已有但不替代真机冒烟）。**外部依赖清单**（阶段通过门禁输入）：B-01 / H-01 / H-07 / G-01 / G-02 / H-04。
 
 ## 协作约定
