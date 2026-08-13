@@ -954,7 +954,7 @@ idle → connecting → connected
 
 ## 19. 与现有后端对齐清单
 
-下表“现有后端值”依据后端交接包 **`frontend-handoff-v2`（批次 7 时点）** 填写：协议契约以 `docs/electron-backend-protocol-v2.md`（v0.6，40 错误码）为准，wire 字段形状以 `frontend_contract/`（ws_message.py / rest.py，Pydantic 单源包）为准，真实轨迹见 `frontend-handoff-v2/traces/`。状态：已记录、**未联调**。
+下表“现有后端值”依据后端交接包 **`frontend-handoff-v2`（批次 7 时点）** 填写：协议契约以 `docs/electron-backend-protocol-v2.md`（v0.6，40 错误码）为准，wire 字段形状以 `frontend_contract/`（ws_message.py / rest.py，Pydantic 单源包）为准，真实轨迹见 `frontend-handoff-v2/traces/`。状态：已记录、**已真实联调**（B-01 2026-08-14 十项复跑通过，见 `docs/review/2026-08-14-Windows-Electron-第三次真实联调前端阻断.md`）。
 
 | 核对项 | 现有后端值 | 前端映射 |
 |---|---|---|
