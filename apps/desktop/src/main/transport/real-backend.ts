@@ -148,6 +148,8 @@ export class RealBackend implements BackendAdapter {
       case 'session': this.handleSession(frame); return
       case 'server_info': this.handleServerInfo(frame); return
       case 'expression': return
+      case 'state': return // FE-INT-P1-01:FSM 状态契约识别,renderer 暂不消费(有意忽略,勿误删)
+      case 'typing': return // FE-INT-P1-01:输入状态契约识别,renderer 暂不消费(有意忽略,勿误删)
       case 'user_message.ack': this.handleAck(frame); return
       case 'error': this.handleErrorFrame(frame); return
       default: {

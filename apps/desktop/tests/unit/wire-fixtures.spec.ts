@@ -43,7 +43,8 @@ const NEW_FIXTURES = [
   'chat-replay-nonempty.jsonl',
   'chat-cancelled.jsonl',
   'chat-reconnect-replay.jsonl',
-  'chat-no-delta-public-reply.jsonl'
+  'chat-no-delta-public-reply.jsonl',
+  'state-typing.jsonl'
 ]
 
 const fixtures = [...VERIFIED_FIXTURES, ...NEW_FIXTURES]

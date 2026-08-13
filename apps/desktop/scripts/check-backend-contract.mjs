@@ -19,11 +19,12 @@ const SCHEMA_JSON = `${BACKEND_DIR}/contract.schema.json` // 判别联合(如不
 const BACKEND_TRACES = '/home/yomu/elysia-agent/docs/archive/frontend-handoff-v2/traces'
 const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
 
-// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 11 型
+// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 13 型
 const WS_V2_FRAME_TYPES = [
   'server_info', 'session', 'expression', 'user_message.ack', 'error',
   'generation.started', 'generation.segment.started', 'generation.delta',
-  'generation.segment.completed', 'generation.completed', 'generation.failed'
+  'generation.segment.completed', 'generation.completed', 'generation.failed',
+  'state', 'typing' // FE-INT-P1-01:11 型 → 13 型,state/typing 兼容帧纳入字段级深比较
 ]
 // phase 3+ 帧(voice_session/dictation/tool.request 等):前端有意滞后,只 warn 不报错(F2 白名单)
 

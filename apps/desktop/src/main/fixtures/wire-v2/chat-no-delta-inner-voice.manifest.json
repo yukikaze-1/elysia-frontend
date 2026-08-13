@@ -1,1 +1,1 @@
-{ "backendCommit": "beeba5776413dde9761375c2fd9541d6636f180d", "protocol": "2", "serverProtocolVersion": "2.0", "schemaHash": "15e589c9a8e29687c2e22a1894207e5481cf5e99e35870bba5ca2e01db824edd", "verified": true, "scenario": "chat-no-delta-inner-voice" }
+{ "backendCommit": "beeba5776413dde9761375c2fd9541d6636f180d", "protocol": "2", "serverProtocolVersion": "2.0", "schemaHash": "96fc24c800bbbba1692da004bb45706a7b370d6069e0f1c166fe69d89156e8c3", "verified": true, "scenario": "chat-no-delta-inner-voice" }

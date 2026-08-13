@@ -59,6 +59,10 @@ export interface RawExpression {
   expression: string
   intensity?: number
 }
+/** FSM 状态变更（FE-INT-P1-01：契约识别 + 有意忽略，renderer 暂不消费） */
+export interface RawState { type: 'state'; state: string }
+/** 输入状态变更（同上） */
+export interface RawTyping { type: 'typing'; typing: boolean }
 
 /** generation 文本聊天帧 */
 export interface RawGenerationStarted {
@@ -158,7 +162,7 @@ export interface RawErrorMessage {
   details?: Record<string, unknown>
 }
 export type RawFrame =
-  | RawSessionMessage | RawServerInfo | RawExpression
+  | RawSessionMessage | RawServerInfo | RawExpression | RawState | RawTyping
   | RawGenerationStarted | RawGenerationSegmentStarted | RawGenerationDelta
   | RawGenerationSegmentCompleted | RawGenerationCompleted | RawGenerationFailed
   | RawUserAck | RawErrorMessage

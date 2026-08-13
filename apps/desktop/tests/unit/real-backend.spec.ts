@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws'
 import { AddressInfo } from 'net'
 import { RealBackend, type RealBackendOptions } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
+import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { CyreneErrorCode } from '@shared/errors'
 
 let server: Server
@@ -310,6 +311,32 @@ describe('RealBackend WS 连接', () => {
     await new Promise((r) => setTimeout(r, 60)) // 越过旧 reconnectTimer 截止点:未被清则会再建 #3
     expect(wsCreateCount).toBe(2)
     expect(b.getConnectionState().status).toBe('connected')
+    await b.disconnect()
+  })
+
+  it('state/typing 帧不 emit、不 warn、不断连（FE-INT-P1-01）', async () => {
+    const warnings: ProtocolWarning[] = []
+    const b = new RealBackend({ now: () => Date.now(), onProtocolWarning: (w) => warnings.push(w) })
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    const events: BackendEvent[] = []
+    const unsub = b.subscribe((e) => events.push(e))
+    const send = (payload: unknown) => { wss.clients.forEach((c) => c.send(JSON.stringify(payload))) }
+    send({ type: 'state', state: 'thinking' })
+    send({ type: 'typing', typing: true })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(events).toEqual([]) // 不 emit
+    expect(warnings).toEqual([]) // 不 warn
+    expect(b.getConnectionState().status).toBe('connected') // 不断连
+    unsub()
+    await b.disconnect()
+  })
+  it('未知 type 帧仍 RAW_FRAME_INVALID warn（fail-closed）', async () => {
+    const warnings: ProtocolWarning[] = []
+    const b = new RealBackend({ now: () => Date.now(), onProtocolWarning: (w) => warnings.push(w) })
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    wss.clients.forEach((c) => c.send(JSON.stringify({ type: 'totally_unknown' })))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(warnings.map((w) => w.code)).toEqual(['RAW_FRAME_INVALID'])
     await b.disconnect()
   })
 })

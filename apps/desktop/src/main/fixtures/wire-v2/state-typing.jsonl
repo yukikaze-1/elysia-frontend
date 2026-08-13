@@ -1,0 +1,6 @@
+{"type": "state", "state": "thinking"}
+{"type": "state", "state": "idle"}
+{"type": "state", "state": "interrupted"}
+{"type": "state", "state": "speaking"}
+{"type": "typing", "typing": true}
+{"type": "typing", "typing": false}

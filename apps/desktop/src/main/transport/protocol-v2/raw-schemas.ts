@@ -168,6 +168,17 @@ const RawUserAckSchema = z.discriminatedUnion('status', [
   RawRejectedUserAckSchema
 ])
 
+/** 契约识别 + 有意忽略：FSM 状态变更（renderer 暂不消费，勿误删——FE-INT-P1-01） */
+const RawStateSchema = z.object({
+  type: z.literal('state'),
+  state: z.string() // 契约原样：后端 StateMessage.state 是裸 str、无 min 约束（空串契约合法）；strict 仍拒未知键
+}).strict()
+/** 契约识别 + 有意忽略：输入状态变更 */
+const RawTypingSchema = z.object({
+  type: z.literal('typing'),
+  typing: z.boolean()
+}).strict()
+
 const RawErrorMessageSchema = z.object({
   type: z.literal('error'),
   message: z.string().min(1),
@@ -190,6 +201,8 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawGenerationCompletedSchema,
   RawGenerationFailedSchema,
   RawUserAckSchema,
+  RawStateSchema,
+  RawTypingSchema,
   RawErrorMessageSchema
 ])
 

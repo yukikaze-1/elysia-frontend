@@ -168,12 +168,28 @@ describe('raw schema ack/error 扩展(2B)', () => {
   })
 })
 
+describe('state/typing 兼容帧（FE-INT-P1-01）', () => {
+  it('parseRawFrame 合法 state/typing 通过', () => {
+    expect(parseRawFrame({ type: 'state', state: 'thinking' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'state', state: 'idle' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'typing', typing: true }).success).toBe(true)
+    expect(parseRawFrame({ type: 'typing', typing: false }).success).toBe(true)
+    expect(parseRawFrame({ type: 'state', state: '' }).success).toBe(true) // 契约允许空串,勿设 min(1)
+  })
+  it('畸形载荷仍失败（strict + 类型/缺失）', () => {
+    expect(parseRawFrame({ type: 'state' }).success).toBe(false) // 缺 state
+    expect(parseRawFrame({ type: 'typing', typing: 'yes' }).success).toBe(false) // 类型错
+    expect(parseRawFrame({ type: 'state', state: 'idle', extra: 1 }).success).toBe(false) // strict 拒未知键
+    expect(parseRawFrame({ type: 'unknown_frame' }).success).toBe(false) // 未知 type fail-closed
+  })
+})
+
 describe('raw schemas fingerprint(2C)', () => {
   it('RAW_FRAME_TYPES 与 union 推导集合一致(I6)', () => {
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',
-      'generation.started', 'server_info', 'session', 'user_message.ack'
+      'generation.started', 'server_info', 'session', 'state', 'typing', 'user_message.ack'
     ])
     expect(RawFrameSchema.safeParse({
       type: 'user_message.ack', messageId: '', clientRequestId: '', receivedAt: 't',
@@ -196,6 +212,11 @@ describe('raw schemas fingerprint(2C)', () => {
   it('非判别字面量值变更 → 指纹变化(_def.value,可执行性 6)', () => {
     const a = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), c: z.literal('a') })]))
     const b = rawSchemasFingerprintFor(z.discriminatedUnion('t', [z.object({ t: z.literal('x'), c: z.literal('b') })]))
+    expect(a).not.toBe(b)
+  })
+  it('加入 state/typing 成员 → 指纹变化（FE-INT-P1-01 敏感性）', () => {
+    const a = rawSchemasFingerprintFor(z.discriminatedUnion('type', [z.object({ type: z.literal('x') })]))
+    const b = rawSchemasFingerprintFor(z.discriminatedUnion('type', [z.object({ type: z.literal('x') }), z.object({ type: z.literal('state'), state: z.string() })]))
     expect(a).not.toBe(b)
   })
 })
