@@ -93,6 +93,12 @@ describe('raw wire schema', () => {
     const r0 = { ...validCompleted, usage: { rounds: [{ model: 'm1', input_tokens: 0, output_tokens: 0, total_tokens: 0, round_num: 0 }], turn_total: 0 } }
     expect(parseRawFrame(r0).success).toBe(true)
   })
+
+  it('session item 缺 message_id/timestamp → 帧校验失败（D2 契约收紧）', () => {
+    expect(parseRawFrame({ type: 'session', messages: [{ role: 'tool', message_id: 'm1', timestamp: 't' }] }).success).toBe(true)
+    expect(parseRawFrame({ type: 'session', messages: [{ role: 'tool', timestamp: 't' }] }).success).toBe(false) // 缺 message_id
+    expect(parseRawFrame({ type: 'session', messages: [{ role: 'tool', message_id: 'm1' }] }).success).toBe(false) // 缺 timestamp
+  })
 })
 
 describe('raw schema ack/error 扩展(2B)', () => {

@@ -44,11 +44,12 @@ const NEW_FIXTURES = [
   'chat-cancelled.jsonl',
   'chat-reconnect-replay.jsonl',
   'chat-no-delta-public-reply.jsonl',
-  'state-typing.jsonl'
+  'state-typing.jsonl',
+  'chat-replay-tool.jsonl'
 ]
 
 const fixtures = [...VERIFIED_FIXTURES, ...NEW_FIXTURES]
-const replayFixtures = ['chat-replay-nonempty.jsonl', 'chat-reconnect-replay.jsonl']
+const replayFixtures = ['chat-replay-nonempty.jsonl', 'chat-reconnect-replay.jsonl', 'chat-replay-tool.jsonl']
 
 describe('wire fixture 两层校验', () => {
   it('① 每行过 raw schema', () => {

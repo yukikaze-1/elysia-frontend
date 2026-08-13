@@ -26,8 +26,8 @@ const RawConversationUsageSchema = z.object({ total: z.number().int().nonnegativ
 
 const RawSessionMessageItemSchema = z.object({
   role: z.string().min(1),
-  message_id: z.string().optional(),
-  timestamp: z.string().optional(),
+  message_id: z.string().min(1),  // D2:持久化消息要求非空身份(§5.4 #1)
+  timestamp: z.string().min(1),
   parts: z.array(z.unknown()).optional(),
   content: z.unknown().optional(),
   content_type: z.record(z.string(), z.array(z.number().int().nonnegative())).optional(),

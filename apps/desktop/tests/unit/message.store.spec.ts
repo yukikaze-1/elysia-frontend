@@ -272,4 +272,34 @@ describe('messageStore 流式应用', () => {
     resolveSend({ clientRequestId: 'c1' })
     await p
   })
+
+  // ---------- D2(二次真实联调):replay/REST 同 ID 去重 + 不同 tool_call_id 不碰撞 ----------
+
+  it('replay 与 REST 相同 messageId 两种到达顺序 → store 只有一条（byId 去重）', async () => {
+    const m1 = { messageId: 'msg_t1', conversationId: 'conv-1', role: 'tool', content: 'x', tool: { callId: 'call_1', name: 'get_time', success: true }, status: 'completed', createdAt: 't1' } as Message
+    // 场景 A：先 loadReplay 再经 REST 到达同 messageId → 仍一条
+    const storeA = useMessageStore()
+    storeA.loadReplay('conv-1', [{ ...m1 }])
+    expect(Object.keys(storeA.byId)).toHaveLength(1)
+    storeA.loadPage({ items: [{ ...m1, content: 'y' }], hasMore: false })   // REST 后到,内容覆盖、不新增
+    expect(Object.keys(storeA.byId)).toHaveLength(1)
+    expect(storeA.byId['msg_t1']?.content).toBe('y')
+    // 场景 B：先 REST 后 loadReplay 同 messageId → 仍一条
+    const storeB = useMessageStore()
+    storeB.loadPage({ items: [{ ...m1, content: 'y' }], hasMore: false })
+    storeB.loadReplay('conv-1', [{ ...m1 }])
+    expect(Object.keys(storeB.byId)).toHaveLength(1)
+    expect(storeB.byId['msg_t1']).toBeDefined()
+    expect(storeB.byId['msg_t1']?.content).toBe('x')   // upsert 替换语义:后到 replay 覆盖既有内容,仍一条不新增
+  })
+
+  it('两条不同 tool_call_id 不碰撞（各自独立 messageId）', async () => {
+    const store = useMessageStore()
+    const t1 = { messageId: 'msg_t1', conversationId: 'conv-1', role: 'tool', content: 'x', tool: { callId: 'call_1', name: 'get_time', success: true }, status: 'completed', createdAt: 't1' } as Message
+    const t2 = { messageId: 'msg_t2', conversationId: 'conv-1', role: 'tool', content: 'y', tool: { callId: 'call_2', name: 'get_time', success: true }, status: 'completed', createdAt: 't2' } as Message
+    store.loadReplay('conv-1', [t1, t2])
+    expect(Object.keys(store.byId)).toHaveLength(2)   // byId 两条,不覆盖
+    expect(store.byId['msg_t1']?.tool?.callId).toBe('call_1')
+    expect(store.byId['msg_t2']?.tool?.callId).toBe('call_2')
+  })
 })

@@ -9,7 +9,7 @@ export interface RestMapperOptions { onProtocolWarning?: (warning: ProtocolWarni
 
 interface MessageSource {
   role: string
-  message_id?: string
+  message_id: string
   timestamp?: string
   session_id?: string
   parts?: unknown[]
@@ -46,7 +46,7 @@ export class RestMapper {
     const role = src.role as MessageRole
     const convId = conversationId ?? src.session_id ?? ''
     const base: Message = {
-      messageId: src.message_id ?? `${convId}:${src.timestamp ?? 'replay'}`, // 缺省可复现本地 id
+      messageId: src.message_id, // D2:正式 v2 路径不设 fallback——身份缺失已在 schema 层拒帧(§5.4 #3)
       conversationId: convId,
       role,
       createdAt: src.timestamp ?? '',

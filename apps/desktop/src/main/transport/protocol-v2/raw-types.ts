@@ -28,8 +28,8 @@ export interface RawSessionMessage {
 export interface RawSessionMessageItem {
   // 2A 只做结构校验;parts/content/tool_calls 用 unknown 是有意放宽(精确类型在 2B 回放归一化时建)
   role: string
-  message_id?: string
-  timestamp?: string
+  message_id: string // D2:持久化消息要求非空身份
+  timestamp: string
   parts?: unknown[]
   content?: unknown
   content_type?: Record<string, number[]>

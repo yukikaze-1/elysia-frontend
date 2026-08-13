@@ -89,4 +89,16 @@ describe('RestMapper', () => {
     expect(result.items.map((i) => i.messageId)).toEqual(['msg-7', 'msg-8']) // 不反转
     expect(result.nextCursor).toBeUndefined() // has_more=false 无 cursor
   })
+
+  it('session tool item 不再产出共享 ${convId}:replay 主键（D2）', () => {
+    const items = [
+      { role: 'user', message_id: 'msg_u', timestamp: 't0', content: 'hi' },
+      { role: 'tool', message_id: 'msg_t1', timestamp: 't1', tool_call_id: 'call_1', name: 'get_time', content: 'x', success: true },
+      { role: 'tool', message_id: 'msg_t2', timestamp: 't2', tool_call_id: 'call_2', name: 'get_time', content: 'y', success: true }
+    ]
+    const out = items.map((m) => mapper.toDomainMessageFromReplay(m as never, 'conv-1'))
+    expect(out).toHaveLength(3)
+    expect(out.map((m) => m.messageId)).toEqual(['msg_u', 'msg_t1', 'msg_t2']) // 两个正式不同 msg_* ID
+    expect(out.some((m) => m.messageId === 'conv-1:replay')).toBe(false)
+  })
 })
