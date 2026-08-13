@@ -5,7 +5,7 @@
 //  - 后端目录缺失 → exit 0(CI/他人机器跳过,不硬依赖);
 //  - 后端 frame type 提取优先 contract.schema.json 判别联合;退化用 ws_message.py `Literal["…"]`(pydantic 写法);
 //  - 解析 type < 3 → exit 1(防静默 false pass);
-//  - 比对限定当前 WS v2 帧子集(WS_V2_FRAME_TYPES 白名单 11 型);前端缺 → exit 1 + 列出;
+//  - 比对限定当前 WS v2 帧子集(WS_V2_FRAME_TYPES 白名单 13 型);前端缺 → exit 1 + 列出;
 //  - 字段级：后端生成的 ws-v2-*.jsonl 逐条 parseRawFrame，解析结果必须与输入深度相等（防 zod 静默 strip）;
 //  - 从后端 JSON Schema 的字段定义构造 error/rejected ACK 关键可选字段探针。
 //  - phase 3+ 帧(voice_session/dictation/tool.request 等)走 warn 白名单,不报错。

@@ -69,7 +69,7 @@ describe('wire fixture 两层校验', () => {
     }
   })
 
-  it('manifest verified/backendCommit:既有 4 组 verified:true+beeba577,新增 7 组 verified:false+unverified', () => {
+  it('manifest verified/backendCommit:既有 4 组 verified:true+beeba577,新增 8 组 verified:false+unverified', () => {
     for (const f of VERIFIED_FIXTURES) {
       const m = readManifest(f.replace(/\.jsonl$/, '.manifest.json'))
       expect(m.verified).toBe(true)
