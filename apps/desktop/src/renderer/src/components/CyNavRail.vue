@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useLayoutStore } from '../stores/layout.store'
 
 type NavKey = 'chat' | 'tasks' | 'settings'
 
 const active = ref<NavKey>('chat')
+const layout = useLayoutStore()
+
+const collapseLabel = computed(() => layout.effective.conversationShown ? '折叠会话列表' : '展开会话列表')
 
 const items: Array<{ key: NavKey; label: string; icon: string }> = [
   {
@@ -49,6 +53,17 @@ const items: Array<{ key: NavKey; label: string; icon: string }> = [
       />
     </button>
     <span class="cy-nav-spacer" />
+    <button
+      class="cy-nav-button cy-nav-collapse"
+      :aria-pressed="layout.effective.conversationShown"
+      :aria-label="collapseLabel"
+      :title="collapseLabel"
+      @click="layout.toggleConversation()"
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5h7v14H4zM15 9l3 3-3 3" />
+      </svg>
+    </button>
   </nav>
 </template>
 
@@ -96,5 +111,10 @@ const items: Array<{ key: NavKey; label: string; icon: string }> = [
 
 .cy-nav-spacer {
   flex: 1;
+}
+
+.cy-nav-collapse[aria-pressed='true'] {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
 }
 </style>
