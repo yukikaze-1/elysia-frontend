@@ -84,6 +84,13 @@ describe('RealBackend WS 连接', () => {
     await b.disconnect()
   })
 
+  it('默认连接不协商 permessage-deflate，避免 aiohttp 保留位帧兼容性故障', async () => {
+    const b = makeBackend()
+    await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
+    expect(receivedHeaders['sec-websocket-extensions']).toBeUndefined()
+    await b.disconnect()
+  })
+
   it('连接状态 connected + activeConversationId 解析', async () => {
     const b = makeBackend()
     await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })

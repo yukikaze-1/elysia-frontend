@@ -287,7 +287,8 @@ export class RealBackend implements BackendAdapter {
       Authorization: `Bearer ${this.token}`
     }
     const factory = this.options.wsFactory
-    const ws = factory ? factory(wsBase, headers) : new WebSocket(wsBase, { headers })
+    // aiohttp 压缩连接空闲后可以 RSV 保留位错误拒绝首个客户端业务帧，控制面显式不协商压缩。
+    const ws = factory ? factory(wsBase, headers) : new WebSocket(wsBase, { headers, perMessageDeflate: false })
     this.ws = ws
     this.mapper = new FrameMapper({ connectionId: this.serverUrl, onProtocolWarning: this.options.onProtocolWarning })
     // 握手超时:建 socket 后立即启动(先于 message 注册,保证同步推帧夹具的 server_info 也能在 handleServerInfo 清掉)。
