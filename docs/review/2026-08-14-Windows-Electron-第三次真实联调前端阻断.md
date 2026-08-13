@@ -1,14 +1,16 @@
-# Windows Electron 第三次真实联调：前端阻断
+# Windows Electron 第三次真实联调：前端阻断与修复闭环
 
 **日期：** 2026-08-14（Asia/Shanghai）
 
-**前端基线：** `05f5af0b80a3f88f4fd13a8dd7a6ef535a640d64`
+**前端基线：** `6b27e2e1ebf4e6ba3e335352379892e7c2679da2`
 
 **后端基线：** `73ac7a32415aa96bbec7687ae0c9e674ab675438`
 
-**状态：** B-01 第 1–9 项已取得真实证据；第 10 项因 WS 压缩连接空闲后协议错误失败。**未封口，阶段 3 不得升为主线。**
+**状态：** 修复提交后的 Windows Electron 复验已通过，B-01 十项全部取得真实证据。**B-01 已封口，阶段 3 可转为主线。**
 
 后端完整证据报告：`/home/yomu/elysia-agent/docs/review/2026-08-14-Windows-Electron-第三次真实联调结果.md`
+
+证据继承口径：原 B-01 #1–#9 在父提交 `05f5af0` 上执行；`6b27e2e` 只改变 WS 压缩选项、增加回归和本报告。修复后已在 `6b27e2e` 上重跑受影响的空闲文本、Renderer reload、取消和全轮诊断；mapper/schema/后端数据未变的工具身份、replay 和存量历史项沿用同一轮原始证据。
 
 ## 1. 已通过的真实 Electron 链路
 
@@ -21,7 +23,7 @@
 - 在干净新 WS 上取消真实长生成：收到 `GENERATION_CANCELLED`，保留 28 字 partial，Store/UI=`interrupted`，无失败横幅或迟到 completed。
 - 旧 `default` 最近 50 条可读，ID 非空无重复，仍有更多历史页。
 
-## 2. [P0] 空闲压缩 WS 的首个客户端业务帧会断连
+## 2. [已关闭 P0] 空闲压缩 WS 的首个客户端业务帧会断连
 
 ### 影响
 
@@ -52,7 +54,7 @@ WS error: Received frame with non-zero reserved bits
 
 该复现不经 Windows、SSH 或 Electron UI，因此已排除隧道传输破坏。
 
-### 当前代码位置
+### 原始代码位置
 
 `apps/desktop/src/main/transport/real-backend.ts:290`：
 
@@ -62,7 +64,7 @@ new WebSocket(wsBase, { headers })
 
 Node `ws` 客户端默认启用 `permessage-deflate`。官方说明同时给出了显式关闭方式：<https://github.com/websockets/ws/blob/master/README.md#websocket-compression>
 
-## 3. 建议处理
+## 3. 处理方案（已完成）
 
 1. 前端最小修复：真实 `ws` 工厂默认显式传入 `perMessageDeflate:false`，不改 `wsFactory` 测试注入契约。
 2. 增加选项装配单测，并增加真实 `ws` + aiohttp 空闲后首帧回归；测试不得只用不协商压缩的 fake socket。
@@ -73,14 +75,22 @@ Node `ws` 客户端默认启用 `permessage-deflate`。官方说明同时给出�
    - B-01 #8 取消；
    - B-01 #10 全轮诊断。
 
-复验前不得将阶段 2 标为“已真实联调”。
+上述前端修复、回归用例和 Windows 真机复验已全部完成。服务端 `compress=False` 仅保留为可选纵深防护，不再阻断 B-01。
 
 ## 4. 修复实施状态
 
-Ubuntu 前端工作区已完成最小修复：
+前端提交 `6b27e2e1ebf4e6ba3e335352379892e7c2679da2` 已完成最小修复：
 
 - `RealBackend` 的默认真实 `ws` 连接显式设置 `perMessageDeflate:false`；测试注入的 `wsFactory` 契约未变。
 - 新增真实本地 `WebSocketServer` 握手回归，断言客户端不发送 `Sec-WebSocket-Extensions`。
-- 定向用例 `30/30`、全量单测 `527/527`、typecheck、lint、production build 均通过。
+- 定向用例 `30/30`、全量单测 `527/527`、Electron 集成 `23/23`、typecheck、lint、production build 全部通过。
+- 跨仓契约检查 `13/13`，字段级真实帧 `63` 条完整保留。
 
-Windows Electron 当前仍是修复前启动的主进程（`connectionId=conn_e7ac4895eabb`），Linux 工作区改动未触发 Windows 端 Main 重载。因此本节只记录“实施+静态/本地动态门禁通过”，B-01 状态仍不变；待 Windows 同步且重启后再补 75s 空闲真实复验。
+Windows Electron 同步该提交并重启后，新 Main 连接为 `conn_240807de609a`，复验结果：
+
+- 静默 `76s` 后从 UI 发文本：ACK、流式、completed 和 REST 落库全部成功；user=`msg_8ebf7bd7321c43f78d28a3752e`，generation=`gen_af19f970902c47cd8a013beff1`，assistant=`msg_44de6ad927754b9b973f7f353e`。
+- 再静默 `76s` 后 reload Renderer：Main `connectionId` 不变，活动会话自动恢复，REST `13` 条与 DOM `13` 行一致，ID 非空且唯一。
+- 取消复验：generation=`gen_d2c2d545666c43b7a214fbbabd`，assistant=`msg_b134619e8cbc4cb58b406bf17f`，终止码=`GENERATION_CANCELLED`，UI=`interrupted`，保留 `62` 字 inner-voice partial，无迟到 completed。
+- 修复后窗口仅建立 `1` 条 WS，`0` 次断连、`0` 条 warning/error、`0` 次 RSV 错误；Pinia `19/19` 唯一键，DOM `19` 行，`droppedEvents=0`。
+
+本轮无错误/连接横幅、无发送失败标记、无 Renderer console/page error。
