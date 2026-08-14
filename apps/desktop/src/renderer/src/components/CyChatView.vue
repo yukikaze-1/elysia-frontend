@@ -6,6 +6,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
+import { useLayoutStore } from '../stores/layout.store'
 import CyChatInput from './CyChatInput.vue'
 import CyConnectionPanel from './CyConnectionPanel.vue'
 import CyMessageBubble from './CyMessageBubble.vue'
@@ -13,6 +14,7 @@ import CyMessageBubble from './CyMessageBubble.vue'
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
+const layout = useLayoutStore()
 
 const messagesRef = ref<HTMLElement>()
 
@@ -83,6 +85,13 @@ watch([visibleIds, isStreaming], async () => {
       </div>
       <div class="cy-header-actions">
         <button class="cy-action-button" title="新建会话" :disabled="!canAct" @click="newConversation">新建</button>
+        <button
+          class="cy-action-button"
+          :aria-pressed="layout.effective.live2dShown"
+          title="显示/隐藏角色"
+          aria-label="显示/隐藏角色"
+          @click="layout.toggleLive2d()"
+        >角色</button>
         <CyConnectionPanel />
       </div>
     </header>
@@ -122,6 +131,13 @@ watch([visibleIds, isStreaming], async () => {
   min-height: 62px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--cy-border);
+  container-type: inline-size; /* G1：连接面板据此容器查询降级 */
+  min-width: 0;
+}
+
+.cy-chat-heading,
+.cy-chat-title-line {
+  min-width: 0;
 }
 
 .cy-chat-title-line {
@@ -134,6 +150,10 @@ watch([visibleIds, isStreaming], async () => {
   margin: 0;
   font-size: 15px;
   font-weight: 500;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cy-online-dot {
@@ -169,6 +189,7 @@ watch([visibleIds, isStreaming], async () => {
   display: flex;
   align-items: center;
   gap: 7px;
+  flex: 0 0 auto; /* 极端窄聊天下不收缩，给标题省略留空间 */
 }
 
 .cy-action-button {

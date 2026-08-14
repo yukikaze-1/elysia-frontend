@@ -75,12 +75,12 @@ async function toggleConnect(): Promise<void> {
     <div class="cy-mode-row">
       <span class="cy-mode-badge">{{ mode === 'mock' ? 'MOCK 演示模式' : 'REAL' }}</span>
     </div>
-    <div v-if="mode !== 'mock'" class="cy-row">
+    <div v-if="mode !== 'mock'" class="cy-row cy-row-form">
       <input v-model="endpointInput" class="cy-input" type="text" placeholder="https://… 或回环 http://127.0.0.1:8765" />
       <button class="cy-btn" :disabled="busy" @click="applyEndpoint">设置</button>
     </div>
     <div v-if="endpointErr" class="cy-err">{{ endpointErr }}</div>
-    <div v-if="mode !== 'mock'" class="cy-row">
+    <div v-if="mode !== 'mock'" class="cy-row cy-row-form">
       <span class="cy-token-label">{{ tokenLabel }}</span>
       <input v-model="tokenInput" class="cy-input" type="password" placeholder="Token" @keyup.enter="applyToken" />
       <button class="cy-btn" :disabled="busy" @click="applyToken">设置</button>
@@ -192,5 +192,23 @@ async function toggleConnect(): Promise<void> {
 .cy-conn-error {
   color: var(--cy-danger);
   font-size: 11px;
+}
+
+/* G1（spec §4.7）：作用于最近容器 .cy-chat-header（container-type: inline-size）。
+   仅「极端窄聊天」才压缩连接面板：默认四区态聊天内容盒 = 540−28 边距 = 512px（窗口 1200），
+   会话栏折叠后 672px（窗口 1100），均 ≥ 420 —— 输入行始终可见；
+   chat 内容盒 < 420px（约 chat<448px，仅极窄视口 520/375 或嵌入场景可达）才隐藏 Endpoint/Token 行。 */
+@container (max-width: 419px) {
+  .cy-connection-panel {
+    min-width: auto;
+  }
+  .cy-row-form {
+    display: none;
+  }
+}
+@container (max-width: 319px) {
+  .cy-mode-badge {
+    display: none;
+  }
 }
 </style>
