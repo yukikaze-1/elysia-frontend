@@ -25,7 +25,8 @@ describe('持久化生命周期（spec §5）', () => {
     try {
       const { page } = launched
       await page.evaluate(() => window.desktopApi.persistSession({ conversationId: 'conv-1001', draft: { text: '草稿', updatedAt: 't1' }, scrollAnchor: { messageId: 'm1', offset: 5 } }))
-      await page.evaluate(() => window.desktopApi.cacheMessages({ conversationId: 'conv-1001', messages: [msg('m1', 't1')], updatedAt: 't1' }))
+      // msg() 定义在测试进程（Node），page.evaluate 回调被序列化到渲染进程、无法闭包外部作用域——把消息对象作为 evaluate 参数传入
+      await page.evaluate((m) => window.desktopApi.cacheMessages({ conversationId: 'conv-1001', messages: [m], updatedAt: 't1' }), msg('m1', 't1'))
       const drafts = (await readJsonFile(launched, 'app-cache/drafts-v1.json')) as { schemaVersion: number; entries: Record<string, unknown> }
       expect(drafts.schemaVersion).toBe(1)
       expect(Object.keys(drafts.entries)).toContain('conv-1001')

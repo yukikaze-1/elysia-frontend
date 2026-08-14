@@ -22,11 +22,12 @@ describe('IPC 安全', () => {
         hasProcess: typeof w.process
       }
     })
-    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键(排序断言:F4 onChatError 落于 listConversations 与 onChatEvent 之间)
+    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键;阶段3 G2 加持久化面 4 键(cacheMessages/hydratePersistence/openExternal/persistSession) → 26 键
     expect(surface.keys).toEqual([
-      'activate', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation',
+      'activate', 'cacheMessages', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation',
       'disconnect', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getMessages',
-      'getRuntimeInfo', 'listConversations', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'renameConversation',
+      'getRuntimeInfo', 'hydratePersistence', 'listConversations', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState',
+      'openExternal', 'persistSession', 'renameConversation',
       'send', 'setBackendToken', 'setEndpoint'
     ])
     expect(surface.hasIpc).toBe(false)
