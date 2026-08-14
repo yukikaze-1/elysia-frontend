@@ -7,6 +7,8 @@ import { useConnectionStore } from './stores/connection.store'
 import { useMessageStore } from './stores/message.store'
 import { useConversationStore } from './stores/conversation.store'
 import { useLayoutStore } from './stores/layout.store'
+import { useDraftStore } from './stores/draft.store'
+import { useCacheStore } from './stores/cache.store'
 import { createRendererBootstrap } from './bootstrap'
 
 const app = createApp(App)
@@ -23,7 +25,9 @@ if (window.desktopApi) {
   createRendererBootstrap(window.desktopApi, {
     connection: useConnectionStore(),
     message: useMessageStore(),
-    conversation: useConversationStore()
+    conversation: useConversationStore(),
+    draft: useDraftStore(),
+    cache: useCacheStore()
   }).register()
 }
 
