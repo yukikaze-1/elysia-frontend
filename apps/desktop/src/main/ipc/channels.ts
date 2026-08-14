@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { isKeyAllowed, type CredentialStatus } from '@shared/contracts'
-import { EndpointResponseSchema, RuntimeInfoSchema } from '@shared/schemas'
+import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
   name: z.string(),
@@ -60,3 +60,12 @@ export const chatDeleteSchema = z.object({
   conversationId: z.string().min(1)
 })
 export const chatGetStateSchema = z.undefined()
+
+// —— 阶段 3 G2 持久化四通道 request schema（响应 schema 别名引用共享定义，与既有 chat* 模式一致）——
+export const chatHydratePersistenceSchema = z.undefined()
+export const chatPersistSessionSchema = PersistSessionInputSchema
+export const chatCacheMessagesSchema = CacheMessagesInputSchema
+export const chatOpenExternalSchema = OpenExternalInputSchema
+// 响应 schema：共享定义在 shared/schemas/ipc-response，别名保持引用兼容
+export const sessionPersistenceStateResponseSchema = SessionPersistenceStateSchema
+export const persistSessionResultResponseSchema = PersistSessionResultSchema

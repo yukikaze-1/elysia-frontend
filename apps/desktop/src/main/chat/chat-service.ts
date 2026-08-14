@@ -8,6 +8,7 @@ import { PushChannels } from '@shared/contracts/ipc'
 import type { ConnectionConfig } from '../connection/connection-config'
 import { safeAudit } from '../diagnostics/safe-audit'
 import type { AuditEvent } from '../diagnostics/audit'
+import type { SessionStore } from '../persistence/session-store'
 
 export interface ChatServiceDeps {
   adapter: BackendAdapter
@@ -16,6 +17,7 @@ export interface ChatServiceDeps {
   requireToken?: boolean
   connectionConfig: ConnectionConfig   // endpoint 规范化 + token-origin 绑定（connect 校验/设置都经它）
   packaged?: boolean                   // 装配信息（getRuntimeInfo 展示用）
+  sessionStore?: SessionStore          // G2：列表缓存派生 / lastActive / 删除联动 purge（fail-open）
   audit?: (event: Omit<AuditEvent, 'ts'>) => void   // 连接生命周期审计（C2;fail-open,safeAudit 调用）
 }
 
@@ -79,14 +81,25 @@ export function createChatService(deps: ChatServiceDeps) {
       // C2:disconnect 内无 requireToken 收窄,表达式可保留（与 connect 分支内写死不同）
       safeAudit(deps.audit, { type: 'connection:disconnect', summary: `mode=${deps.requireToken !== false ? 'real' : 'mock'}` })
     },
-    listConversations: (input: PageQuery) => adapter.listConversations(input),
+    listConversations: async (input: PageQuery) => {
+      const p = await adapter.listConversations(input)
+      deps.sessionStore?.syncConversationList(p.items).catch(() => {}) // 持久化失败不影响操作结果（C1 fail-open）
+      return p
+    },
     getMessages: (input: ConversationMessagesQuery) => adapter.getConversationMessages(input),
     send: (input: SendMessageInput) => adapter.sendMessage(input),
     cancel: (input: { generationId: string }) => adapter.cancelGeneration(input),
-    activate: (id: string) => adapter.activateConversation(id),
+    activate: async (id) => {
+      const r = await adapter.activateConversation(id)
+      deps.sessionStore?.setActiveConversation(id).catch(() => {}) // 记录 lastActiveConversationId
+      return r
+    },
     createConversation: (input: CreateConversationInput) => adapter.createConversation(input),
     renameConversation: (input: { conversationId: string; title: string }) => adapter.renameConversation(input.conversationId, input.title),
-    deleteConversation: (id: string) => adapter.deleteConversation(id),
+    deleteConversation: async (id) => {
+      await adapter.deleteConversation(id)
+      deps.sessionStore?.purgeConversation(id).catch(() => {}) // 联动删草稿+锚点+快照
+    },
     getConnectionState: () => adapter.getConnectionState(),
     /** 连接状态变化主动推送(adapter.onConnectionStateChange 由装配方桥到此处) */
     pushState,

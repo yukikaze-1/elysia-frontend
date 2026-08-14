@@ -20,6 +20,7 @@ import { createDiagnostics, type Diagnostics } from './diagnostics'
 import type { AuditEvent } from './diagnostics/audit'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
+import { SessionStore } from './persistence/session-store'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
 import { MockBackend } from './transport/mock-backend'
@@ -166,6 +167,16 @@ async function main(): Promise<void> {
       },
       (e) => { audit({ type: 'endpoint:set', summary: e.origin }) }
     )
+    // 阶段 3 G2 SessionStore（Main 持久化边界，docs/06 §14）：必须在 createChatService 之前装配（chat-service 钩子需要它）。
+    // getActiveConversationId 闭包引用 chatBridge.svc（此时未赋值，但只在 connect 后的 persistSession 才调用，懒绑定安全）。
+    const sessionStore = new SessionStore({
+      appCache: dirs.appCache,
+      safeRoot,
+      logger: diagnostics.logger,
+      countDiagnostic: (code: string) => diagnostics?.logger.warn('persistence:diagnostic', { code }),
+      getActiveConversationId: () => chatBridge.svc?.getConnectionState().activeConversationId
+    })
+    await sessionStore.load() // 损坏隔离，不阻塞启动
     const chatSvc = createChatService({
       adapter,
       send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },   // P3:webContents 守卫(窗口未建不崩)
@@ -173,10 +184,11 @@ async function main(): Promise<void> {
       requireToken: !useMock,
       connectionConfig: connConfig,
       packaged: app.isPackaged,
+      sessionStore,   // G2：listConversations 派生列表缓存 / activate 记 lastActive / deleteConversation purge
       audit   // C2:连接生命周期审计（connect/disconnect;fail-open）
     })
     chatBridge.svc = chatSvc
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
