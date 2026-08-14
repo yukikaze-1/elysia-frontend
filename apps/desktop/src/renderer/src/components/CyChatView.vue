@@ -1,26 +1,18 @@
 <script setup lang="ts">
-// CyChatView:聊天主区——messageStore.byId/order 渲染 + 空态 + 流式占位「生成中…」;
+// CyChatView:聊天主区——头部 + CyMessageList(自研虚拟列表,窗口化渲染)+ CyChatInput。
 // conversationStore 激活/新建(F1:create 不 reset messageStore,新建后须显式 activate(c.id));
 // 连接装配(Endpoint/Token/连接按钮)在 CyConnectionPanel(Mock 演示 / Real 联调)。
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
-import { useMessageStore } from '../stores/message.store'
 import { useLayoutStore } from '../stores/layout.store'
+import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
 import CyConnectionPanel from './CyConnectionPanel.vue'
-import CyMessageBubble from './CyMessageBubble.vue'
 
-const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
 const layout = useLayoutStore()
-
-const messagesRef = ref<HTMLElement>()
-
-const visibleIds = computed(() => messageStore.order.filter((id) => !!messageStore.byId[id]))
-const isEmpty = computed(() => visibleIds.value.length === 0)
-const isStreaming = computed(() => !!messageStore.activeGenerationId)
 
 const convTitle = computed(() => {
   const c = conversationStore.items.find((i) => i.id === conversationStore.currentId)
@@ -65,12 +57,6 @@ async function newConversation(): Promise<void> {
   const id = conversationStore.currentId
   if (id) await conversationStore.activate(id)
 }
-
-/** 流式期间跟随滚动到底;切会话(visibleIds 长度变化)也回底 */
-watch([visibleIds, isStreaming], async () => {
-  await nextTick()
-  if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-})
 </script>
 
 <template>
@@ -96,21 +82,7 @@ watch([visibleIds, isStreaming], async () => {
       </div>
     </header>
 
-    <div ref="messagesRef" class="cy-messages" aria-live="polite">
-      <div v-if="isEmpty" class="cy-empty">
-        <p>新会话,开始对话</p>
-      </div>
-      <template v-else>
-        <CyMessageBubble v-for="id in visibleIds" :key="id" :message="messageStore.byId[id]" />
-      </template>
-
-      <!-- 流式占位:activeGenerationId 存在时显示 -->
-      <div v-if="isStreaming" class="cy-streaming-placeholder">
-        <span class="cy-typing-dot" />
-        <span>生成中…</span>
-      </div>
-    </div>
-
+    <CyMessageList />
     <CyChatInput />
   </section>
 </template>
@@ -209,59 +181,5 @@ watch([visibleIds, isStreaming], async () => {
 .cy-action-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.cy-messages {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 9px;
-  min-height: 0;
-  padding: 12px 16px;
-  overflow-y: auto;
-  background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%);
-}
-
-.cy-empty {
-  display: grid;
-  flex: 1;
-  place-items: center;
-  color: var(--cy-muted);
-  font-size: 13px;
-}
-
-.cy-empty p {
-  margin: 0;
-}
-
-.cy-streaming-placeholder {
-  display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 8px;
-  padding: 9px 13px;
-  color: var(--cy-muted);
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 13px;
-  font-size: 12px;
-}
-
-.cy-typing-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--cy-accent-strong);
-  animation: cy-pulse 1s ease-in-out infinite;
-}
-
-@keyframes cy-pulse {
-  0%,
-  100% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
-  }
 }
 </style>
