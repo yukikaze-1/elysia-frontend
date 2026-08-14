@@ -41,7 +41,7 @@ export interface RawSessionMessageItem {
   success?: boolean
   error?: string
   error_type?: string
-  duration_ms?: number
+  duration_ms?: number | null // P0-02：WS replay wire 类型同步（raw-schemas duration_ms 已 nullable，诚实反映 wire）
   truncated?: boolean
   token_usage?: RawTokenUsage
 }
