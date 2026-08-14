@@ -7,7 +7,7 @@ import { MAX_IPC_MESSAGE_BYTES } from '@shared/contracts'
 import type { Message, SessionPersistenceState } from '@shared/contracts'
 
 const mockApi = {
-  cacheMessages: vi.fn(), persistSession: vi.fn(), hydratePersistence: vi.fn(), openExternal: vi.fn(),
+  cacheMessages: vi.fn(), persistSession: vi.fn(), hydratePersistence: vi.fn(), openExternal: vi.fn(), attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
   getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
   setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
   connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),

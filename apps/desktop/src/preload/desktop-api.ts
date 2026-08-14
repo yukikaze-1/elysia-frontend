@@ -1,9 +1,11 @@
 // apps/desktop/src/preload/desktop-api.ts
-import { ipcRenderer } from 'electron'
+import { ipcRenderer, webUtils } from 'electron'
 import { BACKEND_TOKEN_KEY, IpcChannels, PushChannels, type CredentialStatus, type IpcChannelName, type IpcResult } from '@shared/contracts'
 import type { AppInfo } from '@shared/contracts'
 import type {
   ActivateConversationResult,
+  AttachmentCheckResult,
+  AttachmentsUploadResponse,
   BackendEvent,
   BackendSession,
   CacheMessagesInput,
@@ -13,6 +15,7 @@ import type {
   Conversation,
   ConversationMessagesQuery,
   CreateConversationInput,
+  FileValidationResult,
   Message,
   MessagePage,
   Page,
@@ -27,11 +30,14 @@ import { parseBackendEvent } from '@shared/schemas'
 import { z } from 'zod'
 import {
   ActivateConversationResultSchema,
+  AttachmentCheckResultSchema,
+  AttachmentsUploadResponseSchema,
   BackendSessionSchema,
   ClientRequestRefSchema,
   ConnectionStateSchema,
   ConversationSchema,
   EndpointResponseSchema,
+  FileValidationResultSchema,
   MessagePageSchema,
   MessageSchema,
   PageSchema,
@@ -210,6 +216,36 @@ async function openExternal(url: string): Promise<void> {
   unwrap(await invokeWithArgs<void>(IpcChannels.appOpenExternal, { url }), z.undefined())
 }
 
+// —— 阶段 3 G3 attachments 面（spec §4.2，D5：path 仅 Preload 注入，不入返回面）——
+export interface AttachmentInputFile { localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }
+
+function toIpcDescriptor(f: AttachmentInputFile): Omit<import('@shared/contracts').UploadFileDescriptor, 'path' | 'bytes'> & { path?: string; bytes?: Uint8Array } {
+  const out: Record<string, unknown> = { localId: f.localId, name: f.name, size: f.size, mediaType: f.mediaType, source: f.source }
+  if (f.kind) out.kind = f.kind
+  // P1-2：两个独立 if（不互斥）——file 注入 path（getPathForFile 空串视为 pathless），bytes 独立保留。
+  // 旧 else-if：粘贴项 f.file 为 JS 构造 File（getPathForFile 返 ''），bytes 分支永不达 → descriptor 无 path 无 bytes
+  // → Task 3 schema refine（path/bytes 二选一）判 SCHEMA_VALIDATION_FAILED，粘贴路径端到端断。
+  if (f.file) {
+    const p = webUtils.getPathForFile(f.file)
+    if (p) out.path = p          // 空串视为 pathless（JS 构造 File 无真实路径，安全属性）
+  }
+  if (f.bytes) out.bytes = new Uint8Array(f.bytes)
+  return out as ReturnType<typeof toIpcDescriptor>
+}
+
+async function attachmentsValidate(input: { files: AttachmentInputFile[] }): Promise<FileValidationResult[]> {
+  return unwrap(await invokeWithArgs<FileValidationResult[]>(IpcChannels.attachmentsValidate, { files: input.files.map(toIpcDescriptor) }), z.array(FileValidationResultSchema))
+}
+async function attachmentsUpload(input: { uploadId: string; files: AttachmentInputFile[] }): Promise<AttachmentsUploadResponse> {
+  return unwrap(await invokeWithArgs<AttachmentsUploadResponse>(IpcChannels.attachmentsUpload, { uploadId: input.uploadId, files: input.files.map(toIpcDescriptor) }), AttachmentsUploadResponseSchema)
+}
+async function attachmentsCancel(uploadId: string): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.attachmentsCancel, { uploadId }), z.undefined())
+}
+async function attachmentsCheck(attachmentId: string): Promise<AttachmentCheckResult> {
+  return unwrap(await invokeWithArgs<AttachmentCheckResult>(IpcChannels.attachmentsCheck, { attachmentId }), AttachmentCheckResultSchema)
+}
+
 type ChatEventHandler = (event: BackendEvent) => void
 type ChatStateHandler = (state: ConnectionState) => void
 type ChatReplayHandler = (payload: ReplayPayload) => void
@@ -302,7 +338,12 @@ export const desktopApi = {
   hydratePersistence,
   persistSession,
   cacheMessages,
-  openExternal
+  openExternal,
+  // —— 阶段 3 G3 attachments 面 ——
+  attachmentsValidate,
+  attachmentsUpload,
+  attachmentsCancel,
+  attachmentsCheck
 }
 
 export type DesktopApi = typeof desktopApi

@@ -1,6 +1,8 @@
 import type {
   ActivateConversationResult,
   AppInfo,
+  AttachmentCheckResult,
+  AttachmentsUploadResponse,
   BackendEvent,
   BackendSession,
   CacheMessagesInput,
@@ -11,6 +13,7 @@ import type {
   ConversationMessagesQuery,
   CreateConversationInput,
   CredentialStatus,
+  FileValidationResult,
   Message,
   MessagePage,
   Page,
@@ -54,6 +57,11 @@ declare global {
       persistSession(input: PersistSessionInput): Promise<PersistSessionResult>
       cacheMessages(input: CacheMessagesInput): Promise<void>
       openExternal(url: string): Promise<void>
+      // —— 阶段 3 G3 attachments 面 ——
+      attachmentsValidate(input: { files: Array<import('./desktop-api').AttachmentInputFile> }): Promise<FileValidationResult[]>
+      attachmentsUpload(input: { uploadId: string; files: Array<import('./desktop-api').AttachmentInputFile> }): Promise<AttachmentsUploadResponse>
+      attachmentsCancel(uploadId: string): Promise<void>
+      attachmentsCheck(attachmentId: string): Promise<AttachmentCheckResult>
     }
   }
 }

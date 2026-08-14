@@ -4,6 +4,8 @@
 import type { PublicError } from '../utils/public-error'
 import type {
   ActivateConversationResult,
+  AttachmentCheckResult,
+  AttachmentsUploadResponse,
   BackendEvent,
   BackendSession,
   CacheMessagesInput,
@@ -14,6 +16,7 @@ import type {
   ConversationMessagesQuery,
   CreateConversationInput,
   CredentialStatus,
+  FileValidationResult,
   Message,
   MessagePage,
   Page,
@@ -24,6 +27,9 @@ import type {
   SendMessageInput,
   SessionPersistenceState
 } from '@shared/contracts'
+
+/** Renderer 面附件输入文件（含 file?: File / bytes?: ArrayBuffer；真实路径由 Preload webUtils 注入，不在此面） */
+export interface DesktopAttachmentInputFile { localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }
 
 export interface DesktopApiLike {
   // —— 凭据/连接装配 ——
@@ -53,4 +59,9 @@ export interface DesktopApiLike {
   persistSession(input: PersistSessionInput): Promise<PersistSessionResult>
   cacheMessages(input: CacheMessagesInput): Promise<void>
   openExternal(url: string): Promise<void>
+  // —— 阶段 3 G3 attachments 面 ——
+  attachmentsValidate(input: { files: DesktopAttachmentInputFile[] }): Promise<FileValidationResult[]>
+  attachmentsUpload(input: { uploadId: string; files: DesktopAttachmentInputFile[] }): Promise<AttachmentsUploadResponse>
+  attachmentsCancel(uploadId: string): Promise<void>
+  attachmentsCheck(attachmentId: string): Promise<AttachmentCheckResult>
 }
