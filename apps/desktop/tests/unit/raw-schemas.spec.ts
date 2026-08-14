@@ -226,3 +226,20 @@ describe('raw schemas fingerprint(2C)', () => {
     expect(a).not.toBe(b)
   })
 })
+
+describe('媒体 ContentPart 过 raw schema + 指纹不变（D7，schemaHash 门禁）', () => {
+  it('session 回放项 content 为媒体 ContentPart 数组可解析（schema 保持 content:unknown，无整条拒绝）', () => {
+    const frame = {
+      type: 'session', conversationId: 'conv-1',
+      messages: [{ role: 'assistant', message_id: 'msg-1', timestamp: 't',
+        content: [{ type: 'image', src: '/api/attachments/att_1', mime: 'image/png', attachment_id: 'att_1' }] }]
+    }
+    const r = parseRawFrame(frame)
+    expect(r.success).toBe(true)
+  })
+  it('rawSchemasFingerprint 不含 content 嵌套结构（指纹不下探嵌套元素）→ 本批不改 schema 故指纹不变', () => {
+    const fp = rawSchemasFingerprint()
+    // content 字段 zod 类型仍为 z.unknown().optional()，其 _def.type 不变；断言指纹为 64 位 hex 即可（相对不变性由 wire-fixtures 门禁兜）
+    expect(fp).toMatch(/^[0-9a-f]{64}$/)
+  })
+})

@@ -4,6 +4,7 @@ import type { MessagePage } from '@shared/contracts/backend'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import type { RawSessionMessageItem } from './raw-types'
 import type { RestMessage, RestMessagesPageResponse, RestSessionSummary } from './rest-types'
+import { mapContentMedia, mapContentToEntries } from './content-part'
 
 export interface RestMapperOptions { onProtocolWarning?: (warning: ProtocolWarning) => void }
 
@@ -57,10 +58,35 @@ export class RestMapper {
     } else if (role === 'assistant') {
       const segments: NonNullable<Message['assistantSegments']> = []
       if (src.inner_voice) segments.push({ segmentId: `iv-${base.messageId}`, segmentIndex: 0, channel: 'inner_voice', kind: 'text', text: src.inner_voice, completed: true })
-      const mainText = extractText(src.content, src.parts)
-      if (mainText) segments.push({ segmentId: `pr-${base.messageId}`, segmentIndex: segments.length, channel: 'public_reply', kind: 'markdown', text: mainText, completed: true })
+      let segIndex = segments.length
+      // P2-3：保留 parts 文本兜底——assistant content 为纯媒体数组（无文本条目）时，正文经 extractText(src.content, src.parts) 兜底补一个文本条目
+      const entries = mapContentToEntries(src.content)
+      const mainText = entries.some((e) => e.type === 'text') ? undefined : extractText(src.content, src.parts)
+      const ordered = mainText ? [{ type: 'text' as const, text: mainText }, ...entries] : entries
+      for (const entry of ordered) {
+        if (entry.type === 'text') {
+          segments.push({ segmentId: `pr-${base.messageId}-${segIndex}`, segmentIndex: segIndex, channel: 'public_reply', kind: 'markdown', text: entry.text, completed: true })
+          segIndex += 1
+        } else {
+          segments.push({
+            segmentId: `media-${base.messageId}-${segIndex}`, segmentIndex: segIndex, channel: 'public_reply',
+            kind: entry.media.kind, completed: true,
+            ...(entry.media.attachmentId ? { attachmentId: entry.media.attachmentId } : {}),
+            ...(entry.media.url ? { url: entry.media.url } : {}),
+            ...(entry.media.mediaType ? { mediaType: entry.media.mediaType } : {}),
+            ...(entry.media.name ? { name: entry.media.name } : {}),
+            ...(entry.media.size !== undefined ? { size: entry.media.size } : {}),
+            ...(entry.media.width !== undefined ? { width: entry.media.width } : {}),
+            ...(entry.media.height !== undefined ? { height: entry.media.height } : {}),
+            ...(entry.media.durationMs !== undefined ? { durationMs: entry.media.durationMs } : {})
+          })
+          segIndex += 1
+        }
+      }
       if (segments.length) base.assistantSegments = segments
     }
+    const media = mapContentMedia(src.content)
+    if (media.length) base.attachments = media
     if (role === 'tool' || src.tool_call_id || src.name || src.tool_name || src.success !== undefined) {
       const tool: MessageToolInfo = {}
       if (src.tool_call_id) tool.callId = src.tool_call_id

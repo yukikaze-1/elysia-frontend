@@ -102,3 +102,42 @@ describe('RestMapper', () => {
     expect(out.some((m) => m.messageId === 'conv-1:replay')).toBe(false)
   })
 })
+
+describe('RestMapper 媒体 ContentPart（D7 主路径：映射层不丢媒体）', () => {
+  it('assistant 消息 content 含媒体 → 分段 + 消息级附件（name/size/尺寸从 ContentPart 映射）', () => {
+    const raw: RestMessage = {
+      role: 'assistant', content: [
+        { type: 'text', text: '见图：' },
+        { type: 'image', src: '/api/attachments/att_1', mime: 'image/png', attachment_id: 'att_1', filename: 'a.png', size_bytes: 1024, width: 100, height: 80 }
+      ],
+      message_id: 'msg-img', timestamp: '2026-08-11T00:00:04.000Z', session_id: 'conv-1', _id: 'i1'
+    }
+    const m = mapper.toDomainMessage(raw)
+    const segs = m.assistantSegments ?? []
+    expect(segs.map((s) => s.kind)).toEqual(['markdown', 'image'])
+    expect(segs[1]).toMatchObject({ kind: 'image', attachmentId: 'att_1', mediaType: 'image/png', name: 'a.png', size: 1024, width: 100, height: 80 })
+    expect(m.attachments).toEqual([{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png', name: 'a.png', size: 1024, width: 100, height: 80 }])
+  })
+  it('user 消息 content 含媒体 → Message.attachments（正文空则 content 缺省）', () => {
+    const raw: RestMessage = {
+      role: 'user', content: [{ type: 'file', src: '/api/attachments/att_2', mime: 'application/pdf', attachment_id: 'att_2', filename: 'doc.pdf', size_bytes: 2048 }],
+      message_id: 'msg-f', timestamp: '2026-08-11T00:00:05.000Z', session_id: 'conv-1', _id: 'i2'
+    }
+    const m = mapper.toDomainMessage(raw)
+    expect(m.content).toBeUndefined()
+    expect(m.attachments).toEqual([{ attachmentId: 'att_2', kind: 'file', mediaType: 'application/pdf', name: 'doc.pdf', size: 2048 }])
+  })
+  it('assistant 纯媒体 content 且 parts 有文本 → 文本分段兜底（P2-3 parts 兜底）', () => {
+    const raw: RestMessage = {
+      role: 'assistant',
+      content: [{ type: 'image', src: '/api/attachments/att_9', mime: 'image/png', attachment_id: 'att_9' }],
+      parts: [{ content: '见附件' }],
+      message_id: 'msg-parts', timestamp: '2026-08-11T00:00:06.000Z', session_id: 'conv-1', _id: 'i9'
+    }
+    const m = mapper.toDomainMessage(raw)
+    const segs = m.assistantSegments ?? []
+    expect(segs.map((s) => s.kind)).toEqual(['markdown', 'image'])
+    expect(segs[0].text).toBe('见附件')
+    expect(segs[1]).toMatchObject({ kind: 'image', attachmentId: 'att_9' })
+  })
+})
