@@ -45,6 +45,12 @@ describe('RestMapper', () => {
     expect(m.tool).toEqual({ callId: 'tc-1', name: 'desktop.file.read', success: true, durationMs: 12 })
   })
 
+  it('tool 消息 duration_ms:null → 领域无 durationMs（P0-02 wire 放行 null 后归一化）', () => {
+    const raw: RestMessage = { role: 'tool', content: '已执行', message_id: 'msg-t', timestamp: '2026-08-11T00:00:01.000Z', session_id: 'conv-1', duration_ms: null, tool_name: 'desktop.file.read' }
+    const m = mapper.toDomainMessage(raw)
+    expect(m.tool).toEqual({ name: 'desktop.file.read' })
+  })
+
   it('toDomainMessageFromReplay:回放项 name/mood 处理', () => {
     const replay: RawSessionMessageItem = {
       role: 'tool', message_id: 'msg-4', timestamp: '2026-08-11T00:00:03.000Z',

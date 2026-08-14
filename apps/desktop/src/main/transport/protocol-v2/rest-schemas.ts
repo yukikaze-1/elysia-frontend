@@ -33,7 +33,7 @@ export const RestMessageSchema = z.object({
   success: z.boolean().optional(),
   error: z.string().optional(),
   error_type: z.string().optional(),
-  duration_ms: z.number().optional(),
+  duration_ms: z.number().nullable().optional(),   // P0-02：wire 边界接受 null，映射层归一化（不扩散到领域/IPC）
   truncated: z.boolean().optional()
 }).strict()
 

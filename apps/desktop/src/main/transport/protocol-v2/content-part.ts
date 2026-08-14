@@ -17,16 +17,21 @@ export interface MappedMedia {
   durationMs?: number
 }
 
+/** P0-02：wire 可空数字 → 领域数字。仅 typeof number 且有限且 >=0 保留；null/负/NaN/Infinity → undefined（缺省，不污染 IPC） */
+export function toOptionalNonNegativeNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined
+}
+
 interface ContentPartShape {
   type?: string
   src?: string
   mime?: string
   attachment_id?: string
   filename?: string
-  size_bytes?: number
-  width?: number
-  height?: number
-  duration_ms?: number
+  size_bytes?: unknown   // P0-02：JSON 可为 null，映射层归一化
+  width?: unknown
+  height?: unknown
+  duration_ms?: unknown
 }
 
 /** src 稳定路径尾段解析 att_ ID；格式不匹配返回 undefined（spec §6：attachment_id 优先，src 兜底解析并校验格式） */
@@ -41,16 +46,20 @@ export function parseAttachmentIdFromSrc(src?: string): string | undefined {
 
 function toMedia(part: ContentPartShape, kind: 'image' | 'video' | 'audio' | 'file'): MappedMedia {
   const attachmentId = part.attachment_id ?? parseAttachmentIdFromSrc(part.src)
+  const size = toOptionalNonNegativeNumber(part.size_bytes)
+  const width = toOptionalNonNegativeNumber(part.width)
+  const height = toOptionalNonNegativeNumber(part.height)
+  const durationMs = toOptionalNonNegativeNumber(part.duration_ms)
   return {
     kind,
     ...(attachmentId ? { attachmentId } : {}),
     ...(part.src ? { url: part.src } : {}),
     ...(part.mime ? { mediaType: part.mime } : {}),
     ...(part.filename ? { name: part.filename } : {}),
-    ...(part.size_bytes !== undefined ? { size: part.size_bytes } : {}),
-    ...(part.width !== undefined ? { width: part.width } : {}),
-    ...(part.height !== undefined ? { height: part.height } : {}),
-    ...(part.duration_ms !== undefined ? { durationMs: part.duration_ms } : {})
+    ...(size !== undefined ? { size } : {}),
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {})
   }
 }
 

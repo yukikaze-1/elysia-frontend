@@ -51,4 +51,19 @@ describe('REST wire schema', () => {
   it('未知 role 拒绝(仅 user/assistant/tool)', () => {
     expect(parseRestMessage({ ...validMessage, role: 'system' }).success).toBe(false)
   })
+
+  it('Message 顶层 duration_ms:null 通过（P0-02 wire 边界放行，映射层归一化）', () => {
+    const withNull = { ...validMessage, duration_ms: null }
+    expect(parseRestMessage(withNull).success).toBe(true)
+  })
+  it('parseRestMessagesPage 一页含 null duration_ms → success（单字段 null 不拒整页）', () => {
+    const page = {
+      messages: [
+        { role: 'tool', message_id: 'm1', timestamp: '2026-08-11T00:00:00.000Z', duration_ms: null },
+        { role: 'user', message_id: 'm2', timestamp: '2026-08-11T00:00:01.000Z', content: 'hi' }
+      ],
+      has_more: false, total: 2
+    }
+    expect(parseRestMessagesPage(page).success).toBe(true)
+  })
 })

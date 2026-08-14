@@ -99,6 +99,15 @@ describe('raw wire schema', () => {
     expect(parseRawFrame({ type: 'session', messages: [{ role: 'tool', timestamp: 't' }] }).success).toBe(false) // 缺 message_id
     expect(parseRawFrame({ type: 'session', messages: [{ role: 'tool', message_id: 'm1' }] }).success).toBe(false) // 缺 timestamp
   })
+
+  it('session 帧 tool duration_ms:null 通过（P0-02 replay wire 边界放行，映射层归一化）', () => {
+    const session = {
+      type: 'session', conversationId: 'conv-1',
+      messages: [{ role: 'tool', message_id: 'm1', timestamp: '2026-08-11T00:00:00.000Z', duration_ms: null }],
+      token_stats: { total: 0, byModel: {} }
+    }
+    expect(parseRawFrame(session).success).toBe(true)
+  })
 })
 
 describe('raw schema ack/error 扩展(2B)', () => {

@@ -1,7 +1,7 @@
 // tests/unit/content-part.spec.ts
 // Task 4:媒体 ContentPart 建模（spec §4.2/§4.4，D7）——content(unknown) 数组 → 有序文本/媒体条目 + 消息级附件。
 import { describe, expect, it } from 'vitest'
-import { mapContentMedia, mapContentToEntries, parseAttachmentIdFromSrc } from '../../src/main/transport/protocol-v2/content-part'
+import { mapContentMedia, mapContentToEntries, parseAttachmentIdFromSrc, toOptionalNonNegativeNumber } from '../../src/main/transport/protocol-v2/content-part'
 
 describe('parseAttachmentIdFromSrc', () => {
   it('稳定路径尾段解析 att_ ID（校验格式）', () => {
@@ -59,5 +59,36 @@ describe('mapContentMedia（消息级附件）', () => {
   it('纯文本/空 → []', () => {
     expect(mapContentMedia('文本')).toEqual([])
     expect(mapContentMedia(undefined)).toEqual([])
+  })
+})
+
+describe('toOptionalNonNegativeNumber（P0-02：可空数字归一化，spec §4.2）', () => {
+  it('合法数字与 0 保留；undefined 缺省', () => {
+    expect(toOptionalNonNegativeNumber(100)).toBe(100)
+    expect(toOptionalNonNegativeNumber(0)).toBe(0)
+    expect(toOptionalNonNegativeNumber(undefined)).toBeUndefined()
+  })
+  it('null/负/NaN/Infinity/字符串 → undefined', () => {
+    expect(toOptionalNonNegativeNumber(null)).toBeUndefined()
+    expect(toOptionalNonNegativeNumber(-1)).toBeUndefined()
+    expect(toOptionalNonNegativeNumber(NaN)).toBeUndefined()
+    expect(toOptionalNonNegativeNumber(Infinity)).toBeUndefined()
+    expect(toOptionalNonNegativeNumber('100')).toBeUndefined()
+  })
+})
+
+describe('mapContentMedia / mapContentToEntries 可空数字（P0-02）', () => {
+  it('image width:null,height:null → 领域不含两字段且媒体保留', () => {
+    const atts = mapContentMedia([{ type: 'image', src: '/api/attachments/att_1', mime: 'image/png', attachment_id: 'att_1', filename: 'a.png', width: null, height: null }])
+    expect(atts).toEqual([{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png', name: 'a.png' }])
+  })
+  it('audio duration_ms:null、file size_bytes:null → 条目不含该字段', () => {
+    const entries = mapContentToEntries([
+      { type: 'audio', src: '/api/attachments/att_2', mime: 'audio/mpeg', attachment_id: 'att_2', duration_ms: null },
+      { type: 'file', src: '/api/attachments/att_3', mime: 'application/pdf', attachment_id: 'att_3', size_bytes: null }
+    ])
+    expect(entries[0]).toMatchObject({ type: 'media', media: { kind: 'audio', attachmentId: 'att_2' } })
+    expect(entries[1]).toMatchObject({ type: 'media', media: { kind: 'file', attachmentId: 'att_3' } })
+    expect((entries[0] as { media: { durationMs?: number } }).media.durationMs).toBeUndefined()
   })
 })

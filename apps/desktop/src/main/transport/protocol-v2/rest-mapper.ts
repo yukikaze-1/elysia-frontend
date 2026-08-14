@@ -4,7 +4,7 @@ import type { ChatHistoryItem, ChatHistoryPage, MessagePage, StickerManifest } f
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import type { RawSessionMessageItem } from './raw-types'
 import type { RestMessage, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestMessageContextResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
-import { mapContentMedia, mapContentToEntries } from './content-part'
+import { mapContentMedia, mapContentToEntries, toOptionalNonNegativeNumber } from './content-part'
 
 export interface RestMapperOptions { onProtocolWarning?: (warning: ProtocolWarning) => void }
 
@@ -23,7 +23,7 @@ interface MessageSource {
   success?: boolean
   error?: string
   error_type?: string
-  duration_ms?: number
+  duration_ms?: number | null
   truncated?: boolean
 }
 
@@ -128,7 +128,8 @@ export class RestMapper {
       if (src.success !== undefined) tool.success = src.success
       if (src.error !== undefined) tool.error = src.error
       if (src.error_type !== undefined) tool.errorType = src.error_type
-      if (src.duration_ms !== undefined) tool.durationMs = src.duration_ms
+      const toolDurationMs = toOptionalNonNegativeNumber(src.duration_ms)
+      if (toolDurationMs !== undefined) tool.durationMs = toolDurationMs
       if (src.truncated !== undefined) tool.truncated = src.truncated
       if (Object.keys(tool).length) base.tool = tool
     }

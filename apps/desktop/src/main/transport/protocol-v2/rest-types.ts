@@ -27,7 +27,7 @@ export interface RestMessage {
   success?: boolean
   error?: string
   error_type?: string
-  duration_ms?: number
+  duration_ms?: number | null   // P0-02：JSON 可为 null（wire 类型诚实反映）
   truncated?: boolean
 }
 export interface RestMessagesPageResponse { messages: RestMessage[]; has_more: boolean; total: number; cursor?: string }

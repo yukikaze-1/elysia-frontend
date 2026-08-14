@@ -39,7 +39,7 @@ const RawSessionMessageItemSchema = z.object({
   success: z.boolean().optional(),
   error: z.string().optional(),
   error_type: z.string().optional(),
-  duration_ms: z.number().optional(),
+  duration_ms: z.number().nullable().optional(),   // P0-02：WS replay wire 边界同款（三条恢复路径一致，否则 replay tool null 整段拒）
   truncated: z.boolean().optional(),
   token_usage: RawTokenUsageSchema.optional()
 }).strict()
