@@ -41,8 +41,9 @@ import type {
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper } from './protocol-v2/rest-mapper'
-import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema } from './protocol-v2/rest-schemas'
-import type { BackendAdapter, BackendEventHandler } from './backend-adapter'
+import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse } from './protocol-v2/rest-schemas'
+import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
+import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
@@ -63,6 +64,7 @@ export interface RealBackendOptions {
   reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
   handshakeTimeoutMs?: number  // 默认 10000;握手(connect → server_info)超时,测试注入小值
   restTimeoutMs?: number  // 默认 10000;REST 请求超时,测试注入小值
+  uploadTimeoutMs?: number  // 默认 60000;附件上传长超时(非 10s,spec §4.4),测试注入小值
 }
 
 /** ack 关联的 pending 发送(按 clientRequestId 幂等) */
@@ -79,6 +81,7 @@ const RECONNECT_MAX_DELAY_MS = 30000
 const RECONNECT_MAX_ATTEMPTS = 6
 const HANDSHAKE_TIMEOUT_DEFAULT_MS = 10000
 const REST_TIMEOUT_DEFAULT_MS = 10000
+const UPLOAD_TIMEOUT_DEFAULT_MS = 60000
 
 /** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
  *  400 CONTRACT_VALIDATION → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
@@ -423,7 +426,8 @@ export class RealBackend implements BackendAdapter {
       }, ackTimeoutMs)
       this.pendingAcks.set(input.clientRequestId, { resolve, reject, timer })
     })
-    const payload = { type: 'text', content: input.text, clientRequestId: input.clientRequestId, conversationId: input.conversationId }
+    const payload: Record<string, unknown> = { type: 'text', content: input.text, clientRequestId: input.clientRequestId, conversationId: input.conversationId }
+    if (input.attachments?.length) payload.attachments = input.attachments
     try {
       this.ws.send(JSON.stringify(payload))
     } catch {
@@ -542,6 +546,66 @@ export class RealBackend implements BackendAdapter {
       this.ws.send(JSON.stringify({ type: 'activate_session', conversationId }))
     }
     return { conversationId: parsed.data.activeConversationId }
+  }
+
+  // —— 阶段 3 G3 附件上传/签发（spec §4.4/§4.5）——
+  private async readUploadBytes(f: UploadContent): Promise<Uint8Array> {
+    if (f.bytes) return f.bytes
+    if (f.path) return new Uint8Array(await (await import('fs/promises')).readFile(f.path))
+    throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '上传内容缺少 bytes/path')
+  }
+
+  async uploadAttachments(files: UploadContent[], opts?: { signal?: AbortSignal }): Promise<AttachmentInfo[]> {
+    if (!this.serverUrl) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
+    const uploadTimeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS
+    const timeoutController = new AbortController()
+    const timer = setTimeout(() => timeoutController.abort(), uploadTimeoutMs)
+    // P1-1：取消经 opts.signal 接入——AbortSignal.any 组合超时与调用方取消；任一方 abort 即终止 fetch（spec §4.1 D10）
+    const effectiveSignal = opts?.signal ? AbortSignal.any([timeoutController.signal, opts.signal]) : timeoutController.signal
+    this.activeControllers.add(timeoutController)
+    const form = new FormData()
+    for (const f of files) {
+      const bytes = await this.readUploadBytes(f)
+      // 每文件 kind：重复 kind 字段按文件顺序对应；可省略由后端魔数判定
+      if (f.kind) form.append('kind', f.kind)
+      // bytes 为 Uint8Array<ArrayBufferLike>（fs/promises readFile 或调用方构造）；BlobPart 需 ArrayBufferView<ArrayBuffer>——
+      // 本组上传来源均为新分配的 Uint8Array，buffer 即完整数据，cast 安全（TS2322 兼容）
+      form.append('files', new Blob([bytes as unknown as BlobPart], { type: f.mediaType }), f.name)
+    }
+    const url = `${this.serverUrl.replace(/\/$/, '')}/api/uploads`
+    try {
+      const res = await (this.options.fetchImpl ?? fetch)(url, {
+        method: 'POST',
+        signal: effectiveSignal,
+        headers: { authorization: `Bearer ${this.token}` },   // multipart 不设 content-type（fetch 自动带 boundary）
+        body: form
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
+        throw new CyreneError(mapHttpError(res.status, code), (body as { message?: string }).message ?? `HTTP ${res.status}`, body)
+      }
+      const parsed = parseAttachmentUploadResponse(await res.json())
+      if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '附件上传响应校验失败')
+      return parsed.data.attachments
+    } catch (e) {
+      if (opts?.signal?.aborted) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '附件上传已取消')   // 调用方取消（IPC attachments:cancel 触发）
+      if (timeoutController.signal.aborted) {
+        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
+        throw new CyreneError(CyreneErrorCode.TIMEOUT, `附件上传超时(${uploadTimeoutMs}ms)`)
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+      this.activeControllers.delete(timeoutController)
+    }
+  }
+
+  async signAttachmentUrl(attachmentId: string): Promise<AttachmentSignResult> {
+    const res = await this.restFetch(`/api/attachments/${encodeURIComponent(attachmentId)}/sign`)
+    const parsed = parseAttachmentSignResponse(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '签发响应校验失败')
+    return parsed.data
   }
 
   // —— 非目标方法(阶段 3/4/6 实现,不 Mock 假装)——

@@ -80,3 +80,27 @@ export function parseRestActivateResult(input: unknown): { success: true; data: 
 export function parseRestPendingQuery(input: unknown): { success: true; data: RestPendingQueryResponse } | { success: false; error: z.ZodError } {
   return RestPendingQueryResponseSchema.safeParse(input)
 }
+
+// —— 阶段 3 G3 附件上传/签发响应 schema（请求不建 zod；multipart 由 RealBackend 构造）——
+export const RestAttachmentUploadResponseSchema = z.object({
+  attachments: z.array(z.object({
+    attachmentId: z.string().min(1),
+    kind: z.string().min(1),
+    mime: z.string().min(1),
+    size: z.number().int().nonnegative(),
+    url: z.string().min(1),
+    signedUrl: z.string().optional(),
+    filename: z.string()
+  }))
+}).strict()
+export const RestAttachmentSignResponseSchema = z.object({
+  attachmentId: z.string().min(1),
+  url: z.string().min(1),
+  expiresAt: z.string().min(1)
+}).strict()
+export function parseAttachmentUploadResponse(input: unknown): { success: true; data: z.infer<typeof RestAttachmentUploadResponseSchema> } | { success: false; error: z.ZodError } {
+  return RestAttachmentUploadResponseSchema.safeParse(input)
+}
+export function parseAttachmentSignResponse(input: unknown): { success: true; data: z.infer<typeof RestAttachmentSignResponseSchema> } | { success: false; error: z.ZodError } {
+  return RestAttachmentSignResponseSchema.safeParse(input)
+}

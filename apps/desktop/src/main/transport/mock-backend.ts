@@ -28,8 +28,17 @@ import type { ClientRequestRef, SendMessageInput } from '@shared/contracts/messa
 import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
-import type { BackendAdapter, BackendEventHandler } from './backend-adapter'
+import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
+import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
+
+/** 上传 MIME → kind 提示值（Mock 确定性；真实后端以魔数真值为准） */
+function kindFromMimeForMock(mime: string): string {
+  if (mime.startsWith('image/')) return 'image'
+  if (mime.startsWith('video/')) return 'video'
+  if (mime.startsWith('audio/')) return 'audio'
+  return 'file'
+}
 
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
@@ -172,6 +181,22 @@ export class MockBackend implements BackendAdapter {
     }
     this.scheduleReplay(input.conversationId)
     return { clientRequestId: input.clientRequestId }
+  }
+
+  // —— 阶段 3 G3 附件确定性（spec §3.2）——
+  async uploadAttachments(files: UploadContent[]): Promise<AttachmentInfo[]> {
+    if (!this.connected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'MockBackend 未连接')
+    return files.map((f) => {
+      const attachmentId = `att_${this.idFactory().replace(/[^A-Za-z0-9_-]/g, '')}`
+      const kind = f.kind ?? kindFromMimeForMock(f.mediaType)
+      return { attachmentId, kind, mime: f.mediaType, size: f.size, url: `/api/attachments/${attachmentId}`, filename: f.name }
+    })
+  }
+
+  async signAttachmentUrl(attachmentId: string): Promise<AttachmentSignResult> {
+    const base = 'https://mock.local'
+    // P2-2：返回精确 AttachmentSignResult 形状（{url,expiresAt}）——多余 attachmentId 属字面量超集，TS excess property 报错
+    return { url: `${base}/api/attachments/${encodeURIComponent(attachmentId)}?sig=mock&exp=1`, expiresAt: this.now().toISOString() }
   }
 
   async cancelGeneration(input: CancelGenerationInput): Promise<void> {

@@ -26,6 +26,18 @@ import type { Conversation, CreateConversationInput, Page, PageQuery } from '@sh
 import type { BackendEvent } from '@shared/contracts/events'
 import type { ClientRequestRef, SendMessageInput } from '@shared/contracts/message'
 import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
+import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
+import type { AttachmentKind } from '@shared/contracts/message'
+
+/** 上传内容（路径型 Main 直读盘 / 粘贴型 bytes；kind 为客户端提示值，可省略由后端魔数判定） */
+export interface UploadContent {
+  name: string
+  mediaType: string
+  size: number
+  kind?: AttachmentKind
+  path?: string
+  bytes?: Uint8Array
+}
 
 /** 后端事件回调(Renderer 只消费领域事件,不接触原始协议) */
 export type BackendEventHandler = (event: BackendEvent) => void
@@ -52,6 +64,11 @@ export interface BackendAdapter {
 
   sendMessage(input: SendMessageInput): Promise<ClientRequestRef>
   cancelGeneration(input: CancelGenerationInput): Promise<void>
+
+  /** 批量 multipart 上传（batch 原子；AttachmentInfo.kind 权威；P1-1：opts.signal 为调用方取消信号，abort 后 reject cancelled） */
+  uploadAttachments(files: UploadContent[], opts?: { signal?: AbortSignal }): Promise<AttachmentInfo[]>
+  /** 签发短期签名 URL（Main 持有，不落 Renderer） */
+  signAttachmentUrl(attachmentId: string): Promise<AttachmentSignResult>
 
   listModelProfiles(type?: ModelServiceType): Promise<ModelProfile[]>
   testModelProfile(input: TestModelProfileCommand): Promise<ModelProfileTestResult>

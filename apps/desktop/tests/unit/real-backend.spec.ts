@@ -6,6 +6,7 @@ import { RealBackend, type RealBackendOptions } from '../../src/main/transport/r
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { CyreneErrorCode } from '@shared/errors'
+import type { UploadContent } from '../../src/main/transport/backend-adapter'
 
 let server: Server
 let wss: WebSocketServer
@@ -453,5 +454,82 @@ describe('RealBackend REST 方法', () => {
     const p = b.listConversations({})   // 挂起
     await b.disconnect()                // abort 全部 activeControllers
     await expect(p).rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
+  })
+})
+
+describe('RealBackend uploadAttachments / signAttachmentUrl（spec §4.5/§3.2）', () => {
+  // P1-3：既有惯例（real-backend.spec.ts 同款）——同一 http server 上挂真实 WebSocketServer({path:'/ws'}) 握手 stub，
+  // 使 backend.connect 在 server_info 后 resolve；否则普通 http server 对 /ws 返 404 → 重连退避 ~61s 挂起。
+  function uploadServer(handler: (req: import('http').IncomingMessage, chunks: Buffer[]) => void): Promise<{ port: number; close(): void }> {
+    return new Promise((resolve) => {
+      const s = createServer((req, res) => {
+        const chunks: Buffer[] = []
+        req.on('data', (c) => chunks.push(c))
+        req.on('end', () => handler(req, chunks))
+        if (req.url === '/api/uploads') {
+          setTimeout(() => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ attachments: [{ attachmentId: 'att_up1', kind: 'image', mime: 'image/png', size: 2, url: '/api/attachments/att_up1', filename: 'a.png' }] }))
+          }, 5)
+        } else if (req.url === '/api/attachments/att_up1/sign') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ attachmentId: 'att_up1', url: 'https://cdn.example/att_up1?sig=abc&exp=2030-01-01T00:00:00Z', expiresAt: '2030-01-01T00:00:00.000Z' }))
+        } else { res.writeHead(404); res.end() }
+      })
+      const wss = new WebSocketServer({ server: s, path: '/ws' })
+      wss.on('connection', (ws) => {
+        ws.send(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } }))
+        ws.send(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-1' }))
+        ws.send(JSON.stringify({ type: 'expression', expression: 'idle' }))
+      })
+      s.listen(0, '127.0.0.1', () => resolve({ port: (s.address() as AddressInfo).port, close: () => { wss.close(); s.close() } }))
+    })
+  }
+
+  it('multipart POST /api/uploads（每文件 kind + bytes 型），响应映射 AttachmentInfo', async () => {
+    const { port, close } = await uploadServer((req, chunks) => {
+      expect(req.method).toBe('POST')
+      expect(req.url).toBe('/api/uploads')
+      expect(req.headers['content-type']).toMatch(/multipart\/form-data; boundary=/)
+      expect(req.headers['content-type']).not.toMatch(/application\/json/)
+      const body = Buffer.concat(chunks).toString('utf8')
+      expect(body).toContain('name="files"')
+      expect(body).toContain('filename="a.png"')
+      expect(body).toContain('name="kind"')
+      expect(body).toContain('image')   // 每文件 kind 提示值
+    })
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      const files: UploadContent[] = [{ name: 'a.png', mediaType: 'image/png', size: 2, kind: 'image', bytes: new Uint8Array([0x89, 0x50]) }]
+      const infos = await backend.uploadAttachments(files)
+      expect(infos).toEqual([{ attachmentId: 'att_up1', kind: 'image', mime: 'image/png', size: 2, url: '/api/attachments/att_up1', filename: 'a.png' }])
+      await backend.disconnect()
+    } finally { close() }
+  })
+
+  it('signAttachmentUrl 带 Bearer 调 /sign 解析 AttachmentSignResult', async () => {
+    const { port, close } = await uploadServer((_req, _chunks) => {})
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      const r = await backend.signAttachmentUrl('att_up1')
+      expect(r.url).toContain('sig=abc')
+      expect(r.expiresAt).toBe('2030-01-01T00:00:00.000Z')
+      await backend.disconnect()
+    } finally { close() }
+  })
+
+  it('opts.signal 已中止 → 上传立即 reject（取消经 signal 接入，P1-1）', async () => {
+    const { port, close } = await uploadServer((_req, _chunks) => {})
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      const controller = new AbortController()
+      controller.abort()   // 预中止：AbortSignal.any 组合后 fetch 立即 abort → catch 走取消分支
+      const files: UploadContent[] = [{ name: 'a.png', mediaType: 'image/png', size: 2, bytes: new Uint8Array([0x89, 0x50]) }]
+      await expect(backend.uploadAttachments(files, { signal: controller.signal })).rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
+      await backend.disconnect()
+    } finally { close() }
   })
 })
