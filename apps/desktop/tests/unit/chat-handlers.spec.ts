@@ -7,9 +7,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { createIpcHandler } from '../../src/main/ipc/executor'
-import { ConnectionStateSchema, MessagePageSchema, PageSchema, ConversationSchema } from '@shared/schemas'
+import { ConnectionStateSchema, MessagePageSchema, PageSchema, ConversationSchema, ChatHistoryPageSchema, StickerManifestSchema } from '@shared/schemas'
 import { IpcChannels, type IpcResult } from '@shared/contracts'
-import { chatSetEndpointSchema } from '../../src/main/ipc/channels'
+import { chatListStickersSchema, chatQueryHistorySchema, chatSetEndpointSchema } from '../../src/main/ipc/channels'
 import type { Logger } from '../../src/main/diagnostics/logger'
 import type { ChatService } from '../../src/main/chat/chat-service'
 
@@ -116,5 +116,18 @@ describe('registerChatHandlers 真实接线(electron mock 捕获 ipcMain.handle)
     const { invoke } = await registerOnce({ listConversations: async () => ({ items: [{ id: 'c1', title: 't', updatedAt: 'd' }], hasMore: false }) })
     const res = await invoke(IpcChannels.chatListConversations, {})
     expect(res).toMatchObject({ ok: true, data: { items: [{ id: 'c1' }], hasMore: false } })
+  })
+})
+
+describe('G4 历史/上下文/表情通道（registerChatHandlers 真实接线）', () => {
+  it('chatQueryHistory 响应 ChatHistoryPageSchema 拒绝畸形页', async () => {
+    const h = createIpcHandler(chatQueryHistorySchema, ChatHistoryPageSchema, () => ({ items: [{ conversationId: 'c1' }], hasMore: false }), { sanitize, channel: IpcChannels.chatQueryHistory })
+    const res = await h({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.code).toBe('SCHEMA_VALIDATION_FAILED')
+  })
+  it('chatListStickers 响应 StickerManifestSchema 拒绝畸形（P0-2：stickers 形状）', async () => {
+    const h = createIpcHandler(chatListStickersSchema, StickerManifestSchema, () => ({ stickers: [{ stickerId: '' }] }), { sanitize, channel: IpcChannels.chatListStickers })
+    expect((await h(undefined)).ok).toBe(false)
   })
 })

@@ -3,7 +3,8 @@
 // index.ts 同名时声明文件被静默丢弃——使 tsconfig.node.json（含 tests/**/*）永远加载不到它。
 // 本文件以非冲突基名落于 tests 树，让 launchApp 返回的 page.evaluate 内 `window.desktopApi` 在
 // node 编译程序中可见（渲染进程类型来自 src/preload/index.d.ts，两者共享 @shared/contracts 类型）。
-import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, CredentialStatus, FileValidationResult, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
+import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, ChatHistoryPage, ChatHistoryQuery, CredentialStatus, FileValidationResult, MessageContextQuery, MessagePage, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
+import type { StickerManifest } from '@shared/contracts/sticker'
 
 declare global {
   interface Window {
@@ -25,6 +26,10 @@ declare global {
       cacheMessages(input: CacheMessagesInput): Promise<void>
       deleteConversation(id: string): Promise<void>
       openExternal(url: string): Promise<void>
+      // —— 阶段 3 G4 历史/表情面（与 src/preload/index.d.ts 同源；history-viewer-ipc.spec 要调） ——
+      queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>
+      getMessageContext(input: MessageContextQuery): Promise<MessagePage>
+      listStickers(): Promise<StickerManifest>
       // —— 阶段 3 G3 attachments 面（与 src/preload/index.d.ts 同源；ipc-attachments.spec 要调） ——
       attachmentsValidate(input: { files: Array<{ localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }> }): Promise<FileValidationResult[]>
       attachmentsUpload(input: { uploadId: string; files: Array<{ localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }> }): Promise<AttachmentsUploadResponse>

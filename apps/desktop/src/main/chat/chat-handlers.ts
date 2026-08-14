@@ -3,13 +3,15 @@ import { IpcChannels, type IpcChannelName, type IpcResult } from '@shared/contra
 import {
   ActivateConversationResultSchema,
   BackendSessionSchema,
+  ChatHistoryPageSchema,
   ClientRequestRefSchema,
   ConnectionStateSchema,
   ConversationSchema,
   EndpointResponseSchema,
   MessagePageSchema,
   PageSchema,
-  RuntimeInfoSchema
+  RuntimeInfoSchema,
+  StickerManifestSchema
 } from '@shared/schemas'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import type { Logger } from '../diagnostics/logger'
@@ -22,10 +24,13 @@ import {
   chatCreateSchema,
   chatDeleteSchema,
   chatGetEndpointSchema,
+  chatGetMessageContextSchema,
   chatGetMessagesSchema,
   chatGetRuntimeInfoSchema,
   chatGetStateSchema,
   chatListConversationsSchema,
+  chatListStickersSchema,
+  chatQueryHistorySchema,
   chatRenameSchema,
   chatSendSchema,
   chatSetEndpointSchema
@@ -60,4 +65,8 @@ export function registerChatHandlers(opts: { svc: ChatService; sanitize: Message
   registerHandler(IpcChannels.chatRename, handle(chatRenameSchema, ConversationSchema, (req) => svc.renameConversation(req), IpcChannels.chatRename), 1)
   registerHandler(IpcChannels.chatDelete, handle(chatDeleteSchema, z.undefined(), (req) => svc.deleteConversation(req.conversationId), IpcChannels.chatDelete), 1)
   registerHandler(IpcChannels.chatGetState, handle(chatGetStateSchema, ConnectionStateSchema, () => svc.getConnectionState(), IpcChannels.chatGetState), 0)
+  // —— 阶段 3 G4 历史查看器/表情 三通道（spec §4.3）——
+  registerHandler(IpcChannels.chatQueryHistory, handle(chatQueryHistorySchema, ChatHistoryPageSchema, (req) => svc.queryChatHistory(req), IpcChannels.chatQueryHistory), 1)
+  registerHandler(IpcChannels.chatGetMessageContext, handle(chatGetMessageContextSchema, MessagePageSchema, (req) => svc.getMessageContext(req), IpcChannels.chatGetMessageContext), 1)
+  registerHandler(IpcChannels.chatListStickers, handle(chatListStickersSchema, StickerManifestSchema, () => svc.listStickers(), IpcChannels.chatListStickers), 0)
 }
