@@ -16,6 +16,11 @@ describe('attachments IPC 往返（MockBackend）', () => {
     expect(res[0]).toMatchObject({ localId: 'l1', ok: true })
   })
   it('attachmentsUpload 经 IPC + MockBackend → AttachmentsUploadResponse（AttachmentInfo.kind 权威）', async () => {
+    // MockBackend.uploadAttachments 需已 connect（uploadBatch 走 backend.uploadAttachments）；mock 模式免 token 但需 endpoint
+    await launched.page.evaluate(async () => {
+      await window.desktopApi.setEndpoint('http://127.0.0.1:8765')
+      await window.desktopApi.connect()
+    })
     const res = await launched.page.evaluate(async () => {
       return window.desktopApi.attachmentsUpload({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a.png', size: 4, mediaType: 'image/png', source: 'paste', kind: 'image', bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer }] })
     })
