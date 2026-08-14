@@ -22,10 +22,12 @@ const gridStyle = computed(() => {
 
 let ro: ResizeObserver | undefined
 let rafPending = false
+let latestWidth = 0
 function onResize(width: number): void {
+  latestWidth = width // P3-2：总是记录最新宽度——rAF 回调读最新值，同一帧内多个 RO 事件不丢最后宽度
   if (rafPending) return
   rafPending = true
-  requestAnimationFrame(() => { rafPending = false; layout.handleViewportChange(width) })
+  requestAnimationFrame(() => { rafPending = false; layout.handleViewportChange(latestWidth) })
 }
 function onWindowResize(): void { onResize(window.innerWidth) }
 
