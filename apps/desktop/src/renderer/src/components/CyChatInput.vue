@@ -2,16 +2,23 @@
 // CyChatInput:输入区。回车发送/Shift+Enter 换行;发送按钮;sending 期间禁用(F3,Task 4 review);
 // 停止按钮(activeGenerationId 存在时);断线横幅(connectionStore.state.status 为 reconnecting/error)。
 // G2(§4.4.1):草稿源改 draftStore(内存态 + 防抖持久化归 Main);发送成功清草稿、失败保留;超限/淘汰横幅。
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import { useDraftStore } from '../stores/draft.store'
+import { useAttachmentStore } from '../stores/attachment.store'
+import CyAttachmentQueue from './CyAttachmentQueue.vue'
+import CyDropOverlay from './CyDropOverlay.vue'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
 const draftStore = useDraftStore()
+const attachmentStore = useAttachmentStore()
+const fileInput = ref<HTMLInputElement>()
+const dragActive = ref(false)
+let dragDepth = 0
 
 const currentId = computed(() => conversationStore.currentId)
 const draft = computed({
@@ -22,10 +29,11 @@ const overLimit = computed(() => (currentId.value ? !!draftStore.overLimit[curre
 
 const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
-/** 发送条件:非空 + 未在发送(F3)+ 有激活会话 + 已连接且会话就绪(批次B T9 门控) */
+/** 发送条件:非空/有附件 + 未在发送 + 无阻断(附件 failed/validating/uploading) + 有激活会话 + 已连接且会话就绪 */
 const canSend = computed(() =>
-  draft.value.trim().length > 0 && !messageStore.sending && !!conversationStore.currentId &&
-  connectionStore.state.status === 'connected' && conversationStore.ready
+  (draft.value.trim().length > 0 || attachmentStore.hasReady) &&
+  !messageStore.sending && !attachmentStore.canSend.blockReason &&
+  !!conversationStore.currentId && connectionStore.state.status === 'connected' && conversationStore.ready
 )
 
 /** 断线横幅:reconnecting/error(流式不可继续,提示用户) */
@@ -42,7 +50,9 @@ const bannerText = computed(() => {
 
 async function send(): Promise<void> {
   if (!canSend.value) return
-  const ok = await messageStore.send(draft.value.trim()) // send 成功返回后才清空
+  // G3：附件存在时 attachmentStore 编排上传→发送；保留 messageStore.send 的失败保留草稿语义（G2）
+  let ok = false
+  await attachmentStore.send(draft.value.trim(), { send: async (t, o) => { ok = await messageStore.send(t, o) } })
   if (ok && currentId.value) draftStore.clear(currentId.value) // 失败保留草稿（spec §4.4.1）
 }
 
@@ -55,10 +65,47 @@ function onEnter(e: KeyboardEvent): void {
 function stop(): void {
   messageStore.cancel()
 }
+
+// —— G3 附件收集（点击/拖拽/粘贴仅 source 不同；拖拽/粘贴只建条目，不自动上传/发送，spec §4.3）——
+function onFilePick(e: Event): void {
+  const input = e.target as HTMLInputElement
+  if (input.files) attachmentStore.addFiles(Array.from(input.files).map((f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'picker', file: f })))
+  input.value = ''
+}
+function onDrop(e: DragEvent): void {
+  dragActive.value = false
+  dragDepth = 0
+  if (e.dataTransfer?.files?.length) {
+    attachmentStore.addFiles(Array.from(e.dataTransfer.files).map((f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'drag_drop', file: f })))
+  }
+}
+function onDragEnter(e: DragEvent): void {
+  if (e.dataTransfer?.types?.includes('Files')) { dragDepth += 1; dragActive.value = true }
+}
+function onDragLeave(): void {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragActive.value = false
+}
+async function onPaste(e: ClipboardEvent): Promise<void> {
+  const files = Array.from(e.clipboardData?.files ?? [])
+  if (files.length) {
+    // 粘贴文件 pathless（webUtils.getPathForFile 返回空串）→ 预读 bytes 一并交 store（D5 粘贴 bytes 型）
+    const inputs = await Promise.all(files.map(async (f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'paste' as const, file: f, bytes: await f.arrayBuffer() })))
+    attachmentStore.addFiles(inputs)
+    e.preventDefault()   // 有粘贴附件时不进文本草稿
+  }
+}
 </script>
 
 <template>
-  <footer class="cy-composer">
+  <footer
+    class="cy-composer"
+    @dragenter="onDragEnter"
+    @dragleave="onDragLeave"
+    @dragover.prevent
+    @drop.prevent="onDrop"
+    @paste="onPaste"
+  >
     <!-- 断线横幅(重连/错误时提示;connected 时隐藏) -->
     <div v-if="showBanner" class="cy-banner" role="status">
       <span class="cy-banner-dot" />
@@ -84,7 +131,21 @@ function stop(): void {
       <button class="cy-clear-draft" @click="draftStore.dismissEviction()">知道了</button>
     </div>
 
+    <!-- G3 附件发送阻断提示（failed/validating/uploading 时展示原因） -->
+    <div v-if="attachmentStore.canSend.blockReason" class="cy-banner" role="status">
+      <span class="cy-banner-dot" />
+      <span>{{ attachmentStore.canSend.blockReason }}</span>
+    </div>
+
+    <!-- G3 待发送附件队列 + 拖拽覆盖层 -->
+    <CyAttachmentQueue />
+    <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" @leave="dragActive = false" />
+
     <div class="cy-composer-box">
+      <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" @click="fileInput?.click()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+      </button>
+      <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
       <textarea
         v-model="draft"
         :disabled="messageStore.sending"
@@ -118,6 +179,7 @@ function stop(): void {
 
 <style scoped>
 .cy-composer {
+  position: relative;   /* G3 CyDropOverlay absolute 定位锚点 */
   padding: 10px 14px 14px;
   background: var(--cy-pane);
   border-top: 1px solid var(--cy-border);
@@ -159,7 +221,7 @@ function stop(): void {
 
 .cy-composer-box {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto;
   align-items: end;
   gap: 8px;
   padding: 8px;
@@ -193,6 +255,26 @@ function stop(): void {
   width: 32px;
   height: 32px;
   border-radius: 9px;
+}
+
+.cy-hidden-input {
+  display: none;
+}
+
+.cy-attach-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  color: var(--cy-muted);
+  background: transparent;
+  border: 1px solid var(--cy-border);
+}
+
+.cy-attach-btn:hover {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
 }
 
 .cy-stop-btn {

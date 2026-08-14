@@ -4,6 +4,7 @@
 import { computed } from 'vue'
 import type { AssistantSegment, Message } from '@shared/contracts'
 import CyMarkdown from './CyMarkdown.vue'
+import CyAttachmentMedia from './CyAttachmentMedia.vue'
 
 const props = defineProps<{ message: Message }>()
 
@@ -40,6 +41,11 @@ function segmentText(seg: AssistantSegment): string {
 function isTextSegment(seg: AssistantSegment): boolean {
   return seg.kind === 'text' || seg.kind === 'markdown'
 }
+
+/** G3 user 消息附件列表 → CyAttachmentMedia（D2 内嵌 Message.attachments） */
+function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video' | 'audio' | 'file' | 'link'; mediaType?: string; name?: string; size?: number; url?: string }> {
+  return (props.message.attachments ?? []).map((a) => ({ attachmentId: a.attachmentId, kind: a.kind, mediaType: a.mediaType, name: a.name, size: a.size }))
+}
 </script>
 
 <template>
@@ -47,6 +53,10 @@ function isTextSegment(seg: AssistantSegment): boolean {
   <div v-if="isUser" class="cy-message-row cy-user-row">
     <div class="cy-message cy-user-message">
       <p>{{ message.content }}</p>
+      <!-- G3：user 消息附件（内嵌 Message.attachments） -->
+      <div v-for="a in userAttachments()" :key="a.attachmentId" class="cy-user-attachments">
+        <CyAttachmentMedia :kind="a.kind" :attachment-id="a.attachmentId" :media-type="a.mediaType" :name="a.name" :size="a.size" />
+      </div>
       <span v-if="message.status === 'failed'" class="cy-user-error-badge" title="发送失败">发送失败</span>
     </div>
   </div>
@@ -76,6 +86,17 @@ function isTextSegment(seg: AssistantSegment): boolean {
           </div>
           <template v-for="seg in publicSegments" :key="seg.segmentId">
             <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :source="segmentText(seg)" />
+            <!-- G3：assistant 媒体分段（attachmentId 存在时渲染媒体组件；实时流式分段无 attachmentId 仍走占位，P2-5 wire 契约） -->
+            <CyAttachmentMedia
+              v-else-if="seg.attachmentId"
+              :key="seg.segmentId"
+              class="cy-segment"
+              :kind="(seg.kind as 'image' | 'video' | 'audio' | 'file' | 'link')"
+              :attachment-id="seg.attachmentId"
+              :media-type="seg.mediaType"
+              :name="seg.name"
+              :size="seg.size"
+            />
             <span v-else class="cy-media-placeholder">[{{ seg.kind }} 分段]</span>
           </template>
           <div v-if="hasMeta" class="cy-response-footer">
@@ -232,5 +253,12 @@ function isTextSegment(seg: AssistantSegment): boolean {
 .cy-status-note {
   color: var(--cy-danger);
   font-size: 11px;
+}
+
+.cy-user-attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  max-width: 100%;
 }
 </style>
