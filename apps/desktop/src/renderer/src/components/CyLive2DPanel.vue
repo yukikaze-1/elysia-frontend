@@ -1,13 +1,51 @@
 <script setup lang="ts">
 // Phase 0 占位:角色栏是聊天右侧的布局列扩展(不覆盖聊天)。
 // Live2D 渲染与状态映射属阶段 5。
+// 阶段 3 G1（spec §4.7，决策 D8）：折叠按钮接线 toggleLive2d + 左缘拖拽手柄（role=separator）。
+import { ref } from 'vue'
+import { useLayoutStore } from '../stores/layout.store'
+import { LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH } from '../layout/constants'
+
+const layout = useLayoutStore()
+const dragging = ref(false)
+
+function onResizeStart(e: PointerEvent): void {
+  if (e.button !== 0) return
+  dragging.value = true
+  const el = e.currentTarget as HTMLElement
+  if (el.setPointerCapture) el.setPointerCapture(e.pointerId)
+  e.preventDefault()
+}
+function onResizeMove(e: PointerEvent): void {
+  if (!dragging.value) return
+  // 新宽 = 视口宽 − 指针 x（面板左缘跟随指针）；setLive2dWidth 内部 clamp [300,420]
+  layout.setLive2dWidth(layout.viewportWidth - e.clientX)
+}
+function onResizeEnd(e: PointerEvent): void {
+  dragging.value = false
+  const el = e.currentTarget as HTMLElement
+  if (el.hasPointerCapture && el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)
+}
 </script>
 
 <template>
   <aside class="cy-live">
+    <div
+      class="cy-live-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-valuenow="layout.effective.live2dWidth"
+      :aria-valuemin="LIVE2D_MIN_WIDTH"
+      :aria-valuemax="LIVE2D_MAX_WIDTH"
+      tabindex="-1"
+      @pointerdown="onResizeStart"
+      @pointermove="onResizeMove"
+      @pointerup="onResizeEnd"
+      @pointercancel="onResizeEnd"
+    />
     <div class="cy-live-head">
       <span class="cy-live-title">角色</span>
-      <button class="cy-live-min" title="折叠角色栏" aria-label="折叠角色栏">›</button>
+      <button class="cy-live-min" :aria-pressed="layout.effective.live2dShown" title="折叠角色栏" aria-label="折叠角色栏" @click="layout.toggleLive2d()">›</button>
     </div>
     <div class="cy-live-stage">
       <div class="cy-live-glow" aria-hidden="true" />
@@ -59,6 +97,26 @@
   border-radius: 9px;
   background: var(--cy-surface);
   color: var(--cy-muted);
+}
+
+.cy-live-min[aria-pressed='true'] {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
+}
+
+.cy-live-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.cy-live-resizer:hover {
+  background: var(--cy-accent-strong);
+  opacity: 0.35;
 }
 
 .cy-live-stage {
