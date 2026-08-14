@@ -44,6 +44,7 @@ describe('historyViewerStore', () => {
     await s.submitQuery()
     expect(s.items).toHaveLength(1)          // 旧结果保留
     expect(s.error?.message).toContain('服务端错误')
+    expect(s.hasSearched).toBe(false)        // 阶段3 整改 C1：失败不置 hasSearched（防「没有找到相关聊天记录」伪空态）
   })
   it('loadMore：带 cursor 去重合并 + busy 防重入', async () => {
     const calls: Array<Record<string, unknown>> = []
