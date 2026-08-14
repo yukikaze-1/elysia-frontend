@@ -9,13 +9,13 @@ import { RealBackend } from '../../src/main/transport/real-backend'
 import { CyreneErrorCode } from '../../src/shared/errors'
 
 /** 断言 search/context/stickers 请求参数后返回对应响应 */
-function apiServer(opts: { onSearch?: (url: string) => void; onContext?: (url: string) => void; onStickers?: () => void }): Promise<{ port: number; close(): void }> {
+function apiServer(opts: { onSearch?: (url: string) => void; onContext?: (url: string) => void; onStickers?: () => void; searchBody?: (url: string) => unknown }): Promise<{ port: number; close(): void }> {
   return new Promise((resolve) => {
     const s = createServer((req, res) => {
       const send = (body: unknown): void => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
       if (req.url?.startsWith('/api/search/messages')) {
         opts.onSearch?.(req.url)
-        send({ items: [{ conversationId: 'c1', messageId: 'm1', timestamp: '2026-08-14T02:00:00.000Z', role: 'user', snippet: '命中' }], has_more: false })
+        send(opts.searchBody ? opts.searchBody(req.url) : { items: [{ conversationId: 'c1', messageId: 'm1', timestamp: '2026-08-14T02:00:00.000Z', role: 'user', snippet: '命中' }], has_more: false })
       } else if (req.url?.startsWith('/api/messages/m1/context')) {
         opts.onContext?.(req.url)
         send({ anchor: { role: 'user', message_id: 'm1', timestamp: '2026-08-14T02:00:02.000Z' }, before: [{ role: 'user', message_id: 'm0', timestamp: '2026-08-14T02:00:01.000Z' }], after: [], conversationId: 'c1' })
@@ -77,6 +77,42 @@ describe('RealBackend.queryChatHistory（spec §4.3/§4.4）', () => {
       await backend.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 })
       expect(seen[0]).not.toContain('conversationId=')
       expect(seen[0]).not.toContain('date_from=')
+      await backend.disconnect()
+    } finally { close() }
+  })
+  it('单流（all）首屏按 sortKey 升序：后端 DESC [newer, older] → 领域 [older, newer]；cursor 原样（P1-01 §6.4）', async () => {
+    const { port, close } = await apiServer({
+      searchBody: () => ({
+        items: [
+          { conversationId: 'c1', messageId: 'm2', timestamp: '2026-08-14T02:00:02.000Z', role: 'user', snippet: '新' },
+          { conversationId: 'c1', messageId: 'm1', timestamp: '2026-08-14T02:00:01.000Z', role: 'user', snippet: '旧' }
+        ],
+        has_more: true, cursor: 'cur-2'
+      })
+    })
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      const page = await backend.queryChatHistory({ scope: { type: 'all_conversations' }, query: 'x', timeZone: 'Asia/Shanghai', category: 'all', limit: 50 })
+      expect(page.items.map((i) => i.messageId)).toEqual(['m1', 'm2'])   // 领域升序
+      expect(page.nextCursor).toBe('cur-2')                               // cursor 原样透传
+      await backend.disconnect()
+    } finally { close() }
+  })
+  it('单流第二页（更旧）同样升序；cursor 参数原样发给后端', async () => {
+    const seen: string[] = []
+    const { port, close } = await apiServer({
+      onSearch: (u) => seen.push(u),
+      searchBody: () => ({ items: [{ conversationId: 'c1', messageId: 'm0', timestamp: '2026-08-14T02:00:00.000Z', role: 'user', snippet: '更旧' }], has_more: false })
+    })
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      const page = await backend.queryChatHistory({ scope: { type: 'all_conversations' }, query: 'x', timeZone: 'Asia/Shanghai', category: 'all', limit: 50, cursor: 'cur-2' })
+      expect(seen[0]).toContain('cursor=cur-2')
+      expect(page.items.map((i) => i.messageId)).toEqual(['m0'])
+      expect(page.hasMore).toBe(false)
+      expect(page.nextCursor).toBeUndefined()
       await backend.disconnect()
     } finally { close() }
   })

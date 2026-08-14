@@ -40,7 +40,7 @@ import type {
   RawUserAck
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
-import { RestMapper } from './protocol-v2/rest-mapper'
+import { RestMapper, compareBySortKey } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList } from './protocol-v2/rest-schemas'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
 import type { HistoryCategory, StickerManifest } from '@shared/contracts'
@@ -665,9 +665,9 @@ export class RealBackend implements BackendAdapter {
   async queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage> {
     const wireCats = HISTORY_CATEGORY_WIRE[input.category] ?? [undefined]
     if (wireCats.length === 1) {
-      // 单流（all/sticker/file/audio/link）：不透明游标直接透传
+      // 单流（all/sticker/file/audio/link）：不透明游标直接透传；领域层统一 sortKey 升序（P1-01，与 image_video/loadMore 一致）
       const data = await this.fetchHistoryStream(input, wireCats[0], input.cursor)
-      const items = data.items.map((i) => this.restMapper.toChatHistoryItem(i))
+      const items = data.items.map((i) => this.restMapper.toChatHistoryItem(i)).sort(compareBySortKey)
       return { items, hasMore: data.has_more, nextCursor: data.has_more ? data.cursor : undefined }
     }
     // image_video：两子流（image/video）独立游标 + 顺序合并（P1-3）。
@@ -682,8 +682,7 @@ export class RealBackend implements BackendAdapter {
     const mapped = [imgPage, vidPage].filter((p): p is RestSearchMessagesResponse => p !== null)
       .flatMap((p) => p.items.map((i) => this.restMapper.toChatHistoryItem(i)))
     const byHit = new Map(mapped.map((i) => [i.hitId, i]))
-    const items = [...byHit.values()].sort((a, b) =>
-      a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
+    const items = [...byHit.values()].sort(compareBySortKey)
     const hasMore = (imgPage?.has_more ?? false) || (vidPage?.has_more ?? false)
     const nextState: ImageVideoCursorEncoded = {
       image: imgPage === null ? null : imgPage.has_more ? imgPage.cursor ?? null : null,

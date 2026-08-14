@@ -177,3 +177,8 @@ function senderLabelOf(role?: 'user' | 'assistant' | 'tool' | 'system'): string 
     default: return 'user'
   }
 }
+
+/** P1-01：历史项稳定升序比较（sortKey 含 timestamp|messageId 稳定次键；单流/image_video/store 同款） */
+export function compareBySortKey(a: ChatHistoryItem, b: ChatHistoryItem): number {
+  return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0
+}

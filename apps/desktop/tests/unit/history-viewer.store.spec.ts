@@ -64,6 +64,19 @@ describe('historyViewerStore', () => {
     expect(calls[0].cursor).toBe('cur-1')
     expect(s.items.map((i) => i.messageId)).toEqual(['m1', 'm2'])
   })
+  it('loadMore 收到 DESC 更旧页（含与首屏重叠项）→ 合并后仍全局升序、去重、不整表翻转（P1-01 §6.4）', async () => {
+    setDesktopApi({
+      queryChatHistory: async () => ({
+        items: [item('m1', 't1'), item('m0', 't0')],   // 更旧页后端 DESC：[m1 较新在前, m0 更旧在后]，m1 与首屏重叠
+        hasMore: false, nextCursor: undefined
+      })
+    } as never)
+    const s = useHistoryViewerStore()
+    s.openViewer()
+    s.$patch({ items: [item('m1', 't1'), item('m2', 't2')], hasMore: true, nextCursor: 'cur-2' })   // 首屏已升序
+    await s.loadMore()
+    expect(s.items.map((i) => i.messageId)).toEqual(['m0', 'm1', 'm2'])   // 全局升序、m1 去重、无翻转
+  })
   it('无结果空态：hasSearched=true 且 items 空', async () => {
     setDesktopApi({ queryChatHistory: async () => ({ items: [], hasMore: false }) } as never)
     const s = useHistoryViewerStore()
