@@ -6,6 +6,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
+import { useCacheStore } from '../../src/renderer/src/stores/cache.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Message } from '@shared/contracts'
 
@@ -299,5 +300,67 @@ describe('conversationStore', () => {
     expect(store.error?.message).toContain('activate boom')
     expect(store.busy).toBe(false)
     expect(store.currentId).toBe('c1')   // currentId 已立即切走(失败也留在目标会话)
+  })
+})
+
+describe('G2 离线视图 / activateLocal / 在线恢复（spec §4.5.3 P1-1）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    setDesktopApi(mockApi)
+    vi.resetAllMocks()
+  })
+
+  it('activate 首屏后 setPageMeta 初始化 hasMoreBefore（有 nextCursor 才可向上加载）', async () => {
+    mockApi.activate.mockResolvedValue({ conversationId: 'conv-1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: true, nextCursor: 'cur-1' })
+    const conv = useConversationStore()
+    await conv.activate('conv-1')
+    expect(useMessageStore().hasMoreBefore).toBe(true)
+    expect(useMessageStore().beforeCursor).toBe('cur-1')
+  })
+
+  it('setOfflineCache 装载缓存列表 + offlineView=true', () => {
+    const conv = useConversationStore()
+    conv.setOfflineCache([convA, convB])
+    expect(conv.items).toHaveLength(2)
+    expect(conv.offlineView).toBe(true)
+  })
+
+  it('activateLocal（disconnected + 缓存会话）载入快照、不调 api.activate/getMessages、hasMoreBefore=false', async () => {
+    useConnectionStore().state.status = 'disconnected'
+    const cache = useCacheStore()
+    cache.syncConversations([convA])
+    cache.hydrate({ drafts: [], scrollAnchors: {}, conversations: [convA], messageSnapshots: { [convA.id]: [{ messageId: 'm1', conversationId: convA.id, role: 'user', content: 'hi', status: 'completed', createdAt: 't' }] } })
+    mockApi.activate.mockClear(); mockApi.getMessages.mockClear()
+    const conv = useConversationStore()
+    await conv.activateLocal(convA.id)
+    expect(conv.currentId).toBe(convA.id)
+    expect(conv.offlineView).toBe(true)
+    expect(mockApi.activate).not.toHaveBeenCalled()
+    expect(mockApi.getMessages).not.toHaveBeenCalled()
+    expect(useMessageStore().order).toEqual(['m1'])
+    expect(useMessageStore().hasMoreBefore).toBe(false)
+  })
+
+  it('activateLocal 非缓存会话 → 拒绝 + 提示', async () => {
+    useConnectionStore().state.status = 'disconnected'
+    const conv = useConversationStore()
+    await conv.activateLocal('not-cached')
+    expect(conv.error?.code).toBe('OFFLINE_NOT_CACHED')
+    expect(conv.currentId).toBeUndefined()
+  })
+
+  it('离线视图下 activate 拒绝；在线恢复 activate 正常并清 offlineView', async () => {
+    useConnectionStore().state.status = 'disconnected'
+    const conv = useConversationStore()
+    conv.setOfflineCache([convA])
+    await conv.activate('conv-1')
+    expect(conv.error?.code).toBe('OFFLINE_VIEW')
+    useConnectionStore().state.status = 'connected'
+    mockApi.activate.mockResolvedValue({ conversationId: 'conv-1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false, nextCursor: undefined })
+    await conv.activate('conv-1')
+    expect(conv.offlineView).toBe(false)
+    expect(conv.error).toBeUndefined()
   })
 })

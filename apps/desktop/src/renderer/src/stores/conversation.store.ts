@@ -7,6 +7,8 @@ import type { Conversation } from '@shared/contracts'
 import { api } from './desktop-api'
 import { useMessageStore } from './message.store'
 import { useConnectionStore } from './connection.store'
+import { useCacheStore } from './cache.store'
+import { useDraftStore } from './draft.store'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 
 /** F8:messageOf 仅在 message.store 内定义(非导出),conversation.store 自定模块内 helper */
@@ -23,6 +25,7 @@ export const useConversationStore = defineStore('conversation', () => {
   const ready = ref(false)               // 初始化完成(D13):连接后列表/活动会话/首屏就绪才 true
   const error = ref<PublicError>()       // 会话操作错误(供 UI 展示,§4.2.4/I2)
   const busy = ref(false)                // 会话操作进行中(D22,供按钮 loading/防重复)
+  const offlineView = ref(false) // 离线视图：activateLocal/setOfflineCache 置位，恢复后 false
   let epoch = 0                          // 激活竞态守卫(§4.2.3/D6):数字递增,最新请求才提交
   let initializingFor: string | undefined
   let initializationPromise: Promise<void> | undefined
@@ -35,6 +38,7 @@ export const useConversationStore = defineStore('conversation', () => {
       items.value = p.items
       hasMore.value = p.hasMore
       nextCursor.value = p.nextCursor
+      useCacheStore().syncConversations(p.items) // 在线列表 → 内存缓存（供离线切换判定；持久化列表由 Main 派生）
       error.value = undefined   // F1:成功清旧错误(短横幅语义,防残留)
       return true
     } catch (e) {
@@ -57,6 +61,14 @@ export const useConversationStore = defineStore('conversation', () => {
       if (currentId.value) {
         // 重连/已有活动会话:只刷新列表 + reconcile 活动会话,不动已有历史(replay 按 messageId 去重合并)
         if (!await safeList()) return
+        if (offlineView.value) {
+          // P1-1 在线恢复：离线快照视图 → 真实 activate 拉后端首屏覆盖 + 清 offlineView
+          offlineView.value = false
+          initializedFor.value = key
+          ready.value = true // P2-3：恢复即就绪（快照已可视；activate 异步拉首屏覆盖，不阻塞就绪门控）
+          void activate(currentId.value)
+          return
+        }
         const activeId = useConnectionStore().state.activeConversationId
         if (activeId && activeId !== currentId.value) await activate(activeId)   // I4:后端活动会话变了 → 切过去
         initializedFor.value = key
@@ -108,6 +120,11 @@ export const useConversationStore = defineStore('conversation', () => {
 
   /** §4.2.3 activate:epoch 大者胜;currentId 立即切走;resetConversation + applyPendingReplay + 拉首屏 */
   async function activate(id: string): Promise<void> {
+    if (offlineView.value && useConnectionStore().state.status === 'disconnected') {
+      error.value = { code: 'OFFLINE_VIEW', message: '离线视图下请使用本地缓存会话' }
+      return
+    }
+    offlineView.value = false
     const myEpoch = ++epoch
     busy.value = true
     currentId.value = id               // 立即切走:保护 send/canSend 与事件守卫(即使后续失败也留在目标会话)
@@ -120,6 +137,7 @@ export const useConversationStore = defineStore('conversation', () => {
       const p = await api.getMessages({ conversationId: id })
       if (myEpoch !== epoch) return
       messageStore.loadPage(p)
+      messageStore.setPageMeta(p) // 首页 nextCursor → 更早一页游标（G2）
       error.value = undefined   // F1:激活成功清旧错误
     } catch (e) {
       if (myEpoch !== epoch) return    // 被取代的请求失败不打扰
@@ -187,6 +205,8 @@ export const useConversationStore = defineStore('conversation', () => {
         currentId.value = undefined
         useMessageStore().resetConversation(id)
       }
+      useDraftStore().purge(id)   // 删除联动:清内存草稿/锚点 + 取消待写（G2，spec §4.4.1）
+      useCacheStore().purge(id)   // 删除联动:清消息快照（G2，spec §4.5.1）
       error.value = undefined   // F1:成功清旧错误
     } catch (e) {
       error.value = parsePublicError(messageOf(e))
@@ -195,5 +215,30 @@ export const useConversationStore = defineStore('conversation', () => {
     }
   }
 
-  return { items, currentId, hasMore, nextCursor, initializedFor, ready, error, busy, list, safeList, onConnected, onActiveConversationAppeared, activate, getMore, create, rename, remove }
+  /** 离线水合装载缓存会话列表（bootstrap disconnected 分支）；offlineView 置位 */
+  function setOfflineCache(conversations: Conversation[]): void {
+    items.value = [...conversations]
+    offlineView.value = true
+    error.value = undefined
+  }
+
+  /** 离线会话切换（P1-1）：绕过 api.activate/getMessages，从 cacheStore 换入 messageStore */
+  async function activateLocal(id: string): Promise<void> {
+    if (useConnectionStore().state.status !== 'disconnected') return
+    const cache = useCacheStore()
+    if (!cache.conversations.some((c) => c.id === id)) {
+      error.value = { code: 'OFFLINE_NOT_CACHED', message: '该会话离线不可读' }
+      return
+    }
+    currentId.value = id
+    offlineView.value = true
+    const messageStore = useMessageStore()
+    messageStore.resetConversation(id)
+    const snap = cache.snapshotMessages(id)
+    if (snap && snap.length) messageStore.loadSnapshot(id, snap)
+    // 无快照 → 空态 + 提示（CyChatView 空态文案按 offlineView 区分）
+    error.value = undefined
+  }
+
+  return { items, currentId, hasMore, nextCursor, initializedFor, ready, error, busy, offlineView, list, safeList, onConnected, onActiveConversationAppeared, activate, getMore, create, rename, remove, setOfflineCache, activateLocal }
 })
