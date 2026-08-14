@@ -41,7 +41,9 @@ import type {
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper } from './protocol-v2/rest-mapper'
-import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse } from './protocol-v2/rest-schemas'
+import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList } from './protocol-v2/rest-schemas'
+import { localDateToHalfOpenRange } from '@shared/domain'
+import type { HistoryCategory, StickerManifest } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 
@@ -82,6 +84,18 @@ const RECONNECT_MAX_ATTEMPTS = 6
 const HANDSHAKE_TIMEOUT_DEFAULT_MS = 10000
 const REST_TIMEOUT_DEFAULT_MS = 10000
 const UPLOAD_TIMEOUT_DEFAULT_MS = 60000
+
+/** category → search 端点 category 参数（P2-1：不做 'image,video' 组合串假设——契约无出处；按 docs/02 §19 资源端点
+ *  单值枚举 image|link|video|audio|file|sticker 处理。image_video（图片/视频 tab）拆两次单值查询合并；其余单值透传；
+ *  search 端点 category 最终取值以真实后端联调确认为准（开放项 §7）。check:contract 不覆盖 REST schema，按 frontend_contract/rest.py 人工核对。 */
+const HISTORY_CATEGORY_WIRE: Record<HistoryCategory, string[] | undefined> = {
+  all: undefined,
+  image_video: ['image', 'video'],
+  sticker: ['sticker'],
+  file: ['file'],
+  audio: ['audio'],
+  link: ['link']
+}
 
 /** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
  *  400 CONTRACT_VALIDATION → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
@@ -428,6 +442,7 @@ export class RealBackend implements BackendAdapter {
     })
     const payload: Record<string, unknown> = { type: 'text', content: input.text, clientRequestId: input.clientRequestId, conversationId: input.conversationId }
     if (input.attachments?.length) payload.attachments = input.attachments
+    if (input.stickerId) payload.stickerId = input.stickerId   // 阶段 3 G4：贴图消息 wire（D8）
     try {
       this.ws.send(JSON.stringify(payload))
     } catch {
@@ -608,12 +623,58 @@ export class RealBackend implements BackendAdapter {
     return parsed.data
   }
 
+  // —— 阶段 3 G4 历史查看器/表情（spec §4.3/§4.4/§4.5，D2/D8）——
+  async getMessageContext(input: MessageContextQuery): Promise<MessagePage> {
+    const params: Record<string, string> = { conversationId: input.conversationId }
+    if (input.before !== undefined) params['before'] = String(input.before)
+    if (input.after !== undefined) params['after'] = String(input.after)
+    const q = new URLSearchParams(params).toString()
+    const res = await this.restFetch(`/api/messages/${encodeURIComponent(input.messageId)}/context?${q}`)
+    const parsed = parseRestMessageContext(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '消息上下文响应校验失败')
+    return this.restMapper.toMessagePageFromContext(parsed.data)
+  }
+
+  async queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage> {
+    const wireCats = HISTORY_CATEGORY_WIRE[input.category] ?? [undefined]
+    const pages = await Promise.all(wireCats.map(async (cat) => {
+      const params: Record<string, string> = {}
+      if (input.query) params['query'] = input.query
+      if (input.scope.type === 'conversation') params['conversationId'] = input.scope.conversationId
+      if (input.localDate) {
+        const range = localDateToHalfOpenRange(input.localDate, input.timeZone)
+        params['date_from'] = range.from
+        params['date_to'] = range.to
+      }
+      params['timezone'] = input.timeZone
+      if (cat) params['category'] = cat
+      if (input.cursor) params['cursor'] = input.cursor
+      params['limit'] = String(input.limit)
+      const q = new URLSearchParams(params).toString()
+      const res = await this.restFetch(`/api/search/messages${q ? `?${q}` : ''}`)
+      const parsed = parseRestSearchMessages(await res.json())
+      if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '历史搜索响应校验失败')
+      return parsed.data
+    }))
+    const mapped = pages.flatMap((p) => p.items.map((i) => this.restMapper.toChatHistoryItem(i)))
+    const byHit = new Map(mapped.map((i) => [i.hitId, i]))
+    const items = [...byHit.values()].sort((a, b) =>
+      a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
+    // image_video 合并分页：以任一行有余量的子查询游标续页（两个子查询各自 cursor 续页细节以联调确认，开放项 §7）
+    return { items, hasMore: pages.some((p) => p.has_more), nextCursor: pages.find((p) => p.has_more)?.cursor }
+  }
+
+  async listStickers(): Promise<StickerManifest> {
+    const res = await this.restFetch('/api/stickers')
+    const parsed = parseRestStickerList(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '表情清单响应校验失败')
+    return this.restMapper.toStickerManifest(parsed.data)
+  }
+
   // —— 非目标方法(阶段 3/4/6 实现,不 Mock 假装)——
-  async getMessageContext(_input: MessageContextQuery): Promise<MessagePage> { throw this.notImplemented('getMessageContext') }
   async listModelProfiles(_type?: ModelServiceType): Promise<ModelProfile[]> { throw this.notImplemented('listModelProfiles') }
   async testModelProfile(_input: TestModelProfileCommand): Promise<ModelProfileTestResult> { throw this.notImplemented('testModelProfile') }
   async activateModelProfile(_input: ActivateModelProfileCommand): Promise<void> { throw this.notImplemented('activateModelProfile') }
-  async queryChatHistory(_input: ChatHistoryQuery): Promise<ChatHistoryPage> { throw this.notImplemented('queryChatHistory') }
   async startVoiceInput(_input: StartVoiceInputInput): Promise<VoiceInputSession> { throw this.notImplemented('startVoiceInput') }
   async stopVoiceInput(_input: StopVoiceInputInput): Promise<void> { throw this.notImplemented('stopVoiceInput') }
   async startDictation(_input: StartDictationInput): Promise<DictationSession> { throw this.notImplemented('startDictation') }
