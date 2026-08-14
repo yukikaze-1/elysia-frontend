@@ -112,6 +112,9 @@ function onResizeEnd(e: PointerEvent): void {
   width: 5px;
   cursor: col-resize;
   touch-action: none;
+  /* G1 偏差修正：.cy-live-stage 也是 position:relative（DOM 序更后），会覆盖绝对定位的
+     手柄使其不可交互（Playwright elementFromPoint 验证）；z-index 让手柄始终在最上层。 */
+  z-index: 2;
 }
 
 .cy-live-resizer:hover {
