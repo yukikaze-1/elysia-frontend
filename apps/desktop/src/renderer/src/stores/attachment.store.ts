@@ -37,18 +37,23 @@ export const useAttachmentStore = defineStore('attachment', () => {
     return { localId: f.localId, name: f.name, size: f.size, mediaType: f.mediaType, source: f.source, ...(kind ? { kind } : {}), ...(refData?.file ? { file: refData.file } : {}), ...(refData?.bytes ? { bytes: refData.bytes } : {}) }
   }
 
-  /** 添加（pick/drop/paste 仅 source 不同）；客户端预检 → selected → 异步 validateAll */
+  /** 添加（pick/drop/paste 仅 source 不同）；客户端预检 → selected → 异步 validateAll。
+   *  P1-1：逐项预检——聚合级失败整批 failed；单文件超限只 fail 该文件，其余继续 selected→validateAll（spec §4.3/§4.4 逐项） */
   function addFiles(files: AddFileInput[]): string[] {
     const pre = clientPrecheck(files)
     const ids: string[] = []
-    for (const f of files) {
+    files.forEach((f, index) => {
       const localId = `loc-${crypto.randomUUID()}`
       ids.push(localId)
       fileByLocalId.value[localId] = f.file || f.bytes ? { file: f.file, bytes: f.bytes } : {}
-      commit({ type: 'add', item: { kind: 'attachment', localId, name: f.name, size: f.size, mediaType: f.mediaType, source: f.source, status: pre.ok ? 'selected' : 'failed', ...(pre.ok ? {} : { reason: 'precheck', message: pre.reasons.join('；') }) } })
-      if (!pre.ok) continue
+      // 逐项预检按位置匹配（perFile 与 files 同序），避免同名文件误判
+      const pf = pre.perFile[index]
+      const ok = pre.reasons.length === 0 ? (pf?.ok ?? true) : false
+      const message = ok ? undefined : (pf && !pf.ok ? pf.message : (pre.reasons.length > 0 ? pre.reasons.join('；') : '附件校验失败'))
+      commit({ type: 'add', item: { kind: 'attachment', localId, name: f.name, size: f.size, mediaType: f.mediaType, source: f.source, status: ok ? 'selected' : 'failed', ...(ok ? {} : { reason: 'precheck', message }) } })
+      if (!ok) return
       commit({ type: 'validate', localId })
-    }
+    })
     void validateAll()
     return ids
   }
@@ -81,8 +86,9 @@ export const useAttachmentStore = defineStore('attachment', () => {
     }
   }
 
-  /** 发送编排（spec §4.4）：ready 队列 → 批量上传 → messageStore.send(text,{attachments}) → 清出 */
-  async function send(text: string, messageStore: { send(text: string, opts?: { attachments?: MessageAttachment[] }): Promise<void> }): Promise<void> {
+  /** 发送编排（spec §4.4）：ready 队列 → 批量上传 → messageStore.send → 成功清出。
+   *  P2-3：send 失败（返回 false）不清队列——条目回 ready 保留（可重试/移除），不得无条件 clearOnSent 丢弃失败 */
+  async function send(text: string, messageStore: { send(text: string, opts?: { attachments?: MessageAttachment[] }): Promise<boolean> }): Promise<void> {
     const ready = order.value
       .map((id) => pendingById.value[id])
       .filter((i): i is PendingAttachment => i?.kind === 'attachment' && i.status === 'ready')
@@ -95,8 +101,9 @@ export const useAttachmentStore = defineStore('attachment', () => {
     commit({ type: 'upload', localIds: ready.map((f) => f.localId) })
     try {
       const resp = await api.attachmentsUpload({ uploadId: uid, files: ready.map((f) => descriptor(f)) })
-      await messageStore.send(text, { attachments: resp.attachments })
-      clearOnSent()
+      const ok = await messageStore.send(text, { attachments: resp.attachments })
+      if (ok) clearOnSent()
+      else commit({ type: 'upload-revert', localIds: ready.map((f) => f.localId) })
     } catch (e) {
       const cancelled = !uploading.value   // cancelUpload 已置 uploading=false → 走取消分支（TS 避免 boolean 字面量窄化比较）
       if (cancelled) commit({ type: 'cancel' })

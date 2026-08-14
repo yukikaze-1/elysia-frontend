@@ -59,4 +59,24 @@ describe('UploadService.validateFiles', () => {
     expect(r.every((x) => !x.ok)).toBe(true)
     expect(r[0].reason).toBe('too_large_aggregate')
   })
+  it('P1-1：混合批次——单文件超限只 fail 该文件，其余合法文件 ok:true 继续（逐项校验，spec §4.3/§4.4）', async () => {
+    const over = 11 * 1024 * 1024   // image 限 10MB
+    const r = await svc().validateFiles([
+      desc({ localId: 'a', size: over, mediaType: 'image/png', path: '/tmp/a.png' }),
+      desc({ localId: 'b', size: 10, mediaType: 'image/png', path: '/tmp/b.png' })
+    ])
+    expect(r).toEqual([
+      { localId: 'a', ok: false, reason: 'size_limit', message: '超过该类型大小上限' },
+      { localId: 'b', ok: true, kind: 'image' }
+    ])
+  })
+  it('P1-1：单文件超限只 fail 该文件——失败文件不阻断合法文件按 bytes 魔数嗅探（逐项）', async () => {
+    const over = 11 * 1024 * 1024
+    const r = await svc().validateFiles([
+      desc({ localId: 'a', size: over, mediaType: 'image/png', bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) }),
+      desc({ localId: 'b', size: 10, mediaType: 'image/png', bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) })
+    ])
+    expect(r[0]).toEqual({ localId: 'a', ok: false, reason: 'size_limit', message: '超过该类型大小上限' })
+    expect(r[1]).toEqual({ localId: 'b', ok: true, kind: 'image' })
+  })
 })

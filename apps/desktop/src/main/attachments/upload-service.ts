@@ -6,7 +6,7 @@ import type { FileValidationResult, MessageAttachment, UploadFileDescriptor } fr
 import type { AttachmentInfo, AttachmentKind } from '@shared/contracts'
 import type { BackendAdapter, UploadContent } from '../transport/backend-adapter'
 import type { SafeOpenPlatform } from '../persistence/safe-open'
-import { kindFromMime, precheckFiles, sniffKind, sizeLimitFor } from './attachment-policy'
+import { precheckFiles, sniffKind, sizeLimitFor } from './attachment-policy'
 
 export interface UploadFs {
   realpath(p: string): Promise<string>
@@ -78,11 +78,20 @@ export class UploadService {
 
   async validateFiles(descriptors: UploadFileDescriptor[]): Promise<FileValidationResult[]> {
     const pre = precheckFiles(descriptors.map((d) => ({ name: d.name, size: d.size, mediaType: d.mediaType })))
+    // P1-1：逐项校验（spec §4.3/§4.4）——聚合级（数量/聚合大小）整批 failed；单文件超限/类型问题只 fail 该文件，
+    // 其余合法文件继续 path/bytes 校验（batch 原子仅指上传不指校验，D3）
+    const aggregate = pre.issues.find((i) => i.reason === 'too_large_aggregate' || i.reason === 'too_many')
     const results: FileValidationResult[] = []
-    for (const d of descriptors) {
-      if (!pre.ok) {
-        const issue = pre.issues.find((i) => i.reason !== 'too_large_aggregate' && i.reason !== 'too_many' ? i.name === d.name : true)
-        results.push({ localId: d.localId, ok: false, reason: issue?.reason ?? 'invalid' })
+    for (let index = 0; index < descriptors.length; index++) {
+      const d = descriptors[index]
+      if (aggregate) {
+        results.push({ localId: d.localId, ok: false, reason: aggregate.reason })
+        continue
+      }
+      // 逐项 issue 按位置匹配（index），避免同名文件被首个匹配误判
+      const perFile = pre.issues.find((i) => i.reason !== 'too_large_aggregate' && i.reason !== 'too_many' && i.index === index)
+      if (perFile) {
+        results.push({ localId: d.localId, ok: false, reason: perFile.reason, message: perFile.reason === 'size_limit' ? '超过该类型大小上限' : '不支持的文件类型' })
         continue
       }
       if (d.path) {
@@ -129,14 +138,25 @@ export class UploadService {
       const uploads: UploadContent[] = []
       for (const d of descriptors) {
         if (d.path) {
+          // P2-2：敏感范围复验（realpath+isInside，与 validateFiles 同级防御，防 Renderer 伪造 path）
+          const real = await this.fs.realpath(d.path)
+          if (isInside(this.userDataBase(), real)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `拒绝上传应用数据目录内的文件: ${d.localId}`)
           // 上传前 fs.stat 复验：实际大小与普通文件（防 Renderer 伪造描述符/队列状态漂移，spec §4.5）
           const st = await this.fs.stat(d.path)
           if (!st.isFile()) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件不是普通文件: ${d.localId}`)
-          const kind = kindFromMime(d.mediaType)
+          // P2-1：kind 复验与 validateFiles 统一用 sniffKind（魔数），不用 kindFromMime（MIME 可伪造）——查限一致
+          const head = new Uint8Array(HEAD_LEN)
+          const hfd = await this.fs.open(d.path, this.platform.existingReadFlags)
+          let bytesRead = 0
+          try { bytesRead = (await hfd.read(head, 0, HEAD_LEN)).bytesRead } finally { await hfd.close() }
+          const kind = sniffKind(head.subarray(0, bytesRead))
           if (st.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
-          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind: d.kind, path: d.path, bytes: new Uint8Array(await this.fs.readFile(d.path)) })
+          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind, path: d.path, bytes: new Uint8Array(await this.fs.readFile(d.path)) })
         } else if (d.bytes) {
-          uploads.push({ name: d.name, mediaType: d.mediaType, size: d.size, kind: d.kind, bytes: d.bytes })
+          // P2-1：bytes 分支也按魔数嗅探 kind 复验大小（此前无大小复验）
+          const kind = sniffKind(d.bytes.subarray(0, HEAD_LEN))
+          if (d.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
+          uploads.push({ name: d.name, mediaType: d.mediaType, size: d.size, kind, bytes: d.bytes })
         } else {
           throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件缺少 bytes/path: ${d.localId}`)
         }

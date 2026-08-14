@@ -239,14 +239,16 @@ export interface AttachmentInputFile { localId: string; name: string; size: numb
 function toIpcDescriptor(f: AttachmentInputFile): Omit<import('@shared/contracts').UploadFileDescriptor, 'path' | 'bytes'> & { path?: string; bytes?: Uint8Array } {
   const out: Record<string, unknown> = { localId: f.localId, name: f.name, size: f.size, mediaType: f.mediaType, source: f.source }
   if (f.kind) out.kind = f.kind
-  // P1-2：两个独立 if（不互斥）——file 注入 path（getPathForFile 空串视为 pathless），bytes 独立保留。
-  // 旧 else-if：粘贴项 f.file 为 JS 构造 File（getPathForFile 返 ''），bytes 分支永不达 → descriptor 无 path 无 bytes
-  // → Task 3 schema refine（path/bytes 二选一）判 SCHEMA_VALIDATION_FAILED，粘贴路径端到端断。
+  // P2-7：优先 path（真实文件）；仅 path 为空才填 bytes——保证 path/bytes 二选一（zod refine 不整条拒）。
+  // 旧两个独立 if：粘贴项同时带真实 path（getPathForFile 命中）与 bytes 时二者都填 → refine 判 SCHEMA_VALIDATION_FAILED 整批拒。
+  // JS 构造 File（粘贴项）getPathForFile 返 '' → 视为 pathless，bytes 保留（P1-2 语义不变）。
   if (f.file) {
     const p = webUtils.getPathForFile(f.file)
-    if (p) out.path = p          // 空串视为 pathless（JS 构造 File 无真实路径，安全属性）
+    if (p) out.path = p
+    else if (f.bytes) out.bytes = new Uint8Array(f.bytes)
+  } else if (f.bytes) {
+    out.bytes = new Uint8Array(f.bytes)
   }
-  if (f.bytes) out.bytes = new Uint8Array(f.bytes)
   return out as ReturnType<typeof toIpcDescriptor>
 }
 

@@ -2,10 +2,10 @@
 // CyImageAttachment:图片内联预览（原生缩放）；svg 经 <img> 不执行脚本（spec §4.6 安全注记）。
 import { mediaUrlFor } from '../utils/media-url'
 // P2-6：name prop 已声明（模板 :alt="name ?? '附件图片'" 引用它，缺省会 typecheck 报未声明）
-const props = defineProps<{ attachmentId?: string; mediaType?: string; name?: string }>()
+const props = defineProps<{ attachmentId?: string; mediaType?: string; name?: string; nonce?: number }>()
 const emit = defineEmits<{ error: []; loaded: [] }>()
 function src(): string | undefined {
-  return props.attachmentId ? mediaUrlFor('attachment', props.attachmentId) : undefined
+  return props.attachmentId ? mediaUrlFor('attachment', props.attachmentId, props.nonce) : undefined
 }
 </script>
 

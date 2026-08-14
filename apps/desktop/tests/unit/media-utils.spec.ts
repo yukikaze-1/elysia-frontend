@@ -34,4 +34,8 @@ describe('formatFileSize / mediaUrlFor', () => {
     expect(mediaUrlFor('attachment', 'att_1')).toBe('cyrene://renderer/__cyrene-media/attachment/att_1')
     expect(mediaUrlFor('sticker', 'st_1')).toBe('cyrene://renderer/__cyrene-media/sticker/st_1')
   })
+  it('P1-2：mediaUrlFor 带 nonce → 追加 ?t=（占位重试缓存破坏，强制重新请求协议）', () => {
+    expect(mediaUrlFor('attachment', 'att_1', 3)).toBe('cyrene://renderer/__cyrene-media/attachment/att_1?t=3')
+    expect(mediaUrlFor('attachment', 'att_1')).not.toContain('?t=')
+  })
 })

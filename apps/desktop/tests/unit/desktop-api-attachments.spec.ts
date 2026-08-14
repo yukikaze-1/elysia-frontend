@@ -43,7 +43,7 @@ describe('desktopApi attachments 面', () => {
     })
   })
   it('attachmentsValidate：pathless 文件（getPathForFile 返回空串）→ 走 bytes，path 缺省', async () => {
-    // P1-2：f.file 为 JS 构造 File（粘贴项）时 getPathForFile 返 ''，但 bytes 必须保留（两个独立 if）——
+    // P1-2：f.file 为 JS 构造 File（粘贴项）时 getPathForFile 返 ''，但 bytes 必须保留——
     // 断言 bytes 为 Uint8Array 且 length 正确；旧 else-if 实现下此断言必挂（descriptor 无 path 无 bytes）
     const api = await importApi()
     mockWebUtils.getPathForFile.mockReturnValue('')
@@ -54,6 +54,15 @@ describe('desktopApi attachments 面', () => {
     expect(payload.files[0].path).toBeUndefined()
     expect(payload.files[0].bytes).toBeInstanceOf(Uint8Array)
     expect((payload.files[0].bytes as Uint8Array).length).toBe(2)
+  })
+  it('P2-7：path 与 bytes 同时存在 → 优先 path，不填 bytes（保证二选一，zod refine 不整条拒）', async () => {
+    const api = await importApi()
+    mockWebUtils.getPathForFile.mockReturnValue('/tmp/a.png')   // 真实路径
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: [{ localId: 'l1', ok: true, kind: 'image' }] })
+    await api.attachmentsValidate({ files: [{ localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'paste', file: {} as File, bytes: new ArrayBuffer(2) }] })
+    const payload = mockIpc.invoke.mock.calls[0][1] as { files: Array<{ path?: string; bytes?: Uint8Array }> }
+    expect(payload.files[0].path).toBe('/tmp/a.png')
+    expect(payload.files[0].bytes).toBeUndefined()   // path 非空时不再填 bytes
   })
   it('attachmentsUpload：invoke 带 uploadId + files（path/bytes 二选一）', async () => {
     const api = await importApi()

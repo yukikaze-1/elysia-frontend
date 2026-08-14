@@ -36,11 +36,10 @@ const overLimit = computed(() => (currentId.value ? !!draftStore.overLimit[curre
 
 const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
-/** 发送条件:非空/有附件/有待发送贴图 + 未在发送 + 无阻断(附件 failed/validating/uploading) + 有激活会话 + 已连接且会话就绪
- *  P1-5：canSend 计入 pendingStickers 非空——纯贴图也能点发送按钮；附件阻断只挡附件/文本路径（贴图不经附件编排，不受影响），保证按钮/Enter 一致 */
+/** 发送条件:非空/有附件 + 未在发送 + 无阻断(附件 failed/validating/uploading) + 有激活会话 + 已连接且会话就绪 */
 const canSend = computed(() =>
-  (draft.value.trim().length > 0 || attachmentStore.hasReady || pendingStickers.value.length > 0) &&
-  !messageStore.sending && (pendingStickers.value.length > 0 || !attachmentStore.canSend.blockReason) &&
+  (draft.value.trim().length > 0 || attachmentStore.hasReady) &&
+  !messageStore.sending && !attachmentStore.canSend.blockReason &&
   !!conversationStore.currentId && connectionStore.state.status === 'connected' && conversationStore.ready
 )
 
@@ -65,15 +64,10 @@ function onEnter(e: KeyboardEvent): void {
 
 async function send(): Promise<void> {
   if (!canSend.value && pendingStickers.value.length === 0) return
+  // G3：附件存在时 attachmentStore 编排上传→发送；保留 messageStore.send 的失败保留草稿语义（G2）。
+  // P2-3：wrapper 返回 messageStore.send 布尔——attachmentStore 据此决定清队列（成功）还是回 ready 保留（失败）
   let ok = false
-  const text = draft.value.trim()
-  // P1-5：纯贴图发送——空草稿 + 仅待发送贴图时不发空文本消息（attachmentStore.send('') 会经 messageStore.send('') 发一条空消息）；
-  // 仅当有文本或就绪附件时走附件编排路径
-  if (text.length > 0 || attachmentStore.hasReady) {
-    // G3：附件存在时 attachmentStore 编排上传→发送；保留 messageStore.send 的失败保留草稿语义（G2）。
-    // P2-3：wrapper 返回 messageStore.send 布尔——attachmentStore 据此决定清队列（成功）还是回 ready 保留（失败）
-    await attachmentStore.send(text, { send: async (t, o) => { ok = await messageStore.send(t, o); return ok } })
-  }
+  await attachmentStore.send(draft.value.trim(), { send: async (t, o) => { ok = await messageStore.send(t, o); return ok } })
   // G4：待发送贴图逐条发送（sticker 非附件，不经上传编排；wire stickerId，D8）
   for (const s of pendingStickers.value) {
     const stickerOk = await messageStore.send('', s.stickerId)

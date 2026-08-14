@@ -20,6 +20,7 @@ export type AttachmentQueueAction =
   | { type: 'validate-fail'; localId: string; reason: string; message?: string }
   | { type: 'upload'; localIds: string[] }
   | { type: 'upload-fail'; localId: string; reason: string; message?: string }
+  | { type: 'upload-revert'; localIds: string[] }   // P2-3：send 失败后 uploading → ready（保留条目可重试/移除）
   | { type: 'cancel' }
   | { type: 'remove'; localId: string }
   | { type: 'clear' }
@@ -54,12 +55,22 @@ export function attachmentQueueReducer(state: PendingQueueState, action: Attachm
     }
     case 'upload-fail':
       return patchAttachment(state, action.localId, (a) => (a.status === 'uploading' ? { ...a, status: 'failed', reason: action.reason } : a))
-    case 'cancel': {
+    case 'upload-revert': {
       let s = state
-      for (const id of s.order) {
-        s = patchAttachment(s, id, (a) => (a.status === 'uploading' ? { ...a, status: 'cancelled', reason: 'cancelled' } : a))
+      for (const id of action.localIds) {
+        s = patchAttachment(s, id, (a) => (a.status === 'uploading' ? { ...a, status: 'ready' } : a))
       }
       return s
+    }
+    case 'cancel': {
+      // P2-4：spec §4.8「置 cancelled 移除」——取消后条目直接从队列移除，不再滞留 cancelled 需手动移除
+      const pendingById = { ...state.pendingById }
+      const order = state.order.filter((id) => {
+        const a = pendingById[id]
+        if (a?.kind === 'attachment' && a.status === 'uploading') { delete pendingById[id]; return false }
+        return true
+      })
+      return { pendingById, order }
     }
     case 'remove': {
       if (!state.pendingById[action.localId]) return state
@@ -81,15 +92,25 @@ export function canSendQueue(state: PendingQueueState): { canSend: boolean; bloc
   return { canSend: true }
 }
 
-/** Renderer UX 预检（数量/聚合/单文件按 kind 限额；Main validateFiles 为权威） */
-export function clientPrecheck(files: Array<{ name: string; size: number; mediaType: string }>): { ok: boolean; reasons: string[] } {
+export interface ClientPrecheckItem {
+  name: string
+  ok: boolean
+  message?: string
+}
+
+/** Renderer UX 预检（数量/聚合/单文件按 kind 限额；Main validateFiles 为权威）。
+ *  P1-1：逐项结果——聚合级（数量/总大小）整批 ok:false；单文件超限仅该文件 ok:false，其余文件 ok:true 继续 selected→validateAll */
+export function clientPrecheck(files: Array<{ name: string; size: number; mediaType: string }>): { ok: boolean; reasons: string[]; perFile: ClientPrecheckItem[] } {
   const reasons: string[] = []
   if (files.length > ATTACHMENT_MAX_FILES) reasons.push('一次最多选择 10 个文件')
   const aggregate = files.reduce((s, f) => s + f.size, 0)
   if (aggregate > ATTACHMENT_AGGREGATE_BYTES) reasons.push('附件总大小超过 64MB')
-  for (const f of files) {
+  const perFile = files.map((f) => {
     const kind = kindFromMime(f.mediaType)
-    if (kind !== 'file' && f.size > ATTACHMENT_MAX_BYTES_BY_KIND[kind]) reasons.push(`「${f.name}」超过该类型大小上限`)
-  }
-  return { ok: reasons.length === 0, reasons }
+    if (kind !== 'file' && f.size > ATTACHMENT_MAX_BYTES_BY_KIND[kind]) {
+      return { name: f.name, ok: false, message: `「${f.name}」超过该类型大小上限` }
+    }
+    return { name: f.name, ok: true }
+  })
+  return { ok: reasons.length === 0 && perFile.every((p) => p.ok), reasons, perFile }
 }

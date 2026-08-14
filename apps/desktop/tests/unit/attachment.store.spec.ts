@@ -49,7 +49,7 @@ describe('attachmentStore', () => {
     mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
       files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' }) as FileValidationResult))
     mockApi.attachmentsUpload.mockResolvedValue({ uploadId: 'u1', attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png', name: 'a.png' }] })
-    const messageStore = { send: vi.fn(async () => {}) }
+    const messageStore = { send: vi.fn(async () => true) }
     const store = useAttachmentStore()
     store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
     await vi.waitFor(() => { expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('ready') })
@@ -63,7 +63,7 @@ describe('attachmentStore', () => {
     mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
       files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' }) as FileValidationResult))
     mockApi.attachmentsUpload.mockRejectedValue(new Error('[BACKEND_REJECTED] 上传失败'))
-    const messageStore = { send: vi.fn(async () => {}) }
+    const messageStore = { send: vi.fn(async () => true) }
     const store = useAttachmentStore()
     store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
     await vi.waitFor(() => { expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('ready') })
@@ -72,14 +72,14 @@ describe('attachmentStore', () => {
     expect(messageStore.send).not.toHaveBeenCalled()
   })
 
-  it('cancelUpload → 条目 cancelled + api.attachmentsCancel(uploadId)', async () => {
+  it('P2-4：cancelUpload → 条目从队列移除（spec §4.8 置 cancelled 移除，不再滞留需手动移除）+ api.attachmentsCancel(uploadId)', async () => {
     // P2-8：deferred 手动 reject 消除竞态——固定 5ms 定时 vs cancel 并发时，vi.waitFor 轮询 >5ms 可能先触发 reject 使旧版挂
     let rejectUpload!: (e: Error) => void
     mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
       files.map((f) => ({ localId: f.localId, ok: true, kind: 'video' }) as FileValidationResult))
     mockApi.attachmentsUpload.mockImplementation(() => new Promise((_res, rej) => { rejectUpload = rej }))
     mockApi.attachmentsCancel.mockResolvedValue(undefined)
-    const messageStore = { send: vi.fn(async () => {}) }
+    const messageStore = { send: vi.fn(async () => true) }
     const store = useAttachmentStore()
     store.addFiles([{ name: 'v.mp4', size: 10, mediaType: 'video/mp4', source: 'picker', bytes: new ArrayBuffer(2) }])
     await vi.waitFor(() => { expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('ready') })
@@ -89,8 +89,39 @@ describe('attachmentStore', () => {
     expect(mockApi.attachmentsCancel).toHaveBeenCalledWith(expect.any(String))
     rejectUpload(new Error('[CANCELLED] 已取消'))   // 确定性时序：手动 reject 触发 send 取消分支（cancelUpload 已置 uploading=false）
     await p
-    expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('cancelled')
+    expect(store.order).toHaveLength(0)   // 取消后条目直接移除，不再滞留 cancelled
     expect(messageStore.send).not.toHaveBeenCalled()
+  })
+
+  it('P1-1：混合批次——单文件超限只 fail 该文件，其余合法文件继续 selected→validateAll→ready', async () => {
+    mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
+      files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' }) as FileValidationResult))
+    const store = useAttachmentStore()
+    store.addFiles([
+      { name: 'big.png', size: 11 * 1024 * 1024, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) },
+      { name: 'ok.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }
+    ])
+    const [bigId, okId] = store.order
+    expect((store.pendingById[bigId] as { status: string }).status).toBe('failed')          // 超限文件 clientPrecheck 逐项拒
+    expect((store.pendingById[bigId] as { reason?: string }).reason).toBe('precheck')
+    await vi.waitFor(() => { expect((store.pendingById[okId] as { status: string }).status).toBe('ready') })   // 合法文件继续 ready
+    expect(mockApi.attachmentsValidate).toHaveBeenCalledTimes(1)
+    const payload = mockApi.attachmentsValidate.mock.calls[0][0] as { files: Array<{ localId: string }> }
+    expect(payload.files.map((f) => f.localId)).not.toContain(bigId)   // 失败文件不进入 validateAll
+  })
+
+  it('P2-3：upload 成功但 messageStore.send 返回 false → 队列保留（回 ready 可重试/移除），不清除', async () => {
+    mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
+      files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' }) as FileValidationResult))
+    mockApi.attachmentsUpload.mockResolvedValue({ uploadId: 'u1', attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png', name: 'a.png' }] })
+    const messageStore = { send: vi.fn(async () => false) }
+    const store = useAttachmentStore()
+    store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
+    await vi.waitFor(() => { expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('ready') })
+    await store.send('hi', messageStore)
+    expect(messageStore.send).toHaveBeenCalledWith('hi', { attachments: expect.any(Array) })
+    expect(store.order).toHaveLength(1)                                                        // 失败保留条目
+    expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('ready')     // 回 ready 可重试/移除
   })
 
   it('remove：非 uploading 可移除；uploading 期间禁止', async () => {

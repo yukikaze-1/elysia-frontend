@@ -53,6 +53,27 @@ describe('MediaService.resolveSignedUrl（缓存/重签）', () => {
     await svc.resolveSignedUrl('att_1')
     expect(sign).toHaveBeenCalledTimes(2)
   })
+  it('P2-6：非法 expiresAt（Date.parse NaN）→ 降级短窗口缓存，不放大重签请求', async () => {
+    const sign = vi.fn(async (id: string) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: 'not-a-date' }))
+    const svc = mkService({ sign })
+    const a = await svc.resolveSignedUrl('att_1')
+    const b = await svc.resolveSignedUrl('att_1')
+    expect(a.url).toBe(b.url)
+    expect(sign).toHaveBeenCalledTimes(1)   // 第二调用命中降级缓存，不再重签（避免恒重签放大）
+  })
+  it('P2-6：非法 expiresAt 降级窗口用尽后仍可重签（非死缓存）', async () => {
+    let clock = now()
+    const sign = vi.fn(async (id: string) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: 'not-a-date' }))
+    const svc = new MediaService({
+      backend: { signAttachmentUrl: sign },
+      baseUrl: () => 'http://127.0.0.1:9',
+      now: () => clock
+    })
+    await svc.resolveSignedUrl('att_1')          // 降级缓存 expiresAt = clock + 2*leeway
+    clock = now() + 11 * 60 * 1000               // 推进 11min > 10min 降级窗口 → 缓存失效重签
+    await svc.resolveSignedUrl('att_1')
+    expect(sign).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('MediaService.stream attachment 分支', () => {

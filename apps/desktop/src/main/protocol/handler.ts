@@ -50,7 +50,12 @@ export async function registerCyreneProtocolHandler(opts: CyreneProtocolOptions)
       if (!parsed) return new Response('Forbidden', { status: 403 })
       if (!resolveMedia) return new Response('Not Found', { status: 404 })
       if (isDocumentRequest(request)) return new Response('Forbidden', { status: 403 })
-      return resolveMedia(parsed.mediaType, parsed.id, request)
+      // P2-5：MediaService 抛错（如签名端点失败）不得成为 rejected promise——映射 502 transient 干净状态
+      try {
+        return await resolveMedia(parsed.mediaType, parsed.id, request)
+      } catch {
+        return new Response('Bad Gateway', { status: 502 })
+      }
     }
     if (!realRoot) return new Response('Not Found', { status: 404 })
     const candidate = resolveRendererPath(realRoot, url.pathname)

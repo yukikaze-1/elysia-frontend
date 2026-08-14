@@ -47,6 +47,8 @@ export function sniffKind(head: Uint8Array): AttachmentKind {
 export interface PrecheckIssue {
   name: string
   reason: 'too_many' | 'too_large_aggregate' | 'size_limit' | 'unsupported_type'
+  /** 逐项 issue 对应的文件下标（聚合级 too_many/too_large_aggregate 无 index）——P1-1 逐项校验按位置匹配，避免同名文件误判 */
+  index?: number
 }
 
 /** 客户端/权威共用的预检：数量 ≤10 / 聚合 ≤64MB / 单文件按 kind 限额（D-04 沿用后端数值） */
@@ -55,12 +57,12 @@ export function precheckFiles(files: Array<{ name: string; size: number; mediaTy
   if (files.length > ATTACHMENT_MAX_FILES) issues.push({ name: files[0]?.name ?? '', reason: 'too_many' })
   const aggregate = files.reduce((s, f) => s + f.size, 0)
   if (aggregate > ATTACHMENT_AGGREGATE_BYTES) issues.push({ name: files[0]?.name ?? '', reason: 'too_large_aggregate' })
-  for (const f of files) {
+  files.forEach((f, index) => {
     const kind = kindFromMime(f.mediaType)
     if (!isKindAcceptable(kind, f.mediaType) && kind !== 'file') {
-      issues.push({ name: f.name, reason: 'unsupported_type' })
+      issues.push({ name: f.name, reason: 'unsupported_type', index })
     }
-    if (f.size > sizeLimitFor(kind)) issues.push({ name: f.name, reason: 'size_limit' })
-  }
+    if (f.size > sizeLimitFor(kind)) issues.push({ name: f.name, reason: 'size_limit', index })
+  })
   return { ok: issues.length === 0, issues }
 }

@@ -3,11 +3,11 @@
 import { ref } from 'vue'
 import { formatFileSize } from '../utils/media'
 import { mediaUrlFor } from '../utils/media-url'
-const props = defineProps<{ attachmentId?: string; mediaType?: string; name?: string; size?: number }>()
+const props = defineProps<{ attachmentId?: string; mediaType?: string; name?: string; size?: number; nonce?: number }>()
 const emit = defineEmits<{ error: [] }>()
 const playing = ref(false)
 function src(): string | undefined {
-  return props.attachmentId ? mediaUrlFor('attachment', props.attachmentId) : undefined
+  return props.attachmentId ? mediaUrlFor('attachment', props.attachmentId, props.nonce) : undefined
 }
 </script>
 

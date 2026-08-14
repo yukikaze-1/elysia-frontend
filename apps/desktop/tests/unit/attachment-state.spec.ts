@@ -35,10 +35,18 @@ describe('attachmentQueueReducer（D4 状态机）', () => {
     s = attachmentQueueReducer(s, { type: 'upload-fail', localId: 'l1', reason: 'network', message: '网络错误' })
     expect((s.pendingById['l1'] as PendingAttachment).status).toBe('failed')
   })
-  it('uploading → cancel → cancelled（终态）', () => {
+  it('P2-4：uploading → cancel → 条目移除（spec §4.8 置 cancelled 移除，不再滞留 cancelled）', () => {
     let s = withItem(emptyQueue(), item('l1', { status: 'uploading' }))
+    s = withItem(s, item('l2', { status: 'ready' }))
     s = attachmentQueueReducer(s, { type: 'cancel' })
-    expect((s.pendingById['l1'] as PendingAttachment).status).toBe('cancelled')
+    expect(s.pendingById['l1']).toBeUndefined()   // uploading 条目被移除
+    expect(s.pendingById['l2']).toBeDefined()     // 非 uploading 条目保留
+    expect(s.order).toEqual(['l2'])
+  })
+  it('P2-3：uploading → upload-revert → ready（send 失败保留可重试）', () => {
+    let s = withItem(emptyQueue(), item('l1', { status: 'uploading' }))
+    s = attachmentQueueReducer(s, { type: 'upload-revert', localIds: ['l1'] })
+    expect((s.pendingById['l1'] as PendingAttachment).status).toBe('ready')
   })
   it('remove 删除条目（order 同步）', () => {
     let s = withItem(emptyQueue(), item('l1'))
@@ -95,5 +103,16 @@ describe('clientPrecheck（Renderer UX 预检，D-04 数值共用）', () => {
   })
   it('合法 → ok', () => {
     expect(clientPrecheck([{ name: 'a', size: 1024, mediaType: 'image/png' }]).ok).toBe(true)
+  })
+  it('P1-1：逐项预检——单文件超限只该文件 perFile.ok=false，其余 perFile.ok=true（聚合级 failures 走 reasons）', () => {
+    const r = clientPrecheck([
+      { name: 'big.png', size: 11 * 1024 * 1024, mediaType: 'image/png' },
+      { name: 'ok.png', size: 10, mediaType: 'image/png' }
+    ])
+    expect(r.ok).toBe(false)
+    expect(r.reasons).toHaveLength(0)                          // 无聚合级失败
+    expect(r.perFile.find((p) => p.name === 'big.png')?.ok).toBe(false)
+    expect(r.perFile.find((p) => p.name === 'big.png')?.message).toContain('超过')
+    expect(r.perFile.find((p) => p.name === 'ok.png')?.ok).toBe(true)
   })
 })

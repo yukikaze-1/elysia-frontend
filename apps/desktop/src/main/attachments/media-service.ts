@@ -12,6 +12,8 @@ const STICKER_ID_PATTERN = /^st_[A-Za-z0-9-]+$/
 const STICKER_MIME = 'image/png'
 const STICKER_MAX_BYTES = 1024 * 1024   // P3-2：docs/07 行 101 大小上限；公开静态贴图免鉴权
 const RE_SIGN_LEEWAY_MS = 5 * 60 * 1000
+/** P2-6：非法 expiresAt（Date.parse NaN/非有限）的降级窗口——缓存不可信签名的短寿命，避免 NaN 恒重签放大后端负载 */
+const INVALID_EXPIRY_FALLBACK_MS = RE_SIGN_LEEWAY_MS * 2
 
 /** 解析协议路径 /__cyrene-media/{mediaType}/{id}；非法/未知 → null（spec §4.4） */
 export function parseMediaPath(pathname: string): { mediaType: MediaRouteType; id: string } | null {
@@ -50,7 +52,9 @@ export class MediaService {
     const cached = this.cache.get(attachmentId)
     if (!opts.force && cached && cached.expiresAt - this.now() > RE_SIGN_LEEWAY_MS) return cached
     const sign: AttachmentSignResult = await this.backend.signAttachmentUrl(attachmentId)
-    const entry: ResolvedSignedUrl = { url: sign.url, expiresAt: Date.parse(sign.expiresAt) }
+    const expires = Date.parse(sign.expiresAt)
+    // P2-6：非法 expiresAt（NaN/非有限）→ 降级短窗口缓存（防 NaN 恒重签放大请求）；URL 实际过期由流 401/403 重签兜底
+    const entry: ResolvedSignedUrl = { url: sign.url, expiresAt: Number.isFinite(expires) ? expires : this.now() + INVALID_EXPIRY_FALLBACK_MS }
     this.cache.set(attachmentId, entry)
     return entry
   }
