@@ -6,6 +6,7 @@ import type {
   ActivateConversationResult,
   BackendEvent,
   BackendSession,
+  CacheMessagesInput,
   CancelGenerationInput,
   ClientRequestRef,
   ConnectionState,
@@ -16,8 +17,11 @@ import type {
   MessagePage,
   Page,
   PageQuery,
+  PersistSessionInput,
+  PersistSessionResult,
   RuntimeInfo,
-  SendMessageInput
+  SendMessageInput,
+  SessionPersistenceState
 } from '@shared/contracts'
 import { parseBackendEvent } from '@shared/schemas'
 import { z } from 'zod'
@@ -31,7 +35,9 @@ import {
   MessagePageSchema,
   MessageSchema,
   PageSchema,
-  RuntimeInfoSchema
+  PersistSessionResultSchema,
+  RuntimeInfoSchema,
+  SessionPersistenceStateSchema
 } from '@shared/schemas'
 
 async function invoke<T>(channel: IpcChannelName): Promise<IpcResult<T>> {
@@ -190,6 +196,20 @@ async function getConnectionState(): Promise<ConnectionState> {
   return unwrap(await invoke<ConnectionState>(IpcChannels.chatGetState), ConnectionStateSchema)
 }
 
+// —— 阶段 3 G2 持久化面：四通道信封解包（spec §4.2）——
+async function hydratePersistence(): Promise<SessionPersistenceState> {
+  return unwrap(await invoke<SessionPersistenceState>(IpcChannels.chatHydratePersistence), SessionPersistenceStateSchema)
+}
+async function persistSession(input: PersistSessionInput): Promise<PersistSessionResult> {
+  return unwrap(await invokeWithArgs<PersistSessionResult>(IpcChannels.chatPersistSession, input), PersistSessionResultSchema)
+}
+async function cacheMessages(input: CacheMessagesInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.chatCacheMessages, input), z.undefined())
+}
+async function openExternal(url: string): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.appOpenExternal, { url }), z.undefined())
+}
+
 type ChatEventHandler = (event: BackendEvent) => void
 type ChatStateHandler = (state: ConnectionState) => void
 type ChatReplayHandler = (payload: ReplayPayload) => void
@@ -277,7 +297,12 @@ export const desktopApi = {
   onChatEvent,
   onChatState,
   onChatReplay,
-  onChatError
+  onChatError,
+  // —— 阶段 3 G2 持久化面 ——
+  hydratePersistence,
+  persistSession,
+  cacheMessages,
+  openExternal
 }
 
 export type DesktopApi = typeof desktopApi

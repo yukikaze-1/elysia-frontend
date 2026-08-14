@@ -3,7 +3,7 @@
 // env=node:mock 'electron' 模块的 ipcRenderer。invoke 由 vi.fn 注入返回值;on/removeListener 记录 handler,
 // 测试通过 mockIpc.emit 触发(语义对齐真实 ipcRenderer.on 回调签名 (event, ...args))。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PushChannels, type BackendEvent } from '@shared/contracts'
+import { PushChannels, type BackendEvent, type Message } from '@shared/contracts'
 
 // vi.hoisted:vi.mock 工厂被提升到文件顶部执行,须先在此定义可供工厂引用的 mock 值(变量名以 mock 开头)
 const { mockIpc, mockHandlers } = vi.hoisted(() => {
@@ -333,5 +333,47 @@ describe('desktopApi chat 面', () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     mockIpc.invoke.mockResolvedValue({ ok: false })
     await expect(desktopApi.disconnect()).rejects.toThrow('[IPC_ERROR] IPC 返回格式异常')
+  })
+})
+
+describe('阶段 3 G2 新通道（persistSession/cacheMessages/hydratePersistence/openExternal）', () => {
+  it('persistSession 调 chat:persist-session 并解包 PersistSessionResult（含 evictedConversationIds）', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { evictedConversationIds: ['old'] } })
+    await expect(desktopApi.persistSession({ conversationId: 'c1', draft: { text: '草稿', updatedAt: 't' }, scrollAnchor: null }))
+      .resolves.toEqual({ evictedConversationIds: ['old'] })
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:persist-session', { conversationId: 'c1', draft: { text: '草稿', updatedAt: 't' }, scrollAnchor: null })
+  })
+  it('cacheMessages 调 chat:cache-messages（void 信封）', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: undefined })
+    const msg: Message = { messageId: 'm1', conversationId: 'c1', role: 'user', content: 'hi', status: 'completed', createdAt: 't' }
+    const input = { conversationId: 'c1', messages: [msg], updatedAt: 't' }
+    await expect(desktopApi.cacheMessages(input)).resolves.toBeUndefined()
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:cache-messages', input)
+  })
+  it('hydratePersistence 调 chat:hydrate-persistence（0 参）并解包 SessionPersistenceState', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const state = { drafts: [{ conversationId: 'c1', text: '草稿', attachmentLocalIds: [], updatedAt: 't' }], scrollAnchors: {}, conversations: [], messageSnapshots: {} }
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: state })
+    await expect(desktopApi.hydratePersistence()).resolves.toEqual(state)
+    expect(mockIpc.invoke).toHaveBeenCalledWith('chat:hydrate-persistence')
+  })
+  it('openExternal 调 app:open-external（{url} 包裹, void）', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: undefined })
+    await expect(desktopApi.openExternal('https://example.com/')).resolves.toBeUndefined()
+    expect(mockIpc.invoke).toHaveBeenCalledWith('app:open-external', { url: 'https://example.com/' })
+  })
+  it('hydratePersistence 失败信封 → 抛 [code] message', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: false, error: { code: 'LOAD_FAILED', message: '水合失败' } })
+    await expect(desktopApi.hydratePersistence()).rejects.toThrow('[LOAD_FAILED] 水合失败')
+  })
+  it('persistSession 响应 schema 校验失败（evictedConversationIds 非数组）→ [SCHEMA_VALIDATION_FAILED]', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValue({ ok: true, data: { evictedConversationIds: 'oops' } })
+    await expect(desktopApi.persistSession({ conversationId: 'c1', draft: { text: '', updatedAt: 't' }, scrollAnchor: null }))
+      .rejects.toThrow('[SCHEMA_VALIDATION_FAILED] IPC 响应校验失败')
   })
 })
