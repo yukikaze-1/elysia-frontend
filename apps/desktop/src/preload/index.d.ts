@@ -3,6 +3,7 @@ import type {
   AppInfo,
   BackendEvent,
   BackendSession,
+  CacheMessagesInput,
   CancelGenerationInput,
   ClientRequestRef,
   ConnectionState,
@@ -14,8 +15,11 @@ import type {
   MessagePage,
   Page,
   PageQuery,
+  PersistSessionInput,
+  PersistSessionResult,
   RuntimeInfo,
-  SendMessageInput
+  SendMessageInput,
+  SessionPersistenceState
 } from '@shared/contracts'
 
 declare global {
@@ -45,6 +49,11 @@ declare global {
       onChatState(handler: (state: ConnectionState) => void): () => void
       onChatReplay(handler: (payload: { conversationId: string; messages: Message[] }) => void): () => void
       onChatError(handler: (err: import('./desktop-api').PublicErrorShape) => void): () => void
+      // —— 阶段 3 G2 持久化面（类型先行，运行时装配在 preload/desktop-api.ts）——
+      hydratePersistence(): Promise<SessionPersistenceState>
+      persistSession(input: PersistSessionInput): Promise<PersistSessionResult>
+      cacheMessages(input: CacheMessagesInput): Promise<void>
+      openExternal(url: string): Promise<void>
     }
   }
 }

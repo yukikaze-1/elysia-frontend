@@ -17,7 +17,11 @@ export const IpcChannels = {
   chatGetState: 'chat:get-state',
   chatSetEndpoint: 'chat:set-endpoint',
   chatGetEndpoint: 'chat:get-endpoint',
-  chatGetRuntimeInfo: 'chat:get-runtime-info'
+  chatGetRuntimeInfo: 'chat:get-runtime-info',
+  chatHydratePersistence: 'chat:hydrate-persistence',   // 启动水合：草稿+锚点+会话列表+消息快照
+  chatPersistSession: 'chat:persist-session',           // 草稿+滚动锚点 upsert（防抖/切会话 flush）
+  chatCacheMessages: 'chat:cache-messages',             // 已确认消息快照增量推送
+  appOpenExternal: 'app:open-external'                  // Markdown 外部链接（http/https 白名单）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
@@ -38,3 +42,6 @@ export interface IpcErrorBody {
 
 /** IPC 结果信封：ok:true 带 data；ok:false 带公开错误 */
 export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcErrorBody }
+
+/** 单条 IPC 消息大小上限（docs/07 §6.3）：新持久化/外部链接通道的出参装箱预算与入参校验统一以它为准 */
+export const MAX_IPC_MESSAGE_BYTES = 4 * 1024 * 1024
