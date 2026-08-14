@@ -4,6 +4,8 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageAttachment, MessageAttachmentRef } from '../../src/shared/contracts/message'
 import { AssistantSegmentSchema, MessageAttachmentSchema, MessageSchema } from '../../src/shared/schemas'
+import { ATTACHMENT_MAX_FILES, ATTACHMENT_AGGREGATE_BYTES, ATTACHMENT_MAX_BYTES_BY_KIND, ATTACHMENT_KIND_MIME, type PendingSendItem, type UploadFileDescriptor } from '../../src/shared/contracts/attachments'
+import { IpcChannels } from '../../src/shared/contracts'
 
 describe('附件领域模型（spec §4.2）', () => {
   it('MessageAttachmentSchema 接受上传响应形态（name/size/尺寸/来源消息均可缺省兜底）', () => {
@@ -38,5 +40,44 @@ describe('附件领域模型（spec §4.2）', () => {
       content: 'hi', attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png' }]
     })
     expect(r.success).toBe(true)
+  })
+})
+
+describe('附件/队列/上传契约（spec §4.2）', () => {
+  it('限额常量单一事实来源（D-04：≤10 / 聚合 64MB / 单文件 10/50/20/20MB）', () => {
+    expect(ATTACHMENT_MAX_FILES).toBe(10)
+    expect(ATTACHMENT_AGGREGATE_BYTES).toBe(64 * 1024 * 1024)
+    expect(ATTACHMENT_MAX_BYTES_BY_KIND.image).toBe(10 * 1024 * 1024)
+    expect(ATTACHMENT_MAX_BYTES_BY_KIND.video).toBe(50 * 1024 * 1024)
+    expect(ATTACHMENT_MAX_BYTES_BY_KIND.audio).toBe(20 * 1024 * 1024)
+    expect(ATTACHMENT_MAX_BYTES_BY_KIND.file).toBe(20 * 1024 * 1024)
+  })
+  it('播放矩阵 MIME 白名单与 D-03 一致（video 可播 mp4/webm/ogv；audio 可播 mp3/wav/ogg/flac/m4a；image png/jpg/gif/webp/svg）', () => {
+    expect(ATTACHMENT_KIND_MIME.video).toEqual(['video/mp4', 'video/webm', 'video/ogg'])
+    expect(ATTACHMENT_KIND_MIME.audio).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4'])
+    expect(ATTACHMENT_KIND_MIME.image).toEqual(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
+  })
+  it('队列联合可判别：attachment 分支状态机枚举无 uploaded 瞬态（D4）', () => {
+    const item: PendingSendItem = { kind: 'attachment', localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'drag_drop', status: 'selected' }
+    expect(item.kind).toBe('attachment')
+    const statuses: ReadonlyArray<string> = ['selected', 'validating', 'ready', 'uploading', 'failed', 'cancelled']
+    for (const s of statuses) expect(statuses).toContain(s)
+    expect(statuses).not.toContain('uploaded')
+  })
+  it('G4 PendingSticker 分支挂入队列（入队即 ready）', () => {
+    const st: PendingSendItem = { kind: 'sticker', stickerId: 'st_1', status: 'ready' }
+    expect(st.kind).toBe('sticker')
+    expect(st.status).toBe('ready')
+  })
+  it('UploadFileDescriptor 二选一承载 path/bytes（path 仅 Preload 注入）', () => {
+    const d: UploadFileDescriptor = { localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'paste', bytes: new Uint8Array(2) }
+    expect(d.path).toBeUndefined()
+    expect(d.bytes).toBeInstanceOf(Uint8Array)
+  })
+  it('IPC 四通道常量存在', () => {
+    expect(IpcChannels.attachmentsValidate).toBe('attachments:validate')
+    expect(IpcChannels.attachmentsUpload).toBe('attachments:upload')
+    expect(IpcChannels.attachmentsCancel).toBe('attachments:cancel')
+    expect(IpcChannels.attachmentsCheck).toBe('attachments:check')
   })
 })

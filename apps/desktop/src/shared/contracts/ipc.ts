@@ -21,7 +21,11 @@ export const IpcChannels = {
   chatHydratePersistence: 'chat:hydrate-persistence',   // 启动水合：草稿+锚点+会话列表+消息快照
   chatPersistSession: 'chat:persist-session',           // 草稿+滚动锚点 upsert（防抖/切会话 flush）
   chatCacheMessages: 'chat:cache-messages',             // 已确认消息快照增量推送
-  appOpenExternal: 'app:open-external'                  // Markdown 外部链接（http/https 白名单）
+  appOpenExternal: 'app:open-external',                  // Markdown 外部链接（http/https 白名单）
+  attachmentsValidate: 'attachments:validate',           // 阶段 3 G3：附件校验（数量/大小/类型/路径/敏感范围）
+  attachmentsUpload: 'attachments:upload',               // 阶段 3 G3：批量 multipart 上传（batch 原子）
+  attachmentsCancel: 'attachments:cancel',               // 阶段 3 G3：上传取消（AbortController）
+  attachmentsCheck: 'attachments:check'                  // 阶段 3 G3：媒体状态分类（重签后 Range-0 探测）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 

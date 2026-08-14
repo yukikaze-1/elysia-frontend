@@ -1,4 +1,5 @@
 export * from './app'
+export * from './attachments'
 export * from './backend'
 export * from './conversation'
 export * from './events'
