@@ -44,8 +44,7 @@ const win = computed(() => {
   }
 })
 
-/** D6 恢复守卫：每会话激活只恢复一次 */
-let restoreEpoch = 0
+/** D6 恢复守卫：每会话激活只恢复一次（由 pendingRestoreId + items.length watch 承担） */
 
 function onScroll(): void {
   const el = container.value
@@ -113,7 +112,6 @@ function onRowResized(id: string, entry: ResizeObserverEntry): void {
  *  恢复不在 currentId watch 里做（activate 首屏异步，nextTick 时 order 仍空），改由 items.length watch 在页面加载后触发 */
 let pendingRestoreId: string | undefined
 watch(() => conversationStore.currentId, (id, oldId) => {
-  restoreEpoch++
   if (oldId && lastAnchor.value && lastAnchor.value.conversationId === oldId) {
     draftStore.setScrollAnchor(oldId, lastAnchor.value.anchor)
     void draftStore.flush(oldId)

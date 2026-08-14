@@ -1,5 +1,5 @@
 import { _electron, chromium, type ElectronApplication, type Page } from 'playwright'
-import { mkdtempSync, rmSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'os'
 import { join, extname, resolve, sep, dirname } from 'path'
@@ -22,10 +22,17 @@ const MIME: Record<string, string> = {
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json'
 }
 
-/** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env */
-export async function launchApp(): Promise<LaunchedApp> {
+/** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env。
+ *  seedFiles：启动时预置文件（relPath 相对 userData 根，如 'app-cache/message-cache-v1.json'）——损坏恢复测试在 load() 前注入非法 JSON。
+ *  目录 0700、文件 0600：否则 ensureUserDataDirs（0700 无 group/other）与 openSafeFile 读（0400 无 group/other）会因权限误判损坏/拒绝启动 */
+export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>): Promise<LaunchedApp> {
   const electronPath = ELECTRON_EXEC
   const userData = mkdtempSync(join(tmpdir(), 'cy-int-ud-'))
+  for (const f of seedFiles ?? []) {
+    const p = join(userData, 'Cyrene', f.relPath)
+    mkdirSync(dirname(p), { recursive: true, mode: 0o700 })
+    writeFileSync(p, f.content, { mode: 0o600 })
+  }
   const appDataKey = process.platform === 'win32' ? 'APPDATA' : process.platform === 'darwin' ? 'HOME' : 'XDG_CONFIG_HOME'
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
