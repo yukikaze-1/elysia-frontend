@@ -15,6 +15,24 @@ const RE_SIGN_LEEWAY_MS = 5 * 60 * 1000
 /** P2-6：非法 expiresAt（Date.parse NaN/非有限）的降级窗口——缓存不可信签名的短寿命，避免 NaN 恒重签放大后端负载 */
 const INVALID_EXPIRY_FALLBACK_MS = RE_SIGN_LEEWAY_MS * 2
 
+/** P0-01：签名 URL 解析失败（baseUrl 缺失/畸形/URL 非法）——与签发 fetch 失败区分（spec §4.1 错误分类） */
+export class SignedUrlResolveError extends Error {}
+
+/** P0-01：解析签名 URL。相对路径基于 backend baseUrl 解析为绝对（保留反代 path 前缀）；
+ *  绝对 URL 仅 http(s) 原样放行（D1：兼容对象存储 CDN，不强同源）；其余 scheme/畸形/baseUrl 缺失 → 抛 SignedUrlResolveError。 */
+export function resolveSignUrl(signUrl: string, baseUrl: string | undefined): string {
+  if (!baseUrl) throw new SignedUrlResolveError('backend base URL is not configured')
+  if (/^https?:\/\//i.test(signUrl)) return signUrl
+  if (/^\/(?!\/)/.test(signUrl)) {
+    try {
+      return new URL(baseUrl.replace(/\/+$/, '') + signUrl).toString()   // 拼接再验证：保留 path 前缀，`new URL(signUrl, baseUrl)` 会丢反代 path
+    } catch {
+      throw new SignedUrlResolveError(`invalid signed URL: ${baseUrl}${signUrl}`)
+    }
+  }
+  throw new SignedUrlResolveError(`unsupported signed URL: ${signUrl}`)
+}
+
 /** 解析协议路径 /__cyrene-media/{mediaType}/{id}；非法/未知 → null（spec §4.4） */
 export function parseMediaPath(pathname: string): { mediaType: MediaRouteType; id: string } | null {
   if (!pathname.startsWith(MEDIA_PATH_PREFIX)) return null
@@ -47,15 +65,19 @@ export class MediaService {
     this.fetchImpl = deps.fetchImpl ?? fetch
   }
 
-  /** 签名缓存：exp−5min 视为过期经 /sign 重签（D6） */
+  /** 签名缓存：key 按 endpoint 身份分区（D2，baseUrl 含反代 path 前缀，origin 变化必然 baseUrl 变化）；exp−5min 视为过期经 /sign 重签（D6） */
   async resolveSignedUrl(attachmentId: string, opts: { force?: boolean } = {}): Promise<ResolvedSignedUrl> {
-    const cached = this.cache.get(attachmentId)
+    const base = this.baseUrl()
+    const cacheKey = `${(base ?? '').replace(/\/+$/, '')}:${attachmentId}`
+    const cached = this.cache.get(cacheKey)
     if (!opts.force && cached && cached.expiresAt - this.now() > RE_SIGN_LEEWAY_MS) return cached
+    if (!base) throw new SignedUrlResolveError('backend base URL is not configured')   // P0-01：不调签发表，先失败
     const sign: AttachmentSignResult = await this.backend.signAttachmentUrl(attachmentId)
+    const url = resolveSignUrl(sign.url, base)
     const expires = Date.parse(sign.expiresAt)
     // P2-6：非法 expiresAt（NaN/非有限）→ 降级短窗口缓存（防 NaN 恒重签放大请求）；URL 实际过期由流 401/403 重签兜底
-    const entry: ResolvedSignedUrl = { url: sign.url, expiresAt: Number.isFinite(expires) ? expires : this.now() + INVALID_EXPIRY_FALLBACK_MS }
-    this.cache.set(attachmentId, entry)
+    const entry: ResolvedSignedUrl = { url, expiresAt: Number.isFinite(expires) ? expires : this.now() + INVALID_EXPIRY_FALLBACK_MS }
+    this.cache.set(cacheKey, entry)
     return entry
   }
 
@@ -90,7 +112,14 @@ export class MediaService {
     if (range) headers['range'] = range
     const accept = request.headers.get('accept')
     if (accept) headers['accept'] = accept
-    let signed = await this.resolveSignedUrl(attachmentId)
+    let signed: ResolvedSignedUrl
+    try {
+      signed = await this.resolveSignedUrl(attachmentId)
+    } catch (e) {
+      // P0-01 错误分类：解析失败（baseUrl 缺失/URL 非法）→ 500 可诊断；签发表 fetch 失败 → 502 transient（P2-4）
+      if (e instanceof SignedUrlResolveError) return new Response('Signed URL invalid', { status: 500 })
+      return new Response('Bad Gateway', { status: 502 })
+    }
     let res = await this.proxyFetch(signed.url, request, headers)
     if (res.status === 401 || res.status === 403) {
       // 签名过期：重签一次重试（spec §4.8）
@@ -148,8 +177,8 @@ export class MediaService {
     let signed: ResolvedSignedUrl
     try {
       signed = await this.resolveSignedUrl(attachmentId, { force: true })
-    } catch {
-      return { status: 'error', reason: 'sign_failed' }
+    } catch (e) {
+      return { status: 'error', reason: e instanceof SignedUrlResolveError ? 'resolve_failed' : 'sign_failed' }
     }
     try {
       const res = await this.fetchImpl(signed.url, { headers: { range: 'bytes=0-0' } })

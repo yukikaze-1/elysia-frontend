@@ -2,7 +2,7 @@
 // Task 8:MediaService（spec D1/D6，§4.4/§4.5）——签名缓存/过期重签、Range/206 透传、401/403 重签重试、410 映射、
 // checkStatus 分类、attachmentId/stickerId 白名单、Sec-Fetch-Dest 拒绝、sticker 静态代理无签名。env=node。
 import { describe, expect, it, vi } from 'vitest'
-import { isDocumentRequest, MediaService, parseMediaPath } from '../../src/main/attachments/media-service'
+import { isDocumentRequest, MediaService, parseMediaPath, resolveSignUrl, SignedUrlResolveError } from '../../src/main/attachments/media-service'
 
 const now = () => 1_752_000_000_000   // 固定时钟（2026-07 起）
 
@@ -33,6 +33,35 @@ describe('parseMediaPath / isDocumentRequest', () => {
   it('Sec-Fetch-Dest: document → 拒绝（防媒体字节作顶层文档，spec §4.9）', () => {
     expect(isDocumentRequest(new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'document' } }))).toBe(true)
     expect(isDocumentRequest(new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))).toBe(false)
+  })
+})
+
+describe('resolveSignUrl（P0-01：相对签名 URL 基于 endpoint 解析，spec §4.1）', () => {
+  it('相对 /api/... → 基于 baseUrl 解析为绝对（保留 query）', () => {
+    expect(resolveSignUrl('/api/attachments/att_1?sig=s&exp=1', 'http://127.0.0.1:18765'))
+      .toBe('http://127.0.0.1:18765/api/attachments/att_1?sig=s&exp=1')
+  })
+  it('baseUrl 含 path 前缀（反代/SSH 转发）→ 保留前缀不吞路径', () => {
+    expect(resolveSignUrl('/api/attachments/att_1?sig=s', 'http://127.0.0.1:18765/backend-proxy'))
+      .toBe('http://127.0.0.1:18765/backend-proxy/api/attachments/att_1?sig=s')
+  })
+  it('baseUrl 尾斜杠 → 不双斜杠', () => {
+    expect(resolveSignUrl('/api/attachments/att_1?sig=s', 'http://127.0.0.1:18765/'))
+      .toBe('http://127.0.0.1:18765/api/attachments/att_1?sig=s')
+  })
+  it('绝对 http(s) URL → 原样放行（D1：兼容对象存储 CDN）', () => {
+    expect(resolveSignUrl('https://cdn.x/att_1?sig=s', 'http://127.0.0.1:18765')).toBe('https://cdn.x/att_1?sig=s')
+  })
+  it('异 scheme（javascript:/file:/data:）与协议相对 // → SignedUrlResolveError', () => {
+    expect(() => resolveSignUrl('javascript:alert(1)', 'http://127.0.0.1:18765')).toThrow(SignedUrlResolveError)
+    expect(() => resolveSignUrl('file:///etc/passwd', 'http://127.0.0.1:18765')).toThrow(SignedUrlResolveError)
+    expect(() => resolveSignUrl('//evil.com/x', 'http://127.0.0.1:18765')).toThrow(SignedUrlResolveError)
+  })
+  it('baseUrl 缺失 → SignedUrlResolveError', () => {
+    expect(() => resolveSignUrl('/api/attachments/att_1?sig=s', undefined)).toThrow(SignedUrlResolveError)
+  })
+  it('畸形 baseUrl → SignedUrlResolveError（不抛裸 TypeError）', () => {
+    expect(() => resolveSignUrl('/api/x', 'not a url')).toThrow(SignedUrlResolveError)
   })
 })
 
@@ -112,6 +141,59 @@ describe('MediaService.stream attachment 分支', () => {
     expect((await svcNet.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))).status).toBe(502)
     const svc5xx = mkService({ fetchImpl: async () => new Response('boom', { status: 500 }) })
     expect((await svc5xx.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))).status).toBe(502)
+  })
+})
+
+describe('MediaService P0-01 相对签名 URL 全链路（spec §4.1）', () => {
+  it('相对 sign.url → stream 请求绝对 URL（Range/206 透传）', async () => {
+    const sign = vi.fn(async (id: string) => ({ url: `/api/attachments/${id}?sig=s`, expiresAt: new Date(now() + 3600_000).toISOString() }))
+    const fetchImpl = vi.fn(async (u: RequestInfo | URL) => {
+      expect(String(u)).toBe('http://127.0.0.1:9/api/attachments/att_1?sig=s')
+      return new Response(new Uint8Array(64), { status: 206, headers: { 'content-type': 'video/mp4' } })
+    })
+    const svc = mkService({ sign, fetchImpl })
+    const res = await svc.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'video' } }))
+    expect(res.status).toBe(206)
+  })
+  it('相对 sign.url → checkStatus 请求绝对 URL → ok', async () => {
+    const sign = vi.fn(async (id: string) => ({ url: `/api/attachments/${id}?sig=s`, expiresAt: new Date(now() + 3600_000).toISOString() }))
+    const fetchImpl = vi.fn(async (u: RequestInfo | URL) => {
+      expect(String(u)).toBe('http://127.0.0.1:9/api/attachments/att_1?sig=s')
+      return new Response('', { status: 200 })
+    })
+    const svc = mkService({ sign, fetchImpl })
+    expect((await svc.checkStatus('att_1')).status).toBe('ok')
+  })
+  it('baseUrl 缺失 → 不调签发表、stream 500、checkStatus resolve_failed', async () => {
+    const sign = vi.fn(async () => ({ url: '/api/attachments/att_1?sig=s', expiresAt: 'x' }))
+    const svc = new MediaService({ backend: { signAttachmentUrl: sign }, baseUrl: () => undefined, now })
+    const streamRes = await svc.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(streamRes.status).toBe(500)
+    const cs = await svc.checkStatus('att_1')
+    expect(cs.status).toBe('error')
+    expect(cs.reason).toBe('resolve_failed')
+    expect(sign).not.toHaveBeenCalled()
+  })
+  it('签发表 fetch 失败（非解析问题）→ stream 502、checkStatus sign_failed', async () => {
+    const sign = vi.fn(async () => { throw new Error('net down') })
+    const svc = mkService({ sign })
+    const streamRes = await svc.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(streamRes.status).toBe(502)
+    const cs = await svc.checkStatus('att_1')
+    expect(cs.status).toBe('error')
+    expect(cs.reason).toBe('sign_failed')
+  })
+  it('endpoint 变化（baseUrl 变化）→ 不复用旧缓存、重签且新 base 生效（D2 分区）', async () => {
+    let base = 'http://127.0.0.1:9'
+    let count = 0
+    const sign = vi.fn(async (id: string) => ({ url: `/api/attachments/${id}?sig=${++count}`, expiresAt: new Date(now() + 3600_000).toISOString() }))
+    const svc = new MediaService({ backend: { signAttachmentUrl: sign }, baseUrl: () => base, now })
+    const a = await svc.resolveSignedUrl('att_1')
+    base = 'http://127.0.0.1:9999'
+    const b = await svc.resolveSignedUrl('att_1')
+    expect(a.url).not.toBe(b.url)
+    expect(b.url).toBe('http://127.0.0.1:9999/api/attachments/att_1?sig=2')
+    expect(sign).toHaveBeenCalledTimes(2)
   })
 })
 
