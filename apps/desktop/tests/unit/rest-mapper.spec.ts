@@ -51,6 +51,53 @@ describe('RestMapper', () => {
     expect(m.tool).toEqual({ name: 'desktop.file.read' })
   })
 
+  it('user 纯贴图 content → Message.stickerId（content 缺省）', () => {
+    const raw: RestMessage = {
+      role: 'user', content: [{ type: 'sticker', sticker_id: 'st_1', src: '/static/stickers/st_1.png' }],
+      message_id: 'msg-st1', timestamp: '2026-08-11T00:00:07.000Z', session_id: 'conv-1'
+    }
+    const m = mapper.toDomainMessage(raw)
+    expect(m.stickerId).toBe('st_1')
+    expect(m.content).toBeUndefined()
+    expect(m.attachments).toBeUndefined()   // 贴图不进入附件
+  })
+  it('user 文字+贴图 content（typed parts）→ content 与 stickerId 并存', () => {
+    const raw: RestMessage = {
+      role: 'user', content: [{ type: 'text', text: '你看这个' }, { type: 'sticker', sticker_id: 'st_2', src: '/static/stickers/st_2.png' }],
+      message_id: 'msg-st2', timestamp: '2026-08-11T00:00:08.000Z', session_id: 'conv-1'
+    }
+    const m = mapper.toDomainMessage(raw)
+    expect(m.content).toBe('你看这个')
+    expect(m.stickerId).toBe('st_2')
+  })
+  it('assistant 贴图 content → sticker 分段（kind sticker + stickerId + st- 前缀不撞段）', () => {
+    const raw: RestMessage = {
+      role: 'assistant', content: [{ type: 'text', text: '回复' }, { type: 'sticker', sticker_id: 'st_3', src: '/static/stickers/st_3.png' }],
+      message_id: 'msg-st3', timestamp: '2026-08-11T00:00:09.000Z', session_id: 'conv-1'
+    }
+    const m = mapper.toDomainMessage(raw)
+    const segs = m.assistantSegments ?? []
+    expect(segs.map((s) => s.kind)).toEqual(['markdown', 'sticker'])
+    expect(segs[1]).toMatchObject({ kind: 'sticker', stickerId: 'st_3', channel: 'public_reply', completed: true })
+    expect(segs[1].segmentId).toMatch(/^st-msg-st3-1$/)
+  })
+  it('toDomainMessageFromReplay：同一 StickerPart → 相同 stickerId（REST/replay 共用 assemble）', () => {
+    const raw: RawSessionMessageItem = {
+      role: 'user', content: [{ type: 'sticker', sticker_id: 'st_4', src: '/static/stickers/st_4.png' }],
+      message_id: 'msg-st4', timestamp: '2026-08-11T00:00:10.000Z'
+    }
+    const m = mapper.toDomainMessageFromReplay(raw, 'conv-1')
+    expect(m.stickerId).toBe('st_4')
+  })
+  it('非法 sticker ID / 任意外部 src → 不设 stickerId（fail-open，不拒页）', () => {
+    const raw: RestMessage = {
+      role: 'user', content: [{ type: 'sticker', sticker_id: 'bad', src: 'https://evil.example/x.png' }],
+      message_id: 'msg-st5', timestamp: '2026-08-11T00:00:11.000Z', session_id: 'conv-1'
+    }
+    const m = mapper.toDomainMessage(raw)
+    expect(m.stickerId).toBeUndefined()
+  })
+
   it('toDomainMessageFromReplay:回放项 name/mood 处理', () => {
     const replay: RawSessionMessageItem = {
       role: 'tool', message_id: 'msg-4', timestamp: '2026-08-11T00:00:03.000Z',

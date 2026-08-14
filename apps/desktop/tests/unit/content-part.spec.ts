@@ -1,7 +1,7 @@
 // tests/unit/content-part.spec.ts
 // Task 4:媒体 ContentPart 建模（spec §4.2/§4.4，D7）——content(unknown) 数组 → 有序文本/媒体条目 + 消息级附件。
 import { describe, expect, it } from 'vitest'
-import { mapContentMedia, mapContentToEntries, parseAttachmentIdFromSrc, toOptionalNonNegativeNumber } from '../../src/main/transport/protocol-v2/content-part'
+import { extractStickerId, mapContentMedia, mapContentToEntries, parseAttachmentIdFromSrc, STICKER_ID_PATTERN, stickerIdOf, toOptionalNonNegativeNumber } from '../../src/main/transport/protocol-v2/content-part'
 
 describe('parseAttachmentIdFromSrc', () => {
   it('稳定路径尾段解析 att_ ID（校验格式）', () => {
@@ -34,11 +34,37 @@ describe('mapContentToEntries（有序文本/媒体，供 segmentIndex 分配）
     const entries = mapContentToEntries([{ type: 'audio', src: '/api/attachments/att_9', mime: 'audio/mpeg' }])
     expect(entries[0]).toMatchObject({ type: 'media', media: { kind: 'audio', attachmentId: 'att_9' } })
   })
-  it('sticker ContentPart 不产媒体条目/附件（G4 边界）', () => {
-    expect(mapContentToEntries([{ type: 'sticker', sticker_id: 'st_1', src: '/static/stickers/st_1.png' }])).toEqual([])
+  it('sticker ContentPart → sticker 条目（assistant 分段）；mapContentMedia 不产附件（P0-03）', () => {
+    expect(mapContentToEntries([{ type: 'sticker', sticker_id: 'st_1', src: '/static/stickers/st_1.png' }]))
+      .toEqual([{ type: 'sticker', stickerId: 'st_1' }])
+    expect(mapContentMedia([{ type: 'sticker', sticker_id: 'st_1', src: '/static/stickers/st_1.png' }])).toEqual([])
   })
   it('未知 type / 非对象元素 → 忽略（宽容）', () => {
     expect(mapContentToEntries([{ type: 'bogus' }, 'x', null])).toEqual([])
+  })
+})
+
+describe('sticker 恢复 helpers（P0-03，spec §4.3）', () => {
+  it('stickerIdOf：sticker_id 优先；src 经 stickerIdFromResourceUrl 兜底（真实 /static/stickers/{id}.png）；非法拒绝', () => {
+    expect(stickerIdOf({ type: 'sticker', sticker_id: 'st_1', src: '/static/stickers/st_1.png' })).toBe('st_1')
+    expect(stickerIdOf({ type: 'sticker', src: '/static/stickers/st_2.png' })).toBe('st_2')        // src 兜底（真实形态）
+    expect(stickerIdOf({ type: 'sticker', src: '/static/stickers/bad.png' })).toBeUndefined()      // 非 st_ 前缀拒
+    expect(stickerIdOf({ type: 'sticker', src: '/static/stickers/st_1.jpeg' })).toBeUndefined()    // 非 .png 拒
+    expect(stickerIdOf({ type: 'sticker' })).toBeUndefined()
+    expect(stickerIdOf(null)).toBeUndefined()
+    expect(stickerIdOf({ type: 'image' })).toBeUndefined()
+  })
+  it('extractStickerId：整数组扫描 first-wins；单 part 亦可；无 → undefined', () => {
+    expect(extractStickerId([{ type: 'text', text: '见图' }, { type: 'sticker', sticker_id: 'st_1', src: '/s.png' }, { type: 'sticker', sticker_id: 'st_2', src: '/s.png' }])).toBe('st_1')
+    expect(extractStickerId({ type: 'sticker', sticker_id: 'st_3' })).toBe('st_3')
+    expect(extractStickerId([{ type: 'text', text: 'x' }])).toBeUndefined()
+    expect(extractStickerId('plain')).toBeUndefined()
+    expect(extractStickerId(undefined)).toBeUndefined()
+  })
+  it('STICKER_ID_PATTERN 单一来源：@shared/domain re-export 与媒体代理一致', () => {
+    expect(STICKER_ID_PATTERN.test('st_abc-1')).toBe(true)
+    expect(STICKER_ID_PATTERN.test('ST_1')).toBe(false)
+    expect(STICKER_ID_PATTERN.test('st_1.png')).toBe(false)
   })
 })
 

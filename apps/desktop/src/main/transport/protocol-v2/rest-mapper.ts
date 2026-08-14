@@ -4,7 +4,7 @@ import type { ChatHistoryItem, ChatHistoryPage, MessagePage, StickerManifest } f
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import type { RawSessionMessageItem } from './raw-types'
 import type { RestMessage, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestMessageContextResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
-import { mapContentMedia, mapContentToEntries, toOptionalNonNegativeNumber } from './content-part'
+import { extractStickerId, mapContentMedia, mapContentToEntries, toOptionalNonNegativeNumber } from './content-part'
 
 export interface RestMapperOptions { onProtocolWarning?: (warning: ProtocolWarning) => void }
 
@@ -101,7 +101,7 @@ export class RestMapper {
         if (entry.type === 'text') {
           segments.push({ segmentId: `pr-${base.messageId}-${segIndex}`, segmentIndex: segIndex, channel: 'public_reply', kind: 'markdown', text: entry.text, completed: true })
           segIndex += 1
-        } else {
+        } else if (entry.type === 'media') {
           segments.push({
             segmentId: `media-${base.messageId}-${segIndex}`, segmentIndex: segIndex, channel: 'public_reply',
             kind: entry.media.kind, completed: true,
@@ -115,12 +115,22 @@ export class RestMapper {
             ...(entry.media.durationMs !== undefined ? { durationMs: entry.media.durationMs } : {})
           })
           segIndex += 1
+        } else if (entry.type === 'sticker') {
+          segments.push({   // P0-03：assistant sticker 分段（st- 前缀不撞 pr-/media-）
+            segmentId: `st-${base.messageId}-${segIndex}`, segmentIndex: segIndex, channel: 'public_reply',
+            kind: 'sticker', stickerId: entry.stickerId, completed: true
+          })
+          segIndex += 1
         }
       }
       if (segments.length) base.assistantSegments = segments
     }
     const media = mapContentMedia(src.content)
     if (media.length) base.attachments = media
+    if (role === 'user') {
+      const stickerId = extractStickerId(src.content)
+      if (stickerId) base.stickerId = stickerId   // P0-03：用户贴图消息恢复 Message.stickerId（first-wins）
+    }
     if (role === 'tool' || src.tool_call_id || src.name || src.tool_name || src.success !== undefined) {
       const tool: MessageToolInfo = {}
       if (src.tool_call_id) tool.callId = src.tool_call_id
@@ -138,11 +148,15 @@ export class RestMapper {
   }
 }
 
-/** 提取纯文本:content 为 string 优先;否则 parts 拼接(assistant content/parts 同文本时不重复)。
- *  parts 来自 REST `{content:string}[]` 或 WS 回放宽松 `unknown[]`,逐项安全提取字符串 content。 */
+/** 提取纯文本:content 为 string 优先;否则 typed parts 经 mapContentToEntries 提取 type:'text'(P0-03 文字+贴图);
+ *  再退 parts 旧形状 `{content:string}[]`(assistant content/parts 同文本时不重复)。 */
 function extractText(content: unknown, parts?: unknown[]): string | undefined {
   if (typeof content === 'string' && content.length > 0) return content
-  if (typeof content === 'string' && content.length === 0) return undefined
+  const fromEntries = mapContentToEntries(content)
+    .filter((e) => e.type === 'text')
+    .map((e) => (e as { type: 'text'; text: string }).text)
+    .join('')
+  if (fromEntries.length > 0) return fromEntries
   const joined = (parts ?? []).reduce<string>((acc, p) => {
     if (typeof p === 'object' && p !== null && 'content' in p) {
       const c = (p as { content?: unknown }).content

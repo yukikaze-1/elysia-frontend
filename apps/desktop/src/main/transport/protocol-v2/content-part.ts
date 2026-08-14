@@ -2,6 +2,8 @@
 // 阶段 3 G3（spec §4.4/§4.5，D7）：媒体 ContentPart 建模——schema 保持 content:unknown，
 // 建模在映射层（两 schema content 为 z.unknown().optional()，媒体本可过 .strict() 解析，真实缺口是映射层丢媒体）。
 import type { AttachmentKind, MessageAttachment } from '@shared/contracts/message'
+import { STICKER_ID_PATTERN, stickerIdFromResourceUrl } from '@shared/domain'
+export { STICKER_ID_PATTERN }   // P0-03：main 层门面 re-export（media-service 代理白名单 import 复用，免第三份拷贝）
 
 const ATTACHMENT_ID_PATTERN = /^att_[A-Za-z0-9_-]+$/
 
@@ -44,6 +46,28 @@ export function parseAttachmentIdFromSrc(src?: string): string | undefined {
   return undefined
 }
 
+/** P0-03：单个 sticker ContentPart → 合法 stickerId（sticker_id 优先，src 经 stickerIdFromResourceUrl 兜底（剥 .png+校验）；无效/缺 → undefined） */
+export function stickerIdOf(part: unknown): string | undefined {
+  if (typeof part !== 'object' || part === null) return undefined
+  const p = part as { sticker_id?: unknown; src?: unknown }
+  if (typeof p.sticker_id === 'string' && STICKER_ID_PATTERN.test(p.sticker_id)) return p.sticker_id
+  return typeof p.src === 'string' ? stickerIdFromResourceUrl(p.src) : undefined
+}
+
+/** P0-03：content（整数组）→ 首个合法 stickerId（first-wins，D3）；单 part 亦可；无效/缺 → undefined */
+export function extractStickerId(content: unknown): string | undefined {
+  if (Array.isArray(content)) {
+    for (const p of content) {
+      if (typeof p === 'object' && p !== null && (p as { type?: unknown }).type === 'sticker') {
+        const id = stickerIdOf(p)
+        if (id) return id
+      }
+    }
+    return undefined
+  }
+  return stickerIdOf(content)
+}
+
 function toMedia(part: ContentPartShape, kind: 'image' | 'video' | 'audio' | 'file'): MappedMedia {
   const attachmentId = part.attachment_id ?? parseAttachmentIdFromSrc(part.src)
   const size = toOptionalNonNegativeNumber(part.size_bytes)
@@ -63,20 +87,23 @@ function toMedia(part: ContentPartShape, kind: 'image' | 'video' | 'audio' | 'fi
   }
 }
 
-/** 有序文本/媒体条目（assemble 据此分配全局 segmentIndex；sticker/未知 type 忽略——G4 边界） */
-export function mapContentToEntries(content: unknown): Array<{ type: 'text'; text: string } | { type: 'media'; media: MappedMedia }> {
+/** 有序文本/媒体/sticker 条目（assemble 据此分配全局 segmentIndex；未知 type 忽略——宽容） */
+export function mapContentToEntries(content: unknown): Array<{ type: 'text'; text: string } | { type: 'media'; media: MappedMedia } | { type: 'sticker'; stickerId: string }> {
   if (typeof content === 'string') return content.length > 0 ? [{ type: 'text', text: content }] : []
   if (!Array.isArray(content)) return []
-  const entries: Array<{ type: 'text'; text: string } | { type: 'media'; media: MappedMedia }> = []
+  const entries: Array<{ type: 'text'; text: string } | { type: 'media'; media: MappedMedia } | { type: 'sticker'; stickerId: string }> = []
   for (const p of content) {
     if (typeof p !== 'object' || p === null) continue
-    const part = p as ContentPartShape
-    if (part.type === 'text' && typeof (part as unknown as { text?: unknown }).text === 'string' && (part as unknown as { text: string }).text.length > 0) {
-      entries.push({ type: 'text', text: (part as unknown as { text: string }).text })
+    const part = p as ContentPartShape & { text?: unknown }
+    if (part.type === 'text' && typeof part.text === 'string' && part.text.length > 0) {
+      entries.push({ type: 'text', text: part.text })
     } else if (part.type === 'image' || part.type === 'video' || part.type === 'audio' || part.type === 'file') {
       entries.push({ type: 'media', media: toMedia(part, part.type) })
+    } else if (part.type === 'sticker') {
+      const stickerId = stickerIdOf(part)
+      if (stickerId) entries.push({ type: 'sticker', stickerId })   // P0-03：无效 st_ 忽略（fail-open）
     }
-    // sticker/status/未知：G4 贴图消费，本批不产媒体条目
+    // 未知 type：忽略（宽容）
   }
   return entries
 }

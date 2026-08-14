@@ -115,6 +115,22 @@ describe('messageStore 流式应用', () => {
     expect(msgs.some((m) => m.role === 'user' && m.status === 'acknowledged')).toBe(true)
   })
 
+  it('乐观贴图消息 ACK ID 迁移后保留 stickerId；恢复对象合并不重复不丢（P0-03 §5.4）', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.send.mockResolvedValueOnce({ clientRequestId: 'c1', serverMessageId: 'msg-srv-1' })
+    const store = useMessageStore()
+    await store.send('', 'st_1')
+    const optimistic = Object.values(store.byId).find((m) => m.role === 'user')
+    expect(optimistic?.messageId).toBe('msg-srv-1')      // migrateKey 迁移
+    expect(optimistic?.stickerId).toBe('st_1')            // stickerId 保留
+    const recovered: Message = { messageId: 'msg-srv-1', conversationId: 'conv-1', role: 'user', status: 'completed', createdAt: optimistic!.createdAt, stickerId: 'st_1' }
+    store.loadReplay('conv-1', [recovered])
+    const msgs = Object.values(store.byId).filter((m) => m.messageId === 'msg-srv-1')
+    expect(msgs).toHaveLength(1)                          // 不重复
+    expect(msgs[0].stickerId).toBe('st_1')                // 不丢
+  })
+
   it('generation.failed → lastError 结构化(PublicError:code/message/backendCode/retryable)', () => {
     const store = useMessageStore()
     store.applyEvent(started())

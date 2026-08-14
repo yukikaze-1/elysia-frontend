@@ -3,12 +3,12 @@
 // sticker 静态白名单代理（G4 复用）、checkStatus 分类。签名 URL 不落 Renderer；日志脱敏（只记 mediaType+id+status）。
 import type { AttachmentCheckResult, AttachmentSignResult } from '@shared/contracts'
 import type { BackendAdapter } from '../transport/backend-adapter'
+import { STICKER_ID_PATTERN } from '../transport/protocol-v2/content-part'
 
 export type MediaRouteType = 'attachment' | 'sticker'
 export const MEDIA_PATH_PREFIX = '/__cyrene-media/'
 
 const ATTACHMENT_ID_PATTERN = /^att_[A-Za-z0-9_-]+$/
-const STICKER_ID_PATTERN = /^st_[A-Za-z0-9-]+$/
 const STICKER_MIME = 'image/png'
 const STICKER_MAX_BYTES = 1024 * 1024   // P3-2：docs/07 行 101 大小上限；公开静态贴图免鉴权
 const RE_SIGN_LEEWAY_MS = 5 * 60 * 1000
