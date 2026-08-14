@@ -3,10 +3,14 @@
 // 渲染 inner_voice 折叠(默认收起)+ public_reply CyMarkdown;usage/model/emotion chips(父回复完成后才写入并展示)。
 import { computed } from 'vue'
 import type { AssistantSegment, Message } from '@shared/contracts'
+import { stickerRenderUrl } from '@shared/domain'
 import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
 
 const props = defineProps<{ message: Message }>()
+
+/** G4：贴图渲染 URL（复用 G3 通用媒体代理；id 缺失返回 undefined → 占位） */
+function stickerSrc(id?: string): string | undefined { return id ? stickerRenderUrl(id) : undefined }
 
 const isUser = computed(() => props.message.role === 'user')
 
@@ -52,7 +56,9 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   <!-- user 消息:右对齐;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html)。failed 加错误角标(P2-4) -->
   <div v-if="isUser" class="cy-message-row cy-user-row">
     <div class="cy-message cy-user-message">
-      <p>{{ message.content }}</p>
+      <p v-if="message.content">{{ message.content }}</p>
+      <!-- G4：用户贴图消息（wire Message.stickerId；content 可空） -->
+      <img v-if="message.stickerId" :src="stickerSrc(message.stickerId)" class="cy-sticker-img" alt="表情" />
       <!-- G3：user 消息附件（内嵌 Message.attachments） -->
       <div v-for="a in userAttachments()" :key="a.attachmentId" class="cy-user-attachments">
         <CyAttachmentMedia :kind="a.kind" :attachment-id="a.attachmentId" :media-type="a.mediaType" :name="a.name" :size="a.size" />
@@ -86,6 +92,8 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
           </div>
           <template v-for="seg in publicSegments" :key="seg.segmentId">
             <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :source="segmentText(seg)" />
+            <!-- G4：sticker 分段渲染（wire seg.stickerId，复用通用媒体代理） -->
+            <img v-else-if="seg.kind === 'sticker' && seg.stickerId" :src="stickerSrc(seg.stickerId)" class="cy-sticker-img" alt="表情" />
             <!-- G3：assistant 媒体分段（attachmentId 存在时渲染媒体组件；实时流式分段无 attachmentId 仍走占位，P2-5 wire 契约） -->
             <CyAttachmentMedia
               v-else-if="seg.attachmentId"
@@ -260,5 +268,12 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   gap: 6px;
   margin-top: 6px;
   max-width: 100%;
+}
+
+/* G4：贴图（user 消息 + assistant sticker 分段共用） */
+.cy-sticker-img {
+  width: 96px;
+  height: 96px;
+  object-fit: contain;
 }
 </style>

@@ -2,7 +2,9 @@
 // CyChatInput:输入区。回车发送/Shift+Enter 换行;发送按钮;sending 期间禁用(F3,Task 4 review);
 // 停止按钮(activeGenerationId 存在时);断线横幅(connectionStore.state.status 为 reconnecting/error)。
 // G2(§4.4.1):草稿源改 draftStore(内存态 + 防抖持久化归 Main);发送成功清草稿、失败保留;超限/淘汰横幅。
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
+import { isCompositionEnter } from '@shared/domain'
+import type { PendingSticker } from '@shared/contracts/attachments'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
@@ -10,6 +12,7 @@ import { useDraftStore } from '../stores/draft.store'
 import { useAttachmentStore } from '../stores/attachment.store'
 import CyAttachmentQueue from './CyAttachmentQueue.vue'
 import CyDropOverlay from './CyDropOverlay.vue'
+import CyEmojiPicker from './CyEmojiPicker.vue'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
@@ -19,6 +22,10 @@ const attachmentStore = useAttachmentStore()
 const fileInput = ref<HTMLInputElement>()
 const dragActive = ref(false)
 let dragDepth = 0
+// —— G4 Emoji/表情接线（D7/D8）：面板弹出 + 待发送贴图队列 ——
+const showPicker = ref(false)
+const pendingStickers = ref<PendingSticker[]>([])
+const textareaRef = ref<HTMLTextAreaElement>()
 
 const currentId = computed(() => conversationStore.currentId)
 const draft = computed({
@@ -48,18 +55,52 @@ const bannerText = computed(() => {
   return ''
 })
 
+/** D14 硬化①:守卫通过后才 preventDefault + send（模板不再 .prevent，IME 组词确认 Enter 由守卫拦截） */
+function onEnter(e: KeyboardEvent): void {
+  if (isCompositionEnter(e)) return
+  e.preventDefault()
+  void send()
+}
+
 async function send(): Promise<void> {
-  if (!canSend.value) return
+  if (!canSend.value && pendingStickers.value.length === 0) return
   // G3：附件存在时 attachmentStore 编排上传→发送；保留 messageStore.send 的失败保留草稿语义（G2）
   let ok = false
   await attachmentStore.send(draft.value.trim(), { send: async (t, o) => { ok = await messageStore.send(t, o) } })
+  // G4：待发送贴图逐条发送（sticker 非附件，不经上传编排；wire stickerId，D8）
+  for (const s of pendingStickers.value) {
+    const stickerOk = await messageStore.send('', s.stickerId)
+    if (stickerOk) ok = true
+  }
+  pendingStickers.value = []
   if (ok && currentId.value) draftStore.clear(currentId.value) // 失败保留草稿（spec §4.4.1）
 }
 
-/** 回车发送守卫:IME 组词确认期间(中文/日文输入法)Enter 是候选确认,不发送 */
-function onEnter(e: KeyboardEvent): void {
-  if (e.isComposing || e.keyCode === 229) return
-  void send()
+/** Emoji 光标插入:读取 selectionStart/End,draft 拼接,光标移到插入后;不自动发送(D7) */
+function insertEmoji(emoji: string): void {
+  const ta = textareaRef.value
+  const start = ta?.selectionStart ?? draft.value.length
+  const end = ta?.selectionEnd ?? draft.value.length
+  draft.value = draft.value.slice(0, start) + emoji + draft.value.slice(end)
+  void nextTick(() => {
+    if (ta) { const pos = start + emoji.length; ta.setSelectionRange(pos, pos) }
+  })
+  showPicker.value = false
+  ta?.focus()
+}
+
+function onSelectSticker(s: PendingSticker): void {
+  pendingStickers.value = [...pendingStickers.value, s]
+  showPicker.value = false
+  textareaRef.value?.focus()
+}
+
+function removeSticker(id: string): void {
+  pendingStickers.value = pendingStickers.value.filter((s) => s.stickerId !== id)
+}
+
+function onPickerKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') { showPicker.value = false; textareaRef.value?.focus() }
 }
 
 function stop(): void {
@@ -147,12 +188,13 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       </button>
       <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
       <textarea
+        ref="textareaRef"
         v-model="draft"
         :disabled="messageStore.sending"
         placeholder="输入消息，Enter 发送"
         rows="1"
         aria-label="消息输入框"
-        @keydown.enter.exact.prevent="onEnter"
+        @keydown.enter.exact="onEnter"
       />
       <button
         v-if="hasActiveGeneration"
@@ -170,6 +212,21 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
           <path d="M5 12h14M13 6l6 6-6 6" />
         </svg>
       </button>
+    </div>
+    <!-- G4 Emoji/表情包：面板弹出（Esc 关闭回焦点）+ 待发送贴图队列 -->
+    <div class="cy-composer-tools">
+      <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 7.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM8.5 9.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM12 17c-2.5 0-4.5-1.5-5-3.5h10c-.5 2-2.5 3.5-5 3.5z"/></svg>
+      </button>
+      <div class="cy-picker-wrap" @keydown="onPickerKeydown">
+        <CyEmojiPicker v-if="showPicker" class="cy-emoji-pop" @select-emoji="insertEmoji" @select-sticker="onSelectSticker" @close="showPicker = false" />
+      </div>
+    </div>
+    <div v-if="pendingStickers.length" class="cy-sticker-queue" role="list" aria-label="待发送表情">
+      <span v-for="s in pendingStickers" :key="s.stickerId" class="cy-sticker-chip" role="listitem">
+        {{ s.stickerId }}                    <!-- P0-2：契约 StickerEntry 无 name，chip 显示 stickerId -->
+        <button :aria-label="`移除 ${s.stickerId}`" @click="removeSticker(s.stickerId)">✕</button>
+      </span>
     </div>
     <div class="cy-composer-status">
       <span class="cy-muted">Enter 发送 · Shift+Enter 换行</span>
@@ -304,5 +361,68 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   margin-top: 7px;
   color: var(--cy-muted);
   font-size: 11px;
+}
+
+/* G4 Emoji/表情包：工具行 + 弹出面板锚点 + 待发送贴图队列 */
+.cy-composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.cy-emoji-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--cy-muted);
+  background: var(--cy-surface);
+  border: 1px solid var(--cy-border);
+}
+
+.cy-emoji-btn:hover {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-picker-wrap {
+  position: relative;
+}
+
+.cy-emoji-pop {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 30;
+  margin-bottom: 6px;
+}
+
+.cy-sticker-queue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.cy-sticker-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--cy-surface-soft);
+  border: 1px solid var(--cy-border);
+  color: var(--cy-muted);
+  font-size: 12px;
+}
+
+.cy-sticker-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--cy-muted);
+  font-size: 11px;
+  cursor: pointer;
 }
 </style>

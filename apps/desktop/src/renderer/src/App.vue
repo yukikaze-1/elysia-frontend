@@ -7,6 +7,7 @@ import CyNavRail from './components/CyNavRail.vue'
 import CyConversationList from './components/CyConversationList.vue'
 import CyChatView from './components/CyChatView.vue'
 import CyLive2DPanel from './components/CyLive2DPanel.vue'
+import CyHistoryViewer from './components/CyHistoryViewer.vue'
 import { useLayoutStore } from './stores/layout.store'
 import { gridTemplateFor } from './layout/effective-layout'
 
@@ -62,6 +63,7 @@ watch(() => layout.notice, (n) => {
     </main>
     <CyLive2DPanel v-show="layout.effective.live2dShown" />
     <div v-if="layout.notice" class="cy-layout-toast" role="status">{{ layout.notice }}</div>
+    <CyHistoryViewer />
   </div>
 </template>
 

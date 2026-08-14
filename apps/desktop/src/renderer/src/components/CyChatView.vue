@@ -6,6 +6,7 @@ import { computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useLayoutStore } from '../stores/layout.store'
+import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
 import CyConnectionPanel from './CyConnectionPanel.vue'
@@ -13,6 +14,7 @@ import CyConnectionPanel from './CyConnectionPanel.vue'
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
 const layout = useLayoutStore()
+const historyStore = useHistoryViewerStore()
 
 const convTitle = computed(() => {
   const c = conversationStore.items.find((i) => i.id === conversationStore.currentId)
@@ -70,6 +72,8 @@ async function newConversation(): Promise<void> {
         </div>
       </div>
       <div class="cy-header-actions">
+        <button class="cy-action-button" title="聊天记录" :disabled="!canAct" @click="historyStore.openViewer()">聊天记录</button>
+        <button class="cy-action-button" title="资源" :disabled="!canAct" @click="historyStore.openViewer('image_video')">资源</button>
         <button class="cy-action-button" title="新建会话" :disabled="!canAct" @click="newConversation">新建</button>
         <button
           class="cy-action-button"

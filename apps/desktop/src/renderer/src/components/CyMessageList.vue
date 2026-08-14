@@ -153,6 +153,19 @@ function backToBottom(): void {
   atBottom.value = true
 }
 
+/** G4 D6：来源跳转高亮——滚动居中 + 6s 清除 + aria-live 播报（非纯颜色，配「已定位」chip） */
+let highlightTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => messageStore.highlightMessageId, async (id) => {
+  if (highlightTimer) clearTimeout(highlightTimer)
+  if (!id) return
+  await nextTick()
+  const el = container.value?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
+  el?.scrollIntoView({ block: 'center' })
+  highlightTimer = setTimeout(() => messageStore.clearHighlight(), 6000)
+})
+const hasHighlight = computed(() => !!messageStore.highlightMessageId)
+onBeforeUnmount(() => { if (highlightTimer) clearTimeout(highlightTimer) })
+
 /** 行引用注册（ResizeObserver 观察） */
 function setRowEl(id: string, el: Element | null): void {
   if (el) { rowEls.set(id, el as HTMLElement); resizeObs.value?.observe(el) }
@@ -187,8 +200,10 @@ onMounted(() => {
         :data-message-id="id"
         :ref="(el) => setRowEl(id, el as Element | null)"
         class="cy-vlist-row"
+        :class="{ 'cy-highlighted': messageStore.highlightMessageId === id }"
       >
         <CyMessageBubble :message="messageStore.byId[id]" />
+        <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
       <div :style="{ height: win.paddingBottom + 'px' }" class="cy-vlist-pad" />
       <div v-if="isStreaming" class="cy-streaming-placeholder">
@@ -198,12 +213,16 @@ onMounted(() => {
     </template>
 
     <button v-if="!atBottom && !isEmpty" class="cy-back-bottom" title="回到底部" @click="backToBottom">↓ 回到底部</button>
+    <div v-if="hasHighlight" class="cy-sr-live" role="status" aria-live="polite">已定位到消息</div>
   </div>
 </template>
 
 <style scoped>
 .cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%); }
 .cy-vlist-row { display: flex; flex-direction: column; gap: 9px; padding: 6px 0; }
+.cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: 12px; }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
+.cy-located-chip { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }
+.cy-sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .cy-empty { display: grid; flex: 1; place-items: center; color: var(--cy-muted); font-size: 13px; }
 .cy-back-bottom { position: sticky; bottom: 12px; align-self: center; padding: 6px 12px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; cursor: pointer; }
 .cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: flex-start; gap: 8px; padding: 9px 13px; margin: 6px 0; color: var(--cy-muted); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 13px; font-size: 12px; }
