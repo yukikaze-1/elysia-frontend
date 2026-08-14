@@ -61,8 +61,7 @@ export class RestMapper {
   }
 
   toChatHistoryPage(raw: RestSearchMessagesResponse): ChatHistoryPage {
-    const items = raw.items.map((i) => this.toChatHistoryItem(i)).sort((a, b) =>
-      a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
+    const items = raw.items.map((i) => this.toChatHistoryItem(i)).sort(compareBySortKey)
     return { items, nextCursor: raw.cursor, hasMore: raw.has_more }
   }
 

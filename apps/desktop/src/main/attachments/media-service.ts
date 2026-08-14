@@ -27,10 +27,11 @@ export function resolveSignUrl(signUrl: string, baseUrl: string | undefined): st
     try {
       return new URL(baseUrl.replace(/\/+$/, '') + signUrl).toString()   // 拼接再验证：保留 path 前缀，`new URL(signUrl, baseUrl)` 会丢反代 path
     } catch {
-      throw new SignedUrlResolveError(`invalid signed URL: ${baseUrl}${signUrl}`)
+      // 日志脱敏契约：错误消息不得含签名 URL（签名永不离开 Main），只留 scheme/通用描述
+      throw new SignedUrlResolveError('invalid signed URL (base or signUrl malformed)')
     }
   }
-  throw new SignedUrlResolveError(`unsupported signed URL: ${signUrl}`)
+  throw new SignedUrlResolveError('unsupported signed URL scheme')
 }
 
 /** 解析协议路径 /__cyrene-media/{mediaType}/{id}；非法/未知 → null（spec §4.4） */
@@ -122,8 +123,13 @@ export class MediaService {
     }
     let res = await this.proxyFetch(signed.url, request, headers)
     if (res.status === 401 || res.status === 403) {
-      // 签名过期：重签一次重试（spec §4.8）
-      signed = await this.resolveSignedUrl(attachmentId, { force: true })
+      // 签名过期：重签一次重试（spec §4.8）；重签解析失败同样按 P0-01 错误分类（500/502），不得逃逸到协议层兜底 502 且让 e.message 外泄
+      try {
+        signed = await this.resolveSignedUrl(attachmentId, { force: true })
+      } catch (e) {
+        if (e instanceof SignedUrlResolveError) return new Response('Signed URL invalid', { status: 500 })
+        return new Response('Bad Gateway', { status: 502 })
+      }
       res = await this.proxyFetch(signed.url, request, headers)
     }
     if (res.status === 401 || res.status === 403) return new Response('Gone', { status: 410 })

@@ -174,6 +174,19 @@ describe('MediaService P0-01 相对签名 URL 全链路（spec §4.1）', () => 
     expect(cs.reason).toBe('resolve_failed')
     expect(sign).not.toHaveBeenCalled()
   })
+  it('P0-01：401/403 触发重签时 baseUrl 失效 → 重签解析失败按 500 分类（不逃逸为协议层 502）', async () => {
+    let baseCalls = 0
+    const fetchImpl = vi.fn(async () => new Response('denied', { status: 403 }))
+    const svc = new MediaService({
+      backend: { signAttachmentUrl: async (id) => ({ url: `/api/attachments/${id}?sig=s`, expiresAt: new Date(now() + 3600_000).toISOString() }) },
+      baseUrl: () => (baseCalls++ === 0 ? 'http://127.0.0.1:9' : undefined),   // 首次签发可用，重签时 endpoint 已失效
+      now,
+      fetchImpl
+    })
+    const res = await svc.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(fetchImpl).toHaveBeenCalledTimes(1)   // 首次 fetch 403 → 重签解析失败，不再发起二次 fetch
+    expect(res.status).toBe(500)                 // 解析失败（SignedUrlResolveError）→ 500，而非 502
+  })
   it('签发表 fetch 失败（非解析问题）→ stream 502、checkStatus sign_failed', async () => {
     const sign = vi.fn(async () => { throw new Error('net down') })
     const svc = mkService({ sign })

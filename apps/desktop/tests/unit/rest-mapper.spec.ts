@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RestMapper } from '../../src/main/transport/protocol-v2/rest-mapper'
-import type { RestMessage, RestMessagesPageResponse, RestSessionSummary } from '../../src/main/transport/protocol-v2/rest-types'
+import type { RestMessage, RestMessagesPageResponse, RestSessionSummary, RestMessageContextResponse } from '../../src/main/transport/protocol-v2/rest-types'
 import type { RawSessionMessageItem } from '../../src/main/transport/protocol-v2/raw-types'
 
 const mapper = new RestMapper({ onProtocolWarning: () => {} })
@@ -96,6 +96,20 @@ describe('RestMapper', () => {
     }
     const m = mapper.toDomainMessage(raw)
     expect(m.stickerId).toBeUndefined()
+  })
+
+  it('toMessagePageFromContext：anchor 为 user 贴图消息 → 恢复 Message.stickerId（三条恢复路径之一）', () => {
+    const ctx: RestMessageContextResponse = {
+      anchor: {
+        role: 'user', content: [{ type: 'sticker', sticker_id: 'st_1', src: '/static/stickers/st_1.png' }],
+        message_id: 'msg-ctx-anchor', timestamp: '2026-08-11T00:00:12.000Z', session_id: 'conv-1'
+      },
+      before: [], after: [], conversationId: 'conv-1'
+    }
+    const page = mapper.toMessagePageFromContext(ctx)
+    const anchor = page.items.find((m) => m.messageId === 'msg-ctx-anchor')
+    expect(anchor?.stickerId).toBe('st_1')
+    expect(anchor?.content).toBeUndefined()
   })
 
   it('toDomainMessageFromReplay:回放项 name/mood 处理', () => {
