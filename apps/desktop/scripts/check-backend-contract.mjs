@@ -143,3 +143,101 @@ if (failures.length > 0) {
 
 console.log(`[check-contract] WS v2 type 覆盖: ${wsV2.length - missing.length}/${wsV2.length} 通过;` +
   `字段级帧 ${checkedFrames} 条完整保留;phase3+ 帧 ${deferred.length} 个有意滞后(warn)`)
+
+// ── REST 段：rest.py 目标模型 ↔ 前端 rest-schemas.ts（阶段3 联调前整改 spec §4.3.1）——
+// 字段名/必填性/role 枚举子集比对；防静默通过（模型数<8 或任一模型字段数=0 → exit 1）。
+const REST_TARGET_MODELS = {
+  SearchMessageItem: ['RestSearchMessageItemSchema'],
+  SearchMessagesResponse: ['RestSearchMessagesResponseSchema'],
+  MessageContextResponse: ['RestMessageContextResponseSchema'],
+  AttachmentInfo: ['RestAttachmentUploadResponseSchema', 'shape', 'attachments', 'element'],
+  AttachmentUploadResponse: ['RestAttachmentUploadResponseSchema'],
+  AttachmentSignResponse: ['RestAttachmentSignResponseSchema'],
+  StickerEntry: ['RestStickerItemSchema'],
+  StickerListResponse: ['RestStickerListResponseSchema']
+}
+const REST_SCHEMAS = new URL('../src/main/transport/protocol-v2/rest-schemas.ts', import.meta.url)
+
+/** REST 段主体（M2：rest.py 缺失时由外层守卫跳过，不抛 ENOENT） */
+async function runRestSection() {
+const restSrc = readFileSync(`${BACKEND_DIR}/rest.py`, 'utf8')
+
+/** 按 ^class 边界切模型类体（含 docstring/字段行） */
+function sliceClass(src, name) {
+  const start = src.indexOf(`class ${name}(`)
+  if (start === -1) return ''
+  const bodyStart = src.indexOf('\n', start) + 1
+  const next = src.indexOf('\nclass ', bodyStart)
+  return next === -1 ? src.slice(bodyStart) : src.slice(bodyStart, next)
+}
+const FIELD_RE = /^\s{4}(\w+):\s*([^=#\n]+?)\s*(?:=([^\n]+))?$/gm
+
+/** 解析模型字段 → { name, annotation, defaultText, required }
+ * M1（已知限制）：按行匹配，多行 `Field(` 且注解非 `Optional[` 的字段会把下一行
+ * default= 漏掉而误判必填；当前 8 目标模型仅 signedUrl 为多行且为 Optional[，无现成误报。
+ */
+function parseModelFields(cls) {
+  const fields = []
+  for (const m of cls.matchAll(FIELD_RE)) {
+    if (m[1].startsWith('_')) continue
+    const defaultText = (m[3] ?? '').trim()
+    const fargs = /Field\((.*)\)/s.exec(defaultText)?.[1] ?? ''
+    const required = !m[2].trim().startsWith('Optional[') &&
+      !/\bdefault\s*=\s*None\b|\bdefault_factory\s*=|\bdefault\s*=\s*""/.test(fargs)
+    fields.push({ name: m[1], annotation: m[2].trim(), required })
+  }
+  return fields
+}
+
+/** 前端 zod schema 字段键集合 */
+function schemaKeys(schema) {
+  const s = schema.shape ?? schema
+  return new Set(Object.keys(s))
+}
+
+const { RestSearchMessageItemSchema } = await import(REST_SCHEMAS.href)
+const restFailures = []
+let restChecked = 0
+
+for (const [modelName, path] of Object.entries(REST_TARGET_MODELS)) {
+  const cls = sliceClass(restSrc, modelName)
+  if (!cls) { restFailures.push(`REST 段：未找到后端模型 ${modelName}`); continue }
+  const fields = parseModelFields(cls)
+  if (fields.length === 0) { restFailures.push(`REST 段：${modelName} 字段解析为 0（正则失效？）`); continue }
+  restChecked += 1
+  // 前端 schema 定位：`['RestXxxSchema','shape','attachments','element']` 逐级下钻
+  const mod = await import(REST_SCHEMAS.href)
+  let schema = mod[path[0]]
+  for (let i = 1; i < path.length; i++) schema = schema[path[i]]
+  const front = schemaKeys(schema)
+  const missing = fields.filter((f) => !front.has(f.name)).map((f) => f.name)
+  if (missing.length) restFailures.push(`REST 段：${modelName} 前端缺后端字段 ${missing.join(', ')}`)
+  // 必填性：后端必填字段必须存在于前端（前端可更宽松可选）
+  const reqMissing = fields.filter((f) => f.required && !front.has(f.name)).map((f) => f.name)
+  if (reqMissing.length) restFailures.push(`REST 段：${modelName} 前端缺必填字段 ${reqMissing.join(', ')}`)
+}
+
+// role 枚举子集：后端 Role（StrEnum 成员）⊆ 前端 search item role 枚举
+const roleCls = sliceClass(restSrc, 'Role')
+const roleEnumRe = /^\s{4}(\w+)\s*=\s*"([^"]+)"/gm
+const backendRoles = [...roleCls.matchAll(roleEnumRe)].map((m) => m[2])
+const searchRole = RestSearchMessageItemSchema.shape.role
+const frontRoleInner = searchRole?._def?.innerType ?? searchRole
+const frontRoles = frontRoleInner ? (frontRoleInner.options ?? Object.values(frontRoleInner._def?.entries ?? {})) : []
+const roleOvershoot = backendRoles.filter((r) => !frontRoles.includes(r))
+if (roleOvershoot.length) restFailures.push(`REST 段：role 枚举后端多出前端不识别 ${roleOvershoot.join(', ')}`)
+
+// 防静默通过：模型数 < 8 或任一模型字段数 = 0（已在上层 loop 处理字段数=0）
+if (restChecked < Object.keys(REST_TARGET_MODELS).length) {
+  restFailures.push(`REST 段：仅解析 ${restChecked}/8 模型，疑似正则失效`)
+}
+
+if (restFailures.length) {
+  for (const f of restFailures) console.error(`[check-contract] ${f}`)
+  process.exit(1)
+}
+console.log(`[check-contract] REST 段 ${restChecked}/${Object.keys(REST_TARGET_MODELS).length} 模型通过`)
+}
+
+if (existsSync(`${BACKEND_DIR}/rest.py`)) await runRestSection()
+else console.log('[check-contract] 后端 rest.py 缺失，REST 段跳过')
