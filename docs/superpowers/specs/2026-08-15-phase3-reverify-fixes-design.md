@@ -9,7 +9,7 @@
 **范围：** 阶段3 真实联调复验的 4 项前端整改——**P0-01** 相对签名 URL 基于当前 endpoint 解析为绝对；**P0-02** ContentPart 可空数字 null/非法归一化为字段缺省；**P0-03** 持久化 StickerPart 恢复 `Message.stickerId`（用户）+ `AssistantSegment` sticker 分段（assistant）；**P1-01** 历史搜索首屏与分页统一 `sortKey` 升序。后端 MIME 规范化（BE-S3-RUN-P0-02）不在本 spec 实施。
 **目的：** 闭合真实 Windows Electron 复验暴露的前端缺陷，使阶段3 附件/贴图/历史链路在「切走再切回、来源跳转、Renderer reload、后端重启」四条恢复路径上稳定：相对签名 URL 不再因 Node fetch 不能解析而 502/`probe_failed`；单个可空元数据 `null` 不再使整页 IPC 校验失败；贴图不再因持久化恢复缺失而消失；搜索多页不再整体翻转。
 **决策：** D1～D4 已按推荐定案（详见 §5）——D1 相对拼接 + 绝对 http(s) scheme 校验放行（不强同源）；D2 签名缓存 key 按 endpoint 身份（baseUrl 含 path 前缀）分区；D3 StickerPart 恢复覆盖用户+assistant 双路径（共享映射；无效 `st_` ID fail-open 忽略）；D4 §7 后端 MIME 修复前前端不加兼容层。另：P0-02 归一化字段集与约束、P1-01 升序语义均为复验清单已冻结口径，非决策。
-**文档状态：** v1.2 定稿（独立 code-review 1 轮 2026-08-15：评审→修复→重验全过；C1 `new URL` 畸形 base/URL 归一 `SignedUrlResolveError` + stream catch 落 streamAttachment 内部；I2 `parseStickerIdFromSrc` 真实 `/static/stickers/{id}.png` 剥 `.png` 兜底；I3 §6 补 message.store.spec.ts ACK 迁移/恢复 sticker 断言；M4 sticker 分段 `st-` 前缀；M5 锚点归真实回归验收、500 条用循环页 fixture；M6 baseUrl 尾斜杠 replace 保留为防御；重验结论：Ready to proceed=Yes）。
+**文档状态：** v1.3 定稿（独立 code-review 1 轮 2026-08-15：评审→修复→重验全过，Ready to proceed=Yes；C1 `new URL` 畸形 base/URL 归一 `SignedUrlResolveError` + stream catch 落 streamAttachment 内部；I2 `parseStickerIdFromSrc` 真实 `/static/stickers/{id}.png` 剥 `.png` 兜底；I3 §6 补 message.store.spec.ts ACK 迁移/恢复 sticker 断言；M4 sticker 分段 `st-` 前缀；M5 锚点归真实回归验收、500 条用循环页 fixture；M6 baseUrl 尾斜杠 replace 保留为防御。plan 撰写自审补一处 wire 边界修正：`RestMessageSchema.duration_ms` 改 nullable（否则顶层 `null` 在 `.strict()` wire 层先拒整页、mapper 归一化不可达），rest-types 同步、rest-schemas.spec 补用例）。
 
 ---
 
@@ -31,7 +31,7 @@
 **本 spec 做（前端仓）：**
 
 1. **P0-01 签名 URL 解析**：`media-service.ts` 新增纯函数 `resolveSignUrl(signUrl, baseUrl)`（相对 → 基于 endpoint baseUrl 解析为绝对、保留 path 前缀；绝对 http(s) 原样；其余 scheme 拒绝）；`resolveSignedUrl` 缓存 key 改为 `${baseUrl}:${attachmentId}`（endpoint 身份分区，D2）；baseUrl 缺失/URL 非法 → stream 返回可诊断 500、checkStatus 返回 `{status:'error', reason:'resolve_failed'}`（不伪装成 not_found/transient，复验清单 §3.3.3）。
-2. **P0-02 ContentPart null 归一化**：`content-part.ts` 新增 `toOptionalNonNegativeNumber(v)`（`typeof v === 'number' && Number.isFinite(v) && v >= 0`，否则 undefined）；`ContentPartShape` 数字字段类型如实反映 wire（允许 `null`）；`toMedia` 全数字字段（size_bytes/width/height/duration_ms）经 helper 归一化；`rest-mapper.ts` tool 块的 `duration_ms` 同口径。IPC Schema 保持严格（不 `.nullable()`），必填字段仍 fail-closed。
+2. **P0-02 ContentPart null 归一化**：`content-part.ts` 新增 `toOptionalNonNegativeNumber(v)`（`typeof v === 'number' && Number.isFinite(v) && v >= 0`，否则 undefined）；`ContentPartShape` 数字字段类型如实反映 wire（允许 `null`）；`toMedia` 全数字字段（size_bytes/width/height/duration_ms）经 helper 归一化；`rest-mapper.ts` tool 块的 `duration_ms` 同口径；**wire 边界** `RestMessageSchema.duration_ms` 改 `z.number().nullable().optional()`（`.strict()` 下接受 null，否则整页在 wire 层失败）、`rest-types.ts` 类型同步。IPC Schema 保持严格（不 `.nullable()`），必填字段仍 fail-closed。
 3. **P0-03 StickerPart 恢复（D3 双路径）**：`content-part.ts` 定义并 export `STICKER_ID_PATTERN`（`media-service.ts` 改为 import，单一来源）；新增 `extractStickerId(content)`（`sticker_id` 优先、`src` 尾段兜底、校验 `st_`、first-wins）；`mapContentToEntries` 增加 `sticker` 条目（assistant 逐 part 一个分段，无效 ID fail-open 忽略）；`rest-mapper.ts` `assemble()` 用户分支恢复 `Message.stickerId` + typed parts 文本提取（`extractText` 复用 `mapContentToEntries` 提取 `type:'text'` 条目），assistant 分支产出 `kind:'sticker'` 分段；贴图**不进入** `attachments`（`mapContentMedia` 已跳过 sticker 条目，保持）。
 4. **P1-01 搜索排序统一升序**：`rest-mapper.ts` export `compareBySortKey`；`real-backend.ts` 单流分支升序归一化（与 image_video 分支、Mapper、store `loadMore` 一致）；cursor 原样续接后端返回值（复验清单 §6.3.3/§6.3.4 冻结）。
 
@@ -140,13 +140,13 @@
    }
    ```
 
-4. [rest-mapper.ts:131](../../../apps/desktop/src/main/transport/protocol-v2/rest-mapper.ts#L131) tool 块 `src.duration_ms !== undefined ? { durationMs: src.duration_ms } : {}` 改用 `toOptionalNonNegativeNumber(src.duration_ms)`。
+4. [rest-mapper.ts:131](../../../apps/desktop/src/main/transport/protocol-v2/rest-mapper.ts#L131) tool 块 `src.duration_ms !== undefined ? { durationMs: src.duration_ms } : {}` 改用 `toOptionalNonNegativeNumber(src.duration_ms)`。**此改动要可达，wire 层必须先放行 null**——[rest-schemas.ts:36](../../../apps/desktop/src/main/transport/protocol-v2/rest-schemas.ts#L36) `RestMessageSchema.duration_ms` 当前 `z.number().optional()`（`.strict()`）会先拒掉 `null` 使整页失败（与 P0-02 同类的 wire 边界故障），故改为 `z.number().nullable().optional()`（wire 边界接受 null，映射层归一化，领域/IPC 仍严格）；[rest-types.ts:30](../../../apps/desktop/src/main/transport/protocol-v2/rest-types.ts#L30) `RestMessage.duration_ms?: number` 同步为 `number | null | undefined`（诚实反映 wire）。领域 `MessageToolInfo.durationMs`（[message.ts:102](../../../apps/desktop/src/shared/contracts/message.ts#L102)）保持 `number | undefined`（归一化后）。
 
 5. IPC Schema（[ipc-response.ts:44-69](../../../apps/desktop/src/shared/schemas/ipc-response.ts#L44-L69)）**不改**；必填 `attachmentId/kind/mediaType` 仍 fail-closed。
 
 **约束（复验清单 §4.3）：** null/非法 → 字段缺省，**不丢媒体、不丢消息页**；`0` 为合法值保留（schema 非负含 0）；负/NaN/Infinity（单测注入）一律缺省；REST 首屏、`getMessageContext`、WS replay 三条恢复路径共用同一 helper（均经 `assemble`/`mapContentToEntries`）。
 
-**测试（复验清单 §4.4，content-part.spec.ts + rest-mapper.spec.ts）：** image `width:null,height:null` → 领域不含两字段且媒体保留；`undefined`/合法数字/`0`/负数/NaN/Infinity 分别按约束处理；video/audio 可空 `duration_ms` 与 file 可空 `size` 不污染 IPC；一页含文本+null-width PNG+其他附件 → IPC 整页成功；tool 消息 `duration_ms:null` → 领域无 durationMs；replay 路径同语义。
+**测试（复验清单 §4.4，content-part.spec.ts + rest-mapper.spec.ts + rest-schemas.spec.ts）：** image `width:null,height:null` → 领域不含两字段且媒体保留；`undefined`/合法数字/`0`/负数/NaN/Infinity 分别按约束处理；video/audio 可空 `duration_ms` 与 file 可空 `size` 不污染 IPC；一页含文本+null-width PNG+其他附件 → IPC 整页成功；tool 消息 `duration_ms:null` → wire schema 接受（`.strict()` 下 `null` 通过）、映射层领域无 durationMs；replay 路径同语义。
 
 ### 4.3 FE-S3-RUN-P0-03：StickerPart 恢复（D3 双路径）
 
@@ -214,6 +214,7 @@
 | 文件 | 动作 | 内容 |
 |---|---|---|
 | `tests/unit/media-service.spec.ts` | 改 | sign fixture 增相对 URL；新增 resolveSignUrl 纯函数 describe（相对拼接/反代 path/尾斜杠/绝对放行/异 scheme 拒/baseUrl 缺失）；缓存 endpoint 隔离；相对 URL 下 Range/206、401/403 重签、checkStatus 全链路 |
+| `tests/unit/rest-schemas.spec.ts` | 改 | `RestMessageSchema` 顶层 `duration_ms:null` → `.safeParse` 成功（wire 边界接受 null，P0-02）；`parseRestMessagesPage` 一页含 null duration_ms → success |
 | `tests/unit/content-part.spec.ts` | 改 | :37-39 sticker 边界断言更新（sticker → `{type:'sticker',stickerId}` 条目 + `mapContentMedia` 不产附件）；新增 `stickerIdOf`/`extractStickerId`/`parseStickerIdFromSrc`（sticker_id 优先/src 兜底含真实 `/static/stickers/st_1.png` 形态/非法拒/first-wins/整数组扫描）；toMedia null/0/负/NaN/Infinity 归一化用例 |
 | `tests/unit/rest-mapper.spec.ts` | 改 | 用户纯贴图/文字+贴图 → `Message.stickerId`+content；assistant 贴图 → sticker 分段；replay 同 StickerPart 同 stickerId；tool `duration_ms:null` → 无 durationMs；`width:null,height:null` 页混合返回成功 |
 | `tests/unit/message.store.spec.ts` | 改 | 复验清单 §5.4「乐观消息 ACK ID 迁移后再收到 REST/replay，不重复、不丢贴图」：乐观写 stickerId → `migrateKey` 后 stickerId 保留；收到恢复对象（带 stickerId）合并不重复、不丢（现 :603-611 只测乐观写） |
