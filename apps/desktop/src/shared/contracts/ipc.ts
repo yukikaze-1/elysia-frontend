@@ -25,7 +25,10 @@ export const IpcChannels = {
   attachmentsValidate: 'attachments:validate',           // 阶段 3 G3：附件校验（数量/大小/类型/路径/敏感范围）
   attachmentsUpload: 'attachments:upload',               // 阶段 3 G3：批量 multipart 上传（batch 原子）
   attachmentsCancel: 'attachments:cancel',               // 阶段 3 G3：上传取消（AbortController）
-  attachmentsCheck: 'attachments:check'                  // 阶段 3 G3：媒体状态分类（重签后 Range-0 探测）
+  attachmentsCheck: 'attachments:check',                 // 阶段 3 G3：媒体状态分类（重签后 Range-0 探测）
+  chatQueryHistory: 'chat:query-history',                // 阶段 3 G4：聊天历史统一查询（scope/query/localDate/category/分页）
+  chatGetMessageContext: 'chat:get-message-context',     // 阶段 3 G4：来源跳转上下文窗口
+  chatListStickers: 'chat:list-stickers'                 // 阶段 3 G4：内置表情包清单（StickerManifest）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 

@@ -52,6 +52,7 @@ export interface AssistantSegment {
   width?: number
   height?: number
   durationMs?: number
+  stickerId?: string             // 阶段 3 G4：sticker 分段身份（wire sticker 消息渲染专用，D8）
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
@@ -87,6 +88,8 @@ export interface Message {
   tool?: MessageToolInfo
   /** 附件内嵌消息（spec 阶段 3 G3，D2）；upload 响应/媒体 ContentPart 映射而来 */
   attachments?: MessageAttachment[]
+  /** 阶段 3 G4：用户贴图消息 wire 表示（§7 开放项按可选字段落地，联调对齐后端） */
+  stickerId?: string
 }
 
 /** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */
@@ -135,6 +138,8 @@ export interface SendMessageInput {
   clientRequestId: string
   /** 已上传附件引用（wire AttachmentRef 提示值；服务端以记录为准） */
   attachments?: MessageAttachmentRef[]
+  /** 阶段 3 G4：贴图消息发送（text 可空；wire stickerId 透传，D8） */
+  stickerId?: string
 }
 
 /** 发送确认引用(clientRequestId 幂等) */
