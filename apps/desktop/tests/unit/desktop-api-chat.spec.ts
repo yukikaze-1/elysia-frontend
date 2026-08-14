@@ -377,3 +377,28 @@ describe('阶段 3 G2 新通道（persistSession/cacheMessages/hydratePersistenc
       .rejects.toThrow('[SCHEMA_VALIDATION_FAILED] IPC 响应校验失败')
   })
 })
+
+describe('desktopApi 历史/上下文/表情方法（G4）', () => {
+  it('queryChatHistory 解包 ChatHistoryPage（响应校验失败抛 SCHEMA_VALIDATION_FAILED）', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: { items: [{ hitId: 'c1:m1:', conversationId: 'c1', messageId: 'm1', senderLabel: 'user', createdAt: 't', sortKey: 't|m1' }], hasMore: false } })
+    const page = await desktopApi.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 })
+    expect(Array.isArray(page.items)).toBe(true)
+    expect(typeof page.hasMore).toBe('boolean')
+    mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: { items: 'bad', hasMore: false } })
+    await expect(desktopApi.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 })).rejects.toThrow('[SCHEMA_VALIDATION_FAILED] IPC 响应校验失败')
+  })
+  it('listStickers 解包 StickerManifest{stickers}（P0-2）', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: { stickers: [{ stickerId: 'st_1', src: '/static/stickers/st_1.png' }] } })
+    const manifest = await desktopApi.listStickers()
+    expect(Array.isArray(manifest.stickers)).toBe(true)
+    expect(manifest.stickers[0].stickerId).toBe('st_1')
+  })
+  it('getMessageContext 解包 MessagePage', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: { items: [{ messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't', content: 'x' }], hasMore: false } })
+    const page = await desktopApi.getMessageContext({ conversationId: 'c1', messageId: 'm1' })
+    expect(Array.isArray(page.items)).toBe(true)
+  })
+})

@@ -7,6 +7,8 @@ import type {
   BackendSession,
   CacheMessagesInput,
   CancelGenerationInput,
+  ChatHistoryPage,
+  ChatHistoryQuery,
   ClientRequestRef,
   ConnectionState,
   Conversation,
@@ -15,6 +17,7 @@ import type {
   CredentialStatus,
   FileValidationResult,
   Message,
+  MessageContextQuery,
   MessagePage,
   Page,
   PageQuery,
@@ -24,6 +27,7 @@ import type {
   SendMessageInput,
   SessionPersistenceState
 } from '@shared/contracts'
+import type { StickerManifest } from '@shared/contracts/sticker'
 
 declare global {
   interface Window {
@@ -48,6 +52,10 @@ declare global {
       renameConversation(input: { conversationId: string; title: string }): Promise<Conversation>
       deleteConversation(id: string): Promise<void>
       getConnectionState(): Promise<ConnectionState>
+      // —— 阶段 3 G4 历史查看器/表情面 ——
+      queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>
+      getMessageContext(input: MessageContextQuery): Promise<MessagePage>
+      listStickers(): Promise<StickerManifest>
       onChatEvent(handler: (event: BackendEvent) => void): () => void
       onChatState(handler: (state: ConnectionState) => void): () => void
       onChatReplay(handler: (payload: { conversationId: string; messages: Message[] }) => void): () => void

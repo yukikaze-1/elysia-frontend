@@ -10,6 +10,8 @@ import type {
   BackendSession,
   CacheMessagesInput,
   CancelGenerationInput,
+  ChatHistoryPage,
+  ChatHistoryQuery,
   ClientRequestRef,
   ConnectionState,
   Conversation,
@@ -17,6 +19,7 @@ import type {
   CreateConversationInput,
   FileValidationResult,
   Message,
+  MessageContextQuery,
   MessagePage,
   Page,
   PageQuery,
@@ -26,6 +29,7 @@ import type {
   SendMessageInput,
   SessionPersistenceState
 } from '@shared/contracts'
+import type { StickerManifest } from '@shared/contracts/sticker'
 import { parseBackendEvent } from '@shared/schemas'
 import { z } from 'zod'
 import {
@@ -33,6 +37,7 @@ import {
   AttachmentCheckResultSchema,
   AttachmentsUploadResponseSchema,
   BackendSessionSchema,
+  ChatHistoryPageSchema,
   ClientRequestRefSchema,
   ConnectionStateSchema,
   ConversationSchema,
@@ -43,7 +48,8 @@ import {
   PageSchema,
   PersistSessionResultSchema,
   RuntimeInfoSchema,
-  SessionPersistenceStateSchema
+  SessionPersistenceStateSchema,
+  StickerManifestSchema
 } from '@shared/schemas'
 
 async function invoke<T>(channel: IpcChannelName): Promise<IpcResult<T>> {
@@ -202,6 +208,17 @@ async function getConnectionState(): Promise<ConnectionState> {
   return unwrap(await invoke<ConnectionState>(IpcChannels.chatGetState), ConnectionStateSchema)
 }
 
+// —— 阶段 3 G4 历史查看器/表情面：三通道信封解包（spec §4.3）——
+async function queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage> {
+  return unwrap(await invokeWithArgs<ChatHistoryPage>(IpcChannels.chatQueryHistory, input), ChatHistoryPageSchema)
+}
+async function getMessageContext(input: MessageContextQuery): Promise<MessagePage> {
+  return unwrap(await invokeWithArgs<MessagePage>(IpcChannels.chatGetMessageContext, input), MessagePageSchema)
+}
+async function listStickers(): Promise<StickerManifest> {
+  return unwrap(await invoke<StickerManifest>(IpcChannels.chatListStickers), StickerManifestSchema)
+}
+
 // —— 阶段 3 G2 持久化面：四通道信封解包（spec §4.2）——
 async function hydratePersistence(): Promise<SessionPersistenceState> {
   return unwrap(await invoke<SessionPersistenceState>(IpcChannels.chatHydratePersistence), SessionPersistenceStateSchema)
@@ -330,6 +347,9 @@ export const desktopApi = {
   renameConversation,
   deleteConversation,
   getConnectionState,
+  queryChatHistory,
+  getMessageContext,
+  listStickers,
   onChatEvent,
   onChatState,
   onChatReplay,
