@@ -505,3 +505,61 @@ describe('G3 附件发送编排（spec §4.4/§5）', () => {
     expect(mockApi.send).toHaveBeenCalledWith(expect.not.objectContaining({ attachments: expect.anything() }))
   })
 })
+
+describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', () => {
+  beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi); setCurrent('conv-1') })
+
+  it('setHighlight/clearHighlight 维护高亮状态（含分段）', () => {
+    const store = useMessageStore()
+    store.setHighlight('m1', 'seg1')
+    expect(store.highlightMessageId).toBe('m1')
+    expect(store.highlightSegmentId).toBe('seg1')
+    store.clearHighlight()
+    expect(store.highlightMessageId).toBeUndefined()
+  })
+  it('loadContextWindow：getMessageContext 窗口 + 首页游标初始化 + 去重合并', async () => {
+    setDesktopApi({
+      getMessageContext: async () => ({ items: [
+        { messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T02:00:00.000Z', content: '命中' },
+        { messageId: 'm2', conversationId: 'c1', role: 'assistant', status: 'completed', createdAt: '2026-08-14T02:00:10.000Z' }
+      ], hasMore: false }),
+      getMessages: async () => ({ items: [
+        { messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T02:00:00.000Z', content: '命中' },
+        { messageId: 'm0', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T01:00:00.000Z', content: '更早' }
+      ], hasMore: true, nextCursor: 'cur-1' })
+    } as never)
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'c1' })
+    const store = useMessageStore()
+    store.resetConversation('c1')
+    const ok = await store.loadContextWindow('m1')
+    expect(ok).toBe(true)
+    expect(store.nextCursor).toBe('cur-1')
+    // P1-1：getMessageContext 返回 [m1,m2] + 首页 getMessages 返回 [m1,m0]，loadPage 按 messageId 去重合并 → m0/m1/m2 共 3 条
+    expect(store.order.length).toBe(3)
+    expect(store.byId.m1).toBeDefined()
+  })
+  it('loadEarlier：!nextCursor 早退（镜像 getMore）；成功后更新游标', async () => {
+    let called = 0
+    setDesktopApi({ getMessages: async () => { called++; return { items: [], hasMore: false, nextCursor: undefined } } } as never)
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'c1' })
+    const store = useMessageStore()
+    store.resetConversation('c1')
+    await store.loadEarlier()          // 无 nextCursor → 早退
+    expect(called).toBe(0)
+    store.$patch({ nextCursor: 'cur-1' })
+    await store.loadEarlier()
+    expect(called).toBe(1)
+  })
+  it('send 携带 stickerId 透传 + 乐观消息标记', async () => {
+    const sent: unknown[] = []
+    setDesktopApi({ send: async (input: unknown) => { sent.push(input); return { clientRequestId: 'cr1', serverMessageId: 'sm1' } } } as never)
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'c1' })
+    const store = useMessageStore()
+    store.resetConversation('c1')
+    await store.send('', 'st_1')
+    expect(sent[0]).toMatchObject({ conversationId: 'c1', text: '', stickerId: 'st_1' })
+  })
+})

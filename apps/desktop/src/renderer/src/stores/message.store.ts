@@ -43,6 +43,13 @@ export const useMessageStore = defineStore('message', () => {
   const beforeCursor = ref<string>()
   const loadingOlder = ref(false)
 
+  /** G4：来源跳转高亮（D6）——setHighlight 置位，查看器/组件 watch 滚动定位 + 6s 清除 */
+  const highlightMessageId = ref<string>()
+  const highlightSegmentId = ref<string>()
+  /** G4：跳转后分页续接（P2-3）——getMessageContext 窗口落地后首页 getMessages 初始化游标 */
+  const nextCursor = ref<string>()
+  const loadingEarlier = ref(false)
+
   /** generationId → conversationId 归属表:只在 generation.started(唯一带 conversationId 的事件)记录(design §4.2.1) */
   const generationByConversation = ref<Record<string, string>>({})
   /** loadReplay 纯缓冲:currentId 未设时暂存,由 applyPendingReplay(id) 应用(design §4.1.3) */
@@ -127,6 +134,10 @@ export const useMessageStore = defineStore('message', () => {
     hasMoreBefore.value = false
     beforeCursor.value = undefined
     loadingOlder.value = false
+    highlightMessageId.value = undefined
+    highlightSegmentId.value = undefined
+    nextCursor.value = undefined
+    loadingEarlier.value = false
   }
 
   function applyEvent(event: BackendEvent): void {
@@ -196,9 +207,14 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
-  async function send(text: string, opts?: { attachments?: MessageAttachment[] }): Promise<boolean> {
+  /** 发送文本（可选贴图 stickerId 或附件 opts）；既有 G3 附件调用兼容 */
+  async function send(text: string, stickerId?: string): Promise<boolean>
+  async function send(text: string, opts?: { attachments?: MessageAttachment[]; stickerId?: string }): Promise<boolean>
+  async function send(text: string, arg?: string | { attachments?: MessageAttachment[]; stickerId?: string }): Promise<boolean> {
     const conversationId = useConversationStore().currentId
     if (!conversationId) return false
+    const stickerId = typeof arg === 'string' ? arg : arg?.stickerId
+    const attachments = typeof arg === 'string' ? undefined : arg?.attachments
     lastError.value = undefined   // 新发送清旧错误,避免失败横幅残留(最终 review 修复)
     const clientRequestId = crypto.randomUUID()
     const key = `local-${clientRequestId}`
@@ -206,11 +222,12 @@ export const useMessageStore = defineStore('message', () => {
       messageId: key,
       conversationId,
       role: 'user',
-      content: text,
       status: 'pending',
       clientMessageId: clientRequestId,
       createdAt: nowIso(),
-      ...(opts?.attachments?.length ? { attachments: opts.attachments } : {})
+      ...(text ? { content: text } : {}),
+      ...(stickerId ? { stickerId } : {}),
+      ...(attachments?.length ? { attachments } : {})
     }
     upsertMessage(optimistic)
     sending.value = true
@@ -219,8 +236,9 @@ export const useMessageStore = defineStore('message', () => {
         conversationId,
         text,
         clientRequestId,
-        ...(opts?.attachments?.length
-          ? { attachments: opts.attachments.map((a) => ({ attachmentId: a.attachmentId, kind: a.kind, mime: a.mediaType })) }
+        ...(stickerId ? { stickerId } : {}),
+        ...(attachments?.length
+          ? { attachments: attachments.map((a) => ({ attachmentId: a.attachmentId, kind: a.kind, mime: a.mediaType })) }
           : {})
       })
       if (ref?.serverMessageId) migrateKey(key, ref.serverMessageId, optimistic)
@@ -307,6 +325,58 @@ export const useMessageStore = defineStore('message', () => {
     loadingOlder.value = false
   }
 
+  // —— 阶段 3 G4：来源跳转高亮（D6）+ 上下文窗口（D5/P2-3）——
+
+  function setHighlight(messageId: string, segmentId?: string): void {
+    highlightMessageId.value = messageId
+    highlightSegmentId.value = segmentId
+  }
+  function clearHighlight(): void {
+    highlightMessageId.value = undefined
+    highlightSegmentId.value = undefined
+  }
+
+  /** 按 (createdAt, messageId) 稳定重排 order（批量加载后保序；流式单条 upsert 不受影响） */
+  function reorder(): void {
+    order.value.sort((x, y) => cmpMsg(byId.value[x], byId.value[y]))
+  }
+
+  /** 跳转后分页续接（P2-3）：getMessageContext 窗口落地后，再补一次首页 getMessages 做游标初始化；
+   *  首页 items 与窗口经 loadPage 去重合并（upsert 按 messageId，按 createdAt 稳定排序）。 */
+  async function loadContextWindow(messageId: string, before = 5, after = 5): Promise<boolean> {
+    const conversationId = useConversationStore().currentId
+    if (!conversationId) return false
+    try {
+      const page = await api.getMessageContext({ conversationId, messageId, before, after })
+      loadPage(page)
+      reorder()
+      const first = await api.getMessages({ conversationId, limit: 20 })
+      nextCursor.value = first.nextCursor
+      loadPage(first)
+      reorder()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** 加载更早消息：!nextCursor 早退（镜像 conversationStore.getMore）；成功更新游标；失败保留旧结果可重试 */
+  async function loadEarlier(): Promise<void> {
+    const conversationId = useConversationStore().currentId
+    if (!conversationId || !nextCursor.value || loadingEarlier.value) return
+    loadingEarlier.value = true
+    try {
+      const page = await api.getMessages({ conversationId, before: nextCursor.value })
+      loadPage(page)
+      reorder()
+      nextCursor.value = page.nextCursor
+    } catch {
+      // 保留旧结果，可重试
+    } finally {
+      loadingEarlier.value = false
+    }
+  }
+
   /** 断线(reconnecting/error/disconnected):先清 local-* pending 乐观消息(I5),再处理 in-flight → interrupted(P1-6) */
   function handleConnectionStateChange(s: ConnectionState): void {
     if (s.status !== 'reconnecting' && s.status !== 'error' && s.status !== 'disconnected') return
@@ -341,10 +411,18 @@ export const useMessageStore = defineStore('message', () => {
     hasMoreBefore,
     beforeCursor,
     loadingOlder,
+    highlightMessageId,
+    highlightSegmentId,
+    nextCursor,
+    loadingEarlier,
     resetConversation,
     applyEvent,
     send,
     cancel,
+    setHighlight,
+    clearHighlight,
+    loadContextWindow,
+    loadEarlier,
     loadReplay,
     applyPendingReplay,
     loadPage,
