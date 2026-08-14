@@ -1,4 +1,4 @@
-import type { BackendSession, ConversationMessagesQuery, ConnectionState, RuntimeInfo } from '@shared/contracts/backend'
+import type { BackendSession, ChatHistoryQuery, ConversationMessagesQuery, ConnectionState, MessageContextQuery, RuntimeInfo } from '@shared/contracts/backend'
 import type { BackendAdapter } from '../transport/backend-adapter'
 import type { CreateConversationInput, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
@@ -89,6 +89,10 @@ export function createChatService(deps: ChatServiceDeps) {
     getMessages: (input: ConversationMessagesQuery) => adapter.getConversationMessages(input),
     send: (input: SendMessageInput) => adapter.sendMessage(input),
     cancel: (input: { generationId: string }) => adapter.cancelGeneration(input),
+    // —— 阶段 3 G4 历史查看器/表情（透传）——
+    queryChatHistory: (input: ChatHistoryQuery) => adapter.queryChatHistory(input),
+    getMessageContext: (input: MessageContextQuery) => adapter.getMessageContext(input),
+    listStickers: () => adapter.listStickers(),
     activate: async (id) => {
       const r = await adapter.activateConversation(id)
       deps.sessionStore?.setActiveConversation(id).catch(() => {}) // 记录 lastActiveConversationId

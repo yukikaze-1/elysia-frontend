@@ -4,6 +4,7 @@ import { MockBackend } from '../../src/main/transport/mock-backend'
 import type { Message } from '@shared/contracts/message'
 import { CyreneErrorCode } from '@shared/errors'
 import type { ConnectionConfig, NormalizedEndpoint } from '../../src/main/connection/connection-config'
+import type { StickerManifest } from '../../src/shared/contracts/sticker'
 
 function makeDeps(overrides: Partial<Parameters<typeof createChatService>[0]> = {}) {
   const adapter = new MockBackend()
@@ -164,5 +165,23 @@ describe('chat-service', () => {
     await svc.disconnect()
     expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'connection:disconnect', summary: 'mode=mock' }))
     svc.dispose()
+  })
+})
+
+describe('ChatService 历史/上下文/表情透传（G4）', () => {
+  it('queryChatHistory/getMessageContext/listStickers 透传到 adapter', async () => {
+    const adapter = {
+      queryChatHistory: vi.fn(async () => ({ items: [], hasMore: false })),
+      getMessageContext: vi.fn(async () => ({ items: [], hasMore: false })),
+      listStickers: vi.fn(async (): Promise<StickerManifest> => ({ stickers: [{ stickerId: 'st_1', src: '/static/stickers/st_1.png' }] })),   // P0-2
+      subscribe: vi.fn(() => () => {})
+    }
+    const svc = createChatService({ adapter, send: vi.fn(), getToken: async () => 'tok', connectionConfig: undefined as never, requireToken: false } as never)
+    await svc.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 })
+    await svc.getMessageContext({ conversationId: 'c1', messageId: 'm1' })
+    await svc.listStickers()
+    expect(adapter.queryChatHistory).toHaveBeenCalledTimes(1)
+    expect(adapter.getMessageContext).toHaveBeenCalledTimes(1)
+    expect(adapter.listStickers).toHaveBeenCalledTimes(1)
   })
 })

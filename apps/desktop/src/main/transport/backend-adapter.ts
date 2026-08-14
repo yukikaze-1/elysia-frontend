@@ -28,6 +28,7 @@ import type { ClientRequestRef, SendMessageInput } from '@shared/contracts/messa
 import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { AttachmentKind } from '@shared/contracts/message'
+import type { StickerManifest } from '@shared/contracts/sticker'
 
 /** 上传内容（路径型 Main 直读盘 / 粘贴型 bytes；kind 为客户端提示值，可省略由后端魔数判定） */
 export interface UploadContent {
@@ -75,6 +76,8 @@ export interface BackendAdapter {
   activateModelProfile(input: ActivateModelProfileCommand): Promise<void>
 
   queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>
+  /** 阶段 3 G4：内置表情包清单（StickerManifest{stickers}，D8） */
+  listStickers(): Promise<StickerManifest>
 
   startVoiceInput(input: StartVoiceInputInput): Promise<VoiceInputSession>
   stopVoiceInput(input: StopVoiceInputInput): Promise<void>
