@@ -6,6 +6,7 @@ import { WebSocketServer } from 'ws'
 import type { AddressInfo } from 'net'
 import { describe, expect, it } from 'vitest'
 import { RealBackend } from '../../src/main/transport/real-backend'
+import { CyreneErrorCode } from '../../src/shared/errors'
 
 /** 断言 search/context/stickers 请求参数后返回对应响应 */
 function apiServer(opts: { onSearch?: (url: string) => void; onContext?: (url: string) => void; onStickers?: () => void }): Promise<{ port: number; close(): void }> {
@@ -34,7 +35,7 @@ function apiServer(opts: { onSearch?: (url: string) => void; onContext?: (url: s
 }
 
 describe('RealBackend.queryChatHistory（spec §4.3/§4.4）', () => {
-  it('URL 参数：query/conversationId/date_from 半开区间/timezone/category/cursor/limit', async () => {
+  it('URL 参数：query/conversationId/date_from 自然日/timezone/category/cursor/limit', async () => {
     const seen: string[] = []
     const { port, close } = await apiServer({ onSearch: (u) => seen.push(u) })
     try {
@@ -46,13 +47,24 @@ describe('RealBackend.queryChatHistory（spec §4.3/§4.4）', () => {
       })
       expect(seen[0]).toContain('query=%E5%85%B3%E9%94%AE%E8%AF%8D')
       expect(seen[0]).toContain('conversationId=c1')
-      expect(seen[0]).toContain('date_from=2026-08-13T16%3A00%3A00.000Z')   // 上海 UTC+8 本地日 → 前一日 16:00Z
-      expect(seen[0]).toContain('date_to=2026-08-14T16%3A00%3A00.000Z')
+      expect(seen[0]).toContain('date_from=2026-08-14&date_to=2026-08-14')   // 自然日契约（P0-01：连续参数对，杜绝 T 后缀回归；URLSearchParams 保序）
       expect(seen[0]).toContain('timezone=Asia%2FShanghai')
       expect(seen[0]).toContain('category=sticker')
       expect(seen[0]).toContain('limit=50')
       expect(page.items[0]).toMatchObject({ messageId: 'm1', snippet: '命中' })   // P0-1：search item 仅文本，无 resource
       expect(page.items[0].resource).toBeUndefined()
+      await backend.disconnect()
+    } finally { close() }
+  })
+  it('DST 时区（America/New_York）：date_from/date_to 仍为自然日，不随时区变化', async () => {
+    const seen: string[] = []
+    const { port, close } = await apiServer({ onSearch: (u) => seen.push(u) })
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      await backend.queryChatHistory({ scope: { type: 'all_conversations' }, localDate: '2026-01-15', timeZone: 'America/New_York', category: 'all', limit: 50 })
+      expect(seen[0]).toContain('date_from=2026-01-15&date_to=2026-01-15')
+      expect(seen[0]).toContain('timezone=America%2FNew_York')
       await backend.disconnect()
     } finally { close() }
   })
@@ -188,6 +200,34 @@ describe('RealBackend.sendMessage wire stickerId（D8）', () => {
       await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
       await backend.sendMessage({ conversationId: 'c1', text: '', clientRequestId: 'cr1', stickerId: 'st_1' })
       expect(payloads[0]).toMatchObject({ type: 'text', conversationId: 'c1', clientRequestId: 'cr1', stickerId: 'st_1' })
+      await backend.disconnect()
+    } finally { wss.close(); s.close() }
+  })
+})
+
+describe('RealBackend 搜索错误映射（P0-01：后端日期/时区 fail-fast）', () => {
+  it('400 INVALID_TIMEZONE → INVALID_INPUT（不落 UNKNOWN）', async () => {
+    const { createServer } = await import('http')
+    const { WebSocketServer } = await import('ws')
+    const s = createServer((req, res) => {
+      if (req.url?.startsWith('/api/search/messages')) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ code: 'INVALID_TIMEZONE', message: '未知时区: Bad/Zone' }))
+      } else { res.writeHead(404); res.end() }
+    })
+    const wss = new WebSocketServer({ server: s, path: '/ws' })
+    wss.on('connection', (ws) => {
+      ws.send(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } }))
+      ws.send(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-1' }))
+      ws.send(JSON.stringify({ type: 'expression', expression: 'idle' }))
+    })
+    await new Promise<void>((r) => s.listen(0, '127.0.0.1', r))
+    const port = (s.address() as { port: number }).port
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      await expect(backend.queryChatHistory({ scope: { type: 'all_conversations' }, localDate: '2026-08-14', timeZone: 'Bad/Zone', category: 'all', limit: 50 }))
+        .rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
       await backend.disconnect()
     } finally { wss.close(); s.close() }
   })

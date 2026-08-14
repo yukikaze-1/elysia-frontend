@@ -43,7 +43,6 @@ import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList } from './protocol-v2/rest-schemas'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
-import { localDateToHalfOpenRange } from '@shared/domain'
 import type { HistoryCategory, StickerManifest } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
@@ -123,9 +122,10 @@ function parseImageVideoCursor(cursor: string | undefined): ImageVideoCursorStat
 }
 
 /** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
- *  400 CONTRACT_VALIDATION → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
+ *  400 CONTRACT_VALIDATION/INVALID_TIMEZONE → INVALID_INPUT;401/403 → AUTHENTICATION_FAILED;404 → NOT_FOUND;其余 → UNKNOWN。 */
 function mapHttpError(status: number, code: string): CyreneErrorCode {
   if (status === 400 && code === 'CONTRACT_VALIDATION') return CyreneErrorCode.INVALID_INPUT
+  if (status === 400 && code === 'INVALID_TIMEZONE') return CyreneErrorCode.INVALID_INPUT   // 阶段3 整改 P0-01：后端日期/时区 fail-fast（BE-S3-INT-P1-01）
   if (status === 401 || status === 403) return CyreneErrorCode.AUTHENTICATION_FAILED
   if (status === 404) return CyreneErrorCode.NOT_FOUND
   return CyreneErrorCode.UNKNOWN
@@ -698,9 +698,8 @@ export class RealBackend implements BackendAdapter {
     if (input.query) params['query'] = input.query
     if (input.scope.type === 'conversation') params['conversationId'] = input.scope.conversationId
     if (input.localDate) {
-      const range = localDateToHalfOpenRange(input.localDate, input.timeZone)
-      params['date_from'] = range.from
-      params['date_to'] = range.to
+      params['date_from'] = input.localDate   // YYYY-MM-DD 自然日（阶段3 联调前整改 P0-01：不再预转 UTC ISO，后端自转半开区间）
+      params['date_to'] = input.localDate
     }
     params['timezone'] = input.timeZone
     if (cat) params['category'] = cat
