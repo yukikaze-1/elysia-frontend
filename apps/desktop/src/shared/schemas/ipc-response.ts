@@ -41,13 +41,33 @@ export const EndpointResponseSchema = z.object({
   endpoint: z.string().optional()
 })
 
+export const MessageAttachmentSchema = z.object({
+  attachmentId: z.string().min(1),
+  kind: z.enum(['image', 'video', 'audio', 'file', 'link']),
+  mediaType: z.string().min(1),
+  name: z.string().optional(),
+  size: z.number().nonnegative().optional(),
+  width: z.number().nonnegative().optional(),
+  height: z.number().nonnegative().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  messageId: z.string().optional()
+})
+
 export const AssistantSegmentSchema = z.object({
   segmentId: z.string().min(1),
   segmentIndex: z.number().int().nonnegative(),
   channel: z.enum(['inner_voice', 'public_reply']),
   kind: z.enum(['text', 'markdown', 'image', 'video', 'audio', 'file', 'sticker', 'link']),
   text: z.string().optional(),
-  completed: z.boolean()
+  completed: z.boolean(),
+  attachmentId: z.string().optional(),
+  url: z.string().optional(),
+  mediaType: z.string().optional(),
+  name: z.string().optional(),
+  size: z.number().optional(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+  durationMs: z.number().optional()
 })
 
 /** 镜像 contracts/message.ts `MessageToolInfo`（全 optional；rest-mapper assemble 产出同形对象） */
@@ -71,6 +91,7 @@ export const MessageSchema = z.object({
   clientMessageId: z.string().optional(),
   assistantSegments: z.array(AssistantSegmentSchema).optional(),
   tool: MessageToolInfoSchema.optional(),   // 严格镜像 MessageToolInfo(rest-mapper assemble 产出;M4:输出须可赋值回 Message)
+  attachments: z.array(MessageAttachmentSchema).optional(),   // 附件内嵌消息（阶段 3 G3，D2）
   usage: TokenUsageSchema.optional(),
   model: z.string().optional(),
   emotion: z.string().optional()

@@ -12,14 +12,46 @@ export type SegmentKind =
   | 'sticker'
   | 'link'
 
+/** 附件类别（链接为资源级类别，不参与上传 kind） */
+export type AttachmentKind = 'image' | 'video' | 'audio' | 'file' | 'link'
+
+/** 已发送消息携带的附件（上传响应/媒体分段映射而来）；name/size/尺寸：上传响应与历史/回放 ContentPart 均提供，字段仍 optional 兜底 */
+export interface MessageAttachment {
+  attachmentId: string            // att_ 前缀（后端权威）
+  kind: AttachmentKind
+  mediaType: string               // MIME
+  name?: string
+  size?: number
+  width?: number
+  height?: number
+  durationMs?: number
+  /** 来源消息跳转锚点（历史查看器复用；本批消息内嵌不另存 ConversationResource） */
+  messageId?: string
+}
+
+/** 发送消息携带的附件引用（wire AttachmentRef 提示值；服务端以记录为准） */
+export interface MessageAttachmentRef {
+  attachmentId: string
+  kind: AttachmentKind
+  mime: string
+}
+
 /** 一条 AI 回复内的有序分段(全局顺序由 segmentIndex 决定) */
 export interface AssistantSegment {
   segmentId: string
   segmentIndex: number
   channel: SegmentChannel
-  kind: SegmentKind
+  kind: SegmentKind              // 含 image/video/audio/file/link
   text?: string
   completed: boolean
+  attachmentId?: string          // 媒体分段：附件 ID（ContentPart.attachment_id 优先，src 兜底解析）
+  url?: string                   // 稳定路径 /api/attachments/{id}（展示兜底；attachment_id 缺失时解析）
+  mediaType?: string
+  name?: string
+  size?: number
+  width?: number
+  height?: number
+  durationMs?: number
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool'
@@ -53,6 +85,8 @@ export interface Message {
   emotion?: string
   /** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */
   tool?: MessageToolInfo
+  /** 附件内嵌消息（spec 阶段 3 G3，D2）；upload 响应/媒体 ContentPart 映射而来 */
+  attachments?: MessageAttachment[]
 }
 
 /** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */
@@ -99,6 +133,8 @@ export interface SendMessageInput {
   conversationId: string
   text: string
   clientRequestId: string
+  /** 已上传附件引用（wire AttachmentRef 提示值；服务端以记录为准） */
+  attachments?: MessageAttachmentRef[]
 }
 
 /** 发送确认引用(clientRequestId 幂等) */
