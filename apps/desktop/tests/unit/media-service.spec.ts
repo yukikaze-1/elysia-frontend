@@ -134,3 +134,27 @@ describe('MediaService.checkStatus（D6 分类）', () => {
     expect((await svcBad.checkStatus('evil')).status).toBe('error')
   })
 })
+
+describe('MediaService.streamSticker G4 硬化（spec §4.6 P3-2/P3-4）', () => {
+  it('MIME 带参数容忍：image/png; charset=utf-8 通过（剥参 trim 匹配）', async () => {
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array([0x89, 0x50]), { status: 200, headers: { 'content-type': 'image/png; charset=utf-8' } }))
+    const svc = mkService({ fetchImpl })
+    const res = await svc.stream('sticker', 'st_1', new Request('cyrene://renderer/__cyrene-media/sticker/st_1', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/png')
+  })
+  it('响应体超 1MB → 404 占位（中止注入，P3-2）', async () => {
+    const big = new Uint8Array(1024 * 1024 + 1)
+    const fetchImpl = vi.fn(async () => new Response(big, { status: 200, headers: { 'content-type': 'image/png' } }))
+    const svc = mkService({ fetchImpl })
+    const res = await svc.stream('sticker', 'st_1', new Request('cyrene://renderer/__cyrene-media/sticker/st_1', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(res.status).toBe(404)
+  })
+  it('恰好 1MB 通过；MIME 不匹配 → 415', async () => {
+    const exact = new Uint8Array(1024 * 1024)
+    const svcExact = mkService({ fetchImpl: async () => new Response(exact, { status: 200, headers: { 'content-type': 'image/png' } }) })
+    expect((await svcExact.stream('sticker', 'st_1', new Request('cyrene://renderer/__cyrene-media/sticker/st_1', { headers: { 'sec-fetch-dest': 'img' } }))).status).toBe(200)
+    const svcBad = mkService({ fetchImpl: async () => new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'text/html' } }) })
+    expect((await svcBad.stream('sticker', 'st_1', new Request('cyrene://renderer/__cyrene-media/sticker/st_1', { headers: { 'sec-fetch-dest': 'img' } }))).status).toBe(415)
+  })
+})

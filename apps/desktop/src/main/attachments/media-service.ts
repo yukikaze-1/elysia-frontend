@@ -10,6 +10,7 @@ export const MEDIA_PATH_PREFIX = '/__cyrene-media/'
 const ATTACHMENT_ID_PATTERN = /^att_[A-Za-z0-9_-]+$/
 const STICKER_ID_PATTERN = /^st_[A-Za-z0-9-]+$/
 const STICKER_MIME = 'image/png'
+const STICKER_MAX_BYTES = 1024 * 1024   // P3-2：docs/07 行 101 大小上限；公开静态贴图免鉴权
 const RE_SIGN_LEEWAY_MS = 5 * 60 * 1000
 
 /** 解析协议路径 /__cyrene-media/{mediaType}/{id}；非法/未知 → null（spec §4.4） */
@@ -96,7 +97,28 @@ export class MediaService {
     return res
   }
 
-  /** sticker 静态代理：stickerId 白名单 + MIME 白名单 image/png + 无签名/不缓存签名 URL（G4 边界，spec §2/§4.4） */
+  /** 读响应体并计数；超上限返回 null（中止，回 404 占位，P3-2） */
+  private async readBodyCapped(res: Response): Promise<Uint8Array | null> {
+    const reader = res.body?.getReader()
+    if (!reader) return null
+    const chunks: Uint8Array[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        total += value.byteLength
+        if (total > STICKER_MAX_BYTES) { await reader.cancel(); return null }
+        chunks.push(value)
+      }
+    }
+    const out = new Uint8Array(total)
+    let offset = 0
+    for (const c of chunks) { out.set(c, offset); offset += c.byteLength }
+    return out
+  }
+
+  /** sticker 静态代理：stickerId 白名单 + MIME 白名单 image/png + 1MB 上限 + 无签名/不缓存签名 URL（G4 硬化，spec §4.6 P3-2/P3-4） */
   private async streamSticker(stickerId: string): Promise<Response> {
     if (!STICKER_ID_PATTERN.test(stickerId)) return new Response('Forbidden', { status: 403 })
     const base = this.baseUrl()
@@ -104,10 +126,13 @@ export class MediaService {
     const url = `${base.replace(/\/$/, '')}/static/stickers/${encodeURIComponent(stickerId)}.png`
     try {
       const res = await this.fetchImpl(url)
-      if (res.status !== 200 || (res.headers.get('content-type') ?? '').split(';')[0] !== STICKER_MIME) {
-        return new Response('Unsupported Media Type', { status: 415 })
-      }
-      return new Response(res.body, { status: 200, headers: { 'Content-Type': STICKER_MIME, 'Cache-Control': 'public, max-age=86400' } })
+      // P3-4：MIME 剥参匹配（容忍 ; charset= 等参数，严格相等会误拒）
+      const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim()
+      if (res.status !== 200 || mime !== STICKER_MIME) return new Response('Unsupported Media Type', { status: 415 })
+      const body = await this.readBodyCapped(res)
+      if (body === null) return new Response('Not Found', { status: 404 })   // 超 1MB → 占位（P3-2）
+      // readBodyCapped 产出新分配的 Uint8Array<ArrayBufferLike>；Response BodyInit 需 ArrayBufferView<ArrayBuffer>——cast 兼容（同 real-backend 上传纪律）
+      return new Response(body as unknown as BodyInit, { status: 200, headers: { 'Content-Type': STICKER_MIME, 'Cache-Control': 'public, max-age=86400' } })
     } catch {
       return new Response('Not Found', { status: 404 })
     }

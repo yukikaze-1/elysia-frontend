@@ -35,3 +35,10 @@ describe('buildDevCsp', () => {
     expect(connect).not.toContain('cyrene:')
   })
 })
+
+it('dev img-src 追加 cyrene:（贴图经 cyrene:// 媒体代理；prod 同源不改，D9）', () => {
+  const csp = buildDevCsp(resolveTrustedDevOrigins({}))
+  expect(csp).toContain("img-src 'self' data: blob: cyrene:")
+  const connect = csp.split('; ').find((d) => d.startsWith('connect-src'))!
+  expect(connect).not.toContain('cyrene:')
+})
