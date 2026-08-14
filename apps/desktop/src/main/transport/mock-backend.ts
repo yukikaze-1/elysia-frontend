@@ -3,6 +3,7 @@ import type {
   ActivateModelProfileCommand,
   BackendSession,
   CancelGenerationInput,
+  ChatHistoryItem,
   ChatHistoryPage,
   ChatHistoryQuery,
   ConnectInput,
@@ -11,6 +12,7 @@ import type {
   ConversationMessagesQuery,
   DictationSession,
   GetConversationQuery,
+  HistoryCategory,
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
@@ -24,10 +26,12 @@ import type {
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
-import type { ClientRequestRef, SendMessageInput } from '@shared/contracts/message'
+import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
 import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
+import type { StickerManifest } from '@shared/contracts/sticker'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
+import { isoToLocalDate } from '@shared/domain'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
@@ -83,6 +87,20 @@ export class MockBackend implements BackendAdapter {
   private activeConversationId?: string
   private generationTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
   private idCounter = 0
+  /** 历史记录（预置样例 + sendMessage 追加；查看器 Mock 全链路数据源） */
+  private readonly messageRecords: Message[] = this.seedMessages()
+
+  private seedMessages(): Message[] {
+    const mk = (messageId: string, conversationId: string, role: 'user' | 'assistant', createdAt: string, content?: string, stickerId?: string): Message =>
+      ({ messageId, conversationId, role, createdAt, status: 'completed', ...(content !== undefined ? { content } : {}), ...(stickerId ? { stickerId } : {}) })
+    return [
+      mk('msg-1001', 'conv-1001', 'user', '2026-08-14T02:00:00.000Z', '你好，帮我总结一下'),
+      mk('msg-1002', 'conv-1001', 'assistant', '2026-08-14T02:00:10.000Z', '好的，正在总结……'),
+      mk('msg-1003', 'conv-1001', 'user', '2026-08-13T09:00:00.000Z', '发个表情', 'st_1'),
+      mk('msg-1004', 'conv-1002', 'user', '2026-08-07T01:30:00.000Z', '历史会话的问题'),
+      mk('msg-1005', 'conv-1002', 'assistant', '2026-08-07T01:31:00.000Z', '这是历史会话的回复')
+    ]
+  }
 
   constructor(options: MockBackendOptions = {}) {
     this.emitDelayMs = options.emitDelayMs ?? 30
@@ -144,8 +162,14 @@ export class MockBackend implements BackendAdapter {
     return { items: [], hasMore: false }
   }
 
-  async getMessageContext(_input: MessageContextQuery): Promise<MessagePage> {
-    return { items: [], hasMore: false }
+  async getMessageContext(input: MessageContextQuery): Promise<MessagePage> {
+    const records = this.messageRecords.filter((m) => m.conversationId === input.conversationId)
+      .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
+    const idx = records.findIndex((m) => m.messageId === input.messageId)
+    if (idx < 0) throw new CyreneError(CyreneErrorCode.NOT_FOUND, `消息不存在: ${input.messageId}`)
+    const before = Math.min(input.before ?? 5, idx)
+    const after = Math.min(input.after ?? 5, records.length - idx - 1)
+    return { items: records.slice(idx - before, idx + after + 1), hasMore: false }
   }
 
   async createConversation(input: CreateConversationInput): Promise<Conversation> {
@@ -179,6 +203,14 @@ export class MockBackend implements BackendAdapter {
     if (!this.connected) {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'MockBackend 未连接')
     }
+    // G4：贴图/文本消息记录进历史（可被查看器分类/关键词检索）
+    const recordedId = `msg-${this.idFactory().replace(/[^A-Za-z0-9_-]/g, '')}`
+    this.messageRecords.push({
+      messageId: recordedId, conversationId: input.conversationId, role: 'user',
+      createdAt: this.now().toISOString(), status: 'completed',
+      ...(input.text ? { content: input.text } : {}),
+      ...(input.stickerId ? { stickerId: input.stickerId } : {})
+    })
     this.scheduleReplay(input.conversationId)
     return { clientRequestId: input.clientRequestId }
   }
@@ -228,8 +260,27 @@ export class MockBackend implements BackendAdapter {
     // Mock 无操作
   }
 
-  async queryChatHistory(_input: ChatHistoryQuery): Promise<ChatHistoryPage> {
-    return { items: [], hasMore: false }
+  async queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage> {
+    const filtered = this.messageRecords
+      .filter((m) => input.scope.type === 'all_conversations' || m.conversationId === input.scope.conversationId)
+      .filter((m) => !input.query || (m.content ?? '').toLowerCase().includes(input.query.toLowerCase()))
+      .filter((m) => !input.localDate || isoToLocalDate(m.createdAt, input.timeZone) === input.localDate)
+      .filter((m) => categoryMatches(m, input.category))
+      .map((m) => this.toHistoryItem(m))
+      .sort((a, b) => a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
+    let offset = 0
+    if (input.cursor?.startsWith('mock:')) offset = Number(input.cursor.slice(5)) || 0
+    const items = filtered.slice(offset, offset + input.limit)
+    const nextOffset = offset + input.limit
+    return { items, hasMore: nextOffset < filtered.length, nextCursor: nextOffset < filtered.length ? `mock:${nextOffset}` : undefined }
+  }
+
+  async listStickers(): Promise<StickerManifest> {
+    return { stickers: [
+      { stickerId: 'st_1', src: '/static/stickers/st_1.png' },
+      { stickerId: 'st_2', src: '/static/stickers/st_2.png' },
+      { stickerId: 'st_3', src: '/static/stickers/st_3.png' }
+    ] }
   }
 
   async startVoiceInput(_input: StartVoiceInputInput): Promise<VoiceInputSession> {
@@ -255,6 +306,23 @@ export class MockBackend implements BackendAdapter {
   /** 释放定时器(测试清理用) */
   dispose(): void {
     this.clearTimers()
+  }
+
+  /** 领域富化（Mock 与 Real 差异注，P0-1）：直接产出 ChatHistoryItem（非 REST wire），
+   *  为演示「表情」分类缩略图保留 resource；真实后端 search item 无 kind/url，联调后分类缩略图需资源端点补充。 */
+  private toHistoryItem(m: Message): ChatHistoryItem {
+    const base: ChatHistoryItem = {
+      hitId: `${m.conversationId}:${m.messageId}:`,
+      conversationId: m.conversationId, messageId: m.messageId,
+      senderLabel: senderLabelOf(m.role), createdAt: m.createdAt,
+      sortKey: `${m.createdAt}|${m.messageId}`
+    }
+    if (m.content) base.snippet = m.content
+    if (m.stickerId) {
+      base.resource = { messageId: m.messageId, timestamp: m.createdAt, kind: 'sticker', url: `/static/stickers/${m.stickerId}.png`, stickerId: m.stickerId }
+      base.snippet = '表情'
+    }
+    return base
   }
 
   private scheduleReplay(conversationId: string): void {
@@ -295,4 +363,15 @@ export class MockBackend implements BackendAdapter {
   private emit(event: BackendEvent): void {
     this.handler?.(event)
   }
+}
+
+/** Mock 分类过滤：all 全放行；sticker 有 stickerId；其余分类 Mock 无样例（可扩展） */
+function categoryMatches(m: Message, category: HistoryCategory): boolean {
+  if (category === 'all') return true
+  if (category === 'sticker') return !!m.stickerId
+  return false   // 其余分类 Mock 无样例（可扩展）
+}
+
+function senderLabelOf(role: Message['role']): string {
+  switch (role) { case 'assistant': return 'assistant'; case 'system': return '系统'; case 'tool': return '工具'; default: return 'user' }
 }
