@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // CyFileAttachment:文件图标卡（名称/大小/类型；P0 不下载，D-08 P2）；unsupported 显示「暂不支持播放」。
 import { formatFileSize } from '../utils/media'
-const props = defineProps<{ name?: string; size?: number; mediaType?: string; unsupported?: boolean }>()
+defineProps<{ name?: string; size?: number; mediaType?: string; unsupported?: boolean }>()
 </script>
 
 <template>

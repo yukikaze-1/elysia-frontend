@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // CyLinkAttachment:链接卡片（label + URL，仅展示 http/https；打开外部经既有 will-navigate/setWindowOpenHandler → shell.openExternal，D8 无新 IPC）。
-const props = defineProps<{ url?: string; name?: string }>()
+defineProps<{ url?: string; name?: string }>()
 function isWeb(u?: string): boolean { return !!u && (u.startsWith('http:') || u.startsWith('https:')) }
 </script>
 

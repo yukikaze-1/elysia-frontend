@@ -24,8 +24,9 @@ const MIME: Record<string, string> = {
 
 /** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env。
  *  seedFiles：启动时预置文件（relPath 相对 userData 根，如 'app-cache/message-cache-v1.json'）——损坏恢复测试在 load() 前注入非法 JSON。
+ *  opts.env：附加环境变量（合并到 env 构造末尾；Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
  *  目录 0700、文件 0600：否则 ensureUserDataDirs（0700 无 group/other）与 openSafeFile 读（0400 无 group/other）会因权限误判损坏/拒绝启动 */
-export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>): Promise<LaunchedApp> {
+export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>, opts: { env?: Record<string, string> } = {}): Promise<LaunchedApp> {
   const electronPath = ELECTRON_EXEC
   const userData = mkdtempSync(join(tmpdir(), 'cy-int-ud-'))
   for (const f of seedFiles ?? []) {
@@ -38,7 +39,8 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
     ...(process.env as Record<string, string>),
     [appDataKey]: userData,        // appData→userData 隔离(join(appData,'Cyrene'))
     CYRENE_TEST_HARNESS: '1',
-    CYRENE_BACKEND: 'mock'         // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
+    CYRENE_BACKEND: 'mock',        // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
+    ...(opts.env ?? {})
   }
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
   const app = await _electron.launch({ executablePath: electronPath, args: [ROOT], cwd: ROOT, env, timeout: 30000 })

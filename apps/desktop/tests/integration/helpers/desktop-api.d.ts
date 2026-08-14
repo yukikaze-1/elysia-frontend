@@ -3,7 +3,7 @@
 // index.ts 同名时声明文件被静默丢弃——使 tsconfig.node.json（含 tests/**/*）永远加载不到它。
 // 本文件以非冲突基名落于 tests 树，让 launchApp 返回的 page.evaluate 内 `window.desktopApi` 在
 // node 编译程序中可见（渲染进程类型来自 src/preload/index.d.ts，两者共享 @shared/contracts 类型）。
-import type { AppInfo, BackendSession, CacheMessagesInput, CredentialStatus, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
+import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, CredentialStatus, FileValidationResult, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
 
 declare global {
   interface Window {
@@ -25,6 +25,11 @@ declare global {
       cacheMessages(input: CacheMessagesInput): Promise<void>
       deleteConversation(id: string): Promise<void>
       openExternal(url: string): Promise<void>
+      // —— 阶段 3 G3 attachments 面（与 src/preload/index.d.ts 同源；ipc-attachments.spec 要调） ——
+      attachmentsValidate(input: { files: Array<{ localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }> }): Promise<FileValidationResult[]>
+      attachmentsUpload(input: { uploadId: string; files: Array<{ localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }> }): Promise<AttachmentsUploadResponse>
+      attachmentsCancel(uploadId: string): Promise<void>
+      attachmentsCheck(attachmentId: string): Promise<AttachmentCheckResult>
     }
   }
 }
