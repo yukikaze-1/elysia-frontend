@@ -7,8 +7,11 @@ const isPosix = process.platform !== 'win32'
 
 async function assertParentContained(filePath: string, safeRoot: string): Promise<string> {
   const dir = dirname(filePath)
-  const real = await realpath(dir).catch(() => { throw new Error('父目录无法解析') })
-  const rel = relative(safeRoot, real)
+  // 两侧都 realpath（Windows 下 tmpdir 可能返回 8.3 短名而 realpath 解析为长名，relative 会误判逃逸）：
+  // safeRoot 若不归一化，relative(短名, 长名) 产生 `..` → 假阳性拒绝。归一化后同形式比较。
+  const [safe, real] = await Promise.all([realpath(safeRoot), realpath(dir)])
+    .catch(() => { throw new Error('父目录无法解析') })
+  const rel = relative(safe, real)
   if (rel.startsWith('..') || rel.includes('..')) throw new Error(`父目录逃逸安全根（${real}）`)
   return real
 }

@@ -31,7 +31,7 @@ describe('getStatus', () => {
   it('文件缺失 → empty', async () => {
     expect(await makeStore().getStatus('backend.token')).toBe('empty')
   })
-  it('safeStorage 不可用 → unavailable（先于 empty：basic_text 新机返回 unavailable 而非 empty）', async () => {
+  it.skipIf(process.platform !== 'linux')('safeStorage 不可用 → unavailable（先于 empty：basic_text 新机返回 unavailable 而非 empty；Windows 不判 backend）', async () => {
     const store = makeStore({ safe: fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }) })
     expect(await store.getStatus('backend.token')).toBe('unavailable')
   })
@@ -91,7 +91,7 @@ describe('setCredential', () => {
     expect(raw.keys['backend.token'].enc).toBe(Buffer.from('enc:tok').toString('base64'))
     if (process.platform !== 'win32') expect((await import('fs')).statSync(filePathOf(s)).mode & 0o777).toBe(0o600) // Windows stat.mode 报 0666，0600 仅 POSIX 有意义
   })
-  it('safeStorage 不可用 → 抛 CREDENTIAL_UNAVAILABLE 且不落盘明文', async () => {
+  it.skipIf(process.platform !== 'linux')('safeStorage 不可用 → 抛 CREDENTIAL_UNAVAILABLE 且不落盘明文（basic_text 仅 Linux 判定不可用）', async () => {
     const s = makeStore({ safe: fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }) })
     await expect(s.setCredential('backend.token', 'plaintext')).rejects.toMatchObject({ code: CyreneErrorCode.CREDENTIAL_UNAVAILABLE })
     const { existsSync } = await import('fs')
@@ -156,7 +156,7 @@ describe('getCredential / clearCredential', () => {
     writeFileSync(filePathOf(s), JSON.stringify({ version: 3, keys: {} }), { mode: 0o600 })
     await expect(s.clearCredential('backend.token')).rejects.toMatchObject({ code: CyreneErrorCode.UNSUPPORTED_VERSION })
   })
-  it('safeStorage 不可用但文件可解析 → clear 仍可移除（不需解密）', async () => {
+  it.skipIf(process.platform !== 'linux')('safeStorage 不可用但文件可解析 → clear 仍可移除（不需解密；basic_text 仅 Linux 判定不可用）', async () => {
     const s = makeStore({ safe: fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }) })
     writeFileSync(filePathOf(s), JSON.stringify({ version: 1, keys: { 'backend.token': { enc: 'eA==', algo: 'safeStorage' } } }), { mode: 0o600 })
     await s.clearCredential('backend.token')

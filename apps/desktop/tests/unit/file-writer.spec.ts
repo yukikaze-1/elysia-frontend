@@ -20,8 +20,8 @@ describe('todayKey / dailyPath', () => {
   it('本地日期 YYYY-MM-DD', () => {
     expect(todayKey(new Date(2026, 7, 10))).toBe('2026-08-10') // 注意 Date 月份 0 基
   })
-  it('daily 文件名 = audit-YYYY-MM-DD.jsonl', () => {
-    expect(dailyPath('/audit', 'audit', new Date(2026, 7, 10))).toBe('/audit/audit-2026-08-10.jsonl')
+  it('daily 文件名 = audit-YYYY-MM-DD.jsonl（join 构造期望，Windows 反斜杠自适应）', () => {
+    expect(dailyPath('/audit', 'audit', new Date(2026, 7, 10))).toBe(join('/audit', 'audit-2026-08-10.jsonl'))
   })
 })
 

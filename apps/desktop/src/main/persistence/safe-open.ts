@@ -49,8 +49,10 @@ export function defaultSafeOpenPlatform(): SafeOpenPlatform {
 }
 
 async function assertContained(filePath: string, safeRoot: string): Promise<void> {
-  const real = await realpath(filePath).catch(() => { throw new SafeOpenError(`${filePath} 无法解析真实路径`) })
-  const rel = relative(safeRoot, real)
+  // 两侧都 realpath（Windows CI tmpdir 返回 8.3 短名、realpath 解析长名，relative 误判逃逸的根因修复）
+  const [safe, real] = await Promise.all([realpath(safeRoot), realpath(filePath)])
+    .catch(() => { throw new SafeOpenError(`${filePath} 无法解析真实路径`) })
+  const rel = relative(safe, real)
   if (rel.startsWith('..') || rel.includes('..')) throw new SafeOpenError(`${filePath} 逃逸安全根`)
 }
 
