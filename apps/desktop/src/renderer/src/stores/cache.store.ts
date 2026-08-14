@@ -50,7 +50,14 @@ export const useCacheStore = defineStore('cache', () => {
   async function pushMessages(conversationId: string, messages: Message[], updatedAt: string): Promise<void> {
     const chunks = chunkMessages(messages, MAX_IPC_MESSAGE_BYTES)
     for (const chunk of chunks) {
-      try { await api.cacheMessages({ conversationId, messages: chunk, updatedAt }) } catch { /* 缓存缺落由后端调和兜底 */ }
+      try {
+        await api.cacheMessages({ conversationId, messages: chunk, updatedAt })
+        // 同步内存快照（评审 P2-2）：否则离线切换 activateLocal → snapshotMessages 读到启动水合时的陈旧快照
+        const prev = snapshots.value[conversationId] ?? []
+        const byId = new Map(prev.map((m) => [m.messageId, m]))
+        for (const m of chunk) byId.set(m.messageId, m)
+        snapshots.value = { ...snapshots.value, [conversationId]: [...byId.values()] }
+      } catch { /* 缓存缺落由后端调和兜底 */ }
     }
   }
 

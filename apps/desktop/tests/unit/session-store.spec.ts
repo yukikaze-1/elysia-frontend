@@ -176,6 +176,42 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
     await rm(base, { recursive: true, force: true })
   })
 
+  it('hydrate 多会话大快照（≥2）+ 5MB 草稿 → 降级不抛错、出参 ≤4MiB（评审 P1：≥2 快照分支自引用 bug）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-session5-'))
+    const safeRoot5 = await realpath(base)
+    const counts: string[] = []
+    const s2 = new SessionStore({
+      appCache: base, safeRoot: safeRoot5, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      countDiagnostic: (code: string) => { counts.push(code) }, getActiveConversationId: () => 'c0'
+    })
+    // 3 个会话各 300 条 5KB 消息（≈4.5MB 快照）+ 50×100KB 草稿（5MB）→ 远超 4MiB；≥2 快照触发降级循环（旧实现自引用 bug 在此抛 TypeError）
+    const snapshots: Record<string, unknown> = {}
+    for (let i = 0; i < 3; i++) {
+      snapshots[`c${i}`] = {
+        messages: Array.from({ length: 300 }, (_, j) => ({ messageId: `m${i}-${j}`, conversationId: `c${i}`, role: 'user' as const, content: 'x'.repeat(5 * 1024), status: 'completed' as const, createdAt: `t${i}-${j}` })),
+        updatedAt: `t${i}`, lastSyncAt: `t${i}`
+      }
+    }
+    await writeFile(join(base, 'message-cache-v1.json'), JSON.stringify({
+      schemaVersion: 1,
+      conversations: [{ id: 'c0', title: 'A', updatedAt: 't0' }, { id: 'c1', title: 'B', updatedAt: 't1' }, { id: 'c2', title: 'C', updatedAt: 't2' }],
+      snapshots
+    }), { encoding: 'utf8', mode: 0o600 })
+    const entries: Record<string, { text: string; updatedAt: string }> = {}
+    for (let i = 0; i < 50; i++) entries[`d${i}`] = { text: 'x'.repeat(100 * 1024), updatedAt: `td${String(i).padStart(3, '0')}` }
+    await writeFile(join(base, 'drafts-v1.json'), JSON.stringify({ schemaVersion: 1, entries, scrollAnchors: {}, lastActiveConversationId: 'c0' }), { encoding: 'utf8', mode: 0o600 })
+    await s2.load()
+    const h = s2.hydrate() // 不得抛错
+    expect(counts).toContain('hydrate:degraded')
+    expect(counts).toContain('hydrate:drafts-degraded')
+    expect(h.drafts.length).toBeLessThan(50)
+    expect(h.drafts.length).toBeGreaterThan(0)
+    const approx = h.drafts.reduce((n, d) => n + d.text.length, 0)
+      + Object.values(h.messageSnapshots).reduce((n, msgs) => n + msgs.reduce((n2, m) => n2 + (m.content?.length ?? 0), 0), 0)
+    expect(approx).toBeLessThanOrEqual(4 * 1024 * 1024) // 出参 ≤4MiB（近似下界，stateBytes 含元数据只会更接近上限）
+    await rm(base, { recursive: true, force: true })
+  })
+
   it('不写草稿/消息正文到日志（spy logger 断言无文本）', async () => {
     env = await makeStore()
     await env.s.persistSession({ conversationId: 'c1', draft: { text: 'SECRET_DRAFT_ABC', updatedAt: 't' }, scrollAnchor: null })

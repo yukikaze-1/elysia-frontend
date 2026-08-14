@@ -290,7 +290,15 @@ export const useMessageStore = defineStore('message', () => {
     const items = [...page.items].sort(cmpMsg) // 后端 before 页已归一化升序，再排一次免疫非时间序页（P0-1）
     for (const m of items) upsertMessage(m)
     const conversationId = useConversationStore().currentId
-    if (conversationId && items.length) void useCacheStore().pushMessages(conversationId, items, nowIso()) // best-effort，非离线快照路径
+    if (conversationId && items.length) {
+      // 缓存 updatedAt 用会话真实最新消息时间而非 nowIso()（评审 P2-3）：否则向上翻旧历史会把会话顶成「现在」，
+      // 扰乱 Main 侧 top-20 淘汰（updatedAt 最旧移除）——order 已含本会话已加载消息，取最大 createdAt
+      const latest = order.value.reduce((max, id) => {
+        const c = byId.value[id]?.createdAt ?? ''
+        return c > max ? c : max
+      }, '')
+      void useCacheStore().pushMessages(conversationId, items, latest || nowIso()) // best-effort，非离线快照路径
+    }
   }
 
   /** 激活首屏后初始化向上分页：首页 nextCursor 即「更早一页」的 before 游标（toMessagePage has_more 语义） */

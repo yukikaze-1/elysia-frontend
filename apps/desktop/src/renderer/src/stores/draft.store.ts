@@ -36,7 +36,7 @@ export const useDraftStore = defineStore('draft', () => {
         scrollAnchor: scrollAnchors.value[conversationId] ?? null
       })
       if (res?.evictedConversationIds?.length) {
-        evictionNotice.value = res.evictedConversationIds
+        removeConversations(res.evictedConversationIds) // 评审 P2-4：淘汰项内存清理（草稿/锚点/定时器）+ 一次性通知——否则被 Main 淘汰的草稿留在 Renderer 内存，保存即重新写回、50 会话配额反复震荡
       }
       return res
     } catch {

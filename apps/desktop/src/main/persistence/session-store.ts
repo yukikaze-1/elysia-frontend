@@ -140,12 +140,16 @@ export class SessionStore {
     // lastId 无快照（水合时该会话无消息缓存）则不进首序，防 undefined 值入 kept 崩 stateBytes
     const otherKeys = keys.filter((k) => k !== lastId)
     const ordered = lastId && state.messageSnapshots[lastId] ? [lastId, ...otherKeys] : otherKeys
+    const allSnapshots = state.messageSnapshots  // 保留原引用——不能从被替换的 state.messageSnapshots 重读（会读到 kept 自身，第二轮迭代得到 undefined）
     const kept: Record<string, Message[]> = {}
     for (const k of ordered) {
-      kept[k] = state.messageSnapshots[k]
-      state = { ...state, messageSnapshots: kept }
-      if (this.stateBytes(state) <= MAX_IPC_MESSAGE_BYTES) break
+      const msgs = allSnapshots[k]
+      if (!msgs) continue // 防御：键缺失跳过
+      kept[k] = msgs
+      const candidate: SessionPersistenceState = { ...state, messageSnapshots: kept }
+      if (this.stateBytes(candidate) <= MAX_IPC_MESSAGE_BYTES) break
     }
+    state = { ...state, messageSnapshots: kept }
     if (this.stateBytes(state) > MAX_IPC_MESSAGE_BYTES) {
       // ② 每会话截前 M + 超长正文截断保留元数据（离线可读骨架）
       for (const k of Object.keys(state.messageSnapshots)) {
