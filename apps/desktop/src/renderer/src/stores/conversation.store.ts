@@ -118,8 +118,9 @@ export const useConversationStore = defineStore('conversation', () => {
     await activate(activeId)
   }
 
-  /** §4.2.3 activate:epoch 大者胜;currentId 立即切走;resetConversation + applyPendingReplay + 拉首屏 */
-  async function activate(id: string): Promise<void> {
+  /** §4.2.3 activate:epoch 大者胜;currentId 立即切走;resetConversation + applyPendingReplay + 拉首屏。
+   *  G4 扩展（D5）：anchor 存在时改拉 loadContextWindow 上下文窗口（替代首页）+ setHighlight；anchor 缺省行为完全不变。 */
+  async function activate(id: string, anchor?: { messageId: string; segmentId?: string }): Promise<void> {
     if (offlineView.value && useConnectionStore().state.status === 'disconnected') {
       error.value = { code: 'OFFLINE_VIEW', message: '离线视图下请使用本地缓存会话' }
       return
@@ -134,17 +135,36 @@ export const useConversationStore = defineStore('conversation', () => {
     try {
       await api.activate(id)
       if (myEpoch !== epoch) return    // 已被更新的切换取代,不提交
-      const p = await api.getMessages({ conversationId: id })
-      if (myEpoch !== epoch) return
-      messageStore.loadPage(p)
-      messageStore.setPageMeta(p) // 首页 nextCursor → 更早一页游标（G2）
-      error.value = undefined   // F1:激活成功清旧错误
+      if (anchor) {
+        const ok = await messageStore.loadContextWindow(anchor.messageId)
+        if (myEpoch !== epoch) return
+        if (ok) messageStore.setHighlight(anchor.messageId, anchor.segmentId)
+        error.value = ok ? undefined : parsePublicError('无法定位消息')
+      } else {
+        const p = await api.getMessages({ conversationId: id })
+        if (myEpoch !== epoch) return
+        messageStore.loadPage(p)
+        messageStore.setPageMeta(p) // 首页 nextCursor → 更早一页游标（G2）
+        error.value = undefined   // F1:激活成功清旧错误
+      }
     } catch (e) {
       if (myEpoch !== epoch) return    // 被取代的请求失败不打扰
       error.value = parsePublicError(messageOf(e))
     } finally {
       if (myEpoch === epoch) busy.value = false
     }
+  }
+
+  /** 来源跳转（D5）：当前会话直接上下文窗口；跨会话走 activate(anchor)。失败经 error（聊天区横幅，两分支统一；不清空聊天内容）。 */
+  async function jumpToMessage(conversationId: string, messageId: string, segmentId?: string): Promise<boolean> {
+    if (currentId.value === conversationId) {
+      const ok = await useMessageStore().loadContextWindow(messageId)
+      if (ok) useMessageStore().setHighlight(messageId, segmentId)
+      else error.value = parsePublicError('无法定位消息')
+      return ok
+    }
+    await activate(conversationId, { messageId, segmentId })
+    return true   // 失败已由 activate 写 error（横幅）
   }
 
   /** §4.2.4 getMore:try/catch 写 error + busy */
@@ -240,5 +260,5 @@ export const useConversationStore = defineStore('conversation', () => {
     error.value = undefined
   }
 
-  return { items, currentId, hasMore, nextCursor, initializedFor, ready, error, busy, offlineView, list, safeList, onConnected, onActiveConversationAppeared, activate, getMore, create, rename, remove, setOfflineCache, activateLocal }
+  return { items, currentId, hasMore, nextCursor, initializedFor, ready, error, busy, offlineView, list, safeList, onConnected, onActiveConversationAppeared, activate, jumpToMessage, getMore, create, rename, remove, setOfflineCache, activateLocal }
 })

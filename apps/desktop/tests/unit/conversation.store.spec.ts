@@ -365,3 +365,56 @@ describe('G2 离线视图 / activateLocal / 在线恢复（spec §4.5.3 P1-1）'
     expect(conv.error).toBeUndefined()
   })
 })
+
+describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.5，D5）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    setDesktopApi(mockApi)
+    vi.resetAllMocks()
+  })
+
+  it('activate 无 anchor 行为不变（回归：首屏 getMessages 拉取）', async () => {
+    const getMessages = vi.fn(async () => ({ items: [], hasMore: false }))
+    setDesktopApi({ activate: async () => ({ conversationId: 'c2' }), getMessages, getMessageContext: vi.fn() } as never)
+    const cs = useConversationStore()
+    await cs.activate('c2')
+    expect(getMessages).toHaveBeenCalledTimes(1)
+  })
+  it('activate 带 anchor → loadContextWindow 替代首页 + setHighlight', async () => {
+    const ms = useMessageStore()
+    const loadContextWindow = vi.fn(async () => true)
+    const setHighlight = vi.fn()
+    ms.loadContextWindow = loadContextWindow as never
+    ms.setHighlight = setHighlight as never
+    setDesktopApi({ activate: async () => ({ conversationId: 'c3' }) } as never)
+    const cs = useConversationStore()
+    await cs.activate('c3', { messageId: 'm9', segmentId: 'seg1' })
+    expect(loadContextWindow).toHaveBeenCalledWith('m9')
+    expect(setHighlight).toHaveBeenCalledWith('m9', 'seg1')
+  })
+  it('jumpToMessage 当前会话：直接 loadContextWindow + setHighlight；失败写 error', async () => {
+    const ms = useMessageStore()
+    ms.loadContextWindow = vi.fn(async () => false) as never
+    ms.setHighlight = vi.fn() as never
+    setDesktopApi({} as never)
+    const cs = useConversationStore()
+    cs.$patch({ currentId: 'c1' })
+    const ok = await cs.jumpToMessage('c1', 'm1')
+    expect(ok).toBe(false)
+    expect(cs.error?.message).toContain('无法定位消息')
+  })
+  it('jumpToMessage 跨会话：走 activate(anchor)（api.activate + loadContextWindow + setHighlight）', async () => {
+    const ms = useMessageStore()
+    const loadContextWindow = vi.fn(async () => true)
+    const setHighlight = vi.fn()
+    ms.loadContextWindow = loadContextWindow as never
+    ms.setHighlight = setHighlight as never
+    setDesktopApi({ activate: async () => ({ conversationId: 'c9' }) } as never)
+    const cs = useConversationStore()
+    cs.$patch({ currentId: 'c1' })
+    await cs.jumpToMessage('c9', 'm1', 'seg1')
+    expect(loadContextWindow).toHaveBeenCalledWith('m1')          // 经 activate(anchor) 分支
+    expect(setHighlight).toHaveBeenCalledWith('m1', 'seg1')
+    expect(cs.currentId).toBe('c9')
+  })
+})
