@@ -1,9 +1,9 @@
 import type { Conversation } from '@shared/contracts/conversation'
 import type { Message, MessageRole, MessageToolInfo } from '@shared/contracts/message'
-import type { MessagePage } from '@shared/contracts/backend'
+import type { ChatHistoryItem, ChatHistoryPage, MessagePage, StickerManifest } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import type { RawSessionMessageItem } from './raw-types'
-import type { RestMessage, RestMessagesPageResponse, RestSessionSummary } from './rest-types'
+import type { RestMessage, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestMessageContextResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
 import { mapContentMedia, mapContentToEntries } from './content-part'
 
 export interface RestMapperOptions { onProtocolWarning?: (warning: ProtocolWarning) => void }
@@ -41,6 +41,40 @@ export class RestMapper {
     let nextCursor: string | undefined
     if (raw.has_more) nextCursor = raw.cursor ?? raw.messages.at(-1)?._id
     return { items, hasMore: raw.has_more, nextCursor }
+  }
+
+  /** search item → ChatHistoryItem（D2 归一化，P0-1：仅文本映射——search item 无 kind/url，不产 resource） */
+  toChatHistoryItem(raw: RestSearchMessageItem): ChatHistoryItem {
+    const base: ChatHistoryItem = {
+      hitId: `${raw.conversationId}:${raw.messageId}:${raw.segmentId ?? ''}`,
+      conversationId: raw.conversationId,
+      messageId: raw.messageId,
+      senderLabel: senderLabelOf(raw.role),
+      createdAt: raw.timestamp,
+      sortKey: `${raw.timestamp}|${raw.messageId}`
+    }
+    if (raw.responseId) base.responseId = raw.responseId
+    if (raw.segmentId) base.segmentId = raw.segmentId
+    if (raw.snippet) base.snippet = raw.snippet
+    // P0-1：search item 无 kind/url，不产 resource（查看器分类缩略图缺口见「P0-1 设计缺口」）
+    return base
+  }
+
+  toChatHistoryPage(raw: RestSearchMessagesResponse): ChatHistoryPage {
+    const items = raw.items.map((i) => this.toChatHistoryItem(i)).sort((a, b) =>
+      a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
+    return { items, nextCursor: raw.cursor, hasMore: raw.has_more }
+  }
+
+  toMessagePageFromContext(res: RestMessageContextResponse): MessagePage {
+    const items = [res.anchor, ...res.before, ...res.after]
+      .map((m) => this.toDomainMessage(m, res.conversationId))
+      .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.messageId < b.messageId ? -1 : 1)
+    return { items, hasMore: false }
+  }
+
+  toStickerManifest(raw: RestStickerListResponse): StickerManifest {
+    return { stickers: raw.stickers.map((s) => ({ stickerId: s.stickerId, src: s.src })) }
   }
 
   private assemble(src: MessageSource, conversationId?: string): Message {
@@ -116,4 +150,15 @@ function extractText(content: unknown, parts?: unknown[]): string | undefined {
     return acc
   }, '')
   return joined.length > 0 ? joined : undefined
+}
+
+/** search item role → 领域 senderLabel（D2 归一化；未命中缺省 user） */
+function senderLabelOf(role?: 'user' | 'assistant' | 'tool' | 'system'): string {
+  switch (role) {
+    case 'user': return 'user'
+    case 'assistant': return 'assistant'
+    case 'system': return '系统'
+    case 'tool': return '工具'
+    default: return 'user'
+  }
 }

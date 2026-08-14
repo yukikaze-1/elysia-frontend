@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { RestMessage, RestMessagesPageResponse, RestPendingQueryResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult } from './rest-types'
+import type { RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestPendingQueryResponse, RestSearchMessagesResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult, RestStickerListResponse } from './rest-types'
 
 export const RestSessionSummarySchema = z.object({
   conversationId: z.string().min(1),
@@ -103,4 +103,41 @@ export function parseAttachmentUploadResponse(input: unknown): { success: true; 
 }
 export function parseAttachmentSignResponse(input: unknown): { success: true; data: z.infer<typeof RestAttachmentSignResponseSchema> } | { success: false; error: z.ZodError } {
   return RestAttachmentSignResponseSchema.safeParse(input)
+}
+
+// —— 阶段 3 G4 历史搜索/上下文/表情清单 响应 schema（P0-1/P0-2：camelCase、无 kind/url；严格镜像契约）——
+export const RestSearchMessageItemSchema = z.object({
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+  timestamp: z.string().min(1),
+  role: z.enum(['user', 'assistant', 'tool', 'system']).optional(),
+  snippet: z.string().optional(),
+  responseId: z.string().optional(),
+  segmentId: z.string().optional()
+}).strict()
+export const RestSearchMessagesResponseSchema = z.object({
+  items: z.array(RestSearchMessageItemSchema),
+  has_more: z.boolean(),
+  cursor: z.string().optional()
+}).strict()
+export const RestMessageContextResponseSchema = z.object({
+  anchor: RestMessageSchema,
+  before: z.array(RestMessageSchema),
+  after: z.array(RestMessageSchema),
+  conversationId: z.string().min(1)
+}).strict()
+export const RestStickerItemSchema = z.object({
+  stickerId: z.string().min(1),
+  src: z.string().min(1)
+}).strict()
+export const RestStickerListResponseSchema = z.object({ stickers: z.array(RestStickerItemSchema) }).strict()
+
+export function parseRestSearchMessages(input: unknown): { success: true; data: RestSearchMessagesResponse } | { success: false; error: z.ZodError } {
+  return RestSearchMessagesResponseSchema.safeParse(input)
+}
+export function parseRestMessageContext(input: unknown): { success: true; data: RestMessageContextResponse } | { success: false; error: z.ZodError } {
+  return RestMessageContextResponseSchema.safeParse(input)
+}
+export function parseRestStickerList(input: unknown): { success: true; data: RestStickerListResponse } | { success: false; error: z.ZodError } {
+  return RestStickerListResponseSchema.safeParse(input)
 }

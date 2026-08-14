@@ -36,3 +36,19 @@ export interface RestPendingQueryResponse {
   pendingMessages: { messageId: string; snippet: string; createdAt: string }[]
   pendingApprovals: unknown[]
 }
+
+/** 历史搜索 item（P0-1：对齐 frontend_contract/rest.py SearchMessageItem——camelCase，无 kind/url/sticker_id） */
+export interface RestSearchMessageItem {
+  conversationId: string
+  messageId: string
+  timestamp: string
+  role?: 'user' | 'assistant' | 'tool' | 'system'
+  snippet?: string
+  responseId?: string
+  segmentId?: string
+}
+export interface RestSearchMessagesResponse { items: RestSearchMessageItem[]; has_more: boolean; cursor?: string }
+export interface RestMessageContextResponse { anchor: RestMessage; before: RestMessage[]; after: RestMessage[]; conversationId: string }
+/** P0-2：对齐契约 StickerEntry{stickerId, src} / StickerListResponse{stickers} */
+export interface RestStickerItem { stickerId: string; src: string }
+export interface RestStickerListResponse { stickers: RestStickerItem[] }
