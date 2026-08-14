@@ -25,8 +25,8 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
   const win = new BrowserWindow({
     width: 1200,
     height: 760,
-    minWidth: 736,
-    minHeight: 560,
+    minWidth: 1100, // 阶段 3 G1（决策 D9）：与 renderer layout/constants.ts MIN_WINDOW_WIDTH 一致
+    minHeight: 700, // 阶段 3 G1（决策 D9）：与 renderer layout/constants.ts MIN_WINDOW_HEIGHT 一致
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#181e29',
