@@ -27,6 +27,9 @@ import { MockBackend } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
+import { UploadService } from './attachments/upload-service'
+import { MediaService } from './attachments/media-service'
+import { defaultSafeOpenPlatform } from './persistence/safe-open'
 
 let diagnostics: Diagnostics | undefined
 
@@ -188,7 +191,18 @@ async function main(): Promise<void> {
       audit   // C2:连接生命周期审计（connect/disconnect;fail-open）
     })
     chatBridge.svc = chatSvc
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, audit })
+    // 阶段 3 G3 附件服务装配（spec §4.4/§4.5）：mediaSvc 需 connConfig.getEndpoint()（签发表 target 为后端 baseUrl），
+    // 故放在 connConfig 创建之后、registerHandlers 之前；UploadService 经 adapter 直读盘（D5 路径只在 Main）。
+    const uploadSvc = new UploadService({
+      backend: adapter,
+      userDataBase: expectedUserDataBase,
+      platform: defaultSafeOpenPlatform()
+    })
+    const mediaSvc = new MediaService({
+      backend: adapter,
+      baseUrl: () => connConfig.getEndpoint()?.baseUrl
+    })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
@@ -203,10 +217,13 @@ async function main(): Promise<void> {
       onError: (step, err) => diagnostics?.logger.error('shutdown:step-failed', { step, message: sanitize(err instanceof Error ? err.message : String(err)) })
     }))
     diagnostics.logger.info('app:user-data-ready', { baseCreated, config: dirs.config, logs: dirs.logs, audit: dirs.audit })
-    if (!shouldUseViteDevServer(app.isPackaged, process.env)) {
-      await registerCyreneProtocolHandler({ rendererRoot: join(__dirname, '../renderer') })
-      diagnostics.logger.info('protocol:registered')
-    }
+    // G3：媒体分支需 dev/prod 都注册——dev 页面在 Vite http，媒体 URL 在 cyrene://（spec §3.1）。
+    // P1-5：dev（shouldUseViteDevServer）省略 rendererRoot——媒体分支不依赖它，避免 out/renderer 未构建时 realpath 抛错。
+    await registerCyreneProtocolHandler({
+      ...(!shouldUseViteDevServer(app.isPackaged, process.env) ? { rendererRoot: join(__dirname, '../renderer') } : {}),
+      resolveMedia: (mediaType, id, request) => mediaSvc.stream(mediaType, id, request)
+    })
+    diagnostics.logger.info('protocol:registered')
     diagnostics.logger.info('app:started', { mode: config.mode, packaged: app.isPackaged })
     markAppStarted()
     ensureMainWindow((err) => diagnostics?.logger.error('window:load-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) }))
