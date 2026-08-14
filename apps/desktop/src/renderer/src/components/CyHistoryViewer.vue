@@ -172,7 +172,7 @@ onBeforeUnmount(() => { triggerElement = null })
 <style scoped>
 .cy-history-overlay {
   position: fixed;
-  inset: 36px 0 0 58px;   /* 保留标题栏(36px)与导航栏(58px),覆盖聊天主区与会话栏(D1) */
+  inset: 36px 0 0 60px;   /* 保留标题栏(36px)与导航栏(60px,NAV_WIDTH),覆盖聊天主区与会话栏(D1) */
   z-index: 50;
   display: grid;
   place-items: center;
