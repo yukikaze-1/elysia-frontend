@@ -204,7 +204,7 @@ async function main(): Promise<void> {
     }))
     diagnostics.logger.info('app:user-data-ready', { baseCreated, config: dirs.config, logs: dirs.logs, audit: dirs.audit })
     if (!shouldUseViteDevServer(app.isPackaged, process.env)) {
-      await registerCyreneProtocolHandler(join(__dirname, '../renderer'))
+      await registerCyreneProtocolHandler({ rendererRoot: join(__dirname, '../renderer') })
       diagnostics.logger.info('protocol:registered')
     }
     diagnostics.logger.info('app:started', { mode: config.mode, packaged: app.isPackaged })

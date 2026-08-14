@@ -13,7 +13,8 @@ export function buildDevCsp(trusted: ReadonlySet<string>): string {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
+    "img-src 'self' data: blob: cyrene:",   // 阶段 3 G3（spec D1）：dev 页面在 http://localhost，媒体经 cyrene://renderer/__cyrene-media 放行
+    "media-src 'self' cyrene:",             // 阶段 3 G3：视频/音频同源 cyrene: 放行（connect-src 不动）
     "font-src 'self' data:",
     `connect-src 'self' ${wsSources.join(' ')}`,
     "object-src 'none'",

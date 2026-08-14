@@ -42,4 +42,9 @@ describe('classifyNavigation', () => {
   it('畸形 URL → deny（fail-closed）', () => {
     expect(classifyNavigation('not a url', dev, true)).toBe('deny')
   })
+  it('非 dev server：cyrene://renderer/__cyrene-media/* 前缀 deny（防媒体字节作顶层文档，spec §4.4/§4.9）', () => {
+    expect(classifyNavigation('cyrene://renderer/__cyrene-media/attachment/att_1', undefined, false)).toBe('deny')
+    expect(classifyNavigation('cyrene://renderer/__cyrene-media/sticker/st_1', undefined, false)).toBe('deny')
+    expect(classifyNavigation('cyrene://renderer/index.html', undefined, false)).toBe('app')  // 普通渲染根文件仍 app
+  })
 })

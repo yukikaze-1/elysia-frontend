@@ -6,7 +6,7 @@
     <!-- dev 宽松 CSP（保留；prod/preview 由 cyrene:// 响应头严格 CSP AND 收紧——阶段 1 块 A D-6/G-9） -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws://localhost:* ws://127.0.0.1:*; frame-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cyrene:; media-src 'self' cyrene:; font-src 'self' data:; connect-src 'self' ws://localhost:* ws://127.0.0.1:*; frame-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'"
     />
     <title>Cyrene</title>
   </head>

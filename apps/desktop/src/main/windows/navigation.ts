@@ -27,6 +27,8 @@ export function classifyNavigation(
       return 'external'
     }
     if (!usingDevServer && url.protocol === 'cyrene:' && url.host === RENDERER_HOST) {
+      // G3：媒体字节禁止作顶层文档——__cyrene-media/* 前缀 deny（attachment/sticker 均 deny，双保险之一，spec §4.9）
+      if (url.pathname.startsWith('/__cyrene-media/')) return 'deny'
       return 'app' // 路径包含性已由 protocol handler 强制（handler 对越界 403）
     }
     return 'deny'

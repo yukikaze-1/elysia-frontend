@@ -7,14 +7,35 @@ import { PROTOCOL_SCHEME, RENDERER_HOST } from './scheme'
 import { resolveRendererPath } from './path'
 import { buildRendererCsp } from './csp'
 import { mimeOf } from './mime'
+import { isDocumentRequest, MEDIA_PATH_PREFIX, parseMediaPath, type MediaRouteType } from '../attachments/media-service'
 
-const RENDERER_CSP = buildRendererCsp() // 模块级常量：全进程 CSP 头值恒定，不在每个请求重建
+const RENDERER_CSP = buildRendererCsp()
 
-export async function registerCyreneProtocolHandler(rendererRoot: string): Promise<void> {
-  const realRoot = await realpath(rendererRoot) // 注册时解析一次（渲染根固定），不在每个请求重算
+export type MediaResolver = (mediaType: MediaRouteType, id: string, request: Request) => Promise<Response>
+
+export interface CyreneProtocolOptions {
+  /** 渲染根（缺省时非媒体一律 404；media 分支不依赖 rendererRoot） */
+  rendererRoot?: string
+  /** 媒体分支分派器（Main 注入 MediaService.stream；缺省时媒体路径 404） */
+  resolveMedia?: MediaResolver
+}
+
+export async function registerCyreneProtocolHandler(opts: CyreneProtocolOptions): Promise<void> {
+  const { rendererRoot, resolveMedia } = opts
+  let realRoot: string | undefined
+  let rootLower = ''
+  let rootPrefix = ''
   const lower = (s: string): string => (process.platform === 'win32' ? s.toLowerCase() : s)
-  const rootLower = lower(realRoot)
-  const rootPrefix = rootLower + sep
+  if (rendererRoot) {
+    // P1-5：realpath 失败（如 dev 下 out/renderer 未构建）→ 置 realRoot=undefined，非媒体一律 404，不向上抛错阻断 main()
+    try {
+      realRoot = await realpath(rendererRoot)
+      rootLower = lower(realRoot)
+      rootPrefix = rootLower + sep
+    } catch {
+      realRoot = undefined
+    }
+  }
   protocol.handle(PROTOCOL_SCHEME, async (request) => {
     let url: URL
     try {
@@ -23,9 +44,17 @@ export async function registerCyreneProtocolHandler(rendererRoot: string): Promi
       return new Response('Bad Request', { status: 400 })
     }
     if (url.host !== RENDERER_HOST) return new Response('Not Found', { status: 404 })
-    const candidate = resolveRendererPath(rendererRoot, url.pathname)
+    // G3：媒体分支（spec D1）——/__cyrene-media/{mediaType}/{id}；mediaType 白名单 + id 格式 + Sec-Fetch-Dest 由 MediaService 执行
+    if (url.pathname.startsWith(MEDIA_PATH_PREFIX)) {
+      const parsed = parseMediaPath(url.pathname)
+      if (!parsed) return new Response('Forbidden', { status: 403 })
+      if (!resolveMedia) return new Response('Not Found', { status: 404 })
+      if (isDocumentRequest(request)) return new Response('Forbidden', { status: 403 })
+      return resolveMedia(parsed.mediaType, parsed.id, request)
+    }
+    if (!realRoot) return new Response('Not Found', { status: 404 })
+    const candidate = resolveRendererPath(realRoot, url.pathname)
     if (!candidate) return new Response('Forbidden', { status: 403 })
-    // realpath 包含性（symlink 逃逸防线）：仅对请求路径做一次 realpath
     let realCand: string
     try {
       realCand = await realpath(candidate)
@@ -34,7 +63,6 @@ export async function registerCyreneProtocolHandler(rendererRoot: string): Promi
     }
     const inside = lower(realCand) === rootLower || lower(realCand).startsWith(rootPrefix)
     if (!inside) return new Response('Forbidden', { status: 403 })
-    // 目录 → index.html：对 join 出的 index.html 再做 realpath + 包含性（防目录内 index.html 为 symlink 逃逸）
     let target = realCand
     const st = await stat(target).catch(() => null)
     if (st && st.isDirectory()) {
@@ -43,10 +71,10 @@ export async function registerCyreneProtocolHandler(rendererRoot: string): Promi
       try {
         realIdx = await realpath(idxPath)
       } catch {
-        return new Response('Not Found', { status: 404 }) // 目录内无 index.html → 资源缺失（404），非越权（403）
+        return new Response('Not Found', { status: 404 })
       }
       if (!(lower(realIdx) === rootLower || lower(realIdx).startsWith(rootPrefix))) {
-        return new Response('Forbidden', { status: 403 }) // symlink 逃逸 → 403
+        return new Response('Forbidden', { status: 403 })
       }
       target = realIdx
     }

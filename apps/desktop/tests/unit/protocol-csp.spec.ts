@@ -31,4 +31,11 @@ describe('buildRendererCsp', () => {
     expect(csp).not.toContain('ws:')
     expect(csp).not.toContain('unsafe-inline')
   })
+  it('prod 含 media-src self（视频/音频经同源 cyrene:// 放行，spec D1）', () => {
+    expect(csp).toContain("media-src 'self'")
+  })
+  it('prod img-src 不含裸 host / 不加任意 host（同源 \'self\' 即放行）', () => {
+    expect(csp).not.toContain('cyrene:')
+    expect(csp).not.toContain('http://')
+  })
 })

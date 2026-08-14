@@ -27,4 +27,11 @@ describe('buildDevCsp', () => {
     const connect = buildDevCsp(t).split('; ').find((d) => d.startsWith('connect-src'))!
     expect(connect).toContain('ws://192.168.1.5:*')
   })
+  it('dev 三处加 cyrene:（media-src + img-src；connect-src 不动）', () => {
+    const csp = buildDevCsp(resolveTrustedDevOrigins({}))
+    expect(csp).toContain("media-src 'self' cyrene:")
+    expect(csp).toContain("img-src 'self' data: blob: cyrene:")
+    const connect = csp.split('; ').find((d) => d.startsWith('connect-src'))!
+    expect(connect).not.toContain('cyrene:')
+  })
 })
