@@ -109,6 +109,22 @@ export const PageSchema = <T extends z.ZodType>(itemSchema: T) =>
 
 export const MessagePageSchema = PageSchema(MessageSchema)
 
+export const FileValidationResultSchema = z.object({
+  localId: z.string().min(1),
+  ok: z.boolean(),
+  kind: z.enum(['image', 'video', 'audio', 'file', 'link']).optional(),
+  reason: z.string().optional(),
+  message: z.string().optional()
+})
+export const AttachmentsUploadResponseSchema = z.object({
+  uploadId: z.string().min(1),
+  attachments: z.array(MessageAttachmentSchema)
+})
+export const AttachmentCheckResultSchema = z.object({
+  status: z.enum(['ok', 'expired', 'not_found', 'revoked', 'error']),
+  reason: z.string().optional()
+})
+
 export const ReplayPayloadSchema = z.object({
   conversationId: z.string().min(1),
   messages: z.array(MessageSchema)

@@ -31,7 +31,12 @@ export const runtimeInfoResponseSchema = RuntimeInfoSchema
 export const chatSendSchema = z.object({
   conversationId: z.string().min(1),
   text: z.string(),
-  clientRequestId: z.string().min(1)
+  clientRequestId: z.string().min(1),
+  attachments: z.array(z.object({
+    attachmentId: z.string().min(1),
+    kind: z.enum(['image', 'video', 'audio', 'file', 'link']),
+    mime: z.string().min(1)
+  })).optional()
 })
 export const chatGetMessagesSchema = z.object({
   conversationId: z.string().min(1),
@@ -69,3 +74,20 @@ export const chatOpenExternalSchema = OpenExternalInputSchema
 // 响应 schema：共享定义在 shared/schemas/ipc-response，别名保持引用兼容
 export const sessionPersistenceStateResponseSchema = SessionPersistenceStateSchema
 export const persistSessionResultResponseSchema = PersistSessionResultSchema
+
+// —— attachments 命令 request schema（spec §4.2/§4.5；响应 schema 在 shared/schemas/ipc-response）——
+export const UploadFileDescriptorSchema = z.object({
+  localId: z.string().min(1),
+  name: z.string().min(1).max(255),
+  size: z.number().int().nonnegative(),
+  mediaType: z.string().min(1),
+  source: z.enum(['picker', 'drag_drop', 'paste']),
+  kind: z.enum(['image', 'video', 'audio', 'file', 'link']).optional(),
+  path: z.string().optional(),
+  bytes: z.instanceof(Uint8Array).optional()
+}).refine((d) => (d.path !== undefined) !== (d.bytes !== undefined), { message: 'path/bytes 二选一' })
+
+export const attachmentsValidateSchema = z.object({ files: z.array(UploadFileDescriptorSchema).min(1).max(10) })
+export const attachmentsUploadSchema = z.object({ uploadId: z.string().min(1), files: z.array(UploadFileDescriptorSchema).min(1).max(10) })
+export const attachmentsCancelSchema = z.object({ uploadId: z.string().min(1) })
+export const attachmentsCheckSchema = z.object({ attachmentId: z.string().min(1) })

@@ -6,6 +6,8 @@ import type { MessageAttachment, MessageAttachmentRef } from '../../src/shared/c
 import { AssistantSegmentSchema, MessageAttachmentSchema, MessageSchema } from '../../src/shared/schemas'
 import { ATTACHMENT_MAX_FILES, ATTACHMENT_AGGREGATE_BYTES, ATTACHMENT_MAX_BYTES_BY_KIND, ATTACHMENT_KIND_MIME, type PendingSendItem, type UploadFileDescriptor } from '../../src/shared/contracts/attachments'
 import { IpcChannels } from '../../src/shared/contracts'
+import { attachmentsUploadSchema, attachmentsValidateSchema, attachmentsCancelSchema, attachmentsCheckSchema, chatSendSchema } from '../../src/main/ipc/channels'
+import { AttachmentsUploadResponseSchema, AttachmentCheckResultSchema, FileValidationResultSchema } from '../../src/shared/schemas'
 
 describe('附件领域模型（spec §4.2）', () => {
   it('MessageAttachmentSchema 接受上传响应形态（name/size/尺寸/来源消息均可缺省兜底）', () => {
@@ -79,5 +81,38 @@ describe('附件/队列/上传契约（spec §4.2）', () => {
     expect(IpcChannels.attachmentsUpload).toBe('attachments:upload')
     expect(IpcChannels.attachmentsCancel).toBe('attachments:cancel')
     expect(IpcChannels.attachmentsCheck).toBe('attachments:check')
+  })
+})
+
+describe('IPC request/response schema（spec §4.2/§4.5）', () => {
+  it('attachmentsValidateSchema 收 files[1..10]，path/bytes 二选一', () => {
+    const ok = attachmentsValidateSchema.safeParse({ files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'image/png', source: 'paste', bytes: new Uint8Array(2) }] })
+    expect(ok.success).toBe(true)
+    const noBoth = attachmentsValidateSchema.safeParse({ files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'image/png', source: 'picker', path: '/tmp/a', bytes: new Uint8Array(2) }] })
+    expect(noBoth.success).toBe(false)   // path/bytes 二选一
+    const empty = attachmentsValidateSchema.safeParse({ files: [] })
+    expect(empty.success).toBe(false)    // min(1)
+    const over = attachmentsValidateSchema.safeParse({ files: Array.from({ length: 11 }, (_, i) => ({ localId: `l${i}`, name: 'a', size: 1, mediaType: 'x', source: 'picker' as const, path: '/tmp/a' })) })
+    expect(over.success).toBe(false)     // max(10)
+  })
+  it('attachmentsUploadSchema 需 uploadId + files[1..10]', () => {
+    expect(attachmentsUploadSchema.safeParse({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'x', source: 'picker', path: '/tmp/a' }] }).success).toBe(true)
+    expect(attachmentsUploadSchema.safeParse({ files: [] }).success).toBe(false)
+    expect(attachmentsUploadSchema.safeParse({ uploadId: '', files: [] }).success).toBe(false)
+  })
+  it('attachmentsCancelSchema / attachmentsCheckSchema 单字段', () => {
+    expect(attachmentsCancelSchema.safeParse({ uploadId: 'u1' }).success).toBe(true)
+    expect(attachmentsCheckSchema.safeParse({ attachmentId: 'att_1' }).success).toBe(true)
+    expect(attachmentsCheckSchema.safeParse({}).success).toBe(false)
+  })
+  it('chatSendSchema 接受可选 attachments（MessageAttachmentRef 形状）', () => {
+    const r = chatSendSchema.safeParse({ conversationId: 'c1', text: 'hi', clientRequestId: 'cr1', attachments: [{ attachmentId: 'att_1', kind: 'image', mime: 'image/png' }] })
+    expect(r.success).toBe(true)
+  })
+  it('响应 schema：FileValidationResult/UploadResponse/CheckResult', () => {
+    expect(FileValidationResultSchema.safeParse({ localId: 'l1', ok: false, reason: 'too_large' }).success).toBe(true)
+    expect(AttachmentsUploadResponseSchema.safeParse({ uploadId: 'u1', attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png' }] }).success).toBe(true)
+    expect(AttachmentCheckResultSchema.safeParse({ status: 'expired' }).success).toBe(true)
+    expect(AttachmentCheckResultSchema.safeParse({ status: 'bogus' }).success).toBe(false)
   })
 })
