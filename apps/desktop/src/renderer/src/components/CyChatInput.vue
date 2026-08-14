@@ -1,16 +1,24 @@
 <script setup lang="ts">
 // CyChatInput:输入区。回车发送/Shift+Enter 换行;发送按钮;sending 期间禁用(F3,Task 4 review);
 // 停止按钮(activeGenerationId 存在时);断线横幅(connectionStore.state.status 为 reconnecting/error)。
-import { computed, ref } from 'vue'
+// G2(§4.4.1):草稿源改 draftStore(内存态 + 防抖持久化归 Main);发送成功清草稿、失败保留;超限/淘汰横幅。
+import { computed } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
+import { useDraftStore } from '../stores/draft.store'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
+const draftStore = useDraftStore()
 
-const draft = ref('')
+const currentId = computed(() => conversationStore.currentId)
+const draft = computed({
+  get: () => (currentId.value ? draftStore.drafts[currentId.value] ?? '' : ''),
+  set: (v: string) => { if (currentId.value) draftStore.saveDraft(currentId.value, v) }
+})
+const overLimit = computed(() => (currentId.value ? !!draftStore.overLimit[currentId.value] : false))
 
 const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
@@ -32,16 +40,16 @@ const bannerText = computed(() => {
   return ''
 })
 
-function send(): void {
+async function send(): Promise<void> {
   if (!canSend.value) return
-  messageStore.send(draft.value.trim())
-  draft.value = ''
+  const ok = await messageStore.send(draft.value.trim()) // send 成功返回后才清空
+  if (ok && currentId.value) draftStore.clear(currentId.value) // 失败保留草稿（spec §4.4.1）
 }
 
 /** 回车发送守卫:IME 组词确认期间(中文/日文输入法)Enter 是候选确认,不发送 */
 function onEnter(e: KeyboardEvent): void {
   if (e.isComposing || e.keyCode === 229) return
-  send()
+  void send()
 }
 
 function stop(): void {
@@ -61,6 +69,19 @@ function stop(): void {
     <div v-if="messageStore.lastError" class="cy-banner cy-error-banner" role="alert">
       <span class="cy-banner-dot" />
       <span>发送失败:{{ messageStore.lastError.message }}</span>
+    </div>
+
+    <!-- 草稿超限横幅(G2 §4.4.1 D4):100KB 字节上限,超出部分拒绝写入;提供清空按钮 -->
+    <div v-if="overLimit" class="cy-banner cy-error-banner" role="alert">
+      <span class="cy-banner-dot" />
+      <span>草稿已满（100KB 上限），超出部分未保存</span>
+      <button class="cy-clear-draft" @click="currentId && draftStore.clear(currentId)">清空草稿</button>
+    </div>
+    <!-- 草稿淘汰一次性通知(G2 P2-1):Main 50 会话上限淘汰不静默 -->
+    <div v-if="draftStore.evictionNotice.length" class="cy-banner" role="status">
+      <span class="cy-banner-dot" />
+      <span>草稿已满：最早的非激活会话草稿已按策略清理（{{ draftStore.evictionNotice.length }} 个）</span>
+      <button class="cy-clear-draft" @click="draftStore.dismissEviction()">知道了</button>
     </div>
 
     <div class="cy-composer-box">
@@ -125,6 +146,15 @@ function stop(): void {
 
 .cy-error-banner {
   border-style: dashed;
+}
+
+.cy-clear-draft {
+  border: 0;
+  background: transparent;
+  color: var(--cy-accent-strong);
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: auto;
 }
 
 .cy-composer-box {

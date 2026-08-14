@@ -14,6 +14,8 @@ const currentId = computed(() => conversationStore.currentId)
 
 /** 操作门控(批次B T9):connected + 会话就绪 + 不在操作中;未就绪禁点新建/激活/重命名/删除 */
 const canAct = computed(() => connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy)
+/** 打开会话门控(G2 §4.5.3):在线走 activate;离线视图走 activateLocal(读缓存)——打开按钮离线也启用,新建/重命名/删除仍连在线门控 */
+const canOpen = computed(() => canAct.value || conversationStore.offlineView)
 
 const query = ref('')
 const filteredItems = computed(() => {
@@ -51,6 +53,12 @@ function cancelRename(): void {
 function remove(c: Conversation): void {
   if (window.confirm(`删除会话「${c.title}」?`)) void conversationStore.remove(c.id)
 }
+
+/** 离线视图：点击其他缓存会话 → activateLocal（P1-1 绕过 api.activate/getMessages）；在线 → 既有 activate */
+function activateConv(id: string): void {
+  if (connectionStore.state.status === 'disconnected') void conversationStore.activateLocal(id)
+  else void conversationStore.activate(id)
+}
 </script>
 
 <template>
@@ -83,7 +91,7 @@ function remove(c: Conversation): void {
         :class="{ 'is-active': currentId === c.id }"
       >
         <!-- 常规态:整行可点激活;重命名态:标题换输入框(按钮内不放 input) -->
-        <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" :disabled="!canAct" @click="conversationStore.activate(c.id)">
+        <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" :disabled="!canOpen" @click="activateConv(c.id)">
           <span class="cy-conversation-avatar">{{ c.title.slice(0, 1) }}</span>
           <span class="cy-conversation-copy">
             <span class="cy-conversation-title">{{ c.title }}</span>
