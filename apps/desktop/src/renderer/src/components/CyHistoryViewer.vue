@@ -3,7 +3,7 @@
 // 模态无障碍:role=dialog + aria-modal、初始焦点搜索框、Tab 焦点陷阱、Esc 关闭并回焦点、aria-live 播报。
 // 查询:显式提交(D11) + IME 守卫(isCompositionEnter,D14);分页:不透明游标 loadMore(D12)。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { isCompositionEnter } from '@shared/domain'
+import { isCompositionEnter, isoToLocalDate } from '@shared/domain'
 import type { ChatHistoryItem, HistoryCategory } from '@shared/contracts'
 import { useConversationStore } from '../stores/conversation.store'
 import { useHistoryViewerStore } from '../stores/historyViewer.store'
@@ -23,6 +23,39 @@ const CATEGORIES: Array<{ value: HistoryCategory; label: string }> = [
   { value: 'audio', label: '音频' },
   { value: 'link', label: '链接' }
 ]
+
+/** P2-2：按用户本地自然日分组（spec §2/§4.1/§4.2）——isoToLocalDate 处理跨 UTC 日；组内保序、组间按日期降序 */
+const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+interface DayGroup { date: string; label: string; items: ChatHistoryItem[] }
+const groupedItems = computed<DayGroup[]>(() => {
+  const groups: DayGroup[] = []
+  const byDate = new Map<string, DayGroup>()
+  for (const hit of store.items) {
+    let date = ''
+    try { date = isoToLocalDate(hit.createdAt, localTimeZone) } catch { /* 非法时间戳归入「其他」 */ }
+    if (!date || date.includes('NaN')) date = '其他'
+    let g = byDate.get(date)
+    if (!g) {
+      g = { date, label: dayLabel(date), items: [] }
+      byDate.set(date, g)
+      groups.push(g)
+    }
+    g.items.push(hit)
+  }
+  // 组间按日期降序（最新在前）；「其他」组置底
+  return groups.sort((a, b) => {
+    if (a.date === '其他') return 1
+    if (b.date === '其他') return -1
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0
+  })
+})
+
+function dayLabel(date: string): string {
+  if (date === '其他') return '其他'
+  const [y, m, d] = date.split('-').map(Number)
+  const week = ['日', '一', '二', '三', '四', '五', '六'][new Date(y, m - 1, d).getDay()]
+  return `${y}年${m}月${d}日 · 周${week}`
+}
 
 /** 打开时记录触发元素并聚焦搜索框 */
 function onOpen(): void {
@@ -121,7 +154,10 @@ onBeforeUnmount(() => { triggerElement = null })
         <div v-if="store.loading" class="cy-history-state">正在搜索…</div>
         <div v-else-if="store.hasSearched && store.items.length === 0" class="cy-history-state">没有找到相关聊天记录</div>
         <ul v-else class="cy-history-results">
-          <CyHistoryResultItem v-for="hit in store.items" :key="hit.hitId" :hit="hit" @jump="onJump" />
+          <template v-for="group in groupedItems" :key="group.date">
+            <li class="cy-history-day">{{ group.label }}</li>
+            <CyHistoryResultItem v-for="hit in group.items" :key="hit.hitId" :hit="hit" @jump="onJump" />
+          </template>
         </ul>
 
         <footer class="cy-history-footer">
@@ -170,6 +206,7 @@ onBeforeUnmount(() => { triggerElement = null })
 .cy-retry-btn { margin-left: auto; padding: 3px 9px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-surface); }
 .cy-history-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: 13px; }
 .cy-history-results { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 120px; }
+.cy-history-day { display: block; margin: 8px 0 2px; color: var(--cy-muted); font-size: 12px; font-weight: 500; }
 .cy-history-footer { margin-top: 10px; text-align: center; }
 .cy-more-btn { padding: 6px 16px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }

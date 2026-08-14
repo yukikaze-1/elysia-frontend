@@ -55,9 +55,15 @@ function onScroll(): void {
   // 顶部哨兵：更早历史 + 非加载中 → loadOlder（D5）。
   // 评审 P1-2：前插前 captureAnchor、前插完成后 restoreScrollTop——否则新页整块前插会把锚点/可视消息往下推
   //（scrollTop 数值不变但内容上移，用户视角跳动）。
-  if (el.scrollTop <= 40 && messageStore.hasMoreBefore && !messageStore.loadingOlder) {
-    pendingLoadAnchor.value = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
-    void messageStore.loadOlder().then(() => restoreLoadAnchor())
+  // G4 P1-2：跨会话跳转后（loadContextWindow 置 nextCursor）走 loadEarlier 续接更早历史；常规激活走 loadOlder。
+  if (el.scrollTop <= 40 && !messageStore.loadingOlder && !messageStore.loadingEarlier) {
+    if (messageStore.nextCursor) {
+      pendingLoadAnchor.value = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
+      void messageStore.loadEarlier().then(() => restoreLoadAnchor())
+    } else if (messageStore.hasMoreBefore) {
+      pendingLoadAnchor.value = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
+      void messageStore.loadOlder().then(() => restoreLoadAnchor())
+    }
   }
 }
 
@@ -153,15 +159,46 @@ function backToBottom(): void {
   atBottom.value = true
 }
 
-/** G4 D6：来源跳转高亮——滚动居中 + 6s 清除 + aria-live 播报（非纯颜色，配「已定位」chip） */
+/** G4 D6：来源跳转高亮——滚动居中 + 6s 清除 + aria-live 播报（非纯颜色，配「已定位」chip）。
+ *  P1-1：跨会话跳转后目标行可能不在虚拟列表渲染窗口（querySelector 为 null，restoreScrollFor 滚底部把目标推出窗口）——
+ *  先按 order 前缀和估算滚动容器定位，下一帧窗口重算后再精确 scrollIntoView 居中；items.length 变化时重试。 */
 let highlightTimer: ReturnType<typeof setTimeout> | undefined
+
+/** 定位高亮行：行已渲染 → scrollIntoView 居中；未渲染 → 按前缀和估算 scrollTop 使目标进入视口（返回是否可继续重试） */
+function scrollToHighlight(id: string): boolean {
+  const el = container.value
+  if (!el) return false
+  const row = el.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
+  if (row) {
+    row.scrollIntoView({ block: 'center' })
+    return true
+  }
+  const idx = items.value.findIndex((m) => m.messageId === id)
+  if (idx < 0) return false
+  const targetTop = prefix.value[idx] ?? 0
+  el.scrollTop = Math.max(0, targetTop - el.clientHeight / 2) // 估高近似居中（实测高误差由后续 scrollIntoView 精确修正）
+  scrollTop.value = el.scrollTop
+  atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  return true
+}
+
 watch(() => messageStore.highlightMessageId, async (id) => {
   if (highlightTimer) clearTimeout(highlightTimer)
   if (!id) return
   await nextTick()
-  const el = container.value?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
-  el?.scrollIntoView({ block: 'center' })
+  scrollToHighlight(id)
+  // P1-1：估算滚动后窗口已重算，目标行应已渲染 → 再精确居中一次（若仍未渲染则按新窗口再估算一次）
+  requestAnimationFrame(() => {
+    if (messageStore.highlightMessageId !== id) return
+    scrollToHighlight(id)
+  })
   highlightTimer = setTimeout(() => messageStore.clearHighlight(), 6000)
+})
+
+/** P1-1：高亮期间列表增长/窗口变化 → 重试定位（目标行可能在补载后进入渲染窗口；跨会话跳转首页/上下文窗口合并加载） */
+watch(() => items.value.length, () => {
+  const id = messageStore.highlightMessageId
+  if (id) void nextTick(() => scrollToHighlight(id))
 })
 const hasHighlight = computed(() => !!messageStore.highlightMessageId)
 onBeforeUnmount(() => { if (highlightTimer) clearTimeout(highlightTimer) })
@@ -213,7 +250,9 @@ onMounted(() => {
     </template>
 
     <button v-if="!atBottom && !isEmpty" class="cy-back-bottom" title="回到底部" @click="backToBottom">↓ 回到底部</button>
-    <div v-if="hasHighlight" class="cy-sr-live" role="status" aria-live="polite">已定位到消息</div>
+    <!-- P2-4：aria-live 区常驻（v-if 条件挂载部分读屏器不播报）——role=status 占位容器恒在，文本随高亮更新；
+         清除策略：6s 定时（spec「滚动或 6s」取定时分支；程序性定位滚动与用户滚动难可靠区分，定时满足语义） -->
+    <div class="cy-sr-live" role="status" aria-live="polite">{{ hasHighlight ? '已定位到消息' : '' }}</div>
   </div>
 </template>
 

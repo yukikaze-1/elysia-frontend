@@ -287,9 +287,11 @@ export const useMessageStore = defineStore('message', () => {
   }
 
   function loadPage(page: MessagePage): void {
-    const items = [...page.items].sort(cmpMsg) // 后端 before 页已归一化升序，再排一次免疫非时间序页（P0-1）
-    for (const m of items) upsertMessage(m)
     const conversationId = useConversationStore().currentId
+    // P1-4：非当前会话消息跳过（调用方 await 后 currentId 守卫双保险）——迟到 REST 页/异流响应不得污染其他会话列表。
+    // 仅在 currentId 已设时过滤（未激活前 currentId 为空，历史页属 pending 语义，不在此路径出现）
+    const items = [...page.items].sort(cmpMsg).filter((m) => !conversationId || !m.conversationId || m.conversationId === conversationId) // 后端 before 页已归一化升序，再排一次免疫非时间序页（P0-1）
+    for (const m of items) upsertMessage(m)
     if (conversationId && items.length) {
       // 缓存 updatedAt 用会话真实最新消息时间而非 nowIso()（评审 P2-3）：否则向上翻旧历史会把会话顶成「现在」，
       // 扰乱 Main 侧 top-20 淘汰（updatedAt 最旧移除）——order 已含本会话已加载消息，取最大 createdAt
@@ -350,16 +352,21 @@ export const useMessageStore = defineStore('message', () => {
   }
 
   /** 跳转后分页续接（P2-3）：getMessageContext 窗口落地后，再补一次首页 getMessages 做游标初始化；
-   *  首页 items 与窗口经 loadPage 去重合并（upsert 按 messageId，按 createdAt 稳定排序）。 */
+   *  首页 items 与窗口经 loadPage 去重合并（upsert 按 messageId，按 createdAt 稳定排序）。
+   *  P1-2：首页游标经 setPageMeta 初始化 hasMoreBefore/beforeCursor——跳转后顶部哨兵在 nextCursor 存在时走 loadEarlier 补载更早历史。
+   *  P1-4：两个 await 与 loadPage 之间加 currentId 守卫（对齐 activate 非 anchor 路径的 epoch 语义）——中途切会话不得污染新列表。 */
   async function loadContextWindow(messageId: string, before = 5, after = 5): Promise<boolean> {
     const conversationId = useConversationStore().currentId
     if (!conversationId) return false
     try {
       const page = await api.getMessageContext({ conversationId, messageId, before, after })
+      if (useConversationStore().currentId !== conversationId) return false   // P1-4：切会话丢弃
       loadPage(page)
       reorder()
       const first = await api.getMessages({ conversationId, limit: 20 })
+      if (useConversationStore().currentId !== conversationId) return false   // P1-4：切会话丢弃
       nextCursor.value = first.nextCursor
+      setPageMeta(first)   // P1-2：跳转后初始化「更早一页」游标（hasMoreBefore/beforeCursor），哨兵据此续接
       loadPage(first)
       reorder()
       return true
@@ -368,7 +375,9 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
-  /** 加载更早消息：!nextCursor 早退（镜像 conversationStore.getMore）；成功更新游标；失败保留旧结果可重试 */
+  /** 加载更早消息：!nextCursor 早退（镜像 conversationStore.getMore）；成功更新游标；失败保留旧结果可重试。
+   *  P1-2：跳转后（loadContextWindow 置 nextCursor）顶部哨兵走本路径；同时同步 hasMoreBefore/beforeCursor，
+   *  保证哨兵两路径状态一致——nextCursor 耗尽后不落到用陈旧 beforeCursor 重复拉页的 loadOlder。 */
   async function loadEarlier(): Promise<void> {
     const conversationId = useConversationStore().currentId
     if (!conversationId || !nextCursor.value || loadingEarlier.value) return
@@ -378,6 +387,8 @@ export const useMessageStore = defineStore('message', () => {
       loadPage(page)
       reorder()
       nextCursor.value = page.nextCursor
+      hasMoreBefore.value = page.hasMore && !!page.nextCursor
+      beforeCursor.value = page.nextCursor
     } catch {
       // 保留旧结果，可重试
     } finally {

@@ -72,8 +72,9 @@ async function newConversation(): Promise<void> {
         </div>
       </div>
       <div class="cy-header-actions">
-        <button class="cy-action-button" title="聊天记录" :disabled="!canAct" @click="historyStore.openViewer()">聊天记录</button>
-        <button class="cy-action-button" title="资源" :disabled="!canAct" @click="historyStore.openViewer('image_video')">资源</button>
+        <!-- P2-1：查看器入口不 gating（spec §4.8）——未连接时打开查询经 Main 失败，在查看器错误区展示；新建会话仍 gating -->
+        <button class="cy-action-button" title="聊天记录" @click="historyStore.openViewer()">聊天记录</button>
+        <button class="cy-action-button" title="资源" @click="historyStore.openViewer('image_video')">资源</button>
         <button class="cy-action-button" title="新建会话" :disabled="!canAct" @click="newConversation">新建</button>
         <button
           class="cy-action-button"

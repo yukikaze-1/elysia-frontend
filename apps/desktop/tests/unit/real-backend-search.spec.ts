@@ -70,6 +70,69 @@ describe('RealBackend.queryChatHistory（spec §4.3/§4.4）', () => {
   })
 })
 
+describe('RealBackend.queryChatHistory image_video 分页（P1-3）', () => {
+  it('两子流独立游标编码进不透明游标；loadMore 各子流用自己游标续页（不再共用单一游标 → 第二页异流/跳漏）', async () => {
+    const seen: string[] = []
+    const searchResp = (u: string): { items: unknown[]; has_more: boolean; cursor?: string } => {
+      const q = new URL(u, 'http://localhost')   // req.url 是相对路径，URL 构造需基准
+      const category = q.searchParams.get('category')
+      const cursor = q.searchParams.get('cursor')
+      if (category === 'image') {
+        if (!cursor) return { items: [{ conversationId: 'c1', messageId: 'img1', timestamp: '2026-08-14T01:00:00.000Z' }], has_more: true, cursor: 'img-c1' }
+        return { items: [{ conversationId: 'c1', messageId: 'img2', timestamp: '2026-08-14T03:00:00.000Z' }], has_more: false }
+      }
+      if (category === 'video') {
+        if (!cursor) return { items: [{ conversationId: 'c1', messageId: 'vid1', timestamp: '2026-08-14T02:00:00.000Z' }], has_more: true, cursor: 'vid-c1' }
+        return { items: [{ conversationId: 'c1', messageId: 'vid2', timestamp: '2026-08-14T04:00:00.000Z' }], has_more: false }
+      }
+      return { items: [], has_more: false }
+    }
+    // 独立 server：按 category/cursor 返回有状态响应（apiServer 默认只回 has_more:false 单条，不适用分页用例）
+    const s = await (async () => {
+      const { createServer } = await import('http')
+      const { WebSocketServer } = await import('ws')
+      const server = createServer((req, res) => {
+        const send = (body: unknown): void => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)) }
+        if (req.url?.startsWith('/api/search/messages')) {
+          seen.push(req.url)
+          send(searchResp(req.url))
+        } else { res.writeHead(404); res.end() }
+      })
+      const wss = new WebSocketServer({ server, path: '/ws' })
+      wss.on('connection', (ws) => {
+        ws.send(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } }))
+        ws.send(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-1' }))
+        ws.send(JSON.stringify({ type: 'expression', expression: 'idle' }))
+      })
+      await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+      return { port: (server.address() as { port: number }).port, close: () => { wss.close(); server.close() } }
+    })()
+    try {
+      const backend = new RealBackend({ now: () => Date.now() })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${s.port}`, token: 'tok' })
+      const first = await backend.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'image_video', limit: 50 })
+      // 首页：image+video 两子查询各自无游标 → 返回编码两游标的复合不透明游标
+      const c1 = JSON.parse(first.nextCursor!) as { image: string; video: string }
+      expect(c1).toEqual({ image: 'img-c1', video: 'vid-c1' })
+      expect(first.hasMore).toBe(true)
+      expect(first.items.map((i) => i.messageId)).toEqual(['img1', 'vid1'])   // 按 sortKey(createdAt) 升序合并
+      // 第二页：把复合游标回传 → 两子流各自用自己的游标续页
+      const second = await backend.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'image_video', limit: 50, cursor: first.nextCursor })
+      expect(second.hasMore).toBe(false)
+      expect(second.nextCursor).toBeUndefined()
+      expect(second.items.map((i) => i.messageId)).toEqual(['img2', 'vid2'])
+      // 验证：image 子查询带 cursor=img-c1，video 子查询带 cursor=vid-c1（各用各的，不共用）
+      const secondUrls = seen.slice(2)
+      expect(secondUrls).toHaveLength(2)
+      const imgUrl = secondUrls.find((u) => u.includes('category=image'))
+      const vidUrl = secondUrls.find((u) => u.includes('category=video'))
+      expect(imgUrl).toContain('cursor=img-c1')
+      expect(vidUrl).toContain('cursor=vid-c1')
+      await backend.disconnect()
+    } finally { s.close() }
+  })
+})
+
 describe('RealBackend.getMessageContext（spec §4.5）', () => {
   it('URL 参数 + MessagePage 归一化（before+anchor+after 合并稳定排序）', async () => {
     const seen: string[] = []

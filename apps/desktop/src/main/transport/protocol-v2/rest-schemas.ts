@@ -106,6 +106,8 @@ export function parseAttachmentSignResponse(input: unknown): { success: true; da
 }
 
 // —— 阶段 3 G4 历史搜索/上下文/表情清单 响应 schema（P0-1/P0-2：camelCase、无 kind/url；严格镜像契约）——
+// 已知限制（P2-3）：真实后端 search item 无 kind/url，表情分类在查看器内为纯文本行、无贴图缩略图——
+// 待后端 SearchMessageItem 增 kind/url 或 queryResources 通道后再富化；不伪造实现（P0-1 缺口，不为此绕契约）。
 export const RestSearchMessageItemSchema = z.object({
   conversationId: z.string().min(1),
   messageId: z.string().min(1),

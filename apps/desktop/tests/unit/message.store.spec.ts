@@ -535,9 +535,57 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     const ok = await store.loadContextWindow('m1')
     expect(ok).toBe(true)
     expect(store.nextCursor).toBe('cur-1')
+    // P1-2：首页游标经 setPageMeta 初始化 hasMoreBefore/beforeCursor——跳转后顶部哨兵可据此续接更早历史
+    expect(store.hasMoreBefore).toBe(true)
+    expect(store.beforeCursor).toBe('cur-1')
     // P1-1：getMessageContext 返回 [m1,m2] + 首页 getMessages 返回 [m1,m0]，loadPage 按 messageId 去重合并 → m0/m1/m2 共 3 条
     expect(store.order.length).toBe(3)
     expect(store.byId.m1).toBeDefined()
+  })
+  it('P1-4：loadContextWindow 中途切会话 → 上下文页不污染新会话列表（await 后 currentId 守卫）', async () => {
+    let resolveCtx!: (v: unknown) => void
+    setDesktopApi({ getMessageContext: () => new Promise((r) => { resolveCtx = r }) } as never)
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'c1' })
+    const store = useMessageStore()
+    store.resetConversation('c1')
+    const p = store.loadContextWindow('m1')
+    // 中途切到 c2（activate 会 resetConversation）
+    conversationStore.$patch({ currentId: 'c2' })
+    store.resetConversation('c2')
+    resolveCtx({ items: [
+      { messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't', content: 'x' }
+    ], hasMore: false })
+    const ok = await p
+    expect(ok).toBe(false)          // 守卫丢弃 → 返回 false（不提交上下文）
+    expect(store.byId.m1).toBeUndefined()   // c1 上下文不得进入 c2 列表
+    expect(store.order).toHaveLength(0)
+  })
+  it('P1-4：loadPage 跳过非当前会话消息（迟到的异流 REST 页不污染列表）', () => {
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'conv-1' })
+    const store = useMessageStore()
+    store.loadPage({ items: [
+      { messageId: 'mine', conversationId: 'conv-1', role: 'user', content: 'x', status: 'completed', createdAt: 't' } as Message,
+      { messageId: 'other', conversationId: 'conv-2', role: 'user', content: 'y', status: 'completed', createdAt: 't' } as Message
+    ], hasMore: false })
+    expect(store.byId.mine).toBeDefined()
+    expect(store.byId.other).toBeUndefined()
+    expect(store.order).toEqual(['mine'])
+  })
+  it('P1-2：loadEarlier 成功后同步 hasMoreBefore/beforeCursor（哨兵两路径状态一致，防 nextCursor 耗尽后回退 loadOlder 用陈旧游标）', async () => {
+    let called = 0
+    setDesktopApi({ getMessages: async () => { called++; return { items: [], hasMore: false, nextCursor: undefined } } } as never)
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'c1' })
+    const store = useMessageStore()
+    store.resetConversation('c1')
+    store.$patch({ nextCursor: 'cur-1', hasMoreBefore: true, beforeCursor: 'cur-1' })   // 模拟 loadContextWindow 后初始状态
+    await store.loadEarlier()
+    expect(called).toBe(1)
+    expect(store.nextCursor).toBeUndefined()
+    expect(store.hasMoreBefore).toBe(false)      // 同步：与 nextCursor 一致，不回退陈旧 loadOlder
+    expect(store.beforeCursor).toBeUndefined()
   })
   it('loadEarlier：!nextCursor 早退（镜像 getMore）；成功后更新游标', async () => {
     let called = 0

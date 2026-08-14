@@ -42,6 +42,7 @@ import type {
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList } from './protocol-v2/rest-schemas'
+import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
 import { localDateToHalfOpenRange } from '@shared/domain'
 import type { HistoryCategory, StickerManifest } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
@@ -95,6 +96,30 @@ const HISTORY_CATEGORY_WIRE: Record<HistoryCategory, string[] | undefined> = {
   file: ['file'],
   audio: ['audio'],
   link: ['link']
+}
+
+// —— image_video 分页子流状态（P1-3）——
+// 旧实现用 Promise.all 并行跑 image/video 两子查询、共用一个不透明游标 → 第二页两流同用异流游标必错。
+// 改为：不透明游标 JSON 编码 { image, video } 两个独立子流游标（null=该子流已耗尽，跳过查询；缺省=首次）。
+/** 子流状态：exhausted=已耗尽（不再查询）；cursor=该子流继续游标（undefined=首次/尚未查询） */
+interface ImageVideoSubStreamState { exhausted: boolean; cursor?: string }
+/** 解析后的 image_video 分页状态 */
+interface ImageVideoCursorState { image: ImageVideoSubStreamState; video: ImageVideoSubStreamState }
+/** 编码进不透明游标的持久形状 */
+interface ImageVideoCursorEncoded { image: string | null; video: string | null }
+
+function parseImageVideoCursor(cursor: string | undefined): ImageVideoCursorState {
+  if (!cursor) return { image: { exhausted: false }, video: { exhausted: false } }
+  try {
+    const raw = JSON.parse(cursor) as { image?: string | null; video?: string | null }
+    return {
+      image: { exhausted: raw.image === null, cursor: typeof raw.image === 'string' ? raw.image : undefined },
+      video: { exhausted: raw.video === null, cursor: typeof raw.video === 'string' ? raw.video : undefined }
+    }
+  } catch {
+    // 非本实现编码的游标（后端/旧数据）→ 按首次处理（image/video 都从第一页开始）
+    return { image: { exhausted: false }, video: { exhausted: false } }
+  }
 }
 
 /** REST HTTP 状态 + 后端 code → 领域错误码(spec §5.3 REST 错误映射)。
@@ -624,6 +649,8 @@ export class RealBackend implements BackendAdapter {
   }
 
   // —— 阶段 3 G4 历史查看器/表情（spec §4.3/§4.4/§4.5，D2/D8）——
+  // 已知限制（P2-3）：真实后端 search item 无 kind/url，表情分类在查看器内为纯文本行、无贴图缩略图——
+  // 待后端 SearchMessageItem 增 kind/url 或 queryResources 通道后再富化；不伪造实现（保持文本展示，不为此绕契约）。
   async getMessageContext(input: MessageContextQuery): Promise<MessagePage> {
     const params: Record<string, string> = { conversationId: input.conversationId }
     if (input.before !== undefined) params['before'] = String(input.before)
@@ -637,31 +664,53 @@ export class RealBackend implements BackendAdapter {
 
   async queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage> {
     const wireCats = HISTORY_CATEGORY_WIRE[input.category] ?? [undefined]
-    const pages = await Promise.all(wireCats.map(async (cat) => {
-      const params: Record<string, string> = {}
-      if (input.query) params['query'] = input.query
-      if (input.scope.type === 'conversation') params['conversationId'] = input.scope.conversationId
-      if (input.localDate) {
-        const range = localDateToHalfOpenRange(input.localDate, input.timeZone)
-        params['date_from'] = range.from
-        params['date_to'] = range.to
-      }
-      params['timezone'] = input.timeZone
-      if (cat) params['category'] = cat
-      if (input.cursor) params['cursor'] = input.cursor
-      params['limit'] = String(input.limit)
-      const q = new URLSearchParams(params).toString()
-      const res = await this.restFetch(`/api/search/messages${q ? `?${q}` : ''}`)
-      const parsed = parseRestSearchMessages(await res.json())
-      if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '历史搜索响应校验失败')
-      return parsed.data
-    }))
-    const mapped = pages.flatMap((p) => p.items.map((i) => this.restMapper.toChatHistoryItem(i)))
+    if (wireCats.length === 1) {
+      // 单流（all/sticker/file/audio/link）：不透明游标直接透传
+      const data = await this.fetchHistoryStream(input, wireCats[0], input.cursor)
+      const items = data.items.map((i) => this.restMapper.toChatHistoryItem(i))
+      return { items, hasMore: data.has_more, nextCursor: data.has_more ? data.cursor : undefined }
+    }
+    // image_video：两子流（image/video）独立游标 + 顺序合并（P1-3）。
+    // 不透明游标编码 { image, video } 两个子流游标（null=已耗尽跳过），loadMore 时各子流用自己的游标续页，
+    // 合并按 sortKey 排序、has_more = 任一子流还有余量——杜绝「两子查询共用同一游标 → 第二页异流/跳漏」。
+    const state = parseImageVideoCursor(input.cursor)
+    const [imgCat, vidCat] = wireCats
+    const [imgPage, vidPage] = await Promise.all([
+      state.image.exhausted ? null : this.fetchHistoryStream(input, imgCat, state.image.cursor),
+      state.video.exhausted ? null : this.fetchHistoryStream(input, vidCat, state.video.cursor)
+    ])
+    const mapped = [imgPage, vidPage].filter((p): p is RestSearchMessagesResponse => p !== null)
+      .flatMap((p) => p.items.map((i) => this.restMapper.toChatHistoryItem(i)))
     const byHit = new Map(mapped.map((i) => [i.hitId, i]))
     const items = [...byHit.values()].sort((a, b) =>
       a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
-    // image_video 合并分页：以任一行有余量的子查询游标续页（两个子查询各自 cursor 续页细节以联调确认，开放项 §7）
-    return { items, hasMore: pages.some((p) => p.has_more), nextCursor: pages.find((p) => p.has_more)?.cursor }
+    const hasMore = (imgPage?.has_more ?? false) || (vidPage?.has_more ?? false)
+    const nextState: ImageVideoCursorEncoded = {
+      image: imgPage === null ? null : imgPage.has_more ? imgPage.cursor ?? null : null,
+      video: vidPage === null ? null : vidPage.has_more ? vidPage.cursor ?? null : null
+    }
+    return { items, hasMore, nextCursor: hasMore ? JSON.stringify(nextState) : undefined }
+  }
+
+  /** image_video 单子流查询（category=image 或 video；cursor 为该子流独立游标，P1-3） */
+  private async fetchHistoryStream(input: ChatHistoryQuery, cat: string | undefined, cursor: string | undefined): Promise<RestSearchMessagesResponse> {
+    const params: Record<string, string> = {}
+    if (input.query) params['query'] = input.query
+    if (input.scope.type === 'conversation') params['conversationId'] = input.scope.conversationId
+    if (input.localDate) {
+      const range = localDateToHalfOpenRange(input.localDate, input.timeZone)
+      params['date_from'] = range.from
+      params['date_to'] = range.to
+    }
+    params['timezone'] = input.timeZone
+    if (cat) params['category'] = cat
+    if (cursor) params['cursor'] = cursor
+    params['limit'] = String(input.limit)
+    const q = new URLSearchParams(params).toString()
+    const res = await this.restFetch(`/api/search/messages${q ? `?${q}` : ''}`)
+    const parsed = parseRestSearchMessages(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '历史搜索响应校验失败')
+    return parsed.data
   }
 
   async listStickers(): Promise<StickerManifest> {
