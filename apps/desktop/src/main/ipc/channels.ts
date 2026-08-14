@@ -36,7 +36,8 @@ export const chatSendSchema = z.object({
     attachmentId: z.string().min(1),
     kind: z.enum(['image', 'video', 'audio', 'file', 'link']),
     mime: z.string().min(1)
-  })).optional()
+  })).optional(),
+  stickerId: z.string().optional()   // 阶段 3 G4：贴图消息发送（D8）
 })
 export const chatGetMessagesSchema = z.object({
   conversationId: z.string().min(1),
@@ -91,3 +92,24 @@ export const attachmentsValidateSchema = z.object({ files: z.array(UploadFileDes
 export const attachmentsUploadSchema = z.object({ uploadId: z.string().min(1), files: z.array(UploadFileDescriptorSchema).min(1).max(10) })
 export const attachmentsCancelSchema = z.object({ uploadId: z.string().min(1) })
 export const attachmentsCheckSchema = z.object({ attachmentId: z.string().min(1) })
+
+// —— chat 历史查看器/表情 request schema（spec §4.3；响应 schema 在 shared/schemas/ipc-response）——
+export const chatQueryHistorySchema = z.object({
+  scope: z.union([
+    z.object({ type: z.literal('conversation'), conversationId: z.string().min(1) }),
+    z.object({ type: z.literal('all_conversations') })
+  ]),
+  query: z.string().optional(),
+  localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  timeZone: z.string().min(1),
+  category: z.enum(['all', 'image_video', 'sticker', 'file', 'audio', 'link']),
+  cursor: z.string().optional(),
+  limit: z.number().int().positive().max(100)
+})
+export const chatGetMessageContextSchema = z.object({
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+  before: z.number().int().positive().optional(),
+  after: z.number().int().positive().optional()
+})
+export const chatListStickersSchema = z.undefined()

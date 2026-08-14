@@ -67,7 +67,8 @@ export const AssistantSegmentSchema = z.object({
   size: z.number().optional(),
   width: z.number().optional(),
   height: z.number().optional(),
-  durationMs: z.number().optional()
+  durationMs: z.number().optional(),
+  stickerId: z.string().optional()   // 阶段 3 G4：sticker 分段身份（D8）
 })
 
 /** 镜像 contracts/message.ts `MessageToolInfo`（全 optional；rest-mapper assemble 产出同形对象） */
@@ -94,7 +95,8 @@ export const MessageSchema = z.object({
   attachments: z.array(MessageAttachmentSchema).optional(),   // 附件内嵌消息（阶段 3 G3，D2）
   usage: TokenUsageSchema.optional(),
   model: z.string().optional(),
-  emotion: z.string().optional()
+  emotion: z.string().optional(),
+  stickerId: z.string().optional()   // 阶段 3 G4：用户贴图消息 wire 表示（可选字段，D8）
 })
 
 export const ConversationSchema = z.object({
@@ -108,6 +110,36 @@ export const PageSchema = <T extends z.ZodType>(itemSchema: T) =>
   z.object({ items: z.array(itemSchema), hasMore: z.boolean(), nextCursor: z.string().optional() })
 
 export const MessagePageSchema = PageSchema(MessageSchema)
+
+export const ConversationResourceSchema = z.object({
+  messageId: z.string().min(1),
+  timestamp: z.string(),
+  kind: z.enum(['image', 'link', 'video', 'audio', 'file', 'sticker']),
+  url: z.string().min(1),
+  stickerId: z.string().optional()
+})
+
+export const ChatHistoryItemSchema: z.ZodType<import('@shared/contracts').ChatHistoryItem> = z.object({
+  hitId: z.string().min(1),
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+  responseId: z.string().optional(),
+  segmentId: z.string().optional(),
+  senderLabel: z.string().min(1),
+  snippet: z.string().optional(),
+  resource: ConversationResourceSchema.optional(),
+  createdAt: z.string(),
+  sortKey: z.string().min(1)
+})
+
+export const ChatHistoryPageSchema: z.ZodType<import('@shared/contracts').ChatHistoryPage> =
+  PageSchema(ChatHistoryItemSchema).extend({ snapshotId: z.string().optional() })
+
+export const StickerItemSchema = z.object({
+  stickerId: z.string().min(1),          // P0-2：对齐契约 StickerEntry{stickerId, src}
+  src: z.string().min(1)
+})
+export const StickerManifestSchema = z.object({ stickers: z.array(StickerItemSchema) })   // 对齐 StickerListResponse{stickers}
 
 export const FileValidationResultSchema = z.object({
   localId: z.string().min(1),

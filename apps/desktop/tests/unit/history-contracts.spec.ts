@@ -61,3 +61,47 @@ describe('IPC 三新通道（spec §4.3）', () => {
     expect(IpcChannels.chatListStickers).toBe('chat:list-stickers')
   })
 })
+
+import { chatGetMessageContextSchema, chatListStickersSchema, chatQueryHistorySchema, chatSendSchema } from '../../src/main/ipc/channels'
+import { ChatHistoryPageSchema, MessagePageSchema, StickerManifestSchema } from '../../src/shared/schemas'
+
+describe('IPC request schema（spec §4.3）', () => {
+  it('chatQueryHistorySchema 全字段校验（scope 判别 + 必填 timeZone/category/limit）', () => {
+    const ok = chatQueryHistorySchema.safeParse({ scope: { type: 'conversation', conversationId: 'c1' }, query: 'k', localDate: '2026-08-14', timeZone: 'Asia/Shanghai', category: 'sticker', limit: 50 })
+    expect(ok.success).toBe(true)
+    expect(chatQueryHistorySchema.safeParse({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 }).success).toBe(true)
+    expect(chatQueryHistorySchema.safeParse({ scope: { type: 'bogus' }, timeZone: 'UTC', category: 'all', limit: 50 }).success).toBe(false)
+    expect(chatQueryHistorySchema.safeParse({ scope: { type: 'conversation', conversationId: 'c1' }, timeZone: 'UTC', category: 'all', limit: 200 }).success).toBe(false)  // limit 上限 100
+    expect(chatQueryHistorySchema.safeParse({ scope: { type: 'conversation', conversationId: 'c1' }, timeZone: 'UTC', category: 'all' }).success).toBe(false)  // limit 必填
+  })
+  it('chatQueryHistorySchema localDate 必须 YYYY-MM-DD', () => {
+    expect(chatQueryHistorySchema.safeParse({ scope: { type: 'all_conversations' }, localDate: '2026/08/14', timeZone: 'UTC', category: 'all', limit: 50 }).success).toBe(false)
+  })
+  it('chatGetMessageContextSchema 对齐 MessageContextQuery；chatListStickersSchema 无参', () => {
+    expect(chatGetMessageContextSchema.safeParse({ conversationId: 'c1', messageId: 'm1', before: 5, after: 5 }).success).toBe(true)
+    expect(chatGetMessageContextSchema.safeParse({ conversationId: 'c1' }).success).toBe(false)
+    expect(chatListStickersSchema.safeParse(undefined).success).toBe(true)
+  })
+  it('chatSendSchema 接受可选 stickerId（st_ 前缀）', () => {
+    const r = chatSendSchema.safeParse({ conversationId: 'c1', text: '', clientRequestId: 'cr1', stickerId: 'st_1' })
+    expect(r.success).toBe(true)
+  })
+})
+
+describe('IPC 响应 schema 严格镜像（C1）', () => {
+  it('ChatHistoryPageSchema 接受完整命中项（含 resource）', () => {
+    const r = ChatHistoryPageSchema.safeParse({
+      items: [{ hitId: 'c1:m1:', conversationId: 'c1', messageId: 'm1', senderLabel: 'user', createdAt: 't', sortKey: 't|m1', resource: { messageId: 'm1', timestamp: 't', kind: 'sticker', url: '/static/stickers/st_1.png', stickerId: 'st_1' } }],
+      hasMore: false
+    })
+    expect(r.success).toBe(true)
+  })
+  it('ChatHistoryPageSchema 拒缺必填（hitId/messageId/senderLabel/sortKey）', () => {
+    expect(ChatHistoryPageSchema.safeParse({ items: [{ conversationId: 'c1', createdAt: 't' }], hasMore: false }).success).toBe(false)
+  })
+  it('StickerManifestSchema 接受 {stickers}（P0-2）；getMessageContext 复用 MessagePageSchema', () => {
+    expect(StickerManifestSchema.safeParse({ stickers: [{ stickerId: 'st_1', src: '/static/stickers/st_1.png' }] }).success).toBe(true)
+    expect(StickerManifestSchema.safeParse({ stickers: [{ stickerId: '' }] }).success).toBe(false)
+    expect(MessagePageSchema).toBeDefined()
+  })
+})
