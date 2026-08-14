@@ -74,8 +74,23 @@ function sanitizeHtml(html: string): string {
   return out
 }
 
+/** 代码块包裹（sanitize 后字符串处理，spec §4.6.1 D7）：语言标签 + 复制按钮占位；无高亮库，代码内容保持转义文本。
+ *  保留 `<code>` 元素（复制交互经 `pre code` 取 textContent），语言从 `language-xxx` class 提取，无则「代码」。 */
+export function wrapCodeBlocks(html: string): string {
+  return html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/gi, (m, attrs: string, body: string) => {
+    const langMatch = /class="[^"]*\blanguage-([a-zA-Z0-9_+-]+)[^"]*"/.exec(attrs)
+    const lang = langMatch ? langMatch[1] : '代码'
+    return `<div class="cy-code-block"><div class="cy-code-head"><span class="cy-code-lang">${lang}</span><button type="button" class="cy-code-copy" aria-label="复制代码">复制</button></div><pre><code${attrs}>${body}</code></pre></div>`
+  })
+}
+
+/** 复制文本：去尾部换行（spec §4.6.1） */
+export function trimCodeText(text: string): string {
+  return text.replace(/\n+$/, '')
+}
+
 /** 渲染 markdown → 消毒后 HTML(marked.parse 同步调用,async:false 保证 string 返回) */
 export function renderMarkdown(text: string): string {
   const html = marked.parse(text, { async: false })
-  return sanitizeHtml(html)
+  return wrapCodeBlocks(sanitizeHtml(html)) // sanitize 后再包裹，复制按钮不被打回
 }
