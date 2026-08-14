@@ -9,7 +9,7 @@
 // - handleConnectionStateChange 断线先清 local-* pending 乐观消息(I5),再处理 in-flight → interrupted(F11:清理在早退之前)。
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { BackendEvent, ConnectionState, Message, MessagePage } from '@shared/contracts'
+import type { BackendEvent, ConnectionState, Message, MessageAttachment, MessagePage } from '@shared/contracts'
 import { StreamAccumulator } from '@shared/domain'
 import { api } from './desktop-api'
 import { useConversationStore } from './conversation.store'
@@ -196,7 +196,7 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
-  async function send(text: string): Promise<boolean> {
+  async function send(text: string, opts?: { attachments?: MessageAttachment[] }): Promise<boolean> {
     const conversationId = useConversationStore().currentId
     if (!conversationId) return false
     lastError.value = undefined   // 新发送清旧错误,避免失败横幅残留(最终 review 修复)
@@ -209,12 +209,20 @@ export const useMessageStore = defineStore('message', () => {
       content: text,
       status: 'pending',
       clientMessageId: clientRequestId,
-      createdAt: nowIso()
+      createdAt: nowIso(),
+      ...(opts?.attachments?.length ? { attachments: opts.attachments } : {})
     }
     upsertMessage(optimistic)
     sending.value = true
     try {
-      const ref = await api.send({ conversationId, text, clientRequestId })
+      const ref = await api.send({
+        conversationId,
+        text,
+        clientRequestId,
+        ...(opts?.attachments?.length
+          ? { attachments: opts.attachments.map((a) => ({ attachmentId: a.attachmentId, kind: a.kind, mime: a.mediaType })) }
+          : {})
+      })
       if (ref?.serverMessageId) migrateKey(key, ref.serverMessageId, optimistic)
       optimistic.status = 'acknowledged' // 无 serverMessageId 也 acknowledged(P2-1)
       void useCacheStore().pushMessages(conversationId, [optimistic], nowIso()) // send ack 已确认消息快照

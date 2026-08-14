@@ -464,3 +464,43 @@ describe('G2 历史懒加载：有序插入 / loadOlder / loadSnapshot（spec §
     expect(store.loadingOlder).toBe(false)
   })
 })
+
+describe('G3 附件发送编排（spec §4.4/§5）', () => {
+  beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi); setCurrent('conv-1') })   // 独立 describe：与流式/懒加载 describe 同级，需自带 pinia
+
+  it('send 携带附件 → 乐观消息带 attachments + api.send 带 refs（kind/mime 提示值）', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.send.mockResolvedValueOnce({ clientRequestId: 'c1', serverMessageId: 'msg-srv' })
+    const store = useMessageStore()
+    await store.send('hi', { attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png', name: 'a.png' }] })
+    const msgs = Object.values(store.byId)
+    const user = msgs.find((m) => m.role === 'user')
+    expect(user?.attachments).toEqual([{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png', name: 'a.png' }])
+    expect(mockApi.send).toHaveBeenCalledWith(expect.objectContaining({
+      attachments: [{ attachmentId: 'att_1', kind: 'image', mime: 'image/png' }]
+    }))
+    expect(user?.status).toBe('acknowledged')
+    expect(store.byId['msg-srv']).toBeDefined()   // migrateKey 后正式 ID
+  })
+
+  it('send 失败（附件已上传）→ 乐观消息 failed，附件不重复回退', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.send.mockRejectedValueOnce(new Error('[BACKEND_REJECTED] 队列已满'))
+    const store = useMessageStore()
+    await store.send('hi', { attachments: [{ attachmentId: 'att_1', kind: 'file', mediaType: 'application/pdf' }] })
+    const user = Object.values(store.byId).find((m) => m.role === 'user')
+    expect(user?.status).toBe('failed')
+    expect(user?.attachments?.[0]?.attachmentId).toBe('att_1')
+  })
+
+  it('无附件时 send 行为不变（attachments 缺省）', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.send.mockResolvedValueOnce({ clientRequestId: 'c1' })
+    const store = useMessageStore()
+    await store.send('hi')
+    expect(mockApi.send).toHaveBeenCalledWith(expect.not.objectContaining({ attachments: expect.anything() }))
+  })
+})
