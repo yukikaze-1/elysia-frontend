@@ -23,15 +23,17 @@
 |---|---|---|---|
 | 远程业务状态 | 会话、消息、后端工具结果 | 后端 | 最近数据缓存 |
 | 本地业务状态 | Desktop 工具权限、执行记录 | Main | 脱敏持久化 |
-| UI 状态 | 当前页面、折叠栏、滚动位置 | Renderer | 选择性持久化 |
+| UI 状态 | 当前页面、折叠栏、滚动位置、Live2D 栏布局（可见/折叠/宽度） | Renderer | 选择性持久化（布局记忆走 localStorage `cyrene.layout.v1`，见 §8.5） |
 | 临时交互状态 | 对话框、悬停、加载中 | Renderer | 不持久化 |
-| 用户设置 | 发送键、Live2D、主题 | Main 配置 | 持久化 |
+| 用户设置 | 发送键、主题、Live2D 模型/表情设置 | Main 配置 | 持久化 |
 | 安全凭据 | Token、刷新凭据 | 系统安全存储 | 加密/安全存储 |
 | 诊断状态 | 连接状态、错误摘要 | Main/Renderer | 短期或脱敏日志 |
 
 ## 3. Store 划分
 
 > **实施注记（2026-08-11，阶段 2 块 C）：** `connectionStore`/`conversationStore`/`messageStore` 三 store 已落地（`renderer/src/stores/`），命名与职责遵循本节；`messageStore` 经 2A `StreamAccumulator` 应用领域事件、乐观发送用 `clientMessageId` key、断线 in-flight 置 `interrupted`、重连回放经 `onSessionReplay`→`loadReplay`。其余 store（tool/live2d/settings 等）随对应阶段落地。
+>
+> **实施注记（2026-08-14，阶段 3）：** 新增 `layoutStore`（G1 布局响应式，见 §3.13）、`draftStore`（G2 每会话草稿）、`cacheStore`（G2 离线缓存）、`attachmentStore`（G3 附件待发送队列/上传）、`historyViewerStore`（G4 历史查看器查询/分页/跳转）；CyMessageList 虚拟列表与滚动锚点由 messageStore 消费；草稿/滚动锚点经 Main 持久化（`persistSession`/`hydratePersistence`/`cacheMessages` IPC + `session-store.ts`），附件上传/媒体代理经 attachment 通道与 `main/attachments/`（`media-service.ts`/`upload-service.ts`）。
 
 ### 3.1 `appStore`
 
@@ -132,6 +134,12 @@
 - 最近使用排序、缩略图状态和发送前选择状态；
 - 已发送表情只引用消息中的 `sticker` 分段，不复制消息事实；
 - 不持久化来源文件绝对路径或未验证的远程脚本资源。
+
+### 3.13 `layoutStore`
+
+- 有效布局计算（断点 1200/736/520/320，`layout/effective-layout.ts` 纯函数 + `layout/constants.ts`）；
+- 会话栏折叠态、Live2D 栏可见/折叠/宽度；
+- 布局记忆经 Renderer localStorage（键 `cyrene.layout.v1`，`layout/layout-storage.ts`）读写（§8.5）；不进入 Main 配置。
 
 ## 4. 规范化数据结构
 
@@ -294,13 +302,10 @@ interface PersistedSettingsV2 {
     accentColor: string;
     theme: "system" | "light" | "dark";
   };
-  layout: {
-    conversationPaneCollapsed: boolean;
-    live2dPaneVisible: boolean;
-    live2dPaneWidth: number;
-  };
 }
 ```
+
+> **迁移注记（2026-08-14，阶段 3 G1）：** `PersistedSettingsV2.layout` 字段（`conversationPaneCollapsed`/`live2dPaneVisible`/`live2dPaneWidth`）已从普通配置**移除**，布局属「UI 状态·选择性持久化」，改走 Renderer localStorage（键 `cyrene.layout.v1`，见 §8.5）。旧配置中的 `layout` 块在迁移时**忽略**（不读取、不迁移）；清除 localStorage 即恢复默认布局。
 
 输入法转写的执行位置由 `dictationSttProfileId` 所指 Profile 决定，不再另存一个可能冲突的 `dictationRuntime`。切换 STT Profile 时，Store 必须从 Profile 重新派生并展示 Backend、本机或 Local Worker 数据去向。
 
@@ -340,6 +345,16 @@ Inner Voice 与 Public Reply 可以作为后端历史的一部分在当前会话
 ### 8.4 工具审计
 
 由 Main 持久化脱敏记录。Renderer 获得分页后的公开摘要，不直接读取日志文件。
+
+### 8.5 UI 状态·选择性持久化（布局记忆）
+
+布局相关 UI 状态（窗口位置/大小、会话栏折叠、Live2D 栏可见/折叠/宽度）属**非敏感展示偏好**，走 Renderer localStorage（键 `cyrene.layout.v1`），**不进入 Main 配置**（2026-08-14 阶段 3 G1 定案；`PersistedSettingsV2.layout` 字段已移除，旧配置忽略，见 §8.1 迁移注记）：
+
+- 由 `layoutStore` 读写（`layout/layout-storage.ts`），组件只消费 store，不直接触碰 localStorage；
+- 数据形状含窗口尺寸、当前断点下的有效布局（`effective-layout.ts`）、会话栏折叠态、Live2D 栏可见/折叠/宽度；
+- 首帧用 `window.innerWidth` 播种；窗口 resize 后重算断点；toggle 按目标态设置并置 override；
+- 不做跨会话同步；清除 localStorage 即恢复默认布局；
+- 权限对话框、敏感预览等状态一律不持久化。
 
 ## 9. 数据库或文件选择
 
