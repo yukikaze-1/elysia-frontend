@@ -7,7 +7,7 @@ import {
   ReplayPayloadSchema
 } from '@shared/schemas'
 import {
-  ScrollAnchorSchema, PersistSessionInputSchema, PersistSessionResultSchema,
+  ScrollAnchorSchema, PersistSessionInputSchema,
   CacheMessagesInputSchema, OpenExternalInputSchema, SessionPersistenceStateSchema
 } from '@shared/schemas'
 

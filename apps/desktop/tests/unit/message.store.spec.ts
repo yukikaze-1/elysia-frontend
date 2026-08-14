@@ -382,3 +382,85 @@ describe('messageStore 流式应用', () => {
     })
   })
 })
+
+describe('G2 历史懒加载：有序插入 / loadOlder / loadSnapshot（spec §4.3.3 P0-1）', () => {
+  function pageMsg(id: string, createdAt: string, role: 'user' | 'assistant' = 'user'): Message {
+    return { messageId: id, conversationId: 'conv-1', role, status: 'completed', createdAt, ...(role === 'user' ? { content: id } : { assistantSegments: [] }) }
+  }
+
+  beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi); setCurrent('conv-1') })
+
+  it('upsertMessage 有序插入：before 页（更旧）前插，order 恒 (createdAt, messageId) 升序', () => {
+    const store = useMessageStore()
+    store.loadPage({ items: [pageMsg('m3', 't3'), pageMsg('m1', 't1')], hasMore: true, nextCursor: 'c1' }) // 防御性排序
+    expect(store.order).toEqual(['m1', 'm3'])
+    store.loadPage({ items: [pageMsg('m2', 't2'), pageMsg('m0', 't0')], hasMore: false, nextCursor: undefined }) // 更早页前插
+    expect(store.order).toEqual(['m0', 'm1', 'm2', 'm3'])
+    expect(store.byId['m1']?.content).toBe('m1')
+  })
+
+  it('重复 messageId 原位替换不重插（loadPage 二次去重）', () => {
+    const store = useMessageStore()
+    store.loadPage({ items: [pageMsg('m1', 't1'), pageMsg('m2', 't2')], hasMore: false, nextCursor: undefined })
+    store.loadPage({ items: [{ ...pageMsg('m2', 't2'), content: 'updated' }], hasMore: false, nextCursor: undefined })
+    expect(store.order).toEqual(['m1', 'm2'])
+    expect(store.byId['m2']?.content).toBe('updated')
+  })
+
+  it('非时间序页免疫：乱序 items 合并后仍升序', () => {
+    const store = useMessageStore()
+    store.loadPage({ items: [pageMsg('b', 't2'), pageMsg('a', 't1'), pageMsg('c', 't3')], hasMore: false, nextCursor: undefined })
+    expect(store.order).toEqual(['a', 'b', 'c'])
+  })
+
+  it('setPageMeta 首页 nextCursor → hasMoreBefore/beforeCursor（激活首屏后初始化）', () => {
+    const store = useMessageStore()
+    store.setPageMeta({ items: [pageMsg('m1', 't1')], hasMore: true, nextCursor: 'cur-x' })
+    expect(store.hasMoreBefore).toBe(true)
+    expect(store.beforeCursor).toBe('cur-x')
+  })
+
+  it('loadOlder 携带 before 游标拉更早页并入 + 推进游标；防重入', async () => {
+    const store = useMessageStore()
+    // 首页 items 必须经 loadPage 插入（order 由 loadPage/loadSnapshot 维护）；setPageMeta 只初始化游标、不载入 items（评审 P0-1）
+    store.loadPage({ items: [pageMsg('m2', 't2'), pageMsg('m3', 't3')], hasMore: true, nextCursor: 'cur-1' })
+    store.setPageMeta({ items: [pageMsg('m2', 't2'), pageMsg('m3', 't3')], hasMore: true, nextCursor: 'cur-1' })
+    expect(store.order).toEqual(['m2', 'm3']) // setPageMeta 不改 order
+    mockApi.getMessages.mockResolvedValue({ items: [pageMsg('m1', 't1')], hasMore: false, nextCursor: undefined })
+    await store.loadOlder()
+    expect(mockApi.getMessages).toHaveBeenCalledWith({ conversationId: 'conv-1', before: 'cur-1' })
+    expect(store.order).toEqual(['m1', 'm2', 'm3']) // 新页 items 有序前插
+    expect(store.hasMoreBefore).toBe(false)
+    expect(store.beforeCursor).toBeUndefined()
+    expect(store.loadingOlder).toBe(false)
+  })
+
+  it('loadOlder 失败保留游标 + lastError 公开（可重试），不改已渲染消息', async () => {
+    const store = useMessageStore()
+    store.loadPage({ items: [pageMsg('m2', 't2')], hasMore: true, nextCursor: 'cur-1' }) // 先载入已渲染消息（评审 P0-1）
+    store.setPageMeta({ items: [pageMsg('m2', 't2')], hasMore: true, nextCursor: 'cur-1' })
+    mockApi.getMessages.mockRejectedValue(new Error('网络错误'))
+    await store.loadOlder()
+    expect(store.beforeCursor).toBe('cur-1')
+    expect(store.hasMoreBefore).toBe(true)
+    expect(store.lastError?.message).toContain('网络错误')
+    expect(store.order).toEqual(['m2']) // 失败不改已渲染 order
+  })
+
+  it('loadSnapshot 排序载入 + hasMoreBefore=false（离线水合/离线切换，P1-1）', () => {
+    const store = useMessageStore()
+    store.loadSnapshot('conv-1', [pageMsg('m2', 't2'), pageMsg('m0', 't0')]) // 非时间序快照
+    expect(store.order).toEqual(['m0', 'm2'])
+    expect(store.hasMoreBefore).toBe(false)
+    expect(store.beforeCursor).toBeUndefined()
+  })
+
+  it('resetConversation 清 pagination 状态', () => {
+    const store = useMessageStore()
+    store.setPageMeta({ items: [pageMsg('m1', 't1')], hasMore: true, nextCursor: 'c' })
+    store.resetConversation('conv-1')
+    expect(store.hasMoreBefore).toBe(false)
+    expect(store.beforeCursor).toBeUndefined()
+    expect(store.loadingOlder).toBe(false)
+  })
+})

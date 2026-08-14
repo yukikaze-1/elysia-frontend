@@ -88,8 +88,8 @@ export function computeWindow(
   return { startIndex: start, endIndex: end, paddingTop: prefix[start], paddingBottom: prefix[prefix.length - 1] - prefix[end] }
 }
 
-/** 锚点：首个可见消息 + 视口偏移（D5，向上加载不跳动的前提） */
-export function captureAnchor(items: Message[], prefix: number[], scrollTop: number, viewportHeight: number): ScrollAnchor {
+/** 锚点：首个可见消息 + 视口偏移（D5，向上加载不跳动的前提）；viewportHeight 保留签名位（组件层扩展用） */
+export function captureAnchor(items: Message[], prefix: number[], scrollTop: number, _viewportHeight: number): ScrollAnchor {
   if (items.length === 0) return { messageId: '', offset: 0 }
   const idx = Math.max(0, lowerBound(prefix, scrollTop) - 1)
   return { messageId: items[idx].messageId, offset: scrollTop - prefix[idx] }

@@ -13,6 +13,8 @@ import type { BackendEvent, ConnectionState, Message, MessagePage } from '@share
 import { StreamAccumulator } from '@shared/domain'
 import { api } from './desktop-api'
 import { useConversationStore } from './conversation.store'
+import { useCacheStore } from './cache.store'
+import { cmpMsg } from '../utils/message-order'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 
 function nowIso(): string {
@@ -36,6 +38,11 @@ export const useMessageStore = defineStore('message', () => {
   const accumulator = ref<StreamAccumulator>()
   const lastError = ref<PublicError>()
 
+  /** G2：向上加载更早历史（before 游标，docs/02 §19 倒序 keyset） */
+  const hasMoreBefore = ref(false)
+  const beforeCursor = ref<string>()
+  const loadingOlder = ref(false)
+
   /** generationId → conversationId 归属表:只在 generation.started(唯一带 conversationId 的事件)记录(design §4.2.1) */
   const generationByConversation = ref<Record<string, string>>({})
   /** loadReplay 纯缓冲:currentId 未设时暂存,由 applyPendingReplay(id) 应用(design §4.1.3) */
@@ -54,9 +61,17 @@ export const useMessageStore = defineStore('message', () => {
     droppedEvents.value++
   }
 
-  /** 按 messageId 去重插入:新 key 追加 order;已存在则替换内容、保持位置 */
+  /** 按 messageId 去重 + (createdAt, messageId) 升序二分有序插入（P0-1）：新 key 插到第一个「不早于自己」的 key 之前（同序插其后，稳定）；已存在原位替换 */
   function upsertMessage(msg: Message): void {
-    if (byId.value[msg.messageId] === undefined) order.value.push(msg.messageId)
+    if (byId.value[msg.messageId] !== undefined) { byId.value[msg.messageId] = msg; return }
+    let lo = 0
+    let hi = order.value.length
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1
+      if (cmpMsg(byId.value[order.value[mid]], msg) <= 0) lo = mid + 1
+      else hi = mid
+    }
+    order.value.splice(lo, 0, msg.messageId)
     byId.value[msg.messageId] = msg
   }
 
@@ -109,6 +124,9 @@ export const useMessageStore = defineStore('message', () => {
     order.value = []
     activeGenerationId.value = undefined
     generationByConversation.value = {}
+    hasMoreBefore.value = false
+    beforeCursor.value = undefined
+    loadingOlder.value = false
   }
 
   function applyEvent(event: BackendEvent): void {
@@ -158,6 +176,8 @@ export const useMessageStore = defineStore('message', () => {
         if (event.generationId !== activeGenerationId.value) break
         acc.apply(event)
         finalizeAssistant(acc.getState().messageId, acc)
+        const finalMsg = byId.value[acc.getState().messageId]
+        if (finalMsg) void useCacheStore().pushMessages(useConversationStore().currentId ?? finalMsg.conversationId, [finalMsg], nowIso())
         activeGenerationId.value = undefined
         break
       }
@@ -176,9 +196,9 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
-  async function send(text: string): Promise<void> {
+  async function send(text: string): Promise<boolean> {
     const conversationId = useConversationStore().currentId
-    if (!conversationId) return
+    if (!conversationId) return false
     lastError.value = undefined   // 新发送清旧错误,避免失败横幅残留(最终 review 修复)
     const clientRequestId = crypto.randomUUID()
     const key = `local-${clientRequestId}`
@@ -197,9 +217,12 @@ export const useMessageStore = defineStore('message', () => {
       const ref = await api.send({ conversationId, text, clientRequestId })
       if (ref?.serverMessageId) migrateKey(key, ref.serverMessageId, optimistic)
       optimistic.status = 'acknowledged' // 无 serverMessageId 也 acknowledged(P2-1)
+      void useCacheStore().pushMessages(conversationId, [optimistic], nowIso()) // send ack 已确认消息快照
+      return true // P2-2：成功返回 true，调用方据此清草稿
     } catch (e) {
       optimistic.status = 'failed'
       lastError.value = parsePublicError(messageOf(e))
+      return false // P2-2：失败返回 false，调用方保留草稿
     } finally {
       sending.value = false
     }
@@ -238,7 +261,42 @@ export const useMessageStore = defineStore('message', () => {
   }
 
   function loadPage(page: MessagePage): void {
-    for (const m of page.items) upsertMessage(m)
+    const items = [...page.items].sort(cmpMsg) // 后端 before 页已归一化升序，再排一次免疫非时间序页（P0-1）
+    for (const m of items) upsertMessage(m)
+    const conversationId = useConversationStore().currentId
+    if (conversationId && items.length) void useCacheStore().pushMessages(conversationId, items, nowIso()) // best-effort，非离线快照路径
+  }
+
+  /** 激活首屏后初始化向上分页：首页 nextCursor 即「更早一页」的 before 游标（toMessagePage has_more 语义） */
+  function setPageMeta(page: MessagePage): void {
+    hasMoreBefore.value = page.hasMore && !!page.nextCursor
+    beforeCursor.value = page.nextCursor
+  }
+
+  /** 向上加载更早消息（CyMessageList 顶部哨兵触发）：防重入、失败保留游标可重试 */
+  async function loadOlder(): Promise<void> {
+    const conversationId = useConversationStore().currentId
+    if (!conversationId || loadingOlder.value || !hasMoreBefore.value || !beforeCursor.value) return
+    loadingOlder.value = true
+    try {
+      const page = await api.getMessages({ conversationId, before: beforeCursor.value })
+      loadPage(page)
+      hasMoreBefore.value = page.hasMore
+      beforeCursor.value = page.nextCursor ?? undefined
+    } catch (e) {
+      lastError.value = parsePublicError(messageOf(e)) // 保留游标，可重试
+    } finally {
+      loadingOlder.value = false
+    }
+  }
+
+  /** 离线水合/离线切换载入快照（P0-1/P1-1）：排序载入 + 离线不可加载更早 */
+  function loadSnapshot(conversationId: string, messages: Message[]): void {
+    resetConversation(conversationId)
+    for (const m of [...messages].sort(cmpMsg)) upsertMessage({ ...m, conversationId })
+    hasMoreBefore.value = false
+    beforeCursor.value = undefined
+    loadingOlder.value = false
   }
 
   /** 断线(reconnecting/error/disconnected):先清 local-* pending 乐观消息(I5),再处理 in-flight → interrupted(P1-6) */
@@ -272,6 +330,9 @@ export const useMessageStore = defineStore('message', () => {
     generationByConversation,
     pendingReplay,
     droppedEvents,
+    hasMoreBefore,
+    beforeCursor,
+    loadingOlder,
     resetConversation,
     applyEvent,
     send,
@@ -279,6 +340,9 @@ export const useMessageStore = defineStore('message', () => {
     loadReplay,
     applyPendingReplay,
     loadPage,
+    setPageMeta,
+    loadOlder,
+    loadSnapshot,
     handleConnectionStateChange
   }
 })
