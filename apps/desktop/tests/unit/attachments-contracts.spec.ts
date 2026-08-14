@@ -54,9 +54,9 @@ describe('附件/队列/上传契约（spec §4.2）', () => {
     expect(ATTACHMENT_MAX_BYTES_BY_KIND.audio).toBe(20 * 1024 * 1024)
     expect(ATTACHMENT_MAX_BYTES_BY_KIND.file).toBe(20 * 1024 * 1024)
   })
-  it('播放矩阵 MIME 白名单与 D-03 一致（video 可播 mp4/webm/ogv；audio 可播 mp3/wav/ogg/flac/m4a；image png/jpg/gif/webp/svg）', () => {
+  it('播放矩阵 MIME 白名单与 D-03 一致（video 可播 mp4/webm/ogv；audio 可播 mp3/wav/ogg/flac/m4a/webm；image png/jpg/gif/webp/svg）', () => {
     expect(ATTACHMENT_KIND_MIME.video).toEqual(['video/mp4', 'video/webm', 'video/ogg'])
-    expect(ATTACHMENT_KIND_MIME.audio).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4'])
+    expect(ATTACHMENT_KIND_MIME.audio).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/webm'])
     expect(ATTACHMENT_KIND_MIME.image).toEqual(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
   })
   it('队列联合可判别：attachment 分支状态机枚举无 uploaded 瞬态（D4）', () => {

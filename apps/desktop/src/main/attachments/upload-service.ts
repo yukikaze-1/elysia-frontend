@@ -6,7 +6,7 @@ import type { FileValidationResult, MessageAttachment, UploadFileDescriptor } fr
 import type { AttachmentInfo, AttachmentKind } from '@shared/contracts'
 import type { BackendAdapter, UploadContent } from '../transport/backend-adapter'
 import type { SafeOpenPlatform } from '../persistence/safe-open'
-import { precheckFiles, sniffKind, sizeLimitFor } from './attachment-policy'
+import { precheckFiles, sniffKind, sizeLimitFor, wireKindHint } from './attachment-policy'
 
 export interface UploadFs {
   realpath(p: string): Promise<string>
@@ -151,12 +151,12 @@ export class UploadService {
           try { bytesRead = (await hfd.read(head, 0, HEAD_LEN)).bytesRead } finally { await hfd.close() }
           const kind = sniffKind(head.subarray(0, bytesRead))
           if (st.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
-          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind, path: d.path, bytes: new Uint8Array(await this.fs.readFile(d.path)) })
+          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind: wireKindHint(kind, d.mediaType), path: d.path, bytes: new Uint8Array(await this.fs.readFile(d.path)) })
         } else if (d.bytes) {
           // P2-1：bytes 分支也按魔数嗅探 kind 复验大小（此前无大小复验）
           const kind = sniffKind(d.bytes.subarray(0, HEAD_LEN))
           if (d.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
-          uploads.push({ name: d.name, mediaType: d.mediaType, size: d.size, kind, bytes: d.bytes })
+          uploads.push({ name: d.name, mediaType: d.mediaType, size: d.size, kind: wireKindHint(kind, d.mediaType), bytes: d.bytes })
         } else {
           throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件缺少 bytes/path: ${d.localId}`)
         }

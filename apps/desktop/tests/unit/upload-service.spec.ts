@@ -42,4 +42,17 @@ describe('UploadService.uploadBatch / cancel', () => {
     svc.cancel('u1')                                                              // 批量终止（IPC attachments:cancel 同路径）
     await expect(p).rejects.toThrow('cancelled')                                  // uploadBatch reject → IPC 层 → 条目 cancelled
   })
+  it('webm：UploadContent.kind 为 wireKindHint 消歧值（audio/webm→audio；大小限额仍魔数）', async () => {
+    const calls: Array<{ kind?: string }> = []
+    const uploadAttachments = vi.fn(async (files: Array<{ kind?: string }>) => {
+      calls.push(...files)
+      return files.map((f, i) => ({ attachmentId: `att_${i}`, kind: f.kind ?? 'file', mime: 'application/octet-stream', size: 1, url: `/api/attachments/${i}`, filename: `f${i}` }))
+    })
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs: fakeFs() })
+    // audio/webm：EBML 魔数 → sniffKind='video'，wireKindHint('video','audio/webm')='audio'
+    await svc.uploadBatch('u1', [
+      { localId: 'l1', name: 'a.webm', size: 4, mediaType: 'audio/webm', source: 'picker', bytes: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x01]) }
+    ])
+    expect(calls[0].kind).toBe('audio')
+  })
 })

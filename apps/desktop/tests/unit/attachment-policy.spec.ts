@@ -2,7 +2,7 @@
 // Task 6:纯校验策略（spec §4.5/§3.2 D-04）——kind 矩阵、魔数嗅探、数量/聚合/单文件限额预检。env=node 无 fs。
 import { describe, expect, it } from 'vitest'
 import { ATTACHMENT_MAX_BYTES_BY_KIND } from '../../src/shared/contracts/attachments'
-import { isKindAcceptable, kindFromMime, precheckFiles, sniffKind } from '../../src/main/attachments/attachment-policy'
+import { isKindAcceptable, kindFromMime, precheckFiles, sniffKind, wireKindHint } from '../../src/main/attachments/attachment-policy'
 
 describe('kindFromMime / isKindAcceptable（D-03 矩阵）', () => {
   it('白名单 MIME → 对应 kind', () => {
@@ -65,5 +65,18 @@ describe('precheckFiles（数量/聚合/单文件限额）', () => {
   })
   it('全部通过 → ok:true，无 issues', () => {
     expect(precheckFiles([{ name: 'a', size: 1024, mediaType: 'image/png' }]).ok).toBe(true)
+  })
+})
+
+describe('wireKindHint（webm 魔数无法区分 audio/video，特例回退 MIME）', () => {
+  it('audio/webm：video → audio', () => {
+    expect(wireKindHint('video', 'audio/webm')).toBe('audio')
+  })
+  it('video/webm：保持 video', () => {
+    expect(wireKindHint('video', 'video/webm')).toBe('video')
+  })
+  it('非 webm 不受影响（image png / 无 kind 默认）', () => {
+    expect(wireKindHint('image', 'image/png')).toBe('image')
+    expect(wireKindHint('file', 'audio/webm')).toBe('file')   // 非 video 魔数结果不触发回退
   })
 })

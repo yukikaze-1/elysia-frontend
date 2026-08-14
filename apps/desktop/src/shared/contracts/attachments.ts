@@ -79,7 +79,7 @@ export const ATTACHMENT_MAX_BYTES_BY_KIND: Record<AttachmentKind, number> = {
 export const ATTACHMENT_KIND_MIME: Record<AttachmentKind, readonly string[]> = {
   image: ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'],
   video: ['video/mp4', 'video/webm', 'video/ogg'],
-  audio: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4'],
+  audio: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/webm'],
   file: [],
   link: []
 }

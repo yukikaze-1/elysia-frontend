@@ -44,6 +44,12 @@ export function sniffKind(head: Uint8Array): AttachmentKind {
   return sniff(head) ?? 'file'
 }
 
+/** wire kind 提示：webm 魔数无法区分 audio/video，特例回退 MIME（仅 hint；大小限额仍用 sniffKind 魔数，P2-1 防线不变） */
+export function wireKindHint(kind: AttachmentKind, mediaType: string): AttachmentKind {
+  if (kind === 'video' && mediaType === 'audio/webm') return 'audio'
+  return kind
+}
+
 export interface PrecheckIssue {
   name: string
   reason: 'too_many' | 'too_large_aggregate' | 'size_limit' | 'unsupported_type'
