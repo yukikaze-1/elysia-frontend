@@ -979,7 +979,7 @@ idle → connecting → connected
 | LLM/STT/TTS Profile 配置接口 | `GET/POST /api/providers` → `ProvidersResponse{llm, stt, tts, custom, unconfigured}`（条目含 `credentialConfigured` / `runtime` / `capabilities`）；WS `switch_model{service, model}` / `set_service{service, enabled}`；TTS `GET /api/tts/voices` + `POST /api/tts/preview` + WS `set_tts_voice{voice}` | `ModelProfile` |
 | 自定义模型新增/编辑/删除 | `POST /api/providers`（custom 条目，同名更新；`api_key` 一次性提交入 Secret Store **永不读回**，非 backend runtime 带 key → 400 `PROFILE_INVALID_RUNTIME`）；删除激活中 profile → 409 `PROFILE_IN_USE` | `UpsertCustomModelProfileCommand` |
 | 模型连接测试与切换接口 | `POST /api/providers/test`（base_url 非空一律 SSRF 校验）→ `ProviderTestResult{ok, latency_ms?, error?, detail?}`；切换经 WS `switch_model` / `set_tts_voice` → `switch_model_result` / `set_tts_voice_result{ok, error?}` | `ModelProfileTestResult` |
-| 输入法转写专用 STT 选择 | **无独立字段（待对齐）**：后端 `dictation.start` 仅带 `clientRequestId`，转写用**当前活动 STT**；前端 `dictationSttProfileId` 需在 start 前经 `switch_model{service:"stt"}` / `set_service` 切到目标 STT | `dictationSttProfileId` / `DictationSettings` |
+| 输入法转写专用 STT 选择 | **契约已确认（后端 `556117a`）**：`dictation.start.sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），会话内快照不改全局活动 STT | `dictationSttProfileId` / `DictationSettings` |
 | 普通录音输入与发送确认 | WS `voice.record.start{recordingId(rec_)}` → BINARY PCM ×N（全段缓冲）→ `voice.record.stop{recordingId}` → `voice.transcript{recordingId, text, emotion?}` → `voice.commit{recordingId, text, clientRequestId, clientMessageId?, conversationId?}` → `user_message.ack` + generation.*（复用字幕文本不重转写）；`voice.discard{recordingId}` | `VoiceInputSession` / `RecordedVoiceInputReadyEvent` |
 | 实时语音字幕、断句与轮次提交 | WS `voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped/cancelled/timeout/stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压 | `VoiceCaptionEvent` / 后端轮次事件映射 |
 | TTS 整段/流式音频、取消和完成 | WS `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data, is_final}` ×N → `audio_end{stream_id}`（字节全发≠播完，完成由前端 `onended` 判定）；`audio.cancel{stream_id}`（全局）→ `audio_cancelled{stream_id}` | `TtsPlaybackSession` / `TtsChunkEvent` |
@@ -999,11 +999,11 @@ idle → connecting → connected
 | D-5 | `generation.completed.conversationUsage{total, byModel}` | `conversationUsage`（source=`server_aggregate`） | 会话级累计来自服务端，非前端累加 |
 | D-6 | `generation.segment.completed.content` | `AssistantSegment.text` | 后端整段文本为权威，无需拼 delta；前端 `SegmentCompletedEvent` 当前未含 content，Adapter 需透传或用其覆盖累积 |
 | D-7 | `MessageChannel` 含 `status` 通道 | `SegmentChannel` 仅 inner_voice/public_reply | 后端预留 `status` 通道；Adapter 需映射或过滤，不得丢字段 |
-| D-8 | `dictation.start` 无 STT Profile 字段 | `dictationSttProfileId` | 后端用活动 STT，前端需在 start 前切换；**待后端确认是否加独立字段** |
+| D-8 | `dictation.start.sttProfileId`（`<provider>/<model>`，可选） | `dictationSttProfileId` | 后端已加独立字段（`556117a`），契约已确认；缺省用全局活动 STT，会话内快照不改全局活动 STT；前端直接透传即可，无需 start 前切换 |
 | D-9 | `generation.completed.finishReason` 限 stop/tool_calls | 前端消息状态 completed | 取消/错误统一走 `generation.failed`，前端不得从 `state idle` 推断完成 |
 | D-10 | `server_info.features` / `services` | 连接能力快照 | 各 feature 如实声明；前端据 `features` 门控 UI，不超前实现 |
 
-**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧未动。剩余待后端确认项：`dictationSttProfileId`（D-8）；E-03 凭据所有权契约已确认（后端 Secret Store `data/secrets/` + `credentialConfigured` 只读；desktop/local 凭据归 Electron），可按「已开发、未联调」推进阶段 1。
+**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧 `556117a` 已为 `dictation.start` 增加 `sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），**D-8 关闭（契约已确认）**；无剩余待后端确认项。E-03 凭据所有权契约已确认（后端 Secret Store `data/secrets/` + `credentialConfigured` 只读；desktop/local 凭据归 Electron），可按「已开发、未联调」推进阶段 1。
 
 完成这张表并通过真实事件联调后，才可以把本文状态从“待与现有后端核对”改为“已对齐 / 可作为工程契约基线”。
 

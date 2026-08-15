@@ -67,7 +67,7 @@
 - **B-03/B-04/B-05/B-06/B-08**（传输方式/协议版本/重连续传/错误结构/日志关联）——契约已确认（WS v2 + `X-Protocol-Version: 2`、无续传、40 错误码、`requestId` 关联）；
 - **C-01~C-09**（会话/历史/发送/流式/ID/Token/停止）——契约与真实轨迹已确认；
 - **E-01/E-02/E-03**（Profile/字段/凭据所有权）——契约已确认（后端 Secret Store `data/secrets/` 持有，`credentialConfigured` 只读状态；desktop/local 凭据归 Electron）；E-03 满足阶段 1 进入条件；
-- **E-05/E-06/E-08**（语音/TTS/转写）——三种语音 + TTS 播放契约已确认；**E-07 输入法转写专用 STT Profile 仍有缺口（后端 `dictation.start` 无独立 STT 字段，见 doc 02 §19 D-8，待决策）**；
+- **E-05/E-06/E-08**（语音/TTS/转写）——三种语音 + TTS 播放契约已确认；**E-07 输入法转写专用 STT Profile 已确认（后端 `556117a` 为 `dictation.start` 增加 `sttProfileId` 独立字段，`<provider>/<model>`、缺省用全局活动 STT，会话内快照不改全局活动 STT，见 doc 02 §19 D-8 关闭）**；
 - **F-01~F-05**（工具注册表/Runtime/事件/幂等/P0 清单）——契约已确认；`desktop.command.run` 确认不注册；
 - **G-04**（情绪→状态映射）——`expression`/`mood` 源字段已确认，映射表仍需设计产出。
 
@@ -136,7 +136,7 @@
 | [ ] | E-04 | P1 | 自定义 OpenAI Compatible/Custom REST 的 Endpoint、HTTPS/本机模式、DNS/重定向/私网规则和 Header 白名单 | 危险 Header、远程 HTTP、云元数据/未授权私网、跨域携密重定向和空模型被拒绝 | 4 |
 | [ ] | E-05 | P1 | 普通录音输入、实时语音会话的音频格式、采样率、字幕、VAD、断句和语音轮次事件 | 两种模式各完成一次真实语音输入，字幕均不进入文字草稿 | 4 |
 | [ ] | E-06 | P1 | TTS 是整段还是流式；音频格式、声音、取消和播放完成事件 | 完成一次试听和一次回复播放 | 4 |
-| [ ] | E-07 | P1 | 输入法转写专用 STT Profile 选择，以及 Demo 启用 Backend、本机、Local Worker 中哪些模型执行位置 | 决策记录已确认，Profile 和数据去向明确 | 4 |
+| [~] | E-07 | P1 | 输入法转写专用 STT Profile 选择，以及 Demo 启用 Backend、本机、Local Worker 中哪些模型执行位置 | 契约已确认（后端 `556117a`）：转写可经 `dictation.start.sttProfileId`（`<provider>/<model>`）独立选择兼容 STT Profile，缺省用全局活动 STT，会话内快照不改全局活动 STT | 4 |
 | [ ] | E-08 | P1 | 输入法转写的按下、松开、取消、最终文字和临时音频清理规则 | 转写只写入草稿且不会自动发送 | 4 |
 | [ ] | E-09 | P2 | Local Worker 的启动、发现、版本、模型下载和资源占用接口 | 若进入 Demo，可检测安装与不可用状态 | 4 |
 
