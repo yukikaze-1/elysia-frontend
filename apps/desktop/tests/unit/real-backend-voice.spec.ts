@@ -24,6 +24,8 @@ class FakeWs {
   push(frame: unknown): void { this.handlers['message']?.(JSON.stringify(frame)) }
   /** 推二进制消息（对齐真实 ws 库 isBinary 第二参判别；验证 UNEXPECTED_BINARY 忽略） */
   pushBinary(bytes: Uint8Array): void { this.handlers['message']?.(Buffer.from(bytes), true) }
+  /** 触发 socket close（真实 ws close 事件 → onSocketClosed → 重连退避；测试模拟掉线） */
+  pushClose(): void { this.handlers['close']?.() }
 }
 
 /** 建立已连接 backend（同步推握手帧使 connect resolve）；返回 warnings/errors 捕获数组 */
@@ -167,6 +169,36 @@ describe('RealBackend 单活动语音会话注册表（Task 4）', () => {
     expect(() => backend.sendAudioBytes(new Uint8Array([1, 2, 3]))).not.toThrow()
     expect(binaryCount(ws)).toBe(0)
     expect(warnings.some((w) => w.code === 'VOICE_BINARY_NO_SESSION')).toBe(true)
+  })
+
+  it('socket 掉线（close 无 ended 回执）→ activeVoice 清位，重连后语音 start 不再锁死（review Important fix）', async () => {
+    // realtime 会话活跃；后端未发 voice_session.ended 即掉线 → 重连后若 activeVoice 残留，所有 start* 永久抛
+    // 「已有活动语音会话进行中」。修复：onSocketClosed 清位。
+    const { backend, ws } = await makeBackend({ reconnectBaseDelayMs: 5 })
+    await backend.startRealtimeVoice({ sessionId: 'vs-1' })
+    ws.pushClose()   // 触发 onSocketClosed（未发 ended）：ws 置 undefined、activeVoice 清位、进入重连退避
+    // 等自动重连的 establishWs 复用同一 FakeWs 重新注册 handler（退避 5ms），再推握手帧恢复 connected
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 5))
+      if (backend.getConnectionState().status === 'connecting') break   // establishWs 已发起新握手（connect 置 connecting）
+      ws.push({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })
+      ws.push({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-2' })
+      if (backend.getConnectionState().status === 'connected') break
+    }
+    await expect(backend.startRecordVoice({ recordingId: 'rec-after-reconnect' })).resolves.toEqual({ recordingId: 'rec-after-reconnect' })
+    expect(backend.getConnectionState().status).toBe('connected')
+  })
+
+  it('显式 disconnect → activeVoice 清位，重新 connect 后语音 start 不再锁死（review Important fix）', async () => {
+    const { backend, ws } = await makeBackend()
+    await backend.startRealtimeVoice({ sessionId: 'vs-1' })
+    await backend.disconnect()
+    // 重新连接（connect 用同一 wsFactory 会返回同一 FakeWs，但其 closed；这里新建连接走真实 re-handshake）
+    const p2 = backend.connect({ serverUrl: 'http://test.local', token: 'sk-test' })
+    ws.push({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })
+    ws.push({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-3' })
+    await p2
+    await expect(backend.startRecordVoice({ recordingId: 'rec-after-disc' })).resolves.toEqual({ recordingId: 'rec-after-disc' })
   })
 })
 

@@ -469,6 +469,9 @@ export class RealBackend implements BackendAdapter {
     if (this.disconnected) return
     if (this.state.status === 'error') return // unexpected-response/版本不符 fail-fast 后,后续 close/error 不再翻回 reconnecting
     this.ws = undefined
+    // P4-B：socket 掉线即语音会话随连接终止一并失效——后端侧会话已随连接销毁或不再送达 ended 回执。
+    // 若此处不清位，重连后 activeVoice 恒存（无 ended 可清），所有 start* 永久抛「已有活动语音会话进行中」→ 语音输入锁死（task-4 review Important）。
+    this.activeVoice = undefined
     this.lastSocketClosedAt = this.options.now?.() ?? Date.now() // F2:掉线时刻接入注入时钟(now())
     this.scheduleReconnect()
   }
@@ -511,6 +514,7 @@ export class RealBackend implements BackendAdapter {
       pending.reject(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,ack 未完成'))
     }
     this.pendingAcks.clear()
+    this.activeVoice = undefined // P4-B:显式 disconnect 即语音会话失效(同重连语义),防重连后语音输入锁死(task-4 review Important)
     this.ws?.close()
     this.ws = undefined
     // 握手未完成(connecting/reconnecting)时取消:reject 挂起的 connect promise,避免 await connect() 永久挂死
