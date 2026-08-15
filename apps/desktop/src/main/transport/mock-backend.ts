@@ -36,12 +36,25 @@ import type {
   AudioCancelInput,
   DictationStartInput,
   DictationStopInput,
+  DictationFinalEvent,
+  DictationPartialEvent,
+  DictationCancelledEvent,
   RealtimeVoiceControlInput,
   RealtimeVoiceStartInput,
   VoiceCommitInput,
   VoiceDiscardInput,
+  VoiceInputMode,
   VoiceRecordStartInput,
-  VoiceRecordStopInput
+  VoiceRecordStopInput,
+  VoiceTranscriptEvent,
+  VoiceSessionStartedEvent,
+  VoiceSessionPartialEvent,
+  VoiceSessionTurnEvent,
+  VoiceSessionEndedEvent,
+  AudioSessionStartedEvent,
+  AudioSessionReadyEvent,
+  AudioSessionCancelledEvent,
+  VoiceErrorEvent
 } from '@shared/contracts'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
@@ -98,6 +111,10 @@ export interface MockBackendOptions {
   now?: () => Date
   /** 大 seed：设置时 seedMessages() 返回确定性合成历史（spec §4.3.1）；默认 undefined 保持 5 条 */
   seedHistoryCount?: number
+  /** 语音错误注入（P4-B Mock）：设置时各语音 start* 方法 emit `voice.error` 而非继续（测错误路由） */
+  voiceError?: { code: string; message?: string }
+  /** 普通录音转写文本（P4-B Mock）：stopRecordVoice 缺省 `'这是一段测试录音的转写文本'`；显式空串测「未识别」（stop 不发 transcript） */
+  voiceTranscriptText?: string
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -132,6 +149,13 @@ export class MockBackend implements BackendAdapter {
   private idCounter = 0
   /** 大 seed 条数（构造体内先于 messageRecords 赋值，seedMessages() 才能读到；spec §4.3.1） */
   private readonly seedHistoryCount: number
+  /** P4-B 语音选项：voiceError 注入 + 录音转写文本（缺省测试文案） */
+  private readonly voiceErrorOpt?: { code: string; message?: string }
+  private readonly transcriptText: string
+  /** 实时语音会话归属会话（startRealtimeVoice 携带；turn 内 conversationId 取此优先于活动会话） */
+  private realtimeConversationId?: string
+  /** 实时会话 turn 已发标志（每会话首个 chunk 仅发一次 partial+turn；realtime start/stop/cancel 时重置） */
+  private realtimeTurnEmitted = false
   /** 历史记录（预置样例 + sendMessage 追加；查看器 Mock 全链路数据源） */
   private readonly messageRecords: Message[]
 
@@ -158,6 +182,14 @@ export class MockBackend implements BackendAdapter {
   /** 当前激活选择（activateModelProfile 更新；getActiveModelSelection 返回副本） */
   private activeSelection: ActiveModelSelection = {}
 
+  // —— 阶段 4 批次 B（P4-B）语音/TTS 模拟 ——
+  /** 单活动语音会话（任一语音模式持一；kind + key 双标识，key=recordingId/sessionId/clientRequestId） */
+  private activeVoice?: { kind: VoiceInputMode; key: string }
+  /** 已接收的语音音频块计数（sendAudioBytes 累积；测试可观测） */
+  public receivedAudioChunks = 0
+  /** 单一共享信封计数器（Minor 11 修复）：全部语音/TTS 事件与既有 generation/replay 事件共用同一
+   *  单调计数器打 eventId/sequence（不另起 voiceSeq，避免与 replay 事件交错时非单调；mock-replay.spec 断言全局升序） */
+  private nextSequence = 0
 
   private seedMessages(): Message[] {
     if (this.seedHistoryCount > 0) return this.seedSyntheticHistory(this.seedHistoryCount)
@@ -189,6 +221,8 @@ export class MockBackend implements BackendAdapter {
 
   constructor(options: MockBackendOptions = {}) {
     this.seedHistoryCount = options.seedHistoryCount ?? 0
+    this.voiceErrorOpt = options.voiceError
+    this.transcriptText = options.voiceTranscriptText ?? '这是一段测试录音的转写文本'
     this.messageRecords = this.seedMessages()
     this.emitDelayMs = options.emitDelayMs ?? 30
     this.onConnectionStateChange = options.onConnectionStateChange
@@ -407,22 +441,102 @@ export class MockBackend implements BackendAdapter {
     ] }
   }
 
-  // —— P4-B 语音（Task 4 落地真实 Mock 实现；Task 3 中间态抛 NOT_IMPLEMENTED 保持编译绿） ——
-  async startRecordVoice(_input: VoiceRecordStartInput): Promise<{ recordingId: string }> { throw this.voiceNotImplemented('startRecordVoice') }
-  async stopRecordVoice(_input: VoiceRecordStopInput): Promise<void> { throw this.voiceNotImplemented('stopRecordVoice') }
-  async commitVoice(_input: VoiceCommitInput): Promise<ClientRequestRef> { throw this.voiceNotImplemented('commitVoice') }
-  async discardVoice(_input: VoiceDiscardInput): Promise<void> { throw this.voiceNotImplemented('discardVoice') }
-  async startRealtimeVoice(_input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> { throw this.voiceNotImplemented('startRealtimeVoice') }
-  async stopRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.voiceNotImplemented('stopRealtimeVoice') }
-  async cancelRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.voiceNotImplemented('cancelRealtimeVoice') }
-  async startDictation(_input: DictationStartInput): Promise<{ clientRequestId: string }> { throw this.voiceNotImplemented('startDictation') }
-  async stopDictation(_input: DictationStopInput): Promise<void> { throw this.voiceNotImplemented('stopDictation') }
-  async cancelDictation(_input: DictationStopInput): Promise<void> { throw this.voiceNotImplemented('cancelDictation') }
-  sendAudioBytes(_bytes: Uint8Array): void { throw this.voiceNotImplemented('sendAudioBytes') }
-  async audioCancel(_input: AudioCancelInput): Promise<void> { throw this.voiceNotImplemented('audioCancel') }
+  // —— P4-B 语音（Task 7 落地 Mock 模拟；Task 3 中间态抛 NOT_IMPLEMENTED 保持编译绿） ——
+  async startRecordVoice(input: VoiceRecordStartInput): Promise<{ recordingId: string }> {
+    if (this.pollVoiceError()) return { recordingId: input.recordingId }
+    this.activeVoice = { kind: 'record', key: input.recordingId }
+    return { recordingId: input.recordingId }
+  }
 
-  private voiceNotImplemented(method: string): CyreneError {
-    return new CyreneError(CyreneErrorCode.NOT_IMPLEMENTED, `MockBackend.${method} 尚未实现(阶段4批B Task 4 落地)`)
+  async stopRecordVoice(input: VoiceRecordStopInput): Promise<void> {
+    const text = this.transcriptText
+    // 显式空串测「未识别」：不发 transcript（Minor 18）；非空才 emit voice.transcript
+    if (text.length > 0) {
+      this.emit({ ...this.stamp(), event: 'voice.transcript', recordingId: input.recordingId, text } satisfies VoiceTranscriptEvent)
+    }
+    if (this.activeVoice?.kind === 'record') this.activeVoice = undefined
+  }
+
+  async commitVoice(input: VoiceCommitInput): Promise<ClientRequestRef> {
+    if (!this.connected) {
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'MockBackend 未连接')
+    }
+    // 复用既有 sendMessage ack 语义：记录消息 + 触发 generation 回放；ack 以返回的 ClientRequestRef 体现（与 sendMessage 同构）
+    this.messageRecords.push({
+      messageId: `msg-${this.idFactory().replace(/[^A-Za-z0-9_-]/g, '')}`,
+      conversationId: input.conversationId, role: 'user', createdAt: this.now().toISOString(),
+      status: 'completed', content: input.text
+    })
+    this.scheduleReplay(input.conversationId)
+    return { clientRequestId: input.clientRequestId }
+  }
+
+  async discardVoice(_input: VoiceDiscardInput): Promise<void> {
+    if (this.activeVoice?.kind === 'record') this.activeVoice = undefined
+  }
+
+  async startRealtimeVoice(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> {
+    if (this.pollVoiceError()) return { sessionId: input.sessionId }
+    this.activeVoice = { kind: 'realtime', key: input.sessionId }
+    this.realtimeConversationId = input.conversationId
+    this.realtimeTurnEmitted = false
+    this.emit({ ...this.stamp(), event: 'voice_session.started', sessionId: input.sessionId, ...(input.conversationId ? { conversationId: input.conversationId } : {}) } satisfies VoiceSessionStartedEvent)
+    return { sessionId: input.sessionId }
+  }
+
+  async stopRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void> {
+    this.emit({ ...this.stamp(), event: 'voice_session.ended', sessionId: input.sessionId, reason: 'stopped' } satisfies VoiceSessionEndedEvent)
+    if (this.activeVoice?.kind === 'realtime') { this.activeVoice = undefined; this.realtimeTurnEmitted = false }
+  }
+
+  async cancelRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void> {
+    this.emit({ ...this.stamp(), event: 'voice_session.ended', sessionId: input.sessionId, reason: 'cancelled' } satisfies VoiceSessionEndedEvent)
+    if (this.activeVoice?.kind === 'realtime') { this.activeVoice = undefined; this.realtimeTurnEmitted = false }
+  }
+
+  async startDictation(input: DictationStartInput): Promise<{ clientRequestId: string }> {
+    if (this.pollVoiceError()) return { clientRequestId: input.clientRequestId }
+    this.activeVoice = { kind: 'dictation', key: input.clientRequestId }
+    // 模拟输入法转写累积首条字幕（零消息副作用）
+    this.emit({ ...this.stamp(), event: 'dictation.partial', text: '正在听写' } satisfies DictationPartialEvent)
+    return { clientRequestId: input.clientRequestId }
+  }
+
+  async stopDictation(input: DictationStopInput): Promise<void> {
+    this.emit({ ...this.stamp(), event: 'dictation.final', clientRequestId: input.clientRequestId, text: '这是听写文本' } satisfies DictationFinalEvent)
+    if (this.activeVoice?.kind === 'dictation') this.activeVoice = undefined
+  }
+
+  async cancelDictation(input: DictationStopInput): Promise<void> {
+    this.emit({ ...this.stamp(), event: 'dictation.cancelled', clientRequestId: input.clientRequestId } satisfies DictationCancelledEvent)
+    if (this.activeVoice?.kind === 'dictation') this.activeVoice = undefined
+  }
+
+  sendAudioBytes(_bytes: Uint8Array): void {
+    // 同步累积计数（无会话也计数，不 throw——与 real 的「丢弃告警不抛」语义对齐的 Mock 简化）
+    this.receivedAudioChunks++
+    if (this.activeVoice?.kind !== 'realtime') return
+    // 实时会话：起会话后首个 chunk 模拟后端 VAD 分段 → partial + 自动提交 turn（每会话仅一次）
+    if (!this.realtimeTurnEmitted) {
+      const sessionId = this.activeVoice.key
+      const conversationId = this.realtimeConversationId ?? this.activeConversationId
+      const messageId = `msg_${this.idFactory().replace(/[^A-Za-z0-9_-]/g, '')}`
+      this.realtimeTurnEmitted = true
+      this.emit({ ...this.stamp(), event: 'voice_session.partial', sessionId, turnId: 1, segmentIndex: 0, text: '实时语音轮次文本' } satisfies VoiceSessionPartialEvent)
+      this.emit({ ...this.stamp(), event: 'voice_session.turn', sessionId, turnId: 1, messageId, ...(conversationId ? { conversationId } : {}), text: '实时语音轮次文本' } satisfies VoiceSessionTurnEvent)
+    }
+  }
+
+  async audioCancel(input: AudioCancelInput): Promise<void> {
+    this.emit({ ...this.stamp(), event: 'audio.session.cancelled', streamId: input.streamId } satisfies AudioSessionCancelledEvent)
+  }
+
+  /** options.voiceError 注入：各语音 start* 时 emit voice.error（替代继续）；falsy 时返回 false 正常继续 */
+  private pollVoiceError(): boolean {
+    const err = this.voiceErrorOpt
+    if (!err) return false
+    this.emit({ ...this.stamp(), event: 'voice.error', code: err.code, ...(err.message ? { message: err.message } : {}) } satisfies VoiceErrorEvent)
+    return true
   }
 
   async submitToolResult(_input: ToolResult): Promise<void> {
@@ -460,6 +574,7 @@ export class MockBackend implements BackendAdapter {
     this.fixture.forEach((event, index) => {
       const fresh: Record<string, unknown> = { ...event }
       fresh.eventId = this.idFactory()
+      fresh.sequence = this.nextSequence++
       if ('generationId' in event) fresh.generationId = genId
       if ('messageId' in event) fresh.messageId = msgId
       if ('responseId' in event) fresh.responseId = rspId
@@ -475,6 +590,11 @@ export class MockBackend implements BackendAdapter {
       // BackendEvent 是接口联合，需 as unknown as 双转（TS2352）
       const timer = setTimeout(() => {
         this.emit(fresh as unknown as BackendEvent)
+        // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件
+        if (event.event === 'generation.completed' && this.ttsActive) {
+          this.emit({ ...this.stamp(), event: 'audio.session.started', streamId: 1, format: 'wav' } satisfies AudioSessionStartedEvent)
+          this.emit({ ...this.stamp(), event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/mock-silent', format: 'wav' } satisfies AudioSessionReadyEvent)
+        }
       }, index * this.emitDelayMs)
       genTimers.push(timer)
     })
@@ -488,6 +608,16 @@ export class MockBackend implements BackendAdapter {
 
   private emit(event: BackendEvent): void {
     this.handler?.(event)
+  }
+
+  /** 共享单调信封（Minor 11）：全部 Mock 事件（replay + 语音/TTS）复用同一计数器打 eventId/sequence */
+  private stamp(): { eventId: string; sequence: number } {
+    return { eventId: this.idFactory(), sequence: this.nextSequence++ }
+  }
+
+  /** TTS 活动判定（D-P13）：无独立标志，`!!activeSelection.ttsProfileId` 即活动 */
+  get ttsActive(): boolean {
+    return !!this.activeSelection.ttsProfileId
   }
 }
 
