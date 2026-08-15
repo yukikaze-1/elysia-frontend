@@ -31,6 +31,11 @@ describe('MockBackend 语音模拟（P4-B Task 7）', () => {
       conversationId: 'conv-1001', clientRequestId: 'cc1', clientMessageId: 'cm1'
     })
     expect(ref.clientRequestId).toBe('cc1') // ack 以返回的 ClientRequestRef 体现（与 sendMessage 同构）
+    expect(ref.serverMessageId).toMatch(/^msg-/) // Task 12 乐观消息迁移依赖 serverMessageId（real ack 同形状）
+
+    // serverMessageId 即记录消息 messageId → 迁移 key 在 Mock 历史侧可解析（Task 12 乐观迁移闭环）
+    const hist = await backend.queryChatHistory({ scope: { type: 'conversation', conversationId: 'conv-1001' }, limit: 20, timeZone: 'Asia/Shanghai', category: 'all' })
+    expect(hist.items.some((h) => h.messageId === ref.serverMessageId && h.snippet === '这是一段测试录音的转写文本')).toBe(true)
 
     await sleep(60) // 等 generation 回放完成
     expect(ev.some((e) => e.event === 'generation.completed')).toBe(true)

@@ -461,14 +461,18 @@ export class MockBackend implements BackendAdapter {
     if (!this.connected) {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'MockBackend 未连接')
     }
-    // 复用既有 sendMessage ack 语义：记录消息 + 触发 generation 回放；ack 以返回的 ClientRequestRef 体现（与 sendMessage 同构）
+    // 复用既有 sendMessage 语义：记录消息 + 触发 generation 回放；ack 以返回的 ClientRequestRef 体现。
+    // 服务端消息 ID（serverMessageId）由 idFactory 确定性生成（缺省 `msg-<factory>` 前缀），并作为记录消息的
+    // messageId——Task 12 messageStore.sendVoiceCommit 依赖 ref.serverMessageId 迁移乐观消息 key，Mock 须与 real
+    // 的 user_message.ack{messageId} 返回形状一致（real sendMessage/commitVoice await ack 后均返回 {clientRequestId, serverMessageId}）。
+    const serverMessageId = `msg-${this.idFactory().replace(/[^A-Za-z0-9_-]/g, '')}`
     this.messageRecords.push({
-      messageId: `msg-${this.idFactory().replace(/[^A-Za-z0-9_-]/g, '')}`,
+      messageId: serverMessageId,
       conversationId: input.conversationId, role: 'user', createdAt: this.now().toISOString(),
       status: 'completed', content: input.text
     })
     this.scheduleReplay(input.conversationId)
-    return { clientRequestId: input.clientRequestId }
+    return { clientRequestId: input.clientRequestId, serverMessageId }
   }
 
   async discardVoice(_input: VoiceDiscardInput): Promise<void> {
