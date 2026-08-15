@@ -297,7 +297,7 @@
 
 **进入条件：** 阶段 2 通过；E-01～E-08 已确认。
 
-> **批 A（模型服务 Profile 管理 + TTS 试听）已落地并全量验证（2026-08-15）**：决策 D1（阶段 4 分两块，P4-A = Profile 管理 + TTS 试听 / P4-B = 语音）、D3（TTS 自动朗读归 P4-B）、D4（backend 为主，desktop/local_worker 展示不可用态）已由用户敲定；LLM/STT/TTS Profile 查询/新增/编辑/复制/删除保护/类型化测试/激活切换 + TTS 声音列表/试听（一次性 `tts-preview` media 路由）落地；`credentialStatus` 两态（凭据一次性提交不回显）；当前激活来源 `server_info.services` + `switch_model_result`/`set_tts_voice_result`（无 `model.profile.changed` wire 事件）；WS result 帧单 in-flight 按回显 service/model/voice 关联（10s 超时）；切换只影响新请求；**994 单测（88 files）+ 55 集成（13 files）** + typecheck/lint/build + check:contract（WS 13/13 + REST 段 8/8）全绿；阶段 4 新功能仍标「已开发、未联调」（Mock 驱动），真实 Windows Electron（REAL）联调为验收方（下一轮）；决策记录见 `docs/review/2026-08-15-阶段4批次A-决策记录.md`。
+> **批 A（模型服务 Profile 管理 + TTS 试听 + 设置中心框架）已落地并全量验证（2026-08-15，final review 修复 wave 后）**：决策 D1（阶段 4 分两块，P4-A = Profile 管理 + TTS 试听 / P4-B = 语音）、D3（TTS 自动朗读归 P4-B）、D4（backend 为主，desktop/local_worker 展示不可用态）已由用户敲定；LLM/STT/TTS Profile 查询/新增/编辑/复制/删除保护/类型化测试/激活切换 + TTS 声音列表/试听（一次性 `tts-preview` media 路由）+ 设置中心框架（导航进入、面板内部滚动、其余分组占位）落地；`credentialStatus` 两态（凭据一次性提交不回显）；当前激活来源 `server_info.services` + `switch_model_result`/`set_tts_voice_result`（无 `model.profile.changed` wire 事件）；WS result 帧单 in-flight 按回显 service/model/voice 关联（10s 超时）；切换只影响新请求；**1003 单测（88 files）+ 55 集成（13 files）** + typecheck/lint/build + check:contract（WS 15/15 + REST 15/15）全绿；阶段 4 新功能仍标「已开发、未联调」（Mock 驱动），真实 Windows Electron（REAL）联调为验收方（下一轮）；验收记录见 `docs/review/2026-08-15-阶段4批次A-验收记录.md`，决策记录见 `docs/review/2026-08-15-阶段4批次A-决策记录.md`。
 
 ### 任务清单
 
