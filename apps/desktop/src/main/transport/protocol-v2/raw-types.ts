@@ -161,8 +161,26 @@ export interface RawErrorMessage {
   retryAfterMs?: number
   details?: Record<string, unknown>
 }
+
+/** 模型 Profile 激活结果帧（对齐 ws_message.py SwitchModelResultMessage） */
+export interface RawSwitchModelResult {
+  type: 'switch_model_result'
+  service: 'llm' | 'stt' | 'tts'
+  model: string
+  ok: boolean
+  error?: string
+}
+/** TTS 声音切换结果帧（对齐 ws_message.py SetTtsVoiceResultMessage） */
+export interface RawSetTtsVoiceResult {
+  type: 'set_tts_voice_result'
+  ok: boolean
+  error?: string
+  voice?: string
+}
+
 export type RawFrame =
   | RawSessionMessage | RawServerInfo | RawExpression | RawState | RawTyping
   | RawGenerationStarted | RawGenerationSegmentStarted | RawGenerationDelta
   | RawGenerationSegmentCompleted | RawGenerationCompleted | RawGenerationFailed
   | RawUserAck | RawErrorMessage
+  | RawSwitchModelResult | RawSetTtsVoiceResult

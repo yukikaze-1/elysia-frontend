@@ -99,13 +99,25 @@ export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({
   })
 })
 
+/** 模型 Profile 激活结果（switch_model.result；判别字段 event 对齐 BackendEvent 契约；沿用既有成员写法，不注 z.ZodType 以免判别联合丢失形状信息） */
+export const SwitchModelResultEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('switch_model.result'), service: z.enum(['llm', 'stt', 'tts']), model: z.string(),
+  ok: z.boolean(), error: z.string().optional()
+})
+/** TTS 声音切换结果（set_tts_voice.result；同用 event 判别字段） */
+export const SetTtsVoiceResultEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('set_tts_voice.result'), ok: z.boolean(), error: z.string().optional(), voice: z.string().optional()
+})
+
 export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationStartedEventSchema,
   GenerationSegmentStartedEventSchema,
   GenerationDeltaEventSchema,
   SegmentCompletedEventSchema,
   GenerationCompletedEventSchema,
-  GenerationFailedEventSchema
+  GenerationFailedEventSchema,
+  SwitchModelResultEventSchema,
+  SetTtsVoiceResultEventSchema
 ])
 
 export function parseBackendEvent(input: unknown): {

@@ -190,6 +190,22 @@ const RawErrorMessageSchema = z.object({
   details: z.record(z.string(), z.unknown()).optional()
 }).strict()
 
+/** 模型 Profile 激活结果帧（对齐 ws_message.py SwitchModelResultMessage；ok 必填） */
+const RawSwitchModelResultSchema = z.object({
+  type: z.literal('switch_model_result'),
+  service: z.enum(['llm', 'stt', 'tts']),
+  model: z.string(),
+  ok: z.boolean(),
+  error: z.string().optional()
+}).strict()
+/** TTS 声音切换结果帧（对齐 ws_message.py SetTtsVoiceResultMessage；ok 必填，voice/error 可选） */
+const RawSetTtsVoiceResultSchema = z.object({
+  type: z.literal('set_tts_voice_result'),
+  ok: z.boolean(),
+  error: z.string().optional(),
+  voice: z.string().optional()
+}).strict()
+
 export const RawFrameSchema = z.discriminatedUnion('type', [
   RawSessionMessageSchema,
   RawServerInfoSchema,
@@ -203,7 +219,9 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawUserAckSchema,
   RawStateSchema,
   RawTypingSchema,
-  RawErrorMessageSchema
+  RawErrorMessageSchema,
+  RawSwitchModelResultSchema,
+  RawSetTtsVoiceResultSchema
 ])
 
 export function parseRawFrame(input: unknown): {

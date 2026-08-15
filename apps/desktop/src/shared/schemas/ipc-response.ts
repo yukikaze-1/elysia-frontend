@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
+import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -160,4 +161,31 @@ export const AttachmentCheckResultSchema = z.object({
 export const ReplayPayloadSchema = z.object({
   conversationId: z.string().min(1),
   messages: z.array(MessageSchema)
+})
+
+// —— 阶段 4 批次 A：模型服务 / TTS 出参 schema（严格镜像 shared/contracts/model.ts，C1）——
+export const ModelProfileSchema: z.ZodType<ModelProfile> = z.object({
+  id: z.string(), type: z.enum(['llm', 'stt', 'tts']), displayName: z.string(),
+  source: z.enum(['built_in', 'custom']), provider: z.string(), model: z.string(),
+  models: z.array(z.string()), executionLocation: z.enum(['backend', 'desktop', 'local_worker']),
+  credentialStatus: z.enum(['missing', 'configured', 'expired']), enabled: z.boolean(),
+  capabilities: z.array(z.string()), endpointLabel: z.string().optional(), builtIn: z.boolean()
+})
+export const ModelProfilesSchema = z.array(ModelProfileSchema)
+export const TtsVoiceSchema: z.ZodType<TtsVoice> = z.object({
+  id: z.string(), name: z.string().optional(), languages: z.array(z.string()), capabilities: z.array(z.string())
+})
+export const TtsVoiceListResultSchema: z.ZodType<TtsVoiceListResult> = z.object({
+  voices: z.array(TtsVoiceSchema), current: z.string().optional(), source: z.enum(['static', 'api']), error: z.string().optional()
+})
+export const TtsPreviewOutcomeSchema: z.ZodType<TtsPreviewOutcome> = z.object({
+  ok: z.boolean(), audioUrl: z.string().optional(), durationMs: z.number().optional(), error: z.string().optional()
+})
+export const ModelProfileTestResultSchema: z.ZodType<ModelProfileTestResult> = z.object({
+  profileId: z.string(), service: z.enum(['llm', 'stt', 'tts']), level: z.enum(['connectivity', 'usable']),
+  ok: z.boolean(), latencyMs: z.number().optional(), error: z.string().optional(), detail: z.string().optional()
+})
+export const ActiveModelSelectionSchema: z.ZodType<ActiveModelSelection> = z.object({
+  llmProfileId: z.string().optional(), voiceSttProfileId: z.string().optional(),
+  ttsProfileId: z.string().optional(), dictationSttProfileId: z.string().optional()
 })

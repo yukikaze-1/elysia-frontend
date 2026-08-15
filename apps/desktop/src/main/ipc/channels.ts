@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { isKeyAllowed, type CredentialStatus } from '@shared/contracts'
+import { isKeyAllowed, type ActivateModelProfileCommand, type CredentialStatus, type ModelProfileTestCommand, type SetTtsVoiceCommand, type TtsPreviewCommand, type UpsertModelProfileCommand } from '@shared/contracts'
 import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
@@ -113,3 +113,25 @@ export const chatGetMessageContextSchema = z.object({
   after: z.number().int().positive().optional()
 })
 export const chatListStickersSchema = z.undefined()
+
+// —— 阶段 4 批次 A 模型服务/TTS 命令 request schema（spec §4.6；响应 schema 在 shared/schemas/ipc-response；apiKey 仅存在于请求侧，出参永不含凭据）——
+export const modelsListProfilesSchema = z.object({ type: z.enum(['llm', 'stt', 'tts']).optional() })
+export const modelsSaveProfileSchema: z.ZodType<UpsertModelProfileCommand> = z.object({
+  type: z.enum(['llm', 'stt', 'tts']), name: z.string().min(1).max(200),
+  baseUrl: z.string().max(2048).optional(), apiKey: z.string().max(8192).optional(),
+  apiKeyEnv: z.string().max(200).optional(), models: z.array(z.string().max(200)).max(50).optional(),
+  executionLocation: z.enum(['backend', 'desktop', 'local_worker']).optional(),
+  capabilities: z.array(z.string().max(100)).max(50).optional(), makeActive: z.boolean().optional()
+})
+export const modelsDeleteProfileSchema = z.object({ service: z.enum(['llm', 'stt', 'tts']), name: z.string().min(1).max(200) })
+export const modelsTestProfileSchema: z.ZodType<ModelProfileTestCommand> = z.object({
+  service: z.enum(['llm', 'stt', 'tts']), provider: z.string().min(1).max(200), model: z.string().min(1).max(200),
+  level: z.enum(['connectivity', 'usable']), baseUrl: z.string().max(2048).optional(), apiKey: z.string().max(8192).optional()
+})
+export const modelsActivateProfileSchema: z.ZodType<ActivateModelProfileCommand> = z.object({
+  profileId: z.string().min(1).max(512), service: z.enum(['llm', 'stt', 'tts'])
+})
+export const modelsGetActiveSelectionSchema = z.undefined()
+export const ttsListVoicesSchema = z.undefined()
+export const ttsPreviewSchema: z.ZodType<TtsPreviewCommand> = z.object({ voiceId: z.string().max(200).optional() })
+export const ttsSetVoiceSchema: z.ZodType<SetTtsVoiceCommand> = z.object({ voice: z.string().min(1).max(200) })
