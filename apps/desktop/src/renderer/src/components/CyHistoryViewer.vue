@@ -12,6 +12,9 @@ import CyHistoryResultItem from './CyHistoryResultItem.vue'
 const store = useHistoryViewerStore()
 const conversationStore = useConversationStore()
 
+const resultsEl = ref<HTMLElement>()
+interface AnchorRef { hitId: string; offsetTop: number }
+
 const keywordInput = ref<HTMLInputElement>()
 const overlay = ref<HTMLElement>()
 let triggerElement: Element | null = null   // 打开前的活动元素(关闭后回焦点)
@@ -74,6 +77,31 @@ function onEnter(e: KeyboardEvent): void {
   if (isCompositionEnter(e)) return   // IME 组词确认 Enter 不提交(D14)
   e.preventDefault()
   void store.submitQuery()
+}
+
+/** FE-S3-RUN2-P1-01：加载第二页前捕获首个可见项 + 视口内偏移，DOM 更新后补偿 scrollTop
+ *  （spec §4.2；边界日期组前插的真实扰动点，配合 .cy-history-results overflow-anchor:none 成为唯一调整机制） */
+async function onLoadMorePreservingAnchor(): Promise<void> {
+  const c = resultsEl.value
+  let anchor: AnchorRef | undefined
+  if (c) {
+    const cr = c.getBoundingClientRect()
+    const firstVisible = [...c.querySelectorAll<HTMLElement>('.cy-history-item')]
+      .find((el) => el.getBoundingClientRect().bottom > cr.top)
+    if (firstVisible) {
+      const hitId = firstVisible.dataset.hitId
+      if (hitId) anchor = { hitId, offsetTop: firstVisible.getBoundingClientRect().top - cr.top }
+    }
+  }
+  await store.loadMore()
+  if (c && anchor) {
+    await nextTick()
+    const el = c.querySelector<HTMLElement>(`[data-hit-id="${anchor.hitId}"]`)
+    if (el) {
+      const cr = c.getBoundingClientRect()
+      c.scrollTop += el.getBoundingClientRect().top - cr.top - anchor.offsetTop
+    }
+  }
 }
 
 /** Tab 焦点陷阱:循环回拦在可聚焦元素内 */
@@ -153,7 +181,7 @@ onBeforeUnmount(() => { triggerElement = null })
 
         <div v-if="store.loading" class="cy-history-state">正在搜索…</div>
         <div v-else-if="store.hasSearched && store.items.length === 0" class="cy-history-state">没有找到相关聊天记录</div>
-        <ul v-else class="cy-history-results">
+        <ul v-else ref="resultsEl" class="cy-history-results">
           <template v-for="group in groupedItems" :key="group.date">
             <li class="cy-history-day">{{ group.label }}</li>
             <CyHistoryResultItem v-for="hit in group.items" :key="hit.hitId" :hit="hit" @jump="onJump" />
@@ -161,7 +189,7 @@ onBeforeUnmount(() => { triggerElement = null })
         </ul>
 
         <footer class="cy-history-footer">
-          <button v-if="store.hasMore && !store.loadingMore" class="cy-more-btn" @click="store.loadMore()">加载更多</button>
+          <button v-if="store.hasMore && !store.loadingMore" class="cy-more-btn" @click="onLoadMorePreservingAnchor()">加载更多</button>
           <span v-if="store.loadingMore" class="cy-muted">加载中…</span>
         </footer>
       </div>
@@ -172,10 +200,11 @@ onBeforeUnmount(() => { triggerElement = null })
 <style scoped>
 .cy-history-overlay {
   position: fixed;
-  inset: 36px 0 0 60px;   /* 保留标题栏(36px)与导航栏(60px,NAV_WIDTH),覆盖聊天主区与会话栏(D1) */
+  inset: 36px 0 0 60px;   /* 保留标题栏(36px)与导航栏(60px,NAV_WIDTH) */
   z-index: 50;
-  display: grid;
-  place-items: center;
+  display: flex;           /* grid → flex：max-height 百分比恢复确定性（spec §4.1 方案 A） */
+  align-items: center;
+  justify-content: center;
   background: color-mix(in srgb, var(--cy-window) 70%, transparent);
   backdrop-filter: blur(2px);
 }
@@ -184,6 +213,7 @@ onBeforeUnmount(() => { triggerElement = null })
   flex-direction: column;
   width: min(760px, calc(100% - 48px));
   max-height: calc(100% - 48px);
+  min-height: 0;           /* 允许收缩：面板不再被内容撑破 max-height（spec §4.1） */
   padding: 14px;
   background: var(--cy-pane);
   border: 1px solid var(--cy-border);
@@ -205,9 +235,10 @@ onBeforeUnmount(() => { triggerElement = null })
 .cy-history-error { display: flex; align-items: center; gap: 8px; padding: 8px 11px; margin-bottom: 8px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
 .cy-retry-btn { margin-left: auto; padding: 3px 9px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-surface); }
 .cy-history-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: 13px; }
-.cy-history-results { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; overflow-y: auto; min-height: 120px; }
+.cy-history-results { flex: 1 1 0; display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; overflow-y: auto; overflow-anchor: none; min-height: 120px; }
 .cy-history-day { display: block; margin: 8px 0 2px; color: var(--cy-muted); font-size: 12px; font-weight: 500; }
 .cy-history-footer { margin-top: 10px; text-align: center; }
+.cy-history-header, .cy-history-filters, .cy-history-tabs, .cy-live, .cy-history-error, .cy-history-state, .cy-history-footer { flex-shrink: 0; }
 .cy-more-btn { padding: 6px 16px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

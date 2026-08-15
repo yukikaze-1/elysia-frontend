@@ -22,7 +22,7 @@ const timeText = computed(() => {
 </script>
 
 <template>
-  <li class="cy-history-item">
+  <li class="cy-history-item" :data-hit-id="hit.hitId">
     <div class="cy-hit-main">
       <span class="cy-hit-time">{{ timeText }}</span>
       <span class="cy-hit-sender">{{ hit.senderLabel }}</span>
