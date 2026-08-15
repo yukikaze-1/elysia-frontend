@@ -37,13 +37,14 @@ import { RestMapper, compareBySortKey } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
 import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
-import type { HistoryCategory, StickerManifest, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceRecordStartInput, VoiceRecordStopInput } from '@shared/contracts'
+import { VOICE_ERROR_CODES } from '@shared/contracts'
+import type { HistoryCategory, StickerManifest, VoiceErrorEvent, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceInputMode, VoiceRecordStartInput, VoiceRecordStopInput } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
-  send(data: string): void
+  send(data: string | Uint8Array): void
   close(): void
   readyState: number
 }
@@ -131,7 +132,8 @@ function mapHttpError(status: number, code: string): CyreneErrorCode {
  * 协议差异全部收敛在此(URL/字段名/WS 帧),UI 只消费领域事件。
  * Task 4 实现 connect/握手/帧分派/session 回放/心跳重连/ack 关联/error 路由;
  * Task 5 实现 REST 会话方法(list/get/messages/create/rename/delete/activate + Bearer + 错误映射);
- * 模型/语音/工具方法抛 NOT_IMPLEMENTED 占位(阶段 3/4/6)。
+ * P4-A 模型/TTS 方法已真实落成;P4-B 语音控制帧/sendAudioBytes/voice.error 路由已落地(Task 4);
+ * submitToolResult 等工具方法仍抛 NOT_IMPLEMENTED 占位(阶段 6)。
  */
 export class RealBackend implements BackendAdapter {
   private ws?: WebSocketLike
@@ -159,6 +161,10 @@ export class RealBackend implements BackendAdapter {
   private pendingSwitch: Map<ModelServiceType, { model: string; resolve: () => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }> = new Map()
   /** set_tts_voice result 帧 pending 关联（按 voice 回显匹配）；单 in-flight */
   private pendingVoice?: { voice: string; resolve: () => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }
+  /** 单活动语音会话注册表（P4-B Task 4）：任一语音 start 前守卫（本地抛错防重入），成功后置位；
+   *  record.stop/discard、dictation.stop/cancel、voice_session.ended 清位（realtime stop/cancel 延后到 ended 回执）。
+   *  真实并发冲突由后端 error{VOICE_SESSION_CONFLICT} 帧经 voice.error 兜底（D-P15）。 */
+  private activeVoice?: { kind: VoiceInputMode; key: string }
 
   constructor(options: RealBackendOptions = {}) { this.options = options }
 
@@ -219,6 +225,16 @@ export class RealBackend implements BackendAdapter {
           this.pendingVoice = undefined
           if (frame.ok) pending.resolve()
           else pending.reject(this.resultFrameError(frame.error))
+        }
+        const ev = this.mapper?.mapFrame(frame)
+        if (ev) this.emit(ev)
+        return
+      }
+      case 'voice_session.ended': {
+        // 实时语音会话终态回执：释放单活动会话注册表（Task 4 Step 2 "ended 清位"——realtime stop/cancel
+        // 后 activeVoice 保留到 ended 到达，期间仍拒绝其他语音 start，避免双会话）
+        if (this.activeVoice?.kind === 'realtime' && this.activeVoice.key === frame.sessionId) {
+          this.activeVoice = undefined
         }
         const ev = this.mapper?.mapFrame(frame)
         if (ev) this.emit(ev)
@@ -326,7 +342,21 @@ export class RealBackend implements BackendAdapter {
     }
   }
 
+  /** 语音族错误码判定（D-P15）：VOICE_ERROR_CODES 成员即语音族错误；
+   *  Minor 9：CONTRACT_VALIDATION 不入 VOICE_ERROR_CODES（避免非语音 CONTRACT 也抑制连接横幅），
+   *  语音会话活跃时的 CONTRACT 违规由调用方按「CONTRACT_VALIDATION && activeVoice」另行判定。 */
+  private isVoiceErrorCode(code: string | undefined): boolean {
+    return code !== undefined && (VOICE_ERROR_CODES as readonly string[]).includes(code)
+  }
+
   private handleErrorFrame(frame: RawErrorMessage): void {
+    // D-P15 语音族错误路由：语音族错误码 ∪（CONTRACT_VALIDATION && 语音会话活跃）→ 额外 emit voice.error
+    // （connectionStore 据此抑制全局连接错误横幅）；随后仍走既有 onError 路径（日志/审计不丢）。非语音族不变。
+    if (this.isVoiceErrorCode(frame.code) || (frame.code === 'CONTRACT_VALIDATION' && this.activeVoice)) {
+      // 显式 T=VoiceErrorEvent：条件展开的 message 会让 TS 把 T 宽化为整个 BackendEvent 联合无法收窄
+      const ev = this.mapper?.stampEvent<VoiceErrorEvent>({ event: 'voice.error', code: frame.code as string, ...(frame.message ? { message: frame.message } : {}) })
+      if (ev) this.emit(ev)
+    }
     const err = new CyreneError(CyreneErrorCode.UNKNOWN, frame.message, {
       code: frame.code,
       requestId: frame.requestId,
@@ -395,10 +425,13 @@ export class RealBackend implements BackendAdapter {
         this.onSocketClosed()   // 自动重连:关闭后走指数退避
       }
     }, handshakeTimeoutMs)
-    ws.on('message', (arg?: unknown) => {
+    ws.on('message', (arg?: unknown, arg2?: unknown) => {
       if (arg === undefined) return
-      const text = typeof arg === 'string' ? arg : arg instanceof Buffer ? arg.toString('utf8') : String(arg)
-      this.handleFrame(text)
+      // P4-B Task 4：意外二进制接收（TTS audio_* 等二进制下行由 Task 5 分流；当前无消费方 → 告警忽略不崩）。
+      // 判据用 ws 库第二参（isBinary 布尔）而非 Buffer.isBuffer——真实 ws 在 Node 22 下文本帧也以 Buffer 投递
+      //（typeof=object），第二参才是二进制/文本的权威判别；文本帧(无论 string/Buffer)仍走 handleFrame。
+      if (arg2 === true) { this.warn('UNEXPECTED_BINARY', '收到意外二进制帧,已忽略'); return }
+      this.handleFrame(typeof arg === 'string' ? arg : String(arg))
     })
     ws.on('close', () => { this.onSocketClosed() })
     ws.on('error', () => { this.onSocketClosed() })
@@ -765,9 +798,11 @@ export class RealBackend implements BackendAdapter {
   }
 
   // —— 模型/TTS 方法(阶段 4 批次A:真实后端落成)——
-  /** 发无 ACK 帧,需等 result 帧(switch_model/set_tts_voice);未连接抛 NOT_CONNECTED */
-  private requireWs(): void {
+  /** 发无 ACK 帧,需等 result 帧(switch_model/set_tts_voice)或已连接即可发(语音控制帧);
+   *  未连接抛 NOT_CONNECTED;返回局部 const ws——this.ws 为可变属性 TS 不窄化,后续 ws.send 用返回值 */
+  private requireWs(): WebSocketLike {
     if (this.state.status !== 'connected' || !this.ws) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法执行模型操作')
+    return this.ws
   }
   private switchTimeoutMs(): number { return this.options.switchTimeoutMs ?? 10000 }
 
@@ -853,7 +888,7 @@ export class RealBackend implements BackendAdapter {
   }
 
   async setTtsVoice(input: SetTtsVoiceCommand): Promise<void> {
-    this.requireWs()
+    const ws = this.requireWs()
     return new Promise<void>((resolve, reject) => {
       // 单 in-flight（D-A14）：重入时 supersede 旧 pending（GENERATION_CONFLICT + clearTimeout 旧 timer），
       // 防止旧 timer 稍后无条件清掉新 pending 导致新 result 帧被忽略/误报 TIMEOUT
@@ -865,18 +900,18 @@ export class RealBackend implements BackendAdapter {
         reject(new CyreneError(CyreneErrorCode.TIMEOUT, `set_tts_voice 超时`))
       }, this.switchTimeoutMs())
       this.pendingVoice = { voice: input.voice, resolve, reject, timer }
-      this.ws!.send(JSON.stringify({ type: 'set_tts_voice', voice: input.voice }))
+      ws.send(JSON.stringify({ type: 'set_tts_voice', voice: input.voice }))
     })
   }
 
   async activateModelProfile(input: ActivateModelProfileCommand): Promise<void> {
-    this.requireWs()
+    const ws = this.requireWs()
     return new Promise<void>((resolve, reject) => {
       const existing = this.pendingSwitch.get(input.service)
       if (existing) { clearTimeout(existing.timer); existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `同服务切换未完成`)) }
       const timer = setTimeout(() => { this.pendingSwitch.delete(input.service); reject(new CyreneError(CyreneErrorCode.TIMEOUT, `switch_model 超时`)) }, this.switchTimeoutMs())
       this.pendingSwitch.set(input.service, { model: input.profileId, resolve, reject, timer })
-      this.ws!.send(JSON.stringify({ type: 'switch_model', service: input.service, model: input.profileId }))
+      ws.send(JSON.stringify({ type: 'switch_model', service: input.service, model: input.profileId }))
     })
   }
 
@@ -885,19 +920,128 @@ export class RealBackend implements BackendAdapter {
     return { ...(s?.llm?.model ? { llmProfileId: s.llm.model } : {}), ...(s?.stt?.model ? { voiceSttProfileId: s.stt.model } : {}), ...(s?.tts?.model ? { ttsProfileId: s.tts.model } : {}) }
   }
 
-  // —— P4-B 语音（Task 7 落地真实 wire 实现；Task 3 中间态抛 notImplemented 保持编译绿） ——
-  async startRecordVoice(_input: VoiceRecordStartInput): Promise<{ recordingId: string }> { throw this.notImplemented('startRecordVoice') }
-  async stopRecordVoice(_input: VoiceRecordStopInput): Promise<void> { throw this.notImplemented('stopRecordVoice') }
-  async commitVoice(_input: VoiceCommitInput): Promise<ClientRequestRef> { throw this.notImplemented('commitVoice') }
-  async discardVoice(_input: VoiceDiscardInput): Promise<void> { throw this.notImplemented('discardVoice') }
-  async startRealtimeVoice(_input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> { throw this.notImplemented('startRealtimeVoice') }
-  async stopRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.notImplemented('stopRealtimeVoice') }
-  async cancelRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.notImplemented('cancelRealtimeVoice') }
-  async startDictation(_input: DictationStartInput): Promise<{ clientRequestId: string }> { throw this.notImplemented('startDictation') }
-  async stopDictation(_input: DictationStopInput): Promise<void> { throw this.notImplemented('stopDictation') }
-  async cancelDictation(_input: DictationStopInput): Promise<void> { throw this.notImplemented('cancelDictation') }
-  sendAudioBytes(_bytes: Uint8Array): void { throw this.notImplemented('sendAudioBytes') }
-  async audioCancel(_input: AudioCancelInput): Promise<void> { throw this.notImplemented('audioCancel') }
+  // —— P4-B 语音（Task 4：真实 wire 控制帧 + sendAudioBytes + voice.error 路由；Task 5 接 TTS audio_* 下行）——
+  /** 单活动语音会话守卫：任一语音 start 前检查（本地抛错防重入，不依赖 CyreneErrorCode——无 VOICE 码；
+   *  真实后端并发冲突由 error{VOICE_SESSION_CONFLICT} 帧经 voice.error 兜底） */
+  private requireNoActiveVoice(): void {
+    if (this.activeVoice) throw new Error('已有活动语音会话进行中')
+  }
+
+  async startRecordVoice(input: VoiceRecordStartInput): Promise<{ recordingId: string }> {
+    this.requireNoActiveVoice()
+    const ws = this.requireWs()
+    // voice.record.start 无 conversationId（会话归属在 commit 时带，contract VoiceRecordStartMessage）
+    ws.send(JSON.stringify({ type: 'voice.record.start', recordingId: input.recordingId }))
+    this.activeVoice = { kind: 'record', key: input.recordingId }
+    return { recordingId: input.recordingId }
+  }
+
+  async stopRecordVoice(input: VoiceRecordStopInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'voice.record.stop', recordingId: input.recordingId }))
+    this.activeVoice = undefined // 录音会话已释放（TRANSCRIBING 窗口仍等 voice.transcript，不占活动注册表）
+  }
+
+  async commitVoice(input: VoiceCommitInput): Promise<ClientRequestRef> {
+    // 复用既有 pendingAck 机制（按 clientRequestId 关联 user_message.ack；幂等键即 clientRequestId，
+    // 重入 supersede 旧 pending 防双结算，语义同 sendMessage/F7）。先 requireWs()（未连接抛 NOT_CONNECTED），
+    // 再注册 pending——避免未连接时留下悬空 pending 条目。
+    const ws = this.requireWs()
+    const ackTimeoutMs = this.options.ackTimeoutMs ?? ACK_TIMEOUT_DEFAULT_MS
+    const existing = this.pendingAcks.get(input.clientRequestId)
+    if (existing) {
+      clearTimeout(existing.timer)
+      this.pendingAcks.delete(input.clientRequestId)
+      existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `clientRequestId 重复: ${input.clientRequestId}`))
+    }
+    const promise = new Promise<ClientRequestRef>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingAcks.delete(input.clientRequestId)
+        reject(new CyreneError(CyreneErrorCode.TIMEOUT, `voice.commit user_message.ack 超时(${ackTimeoutMs}ms): ${input.clientRequestId}`))
+      }, ackTimeoutMs)
+      this.pendingAcks.set(input.clientRequestId, { resolve, reject, timer })
+    })
+    try {
+      ws.send(JSON.stringify({
+        type: 'voice.commit',
+        recordingId: input.recordingId,
+        text: input.text,
+        clientRequestId: input.clientRequestId,
+        clientMessageId: input.clientMessageId,
+        conversationId: input.conversationId
+      }))
+    } catch {
+      const pending = this.pendingAcks.get(input.clientRequestId)
+      if (pending) { clearTimeout(pending.timer); this.pendingAcks.delete(input.clientRequestId) }
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '发送失败: WebSocket 已关闭')
+    }
+    return promise
+  }
+
+  async discardVoice(input: VoiceDiscardInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'voice.discard', recordingId: input.recordingId }))
+    this.activeVoice = undefined
+  }
+
+  async startRealtimeVoice(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> {
+    this.requireNoActiveVoice()
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'voice_session.start', sessionId: input.sessionId, ...(input.conversationId ? { conversationId: input.conversationId } : {}) }))
+    this.activeVoice = { kind: 'realtime', key: input.sessionId }
+    return { sessionId: input.sessionId }
+  }
+
+  async stopRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'voice_session.stop', sessionId: input.sessionId }))
+    // 清 active 延后到 voice_session.ended 回执（handleFrame case），此期间拒绝新语音 start 防双会话
+  }
+
+  async cancelRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'voice_session.cancel', sessionId: input.sessionId }))
+  }
+
+  async startDictation(input: DictationStartInput): Promise<{ clientRequestId: string }> {
+    this.requireNoActiveVoice()
+    const ws = this.requireWs()
+    // sttProfileId 缺省不带键 → 后端用全局活动 STT（D-P14/D-8；E-07 契约缺省语义）
+    ws.send(JSON.stringify({ type: 'dictation.start', clientRequestId: input.clientRequestId, ...(input.sttProfileId ? { sttProfileId: input.sttProfileId } : {}) }))
+    this.activeVoice = { kind: 'dictation', key: input.clientRequestId }
+    return { clientRequestId: input.clientRequestId }
+  }
+
+  async stopDictation(input: DictationStopInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'dictation.stop', clientRequestId: input.clientRequestId }))
+    this.activeVoice = undefined
+  }
+
+  async cancelDictation(input: DictationStopInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'dictation.cancel', clientRequestId: input.clientRequestId }))
+    this.activeVoice = undefined
+  }
+
+  sendAudioBytes(bytes: Uint8Array): void {
+    // 双 guard：连接态 + 活动语音会话；任一不满足丢弃告警（同步 void，不 throw）
+    if (this.state.status !== 'connected' || !this.ws) {
+      this.warn('VOICE_BINARY_NOT_CONNECTED', '未连接,丢弃语音音频字节')
+      return
+    }
+    if (!this.activeVoice) {
+      this.warn('VOICE_BINARY_NO_SESSION', '无活动语音会话,丢弃语音音频字节')
+      return
+    }
+    this.ws.send(bytes)
+  }
+
+  async audioCancel(input: AudioCancelInput): Promise<void> {
+    const ws = this.requireWs()
+    ws.send(JSON.stringify({ type: 'audio.cancel', stream_id: input.streamId }))
+  }
+
   async submitToolResult(_input: ToolResult): Promise<void> { throw this.notImplemented('submitToolResult') }
 
   private notImplemented(method: string): CyreneError {
