@@ -119,6 +119,21 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
     expect(saved.id).toBe('custom/my-llm')
   })
 
+  it('saveModelProfile capabilities → POST body capabilities 为 dict（非 string[]；P4-A final review wire 契约）', async () => {
+    const calls: { url: string; init?: RequestInit }[] = []
+    const withCustom = { ...PROVIDERS, custom: { llm: [{ name: 'my-llm', base_url: 'https://api.example.com', models: ['m1'], runtime: 'backend', credentialConfigured: true, capabilities: { auth: true, stream: true } }] } }
+    const { backend } = await makeBackend({}, {
+      fetchImpl: mockFetch([
+        { test: (u, init) => u.includes('/api/providers') && init?.method === 'POST', body: { ok: true, data: [] } },
+        { test: (u) => u.includes('/api/providers'), body: withCustom }
+      ], calls)
+    })
+    await backend.saveModelProfile({ type: 'llm', name: 'my-llm', baseUrl: 'https://api.example.com', capabilities: ['auth', 'stream'] })
+    const postBody = JSON.parse(String(calls[0]?.init?.body))
+    expect(Array.isArray(postBody.entry.capabilities)).toBe(false)
+    expect(postBody.entry.capabilities).toEqual({ auth: true, stream: true })
+  })
+
   it('deleteModelProfile：DELETE /api/providers/llm/x；409 body{ok:false,code} → reject 且 details.code 透传', async () => {
     const calls: { url: string; init?: RequestInit }[] = []
     const { backend } = await makeBackend({}, {
@@ -177,6 +192,14 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
     const noAudio = await backend.previewTts({ voiceId: 'v1' })
     expect(noAudio).toEqual({ ok: false, error: '试听无音频数据' })
   })
+
+  it('previewTts audio_base64 非空串但解出 0 字节 → {ok:false,error:试听无音频数据}（P4-A final review 空字节 guard）', async () => {
+    const { backend } = await makeBackend({}, {
+      fetchImpl: mockFetch([{ test: (u) => u.includes('/api/tts/preview'), body: { ok: true, mime: 'audio/wav', audio_base64: '' } }])
+    })
+    const r = await backend.previewTts({ voiceId: 'v1' })
+    expect(r).toEqual({ ok: false, error: '试听无音频数据' })
+  })
 })
 
 describe('RealBackend switch/set_tts_voice result 帧 pending 关联（Task 4）', () => {
@@ -225,6 +248,14 @@ describe('RealBackend switch/set_tts_voice result 帧 pending 关联（Task 4）
     ws.push({ type: 'set_tts_voice_result', ok: true, voice: 'v1' })
     await expect(p).resolves.toBeUndefined()
     expect(settled).toBe(true)
+  })
+
+  it('setTtsVoice 失败帧（voice 缺省省略 + ok:false）→ reject 解析错误，不误报 10s 超时（P4-A final review）', async () => {
+    const { backend, ws } = await makeBackend()
+    const p = backend.setTtsVoice({ voice: 'v1' })
+    // 后端 SetTtsVoiceResultMessage 失败时 voice 恒缺省（ok:False + error）→ 权威失败帧也须结算 pending
+    ws.push({ type: 'set_tts_voice_result', ok: false, error: 'VOICE_NOT_FOUND: 未知音色' })
+    await expect(p).rejects.toMatchObject({ code: CyreneErrorCode.UNKNOWN, message: '未知音色', details: { backendCode: 'VOICE_NOT_FOUND' } })
   })
 
   it('setTtsVoice 快速二次调用：旧 pending supersede（GENERATION_CONFLICT），第二次正常 resolve（防旧 timer 跨清新 pending）', async () => {

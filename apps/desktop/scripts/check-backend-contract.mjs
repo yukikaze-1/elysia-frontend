@@ -19,12 +19,13 @@ const SCHEMA_JSON = `${BACKEND_DIR}/contract.schema.json` // 判别联合(如不
 const BACKEND_TRACES = '/home/yomu/elysia-agent/docs/archive/frontend-handoff-v2/traces'
 const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
 
-// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 13 型
+// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 15 型
 const WS_V2_FRAME_TYPES = [
   'server_info', 'session', 'expression', 'user_message.ack', 'error',
   'generation.started', 'generation.segment.started', 'generation.delta',
   'generation.segment.completed', 'generation.completed', 'generation.failed',
-  'state', 'typing' // FE-INT-P1-01:11 型 → 13 型,state/typing 兼容帧纳入字段级深比较
+  'state', 'typing', // FE-INT-P1-01:11 型 → 13 型,state/typing 兼容帧纳入字段级深比较
+  'switch_model_result', 'set_tts_voice_result' // 阶段4 批次A:模型 Profile 激活/TTS 声音切换结果帧
 ]
 // phase 3+ 帧(voice_session/dictation/tool.request 等):前端有意滞后,只 warn 不报错(F2 白名单)
 
@@ -144,8 +145,8 @@ if (failures.length > 0) {
 console.log(`[check-contract] WS v2 type 覆盖: ${wsV2.length - missing.length}/${wsV2.length} 通过;` +
   `字段级帧 ${checkedFrames} 条完整保留;phase3+ 帧 ${deferred.length} 个有意滞后(warn)`)
 
-// ── REST 段：rest.py 目标模型 ↔ 前端 rest-schemas.ts（阶段3 联调前整改 spec §4.3.1）——
-// 字段名/必填性/role 枚举子集比对；防静默通过（模型数<8 或任一模型字段数=0 → exit 1）。
+// ── REST 段：rest.py 目标模型 ↔ 前端 rest-schemas.ts（阶段3 联调前整改 spec §4.3.1；阶段4 批次A 增 providers/TTS 模型）——
+// 字段名/必填性/role 枚举子集比对；防静默通过（模型数 < 目标数 或任一模型字段数=0 → exit 1）。
 const REST_TARGET_MODELS = {
   SearchMessageItem: ['RestSearchMessageItemSchema'],
   SearchMessagesResponse: ['RestSearchMessagesResponseSchema'],
@@ -154,7 +155,15 @@ const REST_TARGET_MODELS = {
   AttachmentUploadResponse: ['RestAttachmentUploadResponseSchema'],
   AttachmentSignResponse: ['RestAttachmentSignResponseSchema'],
   StickerEntry: ['RestStickerItemSchema'],
-  StickerListResponse: ['RestStickerListResponseSchema']
+  StickerListResponse: ['RestStickerListResponseSchema'],
+  // 阶段4 批次A：providers（GET /api/providers）、providers/test（POST）、tts/voices（GET）、tts/preview（POST）
+  ProviderEntry: ['ProviderEntryWireSchema'],
+  CustomProvider: ['CustomProviderWireSchema'],
+  ProvidersResponse: ['ProvidersResponseWireSchema'],
+  ProviderTestResult: ['ProviderTestResultWireSchema'],
+  TtsVoiceEntry: ['TtsVoiceEntryWireSchema'],
+  TtsVoicesResponse: ['TtsVoicesResponseWireSchema'],
+  TtsPreviewResult: ['TtsPreviewResultWireSchema']
 }
 const REST_SCHEMAS = new URL('../src/main/transport/protocol-v2/rest-schemas.ts', import.meta.url)
 
@@ -227,9 +236,9 @@ const frontRoles = frontRoleInner ? (frontRoleInner.options ?? Object.values(fro
 const roleOvershoot = backendRoles.filter((r) => !frontRoles.includes(r))
 if (roleOvershoot.length) restFailures.push(`REST 段：role 枚举后端多出前端不识别 ${roleOvershoot.join(', ')}`)
 
-// 防静默通过：模型数 < 8 或任一模型字段数 = 0（已在上层 loop 处理字段数=0）
+// 防静默通过：解析模型数 < 目标模型数 或任一模型字段数 = 0（已在上层 loop 处理字段数=0）
 if (restChecked < Object.keys(REST_TARGET_MODELS).length) {
-  restFailures.push(`REST 段：仅解析 ${restChecked}/8 模型，疑似正则失效`)
+  restFailures.push(`REST 段：仅解析 ${restChecked}/${Object.keys(REST_TARGET_MODELS).length} 模型，疑似正则失效`)
 }
 
 if (restFailures.length) {

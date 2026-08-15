@@ -89,13 +89,14 @@ function validate(): boolean {
   return true
 }
 
-/** 测试并保存：先 connectivity 测试（带局部 apiKey），通过后 saveProfile；失败保留表单（error 已展示）。 */
+/** 测试并保存：先 connectivity 测试（带局部 apiKey + draft.baseUrl），通过后 saveProfile；失败保留表单（error 已展示）。 */
 async function onTestAndSave(): Promise<void> {
   if (!validate()) { apiKeyRef.value = ''; return }
   const d = draft.value!
   const name = d.name.trim()
   const keyInput = apiKeyRef.value
-  await modelStore.testProfile({ type: d.type, provider: 'custom', model: name }, 'connectivity', keyInput || undefined)
+  const baseUrlInput = d.baseUrl?.trim() || undefined   // P4-A final review：新 custom 未持久化 YAML，test 需透传 baseUrl 才能构造请求
+  await modelStore.testProfile({ type: d.type, provider: 'custom', model: name }, 'connectivity', keyInput || undefined, baseUrlInput)
   const r = modelStore.testResult[`custom/${name}|connectivity`]
   apiKeyRef.value = ''   // 提交成功/失败后一律清空一次性密钥
   if (r?.ok && !modelStore.error) {

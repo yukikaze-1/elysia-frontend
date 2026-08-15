@@ -169,7 +169,7 @@ export const ModelProfileSchema: z.ZodType<ModelProfile> = z.object({
   source: z.enum(['built_in', 'custom']), provider: z.string(), model: z.string(),
   models: z.array(z.string()), executionLocation: z.enum(['backend', 'desktop', 'local_worker']),
   credentialStatus: z.enum(['missing', 'configured', 'expired']), enabled: z.boolean(),
-  capabilities: z.array(z.string()), endpointLabel: z.string().optional(), builtIn: z.boolean()
+  capabilities: z.array(z.string()), endpointLabel: z.string().optional(), baseUrl: z.string().optional(), builtIn: z.boolean()
 })
 export const ModelProfilesSchema = z.array(ModelProfileSchema)
 export const TtsVoiceSchema: z.ZodType<TtsVoice> = z.object({

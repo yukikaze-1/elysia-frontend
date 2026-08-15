@@ -217,8 +217,10 @@ export class RealBackend implements BackendAdapter {
       }
       case 'set_tts_voice_result': {
         // TTS 声音切换结果：按 voice 回显匹配 pending（voice 缺省不匹配，D-A14）；匹配后仍 emit 事件。
+        // P4-A final review：后端 SetTtsVoiceResultMessage 失败时 voice 恒缺省省略（ok:False + error，ws_message.py:565），
+        // 仅按 voice 回显匹配会让失败 pending 永不结算（误报 10s 超时）→ 权威失败帧（voice 缺省 + ok:false）也结算。
         const pending = this.pendingVoice
-        if (pending && frame.voice !== undefined && pending.voice === frame.voice) {
+        if (pending && (frame.voice === pending.voice || (!frame.ok && frame.voice === undefined))) {
           clearTimeout(pending.timer)
           this.pendingVoice = undefined
           if (frame.ok) pending.resolve()
@@ -812,7 +814,9 @@ export class RealBackend implements BackendAdapter {
           name: input.name, ...(input.baseUrl ? { base_url: input.baseUrl } : {}),
           ...(input.apiKey ? { api_key: input.apiKey } : {}), ...(input.apiKeyEnv ? { api_key_env: input.apiKeyEnv } : {}),
           ...(input.models ? { models: input.models } : {}), ...(input.executionLocation ? { runtime: input.executionLocation } : {}),
-          ...(input.capabilities ? { capabilities: input.capabilities } : {})
+          // P4-A final review：capabilities wire 契约是 dict[str, Any]（rest.py CustomProvider），不能原样发 string[]——
+          // 后端持久化到 custom_providers.yaml 后，下次 GET /api/providers 的 pydantic 校验会拒绝 list，整个 provider 列表 500。
+          ...(input.capabilities ? { capabilities: Object.fromEntries(input.capabilities.map((c) => [c, true])) } : {})
         }
       })
     })
@@ -849,6 +853,8 @@ export class RealBackend implements BackendAdapter {
     if (!d.ok) return { ok: false, ...(d.error ? { error: d.error } : {}) }
     if (!d.audio_base64) return { ok: false, error: '试听无音频数据' }
     const bytes = Buffer.from(d.audio_base64, 'base64')
+    // P4-A final review：非空 base64 解出 0 字节（空音频）→ 与缺 audio_base64 同语义，<audio> 无法解码，显式失败
+    if (bytes.length === 0) return { ok: false, error: '试听无音频数据' }
     return { ok: true, mime: d.mime, bytes: new Uint8Array(bytes), ...(d.duration_ms !== undefined ? { durationMs: d.duration_ms } : {}) }
   }
 

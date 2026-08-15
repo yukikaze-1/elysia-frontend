@@ -196,6 +196,16 @@ describe('registerModelHandlers 真实接线（electron mock 捕获 ipcMain.hand
     if (res.ok) expect(res.data).toEqual({ ok: false, error: '试听生成失败' })
     expect(putTtsPreview).not.toHaveBeenCalled()
   })
+  it('tts:preview 接线——200 空 body（bytes 缺省/0 字节）→ {ok:false,error:试听无音频数据} 不写 media（P4-A final review guard）', async () => {
+    const { adapter } = makeAdapter()
+    adapter.previewTts.mockResolvedValueOnce({ ok: true } as never)
+    const putTtsPreview = vi.fn()
+    const { invoke } = await registerOnce(adapter, { putTtsPreview })
+    const res = await invoke(IpcChannels.ttsPreview, {})
+    expect(res.ok).toBe(true) // IPC 信封成功；TtsPreviewOutcome.ok=false 在 data 内
+    if (res.ok) expect(res.data).toEqual({ ok: false, error: '试听无音频数据' })
+    expect(putTtsPreview).not.toHaveBeenCalled()
+  })
   it('tts:preview 非法参数（voiceId 非字符串）→ SCHEMA_VALIDATION_FAILED', async () => {
     const { adapter } = makeAdapter()
     const { invoke } = await registerOnce(adapter, { putTtsPreview: vi.fn() })

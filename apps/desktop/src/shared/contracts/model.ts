@@ -19,6 +19,7 @@ export interface ModelProfile {
   enabled: boolean              // ← services.*.enabled（P4-A 仅展示）
   capabilities: string[]        // ← capabilities 键名展开（稳定排序）
   endpointLabel?: string        // custom base_url host 部分（脱敏展示）
+  baseUrl?: string              // P4-A final review：custom base_url 全量（scheme/path 保留；非密钥，编辑向导回填用）
   builtIn: boolean              // source 快捷派生（兼容既有消费方）
 }
 

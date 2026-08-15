@@ -31,8 +31,10 @@ export function registerModelHandlers(deps: { adapter: BackendAdapter; media: Pi
   registerHandler(IpcChannels.ttsPreview, createIpcHandler(ttsPreviewSchema, TtsPreviewOutcomeSchema, async (input) => {
     const raw = await adapter.previewTts(input)
     if (!raw.ok) return { ok: false, ...(raw.error ? { error: raw.error } : {}) }
+    // P4-A final review：200 空 body（bytes 缺省/0 字节）会写入空 media 让 <audio> 静默失败 → 显式失败上提错误
+    if (!raw.bytes || raw.bytes.byteLength === 0) return { ok: false, error: '试听无音频数据' }
     const id = `ttsp-${randomUUID()}`
-    media.putTtsPreview(id, raw.bytes ?? new Uint8Array(), raw.mime ?? 'audio/wav')
+    media.putTtsPreview(id, raw.bytes, raw.mime ?? 'audio/wav')
     return { ok: true, audioUrl: `cyrene://renderer${MEDIA_PATH_PREFIX}tts-preview/${id}`, ...(raw.durationMs !== undefined ? { durationMs: raw.durationMs } : {}) }
   }, { sanitize: deps.sanitize, channel: IpcChannels.ttsPreview, logger: deps.logger }), 1)
   registerHandler(IpcChannels.ttsSetVoice, createIpcHandler(ttsSetVoiceSchema, z.undefined(), (input) => adapter.setTtsVoice(input), { sanitize: deps.sanitize, channel: IpcChannels.ttsSetVoice, logger: deps.logger }), 1)

@@ -54,7 +54,11 @@ export function providersToModelProfiles(raw: ProvidersResponseWire): ModelProfi
       out.push({
         id: `custom/${name}`, type: service, displayName: name, source, provider: 'custom', model: name,
         models, executionLocation: runtime, credentialStatus: cred, enabled: true,
-        capabilities: caps(entry), ...(base ? { endpointLabel: hostOf(base) } : {}), builtIn: false
+        capabilities: caps(entry),
+        ...(base ? { endpointLabel: hostOf(base) } : {}),
+        // P4-A final review：全量 base_url 携带（scheme/path 保留；base_url 非密钥，仅 api_key 保密），编辑向导回填用
+        ...(base ? { baseUrl: base } : {}),
+        builtIn: false
       })
     }
   }

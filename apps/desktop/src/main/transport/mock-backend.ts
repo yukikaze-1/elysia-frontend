@@ -53,6 +53,24 @@ function kindFromMimeForMock(mime: string): string {
   return 'file'
 }
 
+/** 最小合法 WAV（44 字节头 + 0.125s 静音 PCM16/单声道/8kHz）：
+ *  P4-A final review——旧 4 字节 "RIFF" 不是合法 WAV，<audio> 解码失败；试听预览需可播放的确定性字节。 */
+function makeSilentWav(): Uint8Array {
+  const sampleRate = 8000
+  const numChannels = 1
+  const bitsPerSample = 16
+  const dataSize = sampleRate / 8 // 0.125s 静音 = 1000 samples
+  const buf = new ArrayBuffer(44 + dataSize)
+  const v = new DataView(buf)
+  const w = (offset: number, s: string): void => { for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i)) }
+  w(0, 'RIFF'); v.setUint32(4, 36 + dataSize, true); w(8, 'WAVE')
+  w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, numChannels, true)
+  v.setUint32(24, sampleRate, true); v.setUint32(28, (sampleRate * numChannels * bitsPerSample) / 8, true)
+  v.setUint16(32, (numChannels * bitsPerSample) / 8, true); v.setUint16(34, bitsPerSample, true)
+  w(36, 'data'); v.setUint32(40, dataSize, true)
+  return new Uint8Array(buf) // samples 零初始化 → 静音
+}
+
 /** CYRENE_MOCK_HISTORY_LARGE env → seedHistoryCount：undefined/空串→undefined（不开）；
  *  正整数→原值；0/负数/NaN/非整数→120（「大」语义兜底，不允许空 seed，spec §4.3.1） */
 export function parseMockHistoryCountEnv(value: string | undefined): number | undefined {
@@ -312,7 +330,7 @@ export class MockBackend implements BackendAdapter {
         }
       }
       for (const c of this.customProviders[s]) {
-        out.push({ id: `custom/${c.name}`, type: s, displayName: c.name, source: 'custom', provider: 'custom', model: c.name, models: c.models ?? [], executionLocation: c.runtime ?? 'backend', credentialStatus: c.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(c.capabilities ?? {}).sort(), ...(c.base_url ? { endpointLabel: new URL(c.base_url).host } : {}), builtIn: false })
+        out.push({ id: `custom/${c.name}`, type: s, displayName: c.name, source: 'custom', provider: 'custom', model: c.name, models: c.models ?? [], executionLocation: c.runtime ?? 'backend', credentialStatus: c.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(c.capabilities ?? {}).sort(), ...(c.base_url ? { endpointLabel: new URL(c.base_url).host } : {}), ...(c.base_url ? { baseUrl: c.base_url } : {}), builtIn: false })
       }
     }
     return type ? out.filter((p) => p.type === type) : out
@@ -353,7 +371,7 @@ export class MockBackend implements BackendAdapter {
   }
 
   async previewTts(_input: TtsPreviewCommand): Promise<{ ok: boolean; mime?: string; bytes?: Uint8Array; durationMs?: number; error?: string }> {
-    return { ok: true, mime: 'audio/wav', bytes: new Uint8Array([82, 73, 70, 70]) /* mock WAV 头 */ }
+    return { ok: true, mime: 'audio/wav', bytes: makeSilentWav() /* 合法静音 WAV：<audio> 可解码 */ }
   }
 
   async setTtsVoice(input: SetTtsVoiceCommand): Promise<void> { this.currentVoice = input.voice }

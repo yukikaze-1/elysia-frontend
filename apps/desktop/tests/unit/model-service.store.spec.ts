@@ -67,6 +67,20 @@ describe('modelServiceStore', () => {
     expect(mockApi.saveModelProfile).toHaveBeenCalledWith({ ...draft, apiKey: 'secret-key' })
     expect(JSON.stringify(s.drafts)).not.toContain('secret-key')
   })
+  it('startEdit 编辑 custom：baseUrl 优先全量（scheme/path 保留）；无则回退 host 拼 https（P4-A final review）', async () => {
+    const s = useModelServiceStore()
+    s.startEdit({ ...PROFILES[1], endpointLabel: 'api.example.com', baseUrl: 'http://api.example.com:8080/v1' } as never)
+    expect(s.drafts['my-llm'].baseUrl).toBe('http://api.example.com:8080/v1')
+    s.startEdit({ ...PROFILES[1], endpointLabel: 'api.example.com' } as never)
+    expect(s.drafts['my-llm'].baseUrl).toBe('https://api.example.com')
+  })
+  it('testProfile 透传 baseUrl（新 custom 未持久化，测试需 baseUrl 才能构造请求；P4-A final review）', async () => {
+    mockApi.testModelProfile.mockResolvedValue({ profileId: 'custom/my-llm', service: 'llm', level: 'connectivity', ok: true })
+    const s = useModelServiceStore()
+    await s.testProfile({ type: 'llm', provider: 'custom', model: 'my-llm' }, 'connectivity', undefined, 'http://api.example.com:8080/v1')
+    expect(mockApi.testModelProfile).toHaveBeenCalledWith({ service: 'llm', provider: 'custom', model: 'my-llm', level: 'connectivity', baseUrl: 'http://api.example.com:8080/v1' })
+    expect(s.testing['custom/my-llm|connectivity']).toBe('ok')
+  })
   it('listVoices + setVoice 更新 currentVoice', async () => {
     mockApi.listTtsVoices.mockResolvedValue({ voices: [{ id: 'v1', languages: [], capabilities: [] }], source: 'static' })
     mockApi.setTtsVoice.mockResolvedValue(undefined)

@@ -65,11 +65,12 @@ export const useModelServiceStore = defineStore('modelService', () => {
     } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { activating.value[profile.type] = false }
   }
 
-  async function testProfile(profile: Pick<ModelProfile, 'type' | 'provider' | 'model'>, level: 'connectivity' | 'usable', apiKeyInput?: string): Promise<void> {
+  async function testProfile(profile: Pick<ModelProfile, 'type' | 'provider' | 'model'>, level: 'connectivity' | 'usable', apiKeyInput?: string, baseUrl?: string): Promise<void> {
     const key = `${profile.provider}/${profile.model}|${level}`
     testing.value[key] = 'running'; error.value = undefined
     try {
-      const r = await api.testModelProfile({ service: profile.type, provider: profile.provider, model: profile.model, level, ...(apiKeyInput ? { apiKey: apiKeyInput } : {}) })
+      // P4-A final review：新 custom 未保存 YAML 条目时后端无法按名解析，需透传 baseUrl 供 test 构造请求 base_url
+      const r = await api.testModelProfile({ service: profile.type, provider: profile.provider, model: profile.model, level, ...(apiKeyInput ? { apiKey: apiKeyInput } : {}), ...(baseUrl ? { baseUrl } : {}) })
       testResult.value[key] = r
       testing.value[key] = r.ok ? 'ok' : 'error'
       if (!r.ok) error.value = { message: r.error ?? '测试失败' } as PublicError
@@ -132,7 +133,8 @@ export const useModelServiceStore = defineStore('modelService', () => {
   function startEdit(profile?: ModelProfile): void {
     const key = profile?.model ?? 'new'
     drafts.value[key] = profile && profile.source === 'custom'
-      ? { type: profile.type, name: profile.model, baseUrl: profile.endpointLabel ? `https://${profile.endpointLabel}` : undefined, models: profile.models, capabilities: profile.capabilities }
+      // P4-A final review：编辑回填优先用全量 baseUrl（scheme/path 保留），无则回退 host 拼 https（旧行为兜底）
+      ? { type: profile.type, name: profile.model, baseUrl: profile.baseUrl ?? (profile.endpointLabel ? `https://${profile.endpointLabel}` : undefined), models: profile.models, capabilities: profile.capabilities }
       : { type: profile?.type ?? 'llm', name: '', models: [], capabilities: [] }
     validation.value[key] = []
   }
