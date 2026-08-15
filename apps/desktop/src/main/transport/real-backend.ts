@@ -836,7 +836,8 @@ export class RealBackend implements BackendAdapter {
     const parsed = parseRestTtsVoices(await res.json())
     if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, 'tts/voices 响应校验失败')
     const d = parsed.data
-    return { voices: d.voices.map((v) => ({ id: v.id, ...(v.name ? { name: v.name } : {}), languages: v.languages ?? [], capabilities: v.capabilities ?? [] })), current: d.current ?? undefined, source: d.source === 'api' ? 'api' : 'static', ...(d.error ? { error: d.error } : {}) }
+    // capabilities wire 为 dict（rest.py TtsVoiceEntry），展开键名为领域 string[]（对齐 ProviderEntry 映射惯例，稳定排序）
+    return { voices: d.voices.map((v) => ({ id: v.id, ...(v.name ? { name: v.name } : {}), languages: v.languages ?? [], capabilities: Object.keys(v.capabilities ?? {}).sort() })), current: d.current ?? undefined, source: d.source === 'api' ? 'api' : 'static', ...(d.error ? { error: d.error } : {}) }
   }
 
   /** 返回 raw（bytes 由 IPC handler 写入 MediaService）；二进制不越 Main */
@@ -854,7 +855,15 @@ export class RealBackend implements BackendAdapter {
   async setTtsVoice(input: SetTtsVoiceCommand): Promise<void> {
     this.requireWs()
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { this.pendingVoice = undefined; reject(new CyreneError(CyreneErrorCode.TIMEOUT, `set_tts_voice 超时`)) }, this.switchTimeoutMs())
+      // 单 in-flight（D-A14）：重入时 supersede 旧 pending（GENERATION_CONFLICT + clearTimeout 旧 timer），
+      // 防止旧 timer 稍后无条件清掉新 pending 导致新 result 帧被忽略/误报 TIMEOUT
+      const existing = this.pendingVoice
+      if (existing) { clearTimeout(existing.timer); existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `同声音切换未完成`)) }
+      const timer = setTimeout(() => {
+        // 所有权限定：仅当当前 pending 仍是本 timer 时才清（防御旧 timer 迟到清新 pending 的跨清竞态）
+        if (this.pendingVoice?.timer === timer) this.pendingVoice = undefined
+        reject(new CyreneError(CyreneErrorCode.TIMEOUT, `set_tts_voice 超时`))
+      }, this.switchTimeoutMs())
       this.pendingVoice = { voice: input.voice, resolve, reject, timer }
       this.ws!.send(JSON.stringify({ type: 'set_tts_voice', voice: input.voice }))
     })

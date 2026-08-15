@@ -131,12 +131,24 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
     expect(calls[0]?.init?.method).toBe('DELETE')
   })
 
-  it('listTtsVoices：GET /api/tts/voices 归一化 + current/source', async () => {
+  it('listTtsVoices：GET /api/tts/voices 归一化 + current/source；capabilities dict 展开为键名（rest.py:219）', async () => {
     const { backend } = await makeBackend({}, {
-      fetchImpl: mockFetch([{ test: (u) => u.includes('/api/tts/voices'), body: { voices: [{ id: 'v1', name: '晓晓', languages: ['zh'], capabilities: ['wav'] }], current: 'v1', source: 'api' } }])
+      fetchImpl: mockFetch([{ test: (u) => u.includes('/api/tts/voices'), body: {
+        voices: [
+          { id: 'v1', name: '晓晓', languages: ['zh'], capabilities: { wav: true, gender: 'female' } },
+          { id: 'v2', languages: ['en'] }   // capabilities 缺省 → default {} → 领域 []
+        ],
+        current: 'v1', source: 'api'
+      } }])
     })
     const r = await backend.listTtsVoices()
-    expect(r).toEqual({ voices: [{ id: 'v1', name: '晓晓', languages: ['zh'], capabilities: ['wav'] }], current: 'v1', source: 'api' })
+    expect(r).toEqual({
+      voices: [
+        { id: 'v1', name: '晓晓', languages: ['zh'], capabilities: ['gender', 'wav'] },
+        { id: 'v2', languages: ['en'], capabilities: [] }
+      ],
+      current: 'v1', source: 'api'
+    })
   })
 
   it('previewTts：POST /api/tts/preview（voice_id wire）→ 返回 raw bytes/mime/durationMs，不落 MediaService', async () => {
@@ -213,6 +225,16 @@ describe('RealBackend switch/set_tts_voice result 帧 pending 关联（Task 4）
     ws.push({ type: 'set_tts_voice_result', ok: true, voice: 'v1' })
     await expect(p).resolves.toBeUndefined()
     expect(settled).toBe(true)
+  })
+
+  it('setTtsVoice 快速二次调用：旧 pending supersede（GENERATION_CONFLICT），第二次正常 resolve（防旧 timer 跨清新 pending）', async () => {
+    const { backend, ws } = await makeBackend()
+    const first = backend.setTtsVoice({ voice: 'v1' })
+    const second = backend.setTtsVoice({ voice: 'v2' })
+    await expect(first).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
+    ws.push({ type: 'set_tts_voice_result', ok: true, voice: 'v2' })
+    await expect(second).resolves.toBeUndefined()
+    await new Promise((r) => setTimeout(r, 5))   // 旧 v1 timer 已被 clearTimeout，不误清新 pending/不误报 TIMEOUT
   })
 
   it('switch/set_tts_voice 超时 → TIMEOUT（switchTimeoutMs 可注入）', async () => {

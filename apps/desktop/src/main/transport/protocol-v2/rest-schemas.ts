@@ -164,7 +164,8 @@ export const ProviderTestResultWireSchema = z.object({
   ok: z.boolean(), latency_ms: z.number().optional(), error: z.string().optional(), detail: z.string().optional()
 })
 export const TtsVoiceEntryWireSchema = z.object({
-  id: z.string(), name: z.string().optional(), languages: z.array(z.string()).optional(), capabilities: z.array(z.string()).optional()
+  id: z.string(), name: z.string().optional(), languages: z.array(z.string()).optional(),
+  capabilities: z.record(z.string(), z.unknown()).default({})   // rest.py:219 dict（能力描述），非数组；缺省 {} 恒上 wire
 })
 export const TtsVoicesResponseWireSchema = z.object({
   voices: z.array(TtsVoiceEntryWireSchema), current: z.string().optional(), source: z.enum(['static', 'api']).default('static'), error: z.string().optional()
