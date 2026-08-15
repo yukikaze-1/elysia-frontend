@@ -96,7 +96,9 @@ async function onLoadMorePreservingAnchor(): Promise<void> {
   await store.loadMore()
   if (c && anchor) {
     await nextTick()
-    const el = c.querySelector<HTMLElement>(`[data-hit-id="${anchor.hitId}"]`)
+    // anchor.hitId 为后端派生 id（conversationId:messageId:segmentId），含 `"` `\` `]` 等字符会令属性选择器抛 SyntaxError——
+    // 改为 dataset 精确匹配，彻底绕开选择器转义
+    const el = [...c.querySelectorAll<HTMLElement>('.cy-history-item')].find((n) => n.dataset.hitId === anchor.hitId)
     if (el) {
       const cr = c.getBoundingClientRect()
       c.scrollTop += el.getBoundingClientRect().top - cr.top - anchor.offsetTop
