@@ -23,7 +23,7 @@ import { CredentialStore } from './credentials/credential-store'
 import { SessionStore } from './persistence/session-store'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
-import { MockBackend } from './transport/mock-backend'
+import { MockBackend, parseMockHistoryCountEnv } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
@@ -132,11 +132,12 @@ async function main(): Promise<void> {
     // MockBackend 无 onSessionReplay 选项,回放桥仅 RealBackend 分支生效；
     // 用 const 桥容器打破 adapter→svc 环引用(adapter 构造在前、svc 在后,回调只在 connect/disconnect/会话回放时触发,此时已装配完)。
     const useMock = resolveBackendMode(app.isPackaged, process.env) === 'mock'
+    const mockHistoryCount = parseMockHistoryCountEnv(process.env.CYRENE_MOCK_HISTORY_LARGE)
     const chatBridge: { svc: ChatService | undefined } = { svc: undefined }
     const onState = (state: ConnectionState) => chatBridge.svc?.pushState(state)
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}) })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,

@@ -44,6 +44,15 @@ function kindFromMimeForMock(mime: string): string {
   return 'file'
 }
 
+/** CYRENE_MOCK_HISTORY_LARGE env → seedHistoryCount：undefined/空串→undefined（不开）；
+ *  正整数→原值；0/负数/NaN/非整数→120（「大」语义兜底，不允许空 seed，spec §4.3.1） */
+export function parseMockHistoryCountEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  const n = Number(value)
+  if (Number.isInteger(n) && n > 0) return n
+  return 120
+}
+
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number
@@ -55,6 +64,8 @@ export interface MockBackendOptions {
   idFactory?: () => string
   /** 时钟（测试确定性）：默认 new Date() */
   now?: () => Date
+  /** 大 seed：设置时 seedMessages() 返回确定性合成历史（spec §4.3.1）；默认 undefined 保持 5 条 */
+  seedHistoryCount?: number
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -87,10 +98,13 @@ export class MockBackend implements BackendAdapter {
   private activeConversationId?: string
   private generationTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
   private idCounter = 0
+  /** 大 seed 条数（构造体内先于 messageRecords 赋值，seedMessages() 才能读到；spec §4.3.1） */
+  private readonly seedHistoryCount: number
   /** 历史记录（预置样例 + sendMessage 追加；查看器 Mock 全链路数据源） */
-  private readonly messageRecords: Message[] = this.seedMessages()
+  private readonly messageRecords: Message[]
 
   private seedMessages(): Message[] {
+    if (this.seedHistoryCount > 0) return this.seedSyntheticHistory(this.seedHistoryCount)
     const mk = (messageId: string, conversationId: string, role: 'user' | 'assistant', createdAt: string, content?: string, stickerId?: string): Message =>
       ({ messageId, conversationId, role, createdAt, status: 'completed', ...(content !== undefined ? { content } : {}), ...(stickerId ? { stickerId } : {}) })
     return [
@@ -102,7 +116,24 @@ export class MockBackend implements BackendAdapter {
     ]
   }
 
+  /** 确定性合成历史（spec §4.3.1）：30 条/日 × 若干日、createdAt 单调、纯文本无 sticker */
+  private seedSyntheticHistory(count: number): Message[] {
+    const mk = (messageId: string, conversationId: string, role: 'user' | 'assistant', createdAt: string, content: string): Message =>
+      ({ messageId, conversationId, role, createdAt, status: 'completed', content })
+    const DAY = 86_400_000, MIN = 60_000
+    const base = new Date('2026-08-08T00:00:00.000Z').getTime()
+    const out: Message[] = []
+    for (let i = 0; i < count; i++) {
+      const day = Math.floor(i / 30), minute = i % 30
+      const createdAt = new Date(base + day * DAY + minute * MIN).toISOString()
+      out.push(mk(`run2-msg-${String(i + 1).padStart(4, '0')}`, i % 2 === 0 ? 'conv-1001' : 'conv-1002', i % 2 === 0 ? 'user' : 'assistant', createdAt, `模拟命中文本 ${i + 1}`))
+    }
+    return out
+  }
+
   constructor(options: MockBackendOptions = {}) {
+    this.seedHistoryCount = options.seedHistoryCount ?? 0
+    this.messageRecords = this.seedMessages()
     this.emitDelayMs = options.emitDelayMs ?? 30
     this.onConnectionStateChange = options.onConnectionStateChange
     this.now = options.now ?? (() => new Date())
@@ -267,10 +298,11 @@ export class MockBackend implements BackendAdapter {
       .filter((m) => !input.localDate || isoToLocalDate(m.createdAt, input.timeZone) === input.localDate)
       .filter((m) => categoryMatches(m, input.category))
       .map((m) => this.toHistoryItem(m))
-      .sort((a, b) => a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)
+      .sort((a, b) => (a.sortKey > b.sortKey ? -1 : a.sortKey < b.sortKey ? 1 : 0)) // DESC：最新在前（real keyset 同构）
     let offset = 0
     if (input.cursor?.startsWith('mock:')) offset = Number(input.cursor.slice(5)) || 0
-    const items = filtered.slice(offset, offset + input.limit)
+    const page = filtered.slice(offset, offset + input.limit)
+    const items = [...page].sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0)) // 页内升序返回（real transport 后序一致）
     const nextOffset = offset + input.limit
     return { items, hasMore: nextOffset < filtered.length, nextCursor: nextOffset < filtered.length ? `mock:${nextOffset}` : undefined }
   }
