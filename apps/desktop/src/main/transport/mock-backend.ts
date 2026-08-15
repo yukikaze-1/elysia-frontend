@@ -577,8 +577,6 @@ export class MockBackend implements BackendAdapter {
     const genTimers: ReturnType<typeof setTimeout>[] = []
     this.fixture.forEach((event, index) => {
       const fresh: Record<string, unknown> = { ...event }
-      fresh.eventId = this.idFactory()
-      fresh.sequence = this.nextSequence++
       if ('generationId' in event) fresh.generationId = genId
       if ('messageId' in event) fresh.messageId = msgId
       if ('responseId' in event) fresh.responseId = rspId
@@ -593,6 +591,10 @@ export class MockBackend implements BackendAdapter {
       }
       // BackendEvent 是接口联合，需 as unknown as 双转（TS2352）
       const timer = setTimeout(() => {
+        // 信封在 emit 时刻打（非调度时刻）：replay 挂起期间交错发出的语音/TTS 事件（stamp() 也在 emit 时刻）
+        // 与 replay 事件共享同一计数器 → 收到顺序恒等于 stamp 顺序，sequence 全局严格递增（review Important-1）
+        fresh.eventId = this.idFactory()
+        fresh.sequence = this.nextSequence++
         this.emit(fresh as unknown as BackendEvent)
         // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件
         if (event.event === 'generation.completed' && this.ttsActive) {

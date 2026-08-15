@@ -173,6 +173,26 @@ describe('MockBackend 语音模拟（P4-B Task 7）', () => {
     expect(ev.some((e) => e.event === 'generation.started')).toBe(true)
   })
 
+  it('envelope 挂起 replay 期间交错：信封在 emit 时刻打 → 收到顺序恒递增（review Important-1）', async () => {
+    backend = new MockBackend({ emitDelayMs: 30 }) // 慢回放制造交错窗口（11 事件横跨 0..300ms）
+    const ev: BackendEvent[] = []
+    backend.subscribe((e) => ev.push(e))
+    await backend.connect({ serverUrl: 'mock://test' })
+    await backend.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'c1' }) // 调度回放（事件尚未 emit）
+    // replay 仍挂起时立即发语音事件——emit 时刻 stamp 必须晚于已调度但未 emit 的 replay 事件
+    await backend.startRealtimeVoice({ sessionId: 'vs1', conversationId: 'conv-1001' })
+    backend.sendAudioBytes(new Uint8Array(0)) // partial + turn
+    await sleep(400) // 等 replay 全部触发
+    const seqs = ev.map((e) => e.sequence)
+    expect(new Set(seqs).size).toBe(seqs.length) // 无重复
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b)) // 收到顺序恒等于 stamp 顺序 → 严格递增
+    // 交错确实发生：realtime 事件落在 replay 事件流内部（非全部位于 replay 前后）
+    const iStarted = ev.findIndex((e) => e.event === 'voice_session.started')
+    const iDelta = ev.findIndex((e) => e.event === 'generation.delta')
+    expect(iStarted).toBeGreaterThanOrEqual(0)
+    expect(iDelta).toBeGreaterThan(iStarted) // 语音 started 在 replay delta 之前（seq 更小）→ 已交错
+  })
+
   it('ttsActive 判定与 TTS 事件：仅激活 ttsProfile 时触发（D-P13）', async () => {
     // 未激活 TTS → 无 audio 事件（LLM 驱动的 mock-backend-model-services 语义不变）
     backend = new MockBackend({ emitDelayMs: 1 })
