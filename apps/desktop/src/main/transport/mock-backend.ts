@@ -20,14 +20,23 @@ import type {
   StartVoiceInputInput,
   StopDictationInput,
   StopVoiceInputInput,
-  TestModelProfileCommand,
   ToolResult,
   VoiceInputSession
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
-import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
+import type {
+  ActiveModelSelection,
+  ModelExecutionLocation,
+  ModelProfile,
+  ModelProfileTestCommand,
+  ModelServiceType,
+  SetTtsVoiceCommand,
+  TtsPreviewCommand,
+  TtsVoiceListResult,
+  UpsertModelProfileCommand
+} from '@shared/contracts/model'
 import type { StickerManifest } from '@shared/contracts/sticker'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
@@ -102,6 +111,26 @@ export class MockBackend implements BackendAdapter {
   private readonly seedHistoryCount: number
   /** 历史记录（预置样例 + sendMessage 追加；查看器 Mock 全链路数据源） */
   private readonly messageRecords: Message[]
+
+  // —— 阶段 4 P4-A 模型服务（三类内置 + custom CRUD + voices/preview/setVoice；与 real 语义镜像）——
+  /** 内置 provider 表（<service> → <provider> → 元数据）；capabilities 键名展开为稳定排序数组 */
+  private readonly mockProviders = {
+    llm: { deepseek: { models: ['deepseek-v4-flash', 'deepseek-r1'], credentialConfigured: true, runtime: 'backend', capabilities: { auth: 'api_key' } } },
+    stt: { sensevoice: { models: ['sense-voice'], credentialConfigured: false, runtime: 'backend', capabilities: { language: 'zh' } } },
+    tts: { edge: { models: ['edge-tts'], credentialConfigured: true, runtime: 'backend', capabilities: { stream: 'true' } } }
+  }
+  /** 自定义 provider（saveModelProfile upsert；delete 移除） */
+  private readonly customProviders: Record<ModelServiceType, Array<{ name: string; base_url?: string; models?: string[]; runtime?: ModelExecutionLocation; credentialConfigured?: boolean; capabilities?: Record<string, unknown> }>> = { llm: [], stt: [], tts: [] }
+  /** TTS 声音清单（静态；setTtsVoice 仅改 current） */
+  private readonly voices = [
+    { id: 'v1', name: '晓晓', languages: ['zh-CN'], capabilities: [] },
+    { id: 'v2', name: '云希', languages: ['zh-CN'], capabilities: [] },
+    { id: 'v3', name: 'Yunxi', languages: ['zh-CN', 'en-US'], capabilities: [] }
+  ]
+  private currentVoice: string | undefined
+  /** 当前激活选择（activateModelProfile 更新；getActiveModelSelection 返回副本） */
+  private activeSelection: ActiveModelSelection = {}
+
 
   private seedMessages(): Message[] {
     if (this.seedHistoryCount > 0) return this.seedSyntheticHistory(this.seedHistoryCount)
@@ -269,27 +298,63 @@ export class MockBackend implements BackendAdapter {
     this.generationTimers.delete(input.generationId)
   }
 
-  async listModelProfiles(_type?: ModelServiceType): Promise<ModelProfile[]> {
-    return [
-      {
-        id: 'llm-1',
-        type: 'llm',
-        provider: 'mock-provider',
-        modelId: 'cyrene-llm-v1',
-        executionLocation: 'backend',
-        builtIn: true,
-        name: 'Mock LLM'
+  async listModelProfiles(type?: ModelServiceType): Promise<ModelProfile[]> {
+    const out: ModelProfile[] = []
+    const services: ModelServiceType[] = ['llm', 'stt', 'tts']
+    for (const s of services) {
+      for (const [name, entry] of Object.entries(this.mockProviders[s])) {
+        for (const m of (entry.models.length ? entry.models : [name])) {
+          out.push({ id: `${name}/${m}`, type: s, displayName: name, source: 'built_in', provider: name, model: m, models: entry.models, executionLocation: 'backend', credentialStatus: entry.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(entry.capabilities).sort(), builtIn: true })
+        }
       }
-    ]
+      for (const c of this.customProviders[s]) {
+        out.push({ id: `custom/${c.name}`, type: s, displayName: c.name, source: 'custom', provider: 'custom', model: c.name, models: c.models ?? [], executionLocation: c.runtime ?? 'backend', credentialStatus: c.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(c.capabilities ?? {}).sort(), ...(c.base_url ? { endpointLabel: new URL(c.base_url).host } : {}), builtIn: false })
+      }
+    }
+    return type ? out.filter((p) => p.type === type) : out
   }
 
-  async testModelProfile(_input: TestModelProfileCommand): Promise<ModelProfileTestResult> {
-    return { ok: true, latencyMs: 96 }
+  async testModelProfile(input: ModelProfileTestCommand): Promise<ModelProfileTestResult> {
+    const ok = input.level === 'connectivity' ? true : input.provider !== 'failing-stt'
+    return { profileId: `${input.provider}/${input.model}`, service: input.service, level: input.level, ok, latencyMs: 42, ...(ok ? {} : { error: 'mock 转写失败' }) }
   }
 
-  async activateModelProfile(_input: ActivateModelProfileCommand): Promise<void> {
-    // Mock 无操作
+  async saveModelProfile(input: UpsertModelProfileCommand): Promise<ModelProfile> {
+    if (input.executionLocation && input.executionLocation !== 'backend') {
+      throw new CyreneError(CyreneErrorCode.INVALID_INPUT, 'P4-A 不支持非 backend', { code: 'PROFILE_INVALID_RUNTIME' })
+    }
+    const list = this.customProviders[input.type]
+    const existing = list.find((c) => c.name === input.name)
+    const entry = { name: input.name, ...(input.baseUrl ? { base_url: input.baseUrl } : {}), ...(input.models ? { models: input.models } : {}), runtime: 'backend' as const, credentialConfigured: Boolean(input.apiKey), capabilities: Object.fromEntries((input.capabilities ?? []).map((c) => [c, true])) }
+    if (existing) Object.assign(existing, entry); else list.push(entry)
+    const p = (await this.listModelProfiles(input.type)).find((x) => x.id === `custom/${input.name}`)!
+    if (input.makeActive) await this.activateModelProfile({ profileId: p.id, service: p.type })
+    return p
   }
+
+  async deleteModelProfile(service: ModelServiceType, name: string): Promise<void> {
+    const active = this.activeSelection[service === 'llm' ? 'llmProfileId' : service === 'tts' ? 'ttsProfileId' : 'voiceSttProfileId']
+    if (active === `custom/${name}`) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `custom/${name} 正在使用，无法删除`, { code: 'PROFILE_IN_USE' })
+    this.customProviders[service] = this.customProviders[service].filter((c) => c.name !== name)
+  }
+
+  async activateModelProfile(input: ActivateModelProfileCommand): Promise<void> {
+    if (input.service === 'llm') this.activeSelection.llmProfileId = input.profileId
+    else if (input.service === 'tts') this.activeSelection.ttsProfileId = input.profileId
+    else this.activeSelection.voiceSttProfileId = input.profileId
+  }
+
+  async listTtsVoices(): Promise<TtsVoiceListResult> {
+    return { voices: this.voices, current: this.currentVoice, source: 'static' }
+  }
+
+  async previewTts(_input: TtsPreviewCommand): Promise<{ ok: boolean; mime?: string; bytes?: Uint8Array; durationMs?: number; error?: string }> {
+    return { ok: true, mime: 'audio/wav', bytes: new Uint8Array([82, 73, 70, 70]) /* mock WAV 头 */ }
+  }
+
+  async setTtsVoice(input: SetTtsVoiceCommand): Promise<void> { this.currentVoice = input.voice }
+
+  getActiveModelSelection(): ActiveModelSelection { return { ...this.activeSelection } }
 
   async queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage> {
     const filtered = this.messageRecords
