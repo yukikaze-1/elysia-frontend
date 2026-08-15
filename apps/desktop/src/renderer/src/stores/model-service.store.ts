@@ -1,0 +1,146 @@
+// src/renderer/src/stores/model-service.store.ts
+// 阶段 4 批次 A：模型服务设置中心 store——profiles/激活/测试/试听/草稿编排。
+// apiKey 一次性红线：store 状态与 drafts 永不持有 apiKey，仅经 saveProfile/testProfile 命令字段瞬时透传，
+// 提交后即清（组件局部 ref 持有输入，成功/失败后清空）。
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, ModelServiceType, TtsPreviewCommand, TtsVoice, UpsertModelProfileCommand } from '@shared/contracts'
+import { api } from './desktop-api'
+import { parsePublicError, type PublicError } from '../utils/public-error'
+
+export interface ProfileDraft {
+  type: ModelServiceType
+  name: string
+  baseUrl?: string
+  apiKeyEnv?: string
+  models?: string[]
+  capabilities?: string[]
+  executionLocation?: 'backend' | 'desktop' | 'local_worker'
+}
+
+function messageOf(e: unknown): string { return e instanceof Error ? e.message : String(e) }
+
+export const useModelServiceStore = defineStore('modelService', () => {
+  const profiles = ref<ModelProfile[]>([])
+  const active = ref<ActiveModelSelection>({})
+  const voices = ref<TtsVoice[] | null>(null)
+  const voiceSource = ref<'static' | 'api' | null>(null)
+  const currentVoice = ref<string | null>(null)
+  const voicesError = ref<PublicError>()        // 错误态一律 PublicError（repo 惯例，UI 渲染 .message）
+  const loading = ref(false)
+  const testing = ref<Record<string, 'idle' | 'running' | 'ok' | 'error'>>({})
+  const testResult = ref<Record<string, ModelProfileTestResult | undefined>>({})
+  const previewing = ref(false)
+  const saving = ref(false)
+  const deleting = ref(false)
+  const activating = ref<Record<ModelServiceType, boolean>>({ llm: false, stt: false, tts: false })
+  const error = ref<PublicError>()
+  const drafts = ref<Record<string, ProfileDraft>>({})
+  const validation = ref<Record<string, string[]>>({})
+  // 试听结果状态（preview 句柄经 getter 读取，见 preview 定义）
+  const previewState = ref<{ url?: string; error?: string } | null>(null)
+
+  function byType(type: ModelServiceType): ModelProfile[] { return profiles.value.filter((p) => p.type === type) }
+  function customProfiles(type: ModelServiceType): ModelProfile[] { return byType(type).filter((p) => p.source === 'custom') }
+  function activeProfileId(type: ModelServiceType): string | undefined {
+    return type === 'llm' ? active.value.llmProfileId : type === 'tts' ? active.value.ttsProfileId : active.value.voiceSttProfileId
+  }
+
+  async function load(): Promise<void> {
+    loading.value = true; error.value = undefined
+    try {
+      const [list, sel] = await Promise.all([api.listModelProfiles(), api.getActiveModelSelection()])
+      profiles.value = list; active.value = sel
+    } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { loading.value = false }
+  }
+
+  async function activate(profile: Pick<ModelProfile, 'id' | 'type'>): Promise<void> {
+    if (activating.value[profile.type]) return
+    activating.value[profile.type] = true; error.value = undefined
+    try {
+      await api.activateModelProfile({ profileId: profile.id, service: profile.type })
+      if (profile.type === 'llm') active.value = { ...active.value, llmProfileId: profile.id }
+      else if (profile.type === 'tts') active.value = { ...active.value, ttsProfileId: profile.id }
+      else active.value = { ...active.value, voiceSttProfileId: profile.id }
+    } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { activating.value[profile.type] = false }
+  }
+
+  async function testProfile(profile: Pick<ModelProfile, 'type' | 'provider' | 'model'>, level: 'connectivity' | 'usable', apiKeyInput?: string): Promise<void> {
+    const key = `${profile.provider}/${profile.model}|${level}`
+    testing.value[key] = 'running'; error.value = undefined
+    try {
+      const r = await api.testModelProfile({ service: profile.type, provider: profile.provider, model: profile.model, level, ...(apiKeyInput ? { apiKey: apiKeyInput } : {}) })
+      testResult.value[key] = r
+      testing.value[key] = r.ok ? 'ok' : 'error'
+      if (!r.ok) error.value = { message: r.error ?? '测试失败' } as PublicError
+    } catch (e) { testing.value[key] = 'error'; testResult.value[key] = undefined; error.value = parsePublicError(messageOf(e)) }
+  }
+
+  async function saveProfile(draft: ProfileDraft, apiKeyInput?: string): Promise<void> {
+    saving.value = true; error.value = undefined
+    try {
+      const cmd: UpsertModelProfileCommand = { ...draft, ...(apiKeyInput ? { apiKey: apiKeyInput } : {}) }
+      await api.saveModelProfile(cmd)
+      delete drafts.value[draft.name]
+      delete validation.value[draft.name]
+      await load()
+    } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { saving.value = false }
+  }
+
+  async function deleteProfile(profile: Pick<ModelProfile, 'type' | 'model'>): Promise<void> {
+    deleting.value = true; error.value = undefined
+    try {
+      await api.deleteModelProfile(profile.type, profile.model)
+      await load()
+    } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { deleting.value = false }
+  }
+
+  async function listVoices(): Promise<void> {
+    voicesError.value = undefined
+    try {
+      const r = await api.listTtsVoices()
+      voices.value = r.voices; voiceSource.value = r.source
+      currentVoice.value = r.current ?? null; voicesError.value = r.error ? { message: r.error } as PublicError : undefined
+    } catch (e) { voicesError.value = parsePublicError(messageOf(e)) }
+  }
+
+  async function runPreview(input: TtsPreviewCommand): Promise<void> {
+    previewing.value = true; previewState.value = null; error.value = undefined
+    try {
+      const r = await api.previewTts(input)
+      previewState.value = r.ok ? { url: r.audioUrl } : { error: r.error ?? '试听失败' }
+    } catch (e) { previewState.value = { error: parsePublicError(messageOf(e)).message } } finally { previewing.value = false }
+  }
+
+  async function setVoice(voice: string): Promise<void> {
+    error.value = undefined
+    try { await api.setTtsVoice({ voice }); currentVoice.value = voice } catch (e) { error.value = parsePublicError(messageOf(e)) }
+  }
+
+  function startEdit(profile?: ModelProfile): void {
+    const key = profile?.model ?? 'new'
+    drafts.value[key] = profile && profile.source === 'custom'
+      ? { type: profile.type, name: profile.model, baseUrl: profile.endpointLabel ? `https://${profile.endpointLabel}` : undefined, models: profile.models, capabilities: profile.capabilities }
+      : { type: profile?.type ?? 'llm', name: '', models: [], capabilities: [] }
+    validation.value[key] = []
+  }
+  function updateDraft(key: string, patch: Partial<ProfileDraft>): void {
+    drafts.value[key] = { ...drafts.value[key], ...patch }
+  }
+  function cancelEdit(key: string): void { delete drafts.value[key]; delete validation.value[key] }
+
+  // preview 双用句柄（Task 9 消费约定，brief 同源）：动作调用 preview({voiceId})，结果读取 preview.url / preview.error。
+  // 以 ref 状态暴露：Pinia 对 ref 状态按值透出（不套 action 包装），getter 得以保留；状态单一来源 previewState ref 保持响应式。
+  interface PreviewHandle { (input: TtsPreviewCommand): Promise<void>; url?: string; error?: string }
+  const previewHandle = runPreview as PreviewHandle
+  Object.defineProperty(previewHandle, 'url', { get: () => previewState.value?.url, configurable: true })
+  Object.defineProperty(previewHandle, 'error', { get: () => previewState.value?.error, configurable: true })
+  const preview = ref<PreviewHandle>(previewHandle)
+
+  return {
+    profiles, active, voices, voiceSource, currentVoice, voicesError, loading, testing, testResult, previewing, preview,
+    saving, deleting, activating, error, drafts, validation,
+    byType, customProfiles, activeProfileId, load, activate, testProfile, saveProfile, deleteProfile,
+    listVoices, setVoice, startEdit, updateDraft, cancelEdit
+  }
+})

@@ -1,0 +1,85 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
+import { useModelServiceStore } from '../../src/renderer/src/stores/model-service.store'
+import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+
+const mockApi = {
+  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
+  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
+  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
+  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
+  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
+  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
+  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
+  attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
+  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
+  // P4-A 新增
+  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(),
+  testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
+  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn()
+}
+
+beforeEach(() => {
+  setActivePinia(createPinia()); setDesktopApi(mockApi); vi.clearAllMocks()
+  mockApi.listModelProfiles.mockResolvedValue([])   // saveProfile/deleteProfile 内部 load() 依赖它返回数组（Minor #17 防 undefined）
+  mockApi.getActiveModelSelection.mockResolvedValue({})
+})
+
+const PROFILES = [
+  { id: 'deepseek/deepseek-v4-flash', type: 'llm', displayName: 'deepseek', source: 'built_in', provider: 'deepseek', model: 'deepseek-v4-flash', models: ['deepseek-v4-flash'], executionLocation: 'backend', credentialStatus: 'configured', enabled: true, capabilities: [], builtIn: true },
+  { id: 'custom/my-llm', type: 'llm', displayName: 'my-llm', source: 'custom', provider: 'custom', model: 'my-llm', models: [], executionLocation: 'backend', credentialStatus: 'missing', enabled: true, capabilities: [], builtIn: false }
+]
+
+describe('modelServiceStore', () => {
+  it('load 拉 profiles + 激活选择', async () => {
+    mockApi.listModelProfiles.mockResolvedValue(PROFILES)
+    mockApi.getActiveModelSelection.mockResolvedValue({ llmProfileId: 'deepseek/deepseek-v4-flash' })
+    const s = useModelServiceStore()
+    await s.load()
+    expect(s.profiles).toHaveLength(2)
+    expect(s.active.llmProfileId).toBe('deepseek/deepseek-v4-flash')
+  })
+  it('activate 成功后更新 active', async () => {
+    mockApi.activateModelProfile.mockResolvedValue(undefined)
+    const s = useModelServiceStore()
+    await s.activate({ id: 'custom/my-llm', type: 'llm' } as never)
+    expect(mockApi.activateModelProfile).toHaveBeenCalledWith({ profileId: 'custom/my-llm', service: 'llm' })
+    expect(s.active.llmProfileId).toBe('custom/my-llm')
+  })
+  it('activate 失败可见错误且 active 不变', async () => {
+    mockApi.activateModelProfile.mockRejectedValue(new Error('[IPC_ERROR] [UNKNOWN] [backendCode=PROFILE_RUNTIME_NOT_BACKEND] 该 Profile 由 Electron 执行'))
+    const s = useModelServiceStore()
+    await s.activate({ id: 'custom/my-llm', type: 'llm' } as never)
+    expect(s.error?.backendCode).toBe('PROFILE_RUNTIME_NOT_BACKEND')
+    expect(s.active.llmProfileId).toBeUndefined()
+  })
+  it('deleteProfile PROFILE_IN_USE → 可见错误', async () => {
+    mockApi.deleteModelProfile.mockRejectedValue(new Error('[IPC_ERROR] [UNKNOWN] [backendCode=PROFILE_IN_USE] custom/x 正在使用'))
+    const s = useModelServiceStore()
+    await s.deleteProfile({ type: 'llm', model: 'x' } as never)
+    expect(s.error?.backendCode).toBe('PROFILE_IN_USE')
+  })
+  it('saveProfile 一次性 apiKey 提交；drafts 不含 apiKey', async () => {
+    mockApi.saveModelProfile.mockResolvedValue(PROFILES[1])
+    const s = useModelServiceStore()
+    const draft = { type: 'llm', name: 'my-llm', baseUrl: 'https://api.example.com' } as const
+    await s.saveProfile(draft, 'secret-key')
+    expect(mockApi.saveModelProfile).toHaveBeenCalledWith({ ...draft, apiKey: 'secret-key' })
+    expect(JSON.stringify(s.drafts)).not.toContain('secret-key')
+  })
+  it('listVoices + setVoice 更新 currentVoice', async () => {
+    mockApi.listTtsVoices.mockResolvedValue({ voices: [{ id: 'v1', languages: [], capabilities: [] }], source: 'static' })
+    mockApi.setTtsVoice.mockResolvedValue(undefined)
+    const s = useModelServiceStore()
+    await s.listVoices()
+    expect(s.voices).toHaveLength(1)
+    await s.setVoice('v1')
+    expect(s.currentVoice).toBe('v1')
+  })
+  it('preview 成功 → preview.url；失败 → preview.error', async () => {
+    mockApi.previewTts.mockResolvedValue({ ok: true, audioUrl: 'cyrene://renderer/__cyrene-media/tts-preview/ttsp-1' })
+    const s = useModelServiceStore()
+    await s.preview({ voiceId: 'v1' })
+    expect(s.preview?.url).toContain('ttsp-1')
+  })
+})
