@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 阶段 3 G1（spec §4.6，决策 D10）：布局宿主——消费 layoutStore，绑定 grid-template-columns/areas，
 // 挂 ResizeObserver 喂 viewportWidth（P2-2 首帧已由 store 播种）；隐藏区 v-show + 网格列不生成。
+// 阶段 4 批次 A：视图切换——chat 四区（v-if）/ tasks 占位（v-else-if）/ settings 全窗 overlay（v-else）；
+// NavRail 常驻（settings 关闭回焦目标）；CyLive2DPanel 高频渲染 gate（非 chat 视图不渲染）。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CyTitleBar from './components/CyTitleBar.vue'
 import CyNavRail from './components/CyNavRail.vue'
@@ -8,10 +10,13 @@ import CyConversationList from './components/CyConversationList.vue'
 import CyChatView from './components/CyChatView.vue'
 import CyLive2DPanel from './components/CyLive2DPanel.vue'
 import CyHistoryViewer from './components/CyHistoryViewer.vue'
+import CySettingsView from './components/CySettingsView.vue'
 import { useLayoutStore } from './stores/layout.store'
+import { useAppStore } from './stores/app.store'
 import { gridTemplateFor } from './layout/effective-layout'
 
 const layout = useLayoutStore()
+const app = useAppStore()
 const rootRef = ref<HTMLElement>()
 // 用对象字面量重建 style：gridTemplateFor 返回的 GridTemplate（具名接口）缺 CSSProperties 的 `--${string}`
 // 索引签名，直接 `:style` 绑定过不了 vue-tsc；字面量对象字面量语义则可赋给 CSSProperties。
@@ -55,17 +60,24 @@ watch(() => layout.notice, (n) => {
 </script>
 
 <template>
-  <!-- 四区布局:导航 / 会话列表 / 聊天 / Live2D 右栏（角色栏是布局列，不覆盖聊天）。grid-template-* 由有效布局驱动（D10） -->
+  <!-- 四区布局:导航 / 会话列表 / 聊天 / Live2D 右栏（角色栏是布局列，不覆盖聊天）。grid-template-* 由有效布局驱动（D10）。
+       阶段 4 批次 A：Chat 视图整体 v-if；Tasks 占位；Settings 全窗 overlay（fixed，覆盖标题栏以下全部区域）。 -->
   <div ref="rootRef" class="cy-app" :style="gridStyle">
     <CyTitleBar />
     <CyNavRail />
-    <CyConversationList v-show="layout.effective.conversationShown" />
-    <main class="cy-main">
-      <CyChatView />
-    </main>
-    <CyLive2DPanel v-show="layout.effective.live2dShown" />
-    <div v-if="layout.notice" class="cy-layout-toast" role="status">{{ layout.notice }}</div>
-    <CyHistoryViewer />
+    <template v-if="app.currentView === 'chat'">
+      <CyConversationList v-show="layout.effective.conversationShown" />
+      <main class="cy-main">
+        <CyChatView />
+      </main>
+      <CyLive2DPanel v-show="layout.effective.live2dShown && app.currentView === 'chat'" />
+      <div v-if="layout.notice" class="cy-layout-toast" role="status">{{ layout.notice }}</div>
+      <CyHistoryViewer />
+    </template>
+    <div v-else-if="app.currentView === 'tasks'" class="cy-tasks-placeholder" role="status">
+      任务中心 · 阶段 6 落地
+    </div>
+    <CySettingsView v-else @close="app.setView('chat')" />
   </div>
 </template>
 
@@ -87,6 +99,15 @@ watch(() => layout.notice, (n) => {
   display: flex;
   flex-direction: column;
   background: var(--cy-surface);
+}
+
+/* tasks 占位视图：落在 chat 区（导航常驻其左侧，可随时切回） */
+.cy-tasks-placeholder {
+  grid-area: chat;
+  display: grid;
+  place-items: center;
+  color: var(--cy-muted);
+  font-size: 14px;
 }
 
 /* 轻量 toast：非 Live2D 覆盖物，仅瞬时提示，不遮挡交互区 */

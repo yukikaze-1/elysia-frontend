@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+// 阶段 4 批次 A：NavRail active 上提——局部 ref 删除，改由 appStore.currentView 驱动（doc 06 §3.1）。
+// 布局折叠按钮保留（layoutStore 原有语义不变）。
+import { computed } from 'vue'
 import { useLayoutStore } from '../stores/layout.store'
+import { useAppStore, type AppView } from '../stores/app.store'
 
-type NavKey = 'chat' | 'tasks' | 'settings'
-
-const active = ref<NavKey>('chat')
+const app = useAppStore()
 const layout = useLayoutStore()
 
 const collapseLabel = computed(() => layout.effective.conversationShown ? '折叠会话列表' : '展开会话列表')
 
-const items: Array<{ key: NavKey; label: string; icon: string }> = [
+const items: Array<{ key: AppView; label: string; icon: string }> = [
   {
     key: 'chat',
     label: '聊天',
@@ -35,10 +36,10 @@ const items: Array<{ key: NavKey; label: string; icon: string }> = [
       v-for="item in items"
       :key="item.key"
       class="cy-nav-button"
-      :aria-pressed="active === item.key"
+      :aria-pressed="app.currentView === item.key"
       :aria-label="item.label"
       :title="item.label"
-      @click="active = item.key"
+      @click="app.setView(item.key)"
     >
       <svg
         width="20"

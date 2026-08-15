@@ -1,0 +1,71 @@
+<script setup lang="ts">
+// CyTtsVoices:TTS 声音列表与试听（阶段 4 批次 A，spec §3.3/§5.4 + brief Step 8）。
+// 声音列表来自 modelStore.voices（id/name/languages）；currentVoice 高亮；「设为当前声音」→ modelStore.setVoice(voiceId 字符串)；
+// 「试听」→ modelStore.preview({ voiceId })——preview 是「可调用 + 可读状态」双用句柄：
+// 调用触发试听，`.url`/`.error` 读取结果（响应式 getter）；试听为独立操作，不打断当前生成。
+import { useModelServiceStore } from '../stores/model-service.store'
+
+const modelStore = useModelServiceStore()
+
+function onPreview(voiceId: string): void { void modelStore.preview({ voiceId }) }
+function onSetVoice(voiceId: string): void { void modelStore.setVoice(voiceId) }
+</script>
+
+<template>
+  <section class="cy-tts-voices" aria-label="TTS 声音">
+    <h3 class="cy-tts-title">TTS 声音</h3>
+
+    <div v-if="modelStore.voicesError" class="cy-ms-error" role="alert">{{ modelStore.voicesError.message }}</div>
+
+    <div v-if="!modelStore.voices || modelStore.voices.length === 0" class="cy-ms-state">暂无可用声音</div>
+    <ul v-else class="cy-tts-list">
+      <li
+        v-for="v in modelStore.voices"
+        :key="v.id"
+        class="cy-tts-item"
+        :class="{ current: modelStore.currentVoice === v.id }"
+        :data-voice-id="v.id"
+      >
+        <div class="cy-tts-meta">
+          <strong>{{ v.name || v.id }}</strong>
+          <span class="cy-tts-id">{{ v.id }}</span>
+          <span class="cy-tts-lang">{{ v.languages.length ? v.languages.join(' / ') : '—' }}</span>
+          <span v-if="modelStore.currentVoice === v.id" class="cy-tts-current">当前声音</span>
+        </div>
+        <div class="cy-tts-actions">
+          <button class="cy-profile-btn" :disabled="modelStore.currentVoice === v.id" @click="onSetVoice(v.id)">设为当前声音</button>
+          <button class="cy-profile-btn" :disabled="modelStore.previewing" @click="onPreview(v.id)">试听</button>
+        </div>
+      </li>
+    </ul>
+
+    <div v-if="modelStore.preview?.error" class="cy-ms-error" role="alert">{{ modelStore.preview.error }}</div>
+    <audio
+      v-if="modelStore.preview?.url"
+      :src="modelStore.preview.url"
+      class="cy-tts-audio"
+      controls
+      autoplay
+    />
+  </section>
+</template>
+
+<style scoped>
+.cy-tts-voices { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--cy-border); }
+.cy-tts-title { margin: 0; font-size: 13px; color: var(--cy-muted); font-weight: 600; }
+.cy-ms-error { display: flex; align-items: center; gap: 8px; padding: 8px 11px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
+.cy-ms-state { padding: 18px 0; color: var(--cy-muted); text-align: center; font-size: 13px; }
+.cy-tts-list { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.cy-tts-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 9px 12px; background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 11px; }
+.cy-tts-item.current { border-color: var(--cy-accent-strong); }
+.cy-tts-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.cy-tts-id { color: var(--cy-muted); font-size: 11px; }
+.cy-tts-lang { color: var(--cy-muted); font-size: 11px; }
+.cy-tts-current { padding: 1px 8px; border-radius: 999px; background: var(--cy-accent); color: var(--cy-accent-text); font-size: 11px; }
+.cy-tts-actions { display: flex; gap: 7px; }
+.cy-profile-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-text); font-size: 12px; }
+.cy-profile-btn:disabled { opacity: 0.55; cursor: default; }
+.cy-profile-btn:hover:not(:disabled) { background: var(--cy-surface-hover); }
+.cy-tts-audio { width: 100%; }
+button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
+</style>
