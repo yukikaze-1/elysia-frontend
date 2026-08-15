@@ -37,7 +37,21 @@ export const IpcChannels = {
   modelsGetActiveSelection: 'models:get-active-selection', // 阶段 4 批次 A：当前激活选择
   ttsListVoices: 'tts:list-voices',                      // 阶段 4 批次 A：TTS 声音清单
   ttsPreview: 'tts:preview',                             // 阶段 4 批次 A：TTS 预览（生成音频）
-  ttsSetVoice: 'tts:set-voice'                           // 阶段 4 批次 A：TTS 声音切换
+  ttsSetVoice: 'tts:set-voice',                          // 阶段 4 批次 A：TTS 声音切换
+  voiceStartRecord: 'voice:start-record',                // 阶段 4 批次 B：普通录音启动（invoke）
+  voiceStopRecord: 'voice:stop-record',                  // 阶段 4 批次 B：普通录音停止（invoke）
+  voiceCommit: 'voice:commit',                           // 阶段 4 批次 B：录音确认发送（invoke，await ack）
+  voiceDiscard: 'voice:discard',                         // 阶段 4 批次 B：录音丢弃（invoke）
+  voiceStartRealtime: 'voice:start-realtime',            // 阶段 4 批次 B：实时会话启动（invoke）
+  voiceStopRealtime: 'voice:stop-realtime',              // 阶段 4 批次 B：实时会话停止（invoke）
+  voiceCancelRealtime: 'voice:cancel-realtime',          // 阶段 4 批次 B：实时会话取消（invoke）
+  voiceStartDictation: 'voice:start-dictation',          // 阶段 4 批次 B：输入法转写启动（invoke）
+  voiceStopDictation: 'voice:stop-dictation',            // 阶段 4 批次 B：输入法转写停止（invoke）
+  voiceCancelDictation: 'voice:cancel-dictation',        // 阶段 4 批次 B：输入法转写取消（invoke）
+  voiceAudioChunk: 'voice:audio-chunk',                  // 阶段 4 批次 B：音频二进制上行（单向 send，ipcMain.on 不 invoke，D-P18）
+  audioCancel: 'audio:cancel',                           // 阶段 4 批次 B：TTS 播放取消（invoke）
+  settingsLoad: 'settings:load',                         // 阶段 4 批次 B：设置装载（invoke）
+  settingsSave: 'settings:save'                          // 阶段 4 批次 B：设置保存（invoke，patch merge）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 

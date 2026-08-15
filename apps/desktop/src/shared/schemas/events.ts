@@ -109,6 +109,67 @@ export const SetTtsVoiceResultEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('set_tts_voice.result'), ok: z.boolean(), error: z.string().optional(), voice: z.string().optional()
 })
 
+// —— 阶段 4 批次 B（P4-B）：语音族事件 schema 镜像（spec 5.2；F-2 修复：未镜像 → preload parseBackendEvent 丢弃 → 语音功能静默失效）——
+// 每成员均经 BackendEventEnvelopeSchema.extend，eventId/sequence 必填（Minor 15）。
+
+/** 普通录音转写字幕（voice.transcript；PENDING 字幕） */
+export const VoiceTranscriptEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice.transcript'), recordingId: z.string().min(1), text: z.string(), emotion: z.string().optional()
+})
+/** 实时会话已建立（voice_session.started） */
+export const VoiceSessionStartedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice_session.started'), sessionId: z.string().min(1), conversationId: z.string().optional()
+})
+/** 实时会话字幕增量（voice_session.partial） */
+export const VoiceSessionPartialEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice_session.partial'), sessionId: z.string().min(1),
+  turnId: z.number().int().nonnegative(), segmentIndex: z.number().int().nonnegative(), text: z.string()
+})
+/** 实时会话轮次自动提交（voice_session.turn；后端预分配 messageId） */
+export const VoiceSessionTurnEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice_session.turn'), sessionId: z.string().min(1), turnId: z.number().int().nonnegative(),
+  messageId: z.string().min(1), conversationId: z.string().optional(), text: z.string()
+})
+/** 实时会话背压确认（voice_session.ack；seq=服务端已收 BINARY 帧序数） */
+export const VoiceSessionAckEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice_session.ack'), sessionId: z.string().min(1), seq: z.number().int().nonnegative()
+})
+/** 实时会话结束（voice_session.ended；reason 枚举四值） */
+export const VoiceSessionEndedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice_session.ended'), sessionId: z.string().min(1),
+  reason: z.enum(['stopped', 'cancelled', 'timeout', 'stt_disabled'])
+})
+/** 输入法转写字幕累积（dictation.partial） */
+export const DictationPartialEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('dictation.partial'), text: z.string()
+})
+/** 输入法转写终态（dictation.final；clientRequestId 必填） */
+export const DictationFinalEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('dictation.final'), clientRequestId: z.string().min(1), text: z.string()
+})
+/** 输入法转写取消（dictation.cancelled；clientRequestId 必填） */
+export const DictationCancelledEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('dictation.cancelled'), clientRequestId: z.string().min(1)
+})
+/** TTS 句开始（audio.session.started） */
+export const AudioSessionStartedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('audio.session.started'), streamId: z.number().int().nonnegative(),
+  format: z.enum(['wav', 'mp3']).optional()
+})
+/** TTS 整段就绪（audio.session.ready；format 枚举 wav|mp3 可选） */
+export const AudioSessionReadyEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('audio.session.ready'), streamId: z.number().int().nonnegative(), url: z.string().min(1),
+  durationMs: z.number().nonnegative().optional(), format: z.enum(['wav', 'mp3']).optional()
+})
+/** TTS 播放取消/中断（audio.session.cancelled） */
+export const AudioSessionCancelledEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('audio.session.cancelled'), streamId: z.number().int().nonnegative()
+})
+/** 语音族错误（voice.error；D-P15） */
+export const VoiceErrorEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('voice.error'), code: z.string().min(1), message: z.string().optional()
+})
+
 export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationStartedEventSchema,
   GenerationSegmentStartedEventSchema,
@@ -117,7 +178,20 @@ export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationCompletedEventSchema,
   GenerationFailedEventSchema,
   SwitchModelResultEventSchema,
-  SetTtsVoiceResultEventSchema
+  SetTtsVoiceResultEventSchema,
+  VoiceTranscriptEventSchema,
+  VoiceSessionStartedEventSchema,
+  VoiceSessionPartialEventSchema,
+  VoiceSessionTurnEventSchema,
+  VoiceSessionAckEventSchema,
+  VoiceSessionEndedEventSchema,
+  DictationPartialEventSchema,
+  DictationFinalEventSchema,
+  DictationCancelledEventSchema,
+  AudioSessionStartedEventSchema,
+  AudioSessionReadyEventSchema,
+  AudioSessionCancelledEventSchema,
+  VoiceErrorEventSchema
 ])
 
 export function parseBackendEvent(input: unknown): {

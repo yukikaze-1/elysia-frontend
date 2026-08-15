@@ -87,6 +87,37 @@ export interface SetTtsVoiceResultEvent extends BackendEventEnvelope {
   voice?: string
 }
 
+// —— 阶段 4 批次 B（P4-B）：语音族事件（spec 5.2 逐字）——
+// audio / audio_end 原始帧不进 BackendEvent（Main 内解码缓冲，D-P9）；
+// voice_session.ack 进事件流（voiceStore 背压消费）；voice.error 承载语音族错误（D-P15）。
+
+/** 普通录音转写字幕（voice.transcript；PENDING 字幕，终态确认文本在 commit 由用户确认） */
+export interface VoiceTranscriptEvent extends BackendEventEnvelope { event: 'voice.transcript'; recordingId: string; text: string; emotion?: string }
+/** 实时会话已建立（voice_session.started） */
+export interface VoiceSessionStartedEvent extends BackendEventEnvelope { event: 'voice_session.started'; sessionId: string; conversationId?: string }
+/** 实时会话字幕增量（voice_session.partial；后端 VAD 分段） */
+export interface VoiceSessionPartialEvent extends BackendEventEnvelope { event: 'voice_session.partial'; sessionId: string; turnId: number; segmentIndex: number; text: string }
+/** 实时会话轮次自动提交（voice_session.turn；后端预分配 messageId，触发 generation） */
+export interface VoiceSessionTurnEvent extends BackendEventEnvelope { event: 'voice_session.turn'; sessionId: string; turnId: number; messageId: string; conversationId?: string; text: string }
+/** 实时会话背压确认（voice_session.ack；seq=服务端已收 BINARY 帧序数，~1s 周期） */
+export interface VoiceSessionAckEvent extends BackendEventEnvelope { event: 'voice_session.ack'; sessionId: string; seq: number }
+/** 实时会话结束（voice_session.ended；reason 四值） */
+export interface VoiceSessionEndedEvent extends BackendEventEnvelope { event: 'voice_session.ended'; sessionId: string; reason: 'stopped' | 'cancelled' | 'timeout' | 'stt_disabled' }
+/** 输入法转写字幕累积（dictation.partial；只回文字，零消息副作用） */
+export interface DictationPartialEvent extends BackendEventEnvelope { event: 'dictation.partial'; text: string }
+/** 输入法转写终态（dictation.final；前端写草稿，不创建消息、不自动发送） */
+export interface DictationFinalEvent extends BackendEventEnvelope { event: 'dictation.final'; clientRequestId: string; text: string }
+/** 输入法转写取消（dictation.cancelled） */
+export interface DictationCancelledEvent extends BackendEventEnvelope { event: 'dictation.cancelled'; clientRequestId: string }
+/** TTS 句开始（audio.session.started；Phase 2 放行后、首 chunk 前） */
+export interface AudioSessionStartedEvent extends BackendEventEnvelope { event: 'audio.session.started'; streamId: number; format?: 'wav' | 'mp3' }
+/** TTS 整段就绪（audio.session.ready；Main 缓冲收齐后经 MediaService 出 URL） */
+export interface AudioSessionReadyEvent extends BackendEventEnvelope { event: 'audio.session.ready'; streamId: number; url: string; durationMs?: number; format?: 'wav' | 'mp3' }
+/** TTS 播放取消/中断（audio.session.cancelled；audio.cancel / TTS 中断时发，前端清理孤儿 chunk） */
+export interface AudioSessionCancelledEvent extends BackendEventEnvelope { event: 'audio.session.cancelled'; streamId: number }
+/** 语音族错误（voice.error；D-P15：real-backend 对语音族错误码额外 emit，connectionStore 横幅抑制） */
+export interface VoiceErrorEvent extends BackendEventEnvelope { event: 'voice.error'; code: string; message?: string }
+
 /** 后端事件判别联合 */
 export type BackendEvent =
   | GenerationStartedEvent
@@ -97,3 +128,16 @@ export type BackendEvent =
   | GenerationFailedEvent
   | SwitchModelResultEvent
   | SetTtsVoiceResultEvent
+  | VoiceTranscriptEvent
+  | VoiceSessionStartedEvent
+  | VoiceSessionPartialEvent
+  | VoiceSessionTurnEvent
+  | VoiceSessionAckEvent
+  | VoiceSessionEndedEvent
+  | DictationPartialEvent
+  | DictationFinalEvent
+  | DictationCancelledEvent
+  | AudioSessionStartedEvent
+  | AudioSessionReadyEvent
+  | AudioSessionCancelledEvent
+  | VoiceErrorEvent

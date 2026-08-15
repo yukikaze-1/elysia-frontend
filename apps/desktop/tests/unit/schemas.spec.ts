@@ -160,3 +160,73 @@ describe('扩展后的事件 Schema', () => {
     expect(parseBackendEvent(ok).success).toBe(true)
   })
 })
+
+describe('语音/设置 BackendEvent schema 镜像（阶段4批次B）', () => {
+  /** 13 个新事件各一个合法样例（eventId+sequence 必填） */
+  const validSamples: Record<string, Record<string, unknown>> = {
+    'voice.transcript': { event: 'voice.transcript', recordingId: 'rec_1', text: '转写文本', emotion: 'calm' },
+    'voice_session.started': { event: 'voice_session.started', sessionId: 'vs_1', conversationId: 'conv-1' },
+    'voice_session.partial': { event: 'voice_session.partial', sessionId: 'vs_1', turnId: 1, segmentIndex: 0, text: '字幕' },
+    'voice_session.turn': { event: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'msg-1', conversationId: 'conv-1', text: '轮次' },
+    'voice_session.ack': { event: 'voice_session.ack', sessionId: 'vs_1', seq: 42 },
+    'voice_session.ended': { event: 'voice_session.ended', sessionId: 'vs_1', reason: 'stopped' },
+    'dictation.partial': { event: 'dictation.partial', text: '累积字幕' },
+    'dictation.final': { event: 'dictation.final', clientRequestId: 'req_1', text: '终态文本' },
+    'dictation.cancelled': { event: 'dictation.cancelled', clientRequestId: 'req_1' },
+    'audio.session.started': { event: 'audio.session.started', streamId: 1, format: 'wav' },
+    'audio.session.ready': { event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/x', durationMs: 3000, format: 'mp3' },
+    'audio.session.cancelled': { event: 'audio.session.cancelled', streamId: 1 },
+    'voice.error': { event: 'voice.error', code: 'STT_UNAVAILABLE', message: '语音服务不可用' }
+  }
+  let i = 100
+  const envelope = () => ({ eventId: `e${i++}`, sequence: i })
+
+  it('13 个新事件各一个合法样例 parse 通过', () => {
+    for (const [name, body] of Object.entries(validSamples)) {
+      const ok = { ...envelope(), ...body }
+      expect(parseBackendEvent(ok).success, `事件 ${name} 应通过`).toBe(true)
+    }
+  })
+
+  it('缺 eventId 与缺 sequence 均拒绝（两者必填）', () => {
+    for (const [name, body] of Object.entries(validSamples)) {
+      const withoutEventId = { ...envelope(), ...body }
+      delete (withoutEventId as Record<string, unknown>).eventId
+      expect(parseBackendEvent(withoutEventId).success, `事件 ${name} 缺 eventId 应拒绝`).toBe(false)
+      const withoutSequence = { ...envelope(), ...body }
+      delete (withoutSequence as Record<string, unknown>).sequence
+      expect(parseBackendEvent(withoutSequence).success, `事件 ${name} 缺 sequence 应拒绝`).toBe(false)
+    }
+  })
+
+  it('voice_session.ended 非法 reason 被拒绝', () => {
+    const bad = { ...envelope(), event: 'voice_session.ended', sessionId: 'vs_1', reason: 'paused' }
+    expect(parseBackendEvent(bad).success).toBe(false)
+    for (const reason of ['stopped', 'cancelled', 'timeout', 'stt_disabled']) {
+      expect(parseBackendEvent({ ...envelope(), event: 'voice_session.ended', sessionId: 'vs_1', reason }).success).toBe(true)
+    }
+  })
+
+  it('dictation.final / dictation.cancelled 缺 clientRequestId 被拒绝', () => {
+    const final = { ...envelope(), event: 'dictation.final', text: 'x' }
+    expect(parseBackendEvent(final).success).toBe(false)
+    const cancelled = { ...envelope(), event: 'dictation.cancelled' }
+    expect(parseBackendEvent(cancelled).success).toBe(false)
+  })
+
+  it('audio.session.ready 缺 url / 非法 format 被拒绝,format 可缺省', () => {
+    const noUrl = { ...envelope(), event: 'audio.session.ready', streamId: 1 }
+    expect(parseBackendEvent(noUrl).success).toBe(false)
+    const badFormat = { ...envelope(), event: 'audio.session.ready', streamId: 1, url: 'u', format: 'ogg' }
+    expect(parseBackendEvent(badFormat).success).toBe(false)
+    const noFormat = { ...envelope(), event: 'audio.session.ready', streamId: 1, url: 'u', durationMs: 100 }
+    expect(parseBackendEvent(noFormat).success).toBe(true)
+  })
+
+  it('voice.error 缺 code / 空 code 被拒绝', () => {
+    const noCode = { ...envelope(), event: 'voice.error', message: 'x' }
+    expect(parseBackendEvent(noCode).success).toBe(false)
+    const emptyCode = { ...envelope(), event: 'voice.error', code: '' }
+    expect(parseBackendEvent(emptyCode).success).toBe(false)
+  })
+})

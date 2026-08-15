@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -189,3 +189,29 @@ export const ActiveModelSelectionSchema: z.ZodType<ActiveModelSelection> = z.obj
   llmProfileId: z.string().optional(), voiceSttProfileId: z.string().optional(),
   ttsProfileId: z.string().optional(), dictationSttProfileId: z.string().optional()
 })
+
+// —— 阶段 4 批次 B：语音/设置出参 schema（严格镜像 contracts/voice.ts，C1）——
+// 子 schema 不注 z.ZodType（保持 ZodObject 具体类型以保留 .partial()，供 SettingsPatchSchema 使用）；
+// 顶层 SettingsStateSchema/SettingsPatchSchema 注 z.ZodType 强制镜像契约形状。
+export const VoiceSettingsSchema = z.object({
+  enabled: z.boolean(), realtimeEnabled: z.boolean(), autoReadReply: z.boolean(),
+  showCaptions: z.boolean(), consentBackendStt: z.boolean(), micDeviceId: z.string().optional()
+})
+export const DictationSettingsSchema = z.object({
+  sttProfileId: z.string().optional(), insertMode: z.enum(['append', 'replace_selection'])
+})
+export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
+  version: z.literal(1), voice: VoiceSettingsSchema, dictation: DictationSettingsSchema
+})
+/** 局部更新（settings:save 入参；patch 后 merge 才落盘，未提交字段保持现值） */
+export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
+  voice: VoiceSettingsSchema.partial().optional(),
+  dictation: DictationSettingsSchema.partial().optional()
+})
+
+/** 默认设置（M-7 修复）：enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/insertMode；micDeviceId/sttProfileId 缺省 undefined */
+export const DEFAULT_SETTINGS: SettingsState = {
+  version: 1,
+  voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
+  dictation: { insertMode: 'append' }
+}
