@@ -5,7 +5,7 @@ import type { AttachmentCheckResult, AttachmentSignResult } from '@shared/contra
 import type { BackendAdapter } from '../transport/backend-adapter'
 import { STICKER_ID_PATTERN } from '../transport/protocol-v2/content-part'
 
-export type MediaRouteType = 'attachment' | 'sticker'
+export type MediaRouteType = 'attachment' | 'sticker' | 'tts-preview'
 export const MEDIA_PATH_PREFIX = '/__cyrene-media/'
 
 const ATTACHMENT_ID_PATTERN = /^att_[A-Za-z0-9_-]+$/
@@ -41,7 +41,7 @@ export function parseMediaPath(pathname: string): { mediaType: MediaRouteType; i
   const segs = rest.split('/')
   if (segs.length !== 2 || segs.some((s) => s.length === 0)) return null
   const [mt, id] = segs as [string, string]
-  if (mt !== 'attachment' && mt !== 'sticker') return null
+  if (mt !== 'attachment' && mt !== 'sticker' && mt !== 'tts-preview') return null
   return { mediaType: mt, id }
 }
 
@@ -58,6 +58,8 @@ export class MediaService {
   private readonly baseUrl: () => string | undefined
   private readonly now: () => number
   private readonly fetchImpl: typeof fetch
+  private readonly ttsPreviewCache = new Map<string, { bytes: Uint8Array; mime: string; createdAt: number }>()
+  private readonly TTS_PREVIEW_TTL_MS = 60_000
 
   constructor(deps: { backend: Pick<BackendAdapter, 'signAttachmentUrl'>; baseUrl: () => string | undefined; now?: () => number; fetchImpl?: typeof fetch }) {
     this.backend = deps.backend
@@ -85,7 +87,22 @@ export class MediaService {
   async stream(mediaType: MediaRouteType, id: string, request: Request): Promise<Response> {
     if (isDocumentRequest(request)) return new Response('Forbidden', { status: 403 })
     if (mediaType === 'sticker') return this.streamSticker(id)
+    if (mediaType === 'tts-preview') return this.streamTtsPreview(id)
     return this.streamAttachment(id, request)
+  }
+
+  /** 试听音频一次性缓存：放入后 60s 过期；put 时顺手清理过期项（时钟用现有 this.now = deps.now ?? Date.now） */
+  putTtsPreview(id: string, bytes: Uint8Array, mime: string): void {
+    const now = this.now()
+    for (const [k, v] of this.ttsPreviewCache) if (now - v.createdAt > this.TTS_PREVIEW_TTL_MS) this.ttsPreviewCache.delete(k)
+    this.ttsPreviewCache.set(id, { bytes, mime, createdAt: now })
+  }
+
+  private async streamTtsPreview(id: string): Promise<Response> {
+    const hit = this.ttsPreviewCache.get(id)
+    if (!hit) return new Response(null, { status: 404 })
+    // 缓存字段 bytes 类型为 Uint8Array<ArrayBufferLike>；Response BodyInit 需 ArrayBufferView<ArrayBuffer>——cast 兼容（同 sticker readBodyCapped 纪律）
+    return new Response(hit.bytes as unknown as BodyInit, { status: 200, headers: { 'content-type': hit.mime, 'cache-control': 'no-store' } })
   }
 
   private async proxyFetch(signedUrl: string, request: Request, headers: Record<string, string>): Promise<Response> {

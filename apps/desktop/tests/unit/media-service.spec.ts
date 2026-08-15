@@ -274,3 +274,17 @@ describe('MediaService.streamSticker G4 硬化（spec §4.6 P3-2/P3-4）', () =>
     expect((await svcBad.stream('sticker', 'st_1', new Request('cyrene://renderer/__cyrene-media/sticker/st_1', { headers: { 'sec-fetch-dest': 'img' } }))).status).toBe(415)
   })
 })
+
+describe('MediaService.stream tts-preview 分支（阶段 4 批次 A：试听音频一次性路由）', () => {
+  it('tts-preview 路由：put 后 stream 返回 bytes；未知 id → 404', async () => {
+    const svc = mkService()
+    svc.putTtsPreview('ttsp-1', new Uint8Array([1, 2, 3]), 'audio/wav')
+    const res = await svc.stream('tts-preview', 'ttsp-1', new Request('cyrene://renderer/__cyrene-media/tts-preview/ttsp-1', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(res.status).toBe(200)
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    expect(bytes).toEqual(new Uint8Array([1, 2, 3]))
+    expect(res.headers.get('content-type')).toBe('audio/wav')
+    const miss = await svc.stream('tts-preview', 'nope', new Request('cyrene://renderer/__cyrene-media/tts-preview/nope', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(miss.status).toBe(404)
+  })
+})
