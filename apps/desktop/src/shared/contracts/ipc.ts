@@ -28,7 +28,16 @@ export const IpcChannels = {
   attachmentsCheck: 'attachments:check',                 // 阶段 3 G3：媒体状态分类（重签后 Range-0 探测）
   chatQueryHistory: 'chat:query-history',                // 阶段 3 G4：聊天历史统一查询（scope/query/localDate/category/分页）
   chatGetMessageContext: 'chat:get-message-context',     // 阶段 3 G4：来源跳转上下文窗口
-  chatListStickers: 'chat:list-stickers'                 // 阶段 3 G4：内置表情包清单（StickerManifest）
+  chatListStickers: 'chat:list-stickers',                // 阶段 3 G4：内置表情包清单（StickerManifest）
+  modelsListProfiles: 'models:list-profiles',            // 阶段 4 批次 A：模型服务 Profile 清单
+  modelsSaveProfile: 'models:save-profile',              // 阶段 4 批次 A：自定义 Profile 保存（apiKey 一次性）
+  modelsDeleteProfile: 'models:delete-profile',          // 阶段 4 批次 A：删除 Profile
+  modelsTestProfile: 'models:test-profile',              // 阶段 4 批次 A：Profile 连通性/可用性测试
+  modelsActivateProfile: 'models:activate-profile',      // 阶段 4 批次 A：激活 Profile（switch_model）
+  modelsGetActiveSelection: 'models:get-active-selection', // 阶段 4 批次 A：当前激活选择
+  ttsListVoices: 'tts:list-voices',                      // 阶段 4 批次 A：TTS 声音清单
+  ttsPreview: 'tts:preview',                             // 阶段 4 批次 A：TTS 预览（生成音频）
+  ttsSetVoice: 'tts:set-voice'                           // 阶段 4 批次 A：TTS 声音切换
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 

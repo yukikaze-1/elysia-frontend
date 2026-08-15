@@ -70,19 +70,14 @@ export interface CancelGenerationInput {
   generationId: string
 }
 
-export interface TestModelProfileCommand {
-  profileId: string
-}
-
-export interface ModelProfileTestResult {
-  ok: boolean
-  latencyMs?: number
-  error?: string
-}
-
-export interface ActivateModelProfileCommand {
-  profileId: string
-}
+/** 模型服务 Profile 命令/结果统一收敛在 contracts/model.ts（Task 1：ModelProfile 对齐后移出 backend.ts） */
+export type {
+  ModelProfileTestResult,
+  ModelProfileTestCommand,
+  ActivateModelProfileCommand,
+  ModelServiceType,
+  ModelProfile
+} from './model'
 
 /** 历史分类（D2 对齐 docs/02 §19 后端六分类；image_video 为查看器「图片/视频」tab） */
 export type HistoryCategory = 'all' | 'image_video' | 'sticker' | 'file' | 'audio' | 'link'

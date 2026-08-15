@@ -70,6 +70,23 @@ export interface GenerationFailedEvent extends BackendEventEnvelope {
   error: { code: string; message: string; retryable?: boolean; details?: unknown }
 }
 
+/** 模型 Profile 激活结果（switch_model.result；判别字段用 event，配合 schemas/events.ts 的 z.discriminatedUnion('event', ...)） */
+export interface SwitchModelResultEvent extends BackendEventEnvelope {
+  event: 'switch_model.result'
+  service: 'llm' | 'stt' | 'tts'
+  model: string
+  ok: boolean
+  error?: string
+}
+
+/** TTS 声音切换结果（set_tts_voice.result；同用 event 判别字段） */
+export interface SetTtsVoiceResultEvent extends BackendEventEnvelope {
+  event: 'set_tts_voice.result'
+  ok: boolean
+  error?: string
+  voice?: string
+}
+
 /** 后端事件判别联合 */
 export type BackendEvent =
   | GenerationStartedEvent
@@ -78,3 +95,5 @@ export type BackendEvent =
   | SegmentCompletedEvent
   | GenerationCompletedEvent
   | GenerationFailedEvent
+  | SwitchModelResultEvent
+  | SetTtsVoiceResultEvent
