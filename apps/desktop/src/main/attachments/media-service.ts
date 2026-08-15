@@ -5,7 +5,7 @@ import type { AttachmentCheckResult, AttachmentSignResult } from '@shared/contra
 import type { BackendAdapter } from '../transport/backend-adapter'
 import { STICKER_ID_PATTERN } from '../transport/protocol-v2/content-part'
 
-export type MediaRouteType = 'attachment' | 'sticker' | 'tts-preview'
+export type MediaRouteType = 'attachment' | 'sticker' | 'tts-preview' | 'tts-live'
 export const MEDIA_PATH_PREFIX = '/__cyrene-media/'
 
 const ATTACHMENT_ID_PATTERN = /^att_[A-Za-z0-9_-]+$/
@@ -41,7 +41,7 @@ export function parseMediaPath(pathname: string): { mediaType: MediaRouteType; i
   const segs = rest.split('/')
   if (segs.length !== 2 || segs.some((s) => s.length === 0)) return null
   const [mt, id] = segs as [string, string]
-  if (mt !== 'attachment' && mt !== 'sticker' && mt !== 'tts-preview') return null
+  if (mt !== 'attachment' && mt !== 'sticker' && mt !== 'tts-preview' && mt !== 'tts-live') return null
   return { mediaType: mt, id }
 }
 
@@ -60,6 +60,9 @@ export class MediaService {
   private readonly fetchImpl: typeof fetch
   private readonly ttsPreviewCache = new Map<string, { bytes: Uint8Array; mime: string; createdAt: number }>()
   private readonly TTS_PREVIEW_TTL_MS = 60_000
+  /** P4-B tts-live：实时朗读音频缓存——契约 TtsMediaSink.putTtsAudio 需返回 cyrene:// URL；TTL 缺省 5min（spec D-P13） */
+  private readonly ttsLiveCache = new Map<string, { bytes: Uint8Array; mime: string; createdAt: number }>()
+  private readonly TTS_LIVE_TTL_MS = 300_000
 
   constructor(deps: { backend: Pick<BackendAdapter, 'signAttachmentUrl'>; baseUrl: () => string | undefined; now?: () => number; fetchImpl?: typeof fetch }) {
     this.backend = deps.backend
@@ -88,6 +91,7 @@ export class MediaService {
     if (isDocumentRequest(request)) return new Response('Forbidden', { status: 403 })
     if (mediaType === 'sticker') return this.streamSticker(id)
     if (mediaType === 'tts-preview') return this.streamTtsPreview(id)
+    if (mediaType === 'tts-live') return this.streamTtsLive(id)
     return this.streamAttachment(id, request)
   }
 
@@ -102,6 +106,24 @@ export class MediaService {
     const hit = this.ttsPreviewCache.get(id)
     if (!hit) return new Response(null, { status: 404 })
     // 缓存字段 bytes 类型为 Uint8Array<ArrayBufferLike>；Response BodyInit 需 ArrayBufferView<ArrayBuffer>——cast 兼容（同 sticker readBodyCapped 纪律）
+    return new Response(hit.bytes as unknown as BodyInit, { status: 200, headers: { 'content-type': hit.mime, 'cache-control': 'no-store' } })
+  }
+
+  /** P4-B tts-live：实时朗读音频放缓存。`mime` 缺省 `audio/wav`（与 `TtsMediaSink` 契约声明一致，可满足接口可赋值性）。
+   *  `ttlMs` 缺省 5min（300000）；put 时惰性清理过期项（同 putTtsPreview）。
+   *  M5 修复：契约 `TtsMediaSink` 需返回 cyrene:// URL 供 `<audio src>` 使用——URL 组装同 model-handlers.ts 的 tts-preview。 */
+  putTtsAudio(id: string, bytes: Uint8Array, mime?: string, opts: { ttlMs?: number } = {}): { url: string } {
+    const now = this.now()
+    const ttl = opts.ttlMs ?? this.TTS_LIVE_TTL_MS
+    const resolvedMime = mime ?? 'audio/wav'
+    for (const [k, v] of this.ttsLiveCache) if (now - v.createdAt > ttl) this.ttsLiveCache.delete(k)
+    this.ttsLiveCache.set(id, { bytes, mime: resolvedMime, createdAt: now })
+    return { url: `cyrene://renderer${MEDIA_PATH_PREFIX}tts-live/${id}` }
+  }
+
+  private async streamTtsLive(id: string): Promise<Response> {
+    const hit = this.ttsLiveCache.get(id)
+    if (!hit) return new Response(null, { status: 404 })
     return new Response(hit.bytes as unknown as BodyInit, { status: 200, headers: { 'content-type': hit.mime, 'cache-control': 'no-store' } })
   }
 

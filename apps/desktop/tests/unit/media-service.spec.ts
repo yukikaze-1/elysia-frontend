@@ -23,6 +23,7 @@ describe('parseMediaPath / isDocumentRequest', () => {
   it('解析 /__cyrene-media/{mediaType}/{id}', () => {
     expect(parseMediaPath('/__cyrene-media/attachment/att_1')).toEqual({ mediaType: 'attachment', id: 'att_1' })
     expect(parseMediaPath('/__cyrene-media/sticker/st_1')).toEqual({ mediaType: 'sticker', id: 'st_1' })
+    expect(parseMediaPath('/__cyrene-media/tts-live/live-1')).toEqual({ mediaType: 'tts-live', id: 'live-1' })
   })
   it('非媒体路径/缺段/未知 mediaType → null', () => {
     expect(parseMediaPath('/index.html')).toBeNull()
@@ -286,5 +287,74 @@ describe('MediaService.stream tts-preview 分支（阶段 4 批次 A：试听音
     expect(res.headers.get('content-type')).toBe('audio/wav')
     const miss = await svc.stream('tts-preview', 'nope', new Request('cyrene://renderer/__cyrene-media/tts-preview/nope', { headers: { 'sec-fetch-dest': 'img' } }))
     expect(miss.status).toBe(404)
+  })
+})
+
+describe('MediaService.putTtsAudio / stream tts-live 分支（阶段 4 批次 B：实时朗读媒体路由，spec D-P13）', () => {
+  it('putTtsAudio 返回 cyrene:// URL；put 后 stream 返回 bytes/mime + Cache-Control: no-store（Minor 17）', async () => {
+    const svc = mkService()
+    const { url } = svc.putTtsAudio('live-1', new Uint8Array([4, 5, 6]), 'audio/webm')
+    expect(url).toBe('cyrene://renderer/__cyrene-media/tts-live/live-1')
+    const res = await svc.stream('tts-live', 'live-1', new Request(url, { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(res.status).toBe(200)
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    expect(bytes).toEqual(new Uint8Array([4, 5, 6]))
+    expect(res.headers.get('content-type')).toBe('audio/webm')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+  })
+  it('mime 缺省 → audio/wav 回落；未知 id → 404 含 mock 占位 mock-silent（Task 5/7 不落缓存）', async () => {
+    const svc = mkService()
+    const { url } = svc.putTtsAudio('live-defmime', new Uint8Array([7, 8, 9]))
+    const res = await svc.stream('tts-live', 'live-defmime', new Request(url, { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('audio/wav')
+    const miss = await svc.stream('tts-live', 'mock-silent', new Request('cyrene://renderer/__cyrene-media/tts-live/mock-silent', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(miss.status).toBe(404)
+    const miss2 = await svc.stream('tts-live', 'nope', new Request('cyrene://renderer/__cyrene-media/tts-live/nope', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(miss2.status).toBe(404)
+  })
+  it('ttlMs 过期后经惰性清理（put）移除 → 404；未过期新 put 不清理（同 putTtsPreview 语义）', async () => {
+    let clock = now()
+    const svc = new MediaService({
+      backend: { signAttachmentUrl: async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }) },
+      baseUrl: () => 'http://127.0.0.1:9',
+      now: () => clock
+    })
+    svc.putTtsAudio('live-ttl', new Uint8Array([1]), 'audio/wav', { ttlMs: 1000 })
+    const hit = await svc.stream('tts-live', 'live-ttl', new Request('cyrene://renderer/__cyrene-media/tts-live/live-ttl', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(hit.status).toBe(200)
+    clock = now() + 2000   // 超过 1s TTL
+    // 惰性清理只在 put 时触发：超期项由下一次 put 清除（同 putTtsPreview）
+    svc.putTtsAudio('live-ttl', new Uint8Array([2]), 'audio/wav', { ttlMs: 1000 })
+    const expired = await svc.stream('tts-live', 'live-ttl', new Request('cyrene://renderer/__cyrene-media/tts-live/live-ttl', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(expired.status).toBe(200)   // 同 TTL 窗口内重新放入仍可访问
+    clock = now() + 4000   // 再次超过 1s TTL，且总时钟推进 > 初始 put
+    svc.putTtsAudio('live-other', new Uint8Array([3]), 'audio/wav', { ttlMs: 1000 })   // 惰性清理：sweep 掉 expired 的 live-ttl
+    const swept = await svc.stream('tts-live', 'live-ttl', new Request('cyrene://renderer/__cyrene-media/tts-live/live-ttl', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(swept.status).toBe(404)
+  })
+  it('缺省 ttlMs = 5min：5min 内 200；超过 5min 由下一次 put 惰性清理 → 404', async () => {
+    let clock = now()
+    const svc = new MediaService({
+      backend: { signAttachmentUrl: async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }) },
+      baseUrl: () => 'http://127.0.0.1:9',
+      now: () => clock
+    })
+    svc.putTtsAudio('live-def', new Uint8Array([1]), 'audio/wav')
+    const hit = await svc.stream('tts-live', 'live-def', new Request('cyrene://renderer/__cyrene-media/tts-live/live-def', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(hit.status).toBe(200)
+    clock = now() + 5 * 60 * 1000 + 1   // 超 300000ms
+    svc.putTtsAudio('live-new', new Uint8Array([2]), 'audio/wav')   // 惰性清理触发，移除过期 live-def
+    const expired = await svc.stream('tts-live', 'live-def', new Request('cyrene://renderer/__cyrene-media/tts-live/live-def', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(expired.status).toBe(404)
+    const fresh = await svc.stream('tts-live', 'live-new', new Request('cyrene://renderer/__cyrene-media/tts-live/live-new', { headers: { 'sec-fetch-dest': 'media' } }))
+    expect(fresh.status).toBe(200)
+  })
+  it('attachment 分支不受影响（tts-live 改动未波及附件流）', async () => {
+    const fetchImpl = vi.fn(async () => new Response(new Uint8Array(4), { status: 200, headers: { 'content-type': 'video/mp4' } }))
+    const svc = mkService({ fetchImpl })
+    const res = await svc.stream('attachment', 'att_1', new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'video' } }))
+    expect(res.status).toBe(200)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 })
