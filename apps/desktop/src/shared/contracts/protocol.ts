@@ -23,7 +23,11 @@ export const ProtocolWarningCode = {
   // real-backend(P4-B 语音:二进制上行守卫 + 意外二进制接收)
   VOICE_BINARY_NOT_CONNECTED: 'VOICE_BINARY_NOT_CONNECTED',
   VOICE_BINARY_NO_SESSION: 'VOICE_BINARY_NO_SESSION',
-  UNEXPECTED_BINARY: 'UNEXPECTED_BINARY'
+  UNEXPECTED_BINARY: 'UNEXPECTED_BINARY',
+  // real-backend(P4-B TTS 播放:audio_* 帧缓冲守卫 + sink 缺失)
+  TTS_MEDIA_SINK_MISSING: 'TTS_MEDIA_SINK_MISSING',
+  AUDIO_ORPHAN_CHUNK: 'AUDIO_ORPHAN_CHUNK',
+  AUDIO_END_NO_BUFFER: 'AUDIO_END_NO_BUFFER'
 } as const
 
 export type ProtocolWarningCode = typeof ProtocolWarningCode[keyof typeof ProtocolWarningCode]

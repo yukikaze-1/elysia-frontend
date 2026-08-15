@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { WebSocket } from 'ws'
 import type { BackendEvent } from '@shared/contracts'
 import type {
@@ -26,6 +27,10 @@ import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseRawFrame } from './protocol-v2/raw-schemas'
 import type {
+  RawAudioCancelled,
+  RawAudioChunk,
+  RawAudioEnd,
+  RawAudioStart,
   RawErrorMessage,
   RawServerInfo,
   RawSessionMessage,
@@ -38,7 +43,7 @@ import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail,
 import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
 import { VOICE_ERROR_CODES } from '@shared/contracts'
-import type { HistoryCategory, StickerManifest, VoiceErrorEvent, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceInputMode, VoiceRecordStartInput, VoiceRecordStopInput } from '@shared/contracts'
+import type { HistoryCategory, StickerManifest, VoiceErrorEvent, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceInputMode, VoiceRecordStartInput, VoiceRecordStopInput, AudioSessionReadyEvent } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 
@@ -47,6 +52,10 @@ export interface WebSocketLike {
   send(data: string | Uint8Array): void
   close(): void
   readyState: number
+}
+/** TTS 音频落盘 sink（Task 6 由 MediaService 装配）：putTtsAudio 写入 bytes 并返回可播放 url */
+export interface TtsMediaSink {
+  putTtsAudio(id: string, bytes: Uint8Array, mime?: string): { url: string }
 }
 export interface RealBackendOptions {
   fetchImpl?: typeof fetch
@@ -57,6 +66,8 @@ export interface RealBackendOptions {
   onError?: (error: CyreneError) => void
   /** 连接状态变化回调(状态机任意迁移触发;2C 用于 IPC 状态推送) */
   onConnectionStateChange?: (state: ConnectionState) => void
+  /** TTS 音频 sink 提供器(Task 6 装配 MediaService);返回 undefined 表示当前无 sink(不落盘、告警 TTS_MEDIA_SINK_MISSING) */
+  getTtsMedia?: () => TtsMediaSink | undefined
   ackTimeoutMs?: number   // 默认 15000;测试注入小值
   reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
   handshakeTimeoutMs?: number  // 默认 10000;握手(connect → server_info)超时,测试注入小值
@@ -165,6 +176,8 @@ export class RealBackend implements BackendAdapter {
    *  record.stop/discard、dictation.stop/cancel、voice_session.ended 清位（realtime stop/cancel 延后到 ended 回执）。
    *  真实并发冲突由后端 error{VOICE_SESSION_CONFLICT} 帧经 voice.error 兜底（D-P15）。 */
   private activeVoice?: { kind: VoiceInputMode; key: string }
+  /** TTS audio_* 帧缓冲（Task 5）：按 stream_id 积累 chunks；audio_end 时拼装写入 sink 并 emit ready；新 stream supersede 旧 */
+  private ttsBuffers = new Map<number, { chunks: Uint8Array[]; bytes: number; format: 'wav' | 'mp3'; durationMs?: number }>()
 
   constructor(options: RealBackendOptions = {}) { this.options = options }
 
@@ -240,6 +253,10 @@ export class RealBackend implements BackendAdapter {
         if (ev) this.emit(ev)
         return
       }
+      case 'audio_start': this.handleAudioStart(frame); return
+      case 'audio': this.handleAudioChunk(frame); return
+      case 'audio_end': this.handleAudioEnd(frame); return
+      case 'audio_cancelled': this.handleAudioCancelled(frame); return
       default: {
         try {
           const ev = this.mapper?.mapFrame(frame)
@@ -374,6 +391,56 @@ export class RealBackend implements BackendAdapter {
 
   private warn(code: ProtocolWarningCode, message: string): void {
     this.options.onProtocolWarning?.({ code, message })
+  }
+
+  // —— TTS 播放帧（audio_*，Task 5；spec §5.5 / D-P8/D-P9）——
+  // 文本 JSON 帧（data 为 base64），与二进制接收分支无关（二进制是 WASM 下行/上行语音流，Task 4 分流）。
+  /** audio_start：建缓冲条目（durationMs 从帧拷贝）、emit started。新 stream（同 stream_id）自然 supersede 旧缓冲（.set 覆盖） */
+  private handleAudioStart(frame: RawAudioStart): void {
+    this.ttsBuffers.set(frame.stream_id, {
+      chunks: [],
+      bytes: 0,
+      format: frame.format,
+      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {})
+    })
+    const ev = this.mapper?.mapFrame(frame)
+    if (ev) this.emit(ev)
+  }
+  /** audio：base64 解码 append 到缓冲（按序拼接） */
+  private handleAudioChunk(frame: RawAudioChunk): void {
+    const b = this.ttsBuffers.get(frame.stream_id)
+    if (!b) { this.warn('AUDIO_ORPHAN_CHUNK', `收到未关联 audio_start 的 audio chunk: stream_id=${frame.stream_id}`); return }
+    const bytes = Buffer.from(frame.data, 'base64')
+    b.chunks.push(new Uint8Array(bytes))
+    b.bytes += bytes.length
+  }
+  /** audio_end：拼装缓冲写入 sink，emit ready；无 sink 告警丢弃 */
+  private handleAudioEnd(frame: RawAudioEnd): void {
+    const b = this.ttsBuffers.get(frame.stream_id)
+    if (!b) { this.warn('AUDIO_END_NO_BUFFER', `收到未关联 audio_start 的 audio_end: stream_id=${frame.stream_id}`); return }
+    const mime = b.format === 'mp3' ? 'audio/mpeg' : 'audio/wav'
+    const sink = this.options.getTtsMedia?.()
+    if (!sink) { this.warn('TTS_MEDIA_SINK_MISSING', `TTS 音频 sink 缺失,丢弃 stream_id=${frame.stream_id}`); this.ttsBuffers.delete(frame.stream_id); return }
+    const concatLen = b.chunks.reduce((s, c) => s + c.length, 0)
+    const concat = new Uint8Array(concatLen)
+    let off = 0
+    for (const c of b.chunks) { concat.set(c, off); off += c.length }
+    const { url } = sink.putTtsAudio(`tts-${randomUUID()}`, concat, mime)
+    const ev = this.mapper?.stampEvent<AudioSessionReadyEvent>({
+      event: 'audio.session.ready',
+      streamId: frame.stream_id,
+      url,
+      ...(b.durationMs !== undefined ? { durationMs: b.durationMs } : {}),
+      format: b.format
+    })
+    if (ev) this.emit(ev)
+    this.ttsBuffers.delete(frame.stream_id)
+  }
+  /** audio_cancelled：清缓冲 + emit cancelled */
+  private handleAudioCancelled(frame: RawAudioCancelled): void {
+    this.ttsBuffers.delete(frame.stream_id)
+    const ev = this.mapper?.mapFrame(frame)
+    if (ev) this.emit(ev)
   }
 
   private emit(event: BackendEvent): void { for (const h of this.handler) h(event) }
