@@ -91,11 +91,12 @@ function resultText(r: { ok: boolean; latencyMs?: number; error?: string } | und
         </button>
         <button
           class="cy-profile-btn cy-profile-activate"
-          :disabled="modelStore.activating[profile.type] || isActive"
+          :disabled="modelStore.activating[profile.type] || isActive || !profile.enabled"
+          :title="!profile.enabled ? '服务未启用（services.*.enabled=false），无法设为当前' : undefined"
           @click="onActivate()"
         >
           <i v-if="modelStore.activating[profile.type]" class="cy-spinner" aria-hidden="true" />
-          {{ modelStore.activating[profile.type] ? '切换中…' : isActive ? '当前使用中' : '设为当前' }}
+          {{ modelStore.activating[profile.type] ? '切换中…' : !profile.enabled ? '服务已停用' : isActive ? '当前使用中' : '设为当前' }}
         </button>
         <template v-if="profile.source === 'custom'">
           <button class="cy-profile-btn" @click="emit('edit')">编辑</button>
