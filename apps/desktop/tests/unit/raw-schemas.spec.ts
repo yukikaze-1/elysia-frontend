@@ -204,7 +204,8 @@ describe('raw schemas fingerprint(2C)', () => {
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',
-      'generation.started', 'server_info', 'session', 'state', 'typing', 'user_message.ack'
+      'generation.started', 'server_info', 'session', 'set_tts_voice_result', 'state',
+      'switch_model_result', 'typing', 'user_message.ack'
     ])
     expect(RawFrameSchema.safeParse({
       type: 'user_message.ack', messageId: '', clientRequestId: '', receivedAt: 't',

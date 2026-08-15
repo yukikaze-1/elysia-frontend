@@ -17,7 +17,6 @@ import type {
   StartVoiceInputInput,
   StopDictationInput,
   StopVoiceInputInput,
-  TestModelProfileCommand,
   ToolResult,
   VoiceInputSession,
   DictationSession
@@ -25,7 +24,7 @@ import type {
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
 import type { ClientRequestRef, SendMessageInput } from '@shared/contracts/message'
-import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
+import type { ModelProfile, ModelProfileTestCommand, ModelServiceType } from '@shared/contracts/model'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { AttachmentKind } from '@shared/contracts/message'
 import type { StickerManifest } from '@shared/contracts/sticker'
@@ -72,7 +71,7 @@ export interface BackendAdapter {
   signAttachmentUrl(attachmentId: string): Promise<AttachmentSignResult>
 
   listModelProfiles(type?: ModelServiceType): Promise<ModelProfile[]>
-  testModelProfile(input: TestModelProfileCommand): Promise<ModelProfileTestResult>
+  testModelProfile(input: ModelProfileTestCommand): Promise<ModelProfileTestResult>
   activateModelProfile(input: ActivateModelProfileCommand): Promise<void>
 
   queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>

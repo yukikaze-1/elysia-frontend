@@ -53,6 +53,12 @@ export class FrameMapper {
         return this.mapCompleted(frame)
       case 'generation.failed':
         return this.mapFailed(frame)
+      case 'switch_model_result':
+        // 模型 Profile 激活结果（D-A14：ok 必填；error 为 "<CODE>: <msg>" 前缀串，由连接层解析）
+        return { ...this.envelope(), event: 'switch_model.result', service: frame.service, model: frame.model, ok: frame.ok, ...(frame.error ? { error: frame.error } : {}) }
+      case 'set_tts_voice_result':
+        // TTS 声音切换结果（同 D-A14：ok 必填，voice/error 可选）
+        return { ...this.envelope(), event: 'set_tts_voice.result', ok: frame.ok, ...(frame.error ? { error: frame.error } : {}), ...(frame.voice ? { voice: frame.voice } : {}) }
       default:
         return null // 握手/工具/音频等帧由连接层分流
     }

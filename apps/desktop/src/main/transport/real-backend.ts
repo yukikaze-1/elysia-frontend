@@ -20,14 +20,13 @@ import type {
   StartVoiceInputInput,
   StopDictationInput,
   StopVoiceInputInput,
-  TestModelProfileCommand,
   ToolResult,
   VoiceInputSession
 } from '@shared/contracts/backend'
 export type { ConnectionState, ConnectionStatus } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
-import type { ModelProfile, ModelServiceType } from '@shared/contracts/model'
+import type { ActiveModelSelection, ModelProfile, ModelProfileTestCommand, ModelServiceType, SetTtsVoiceCommand, TtsPreviewCommand, TtsVoiceListResult, UpsertModelProfileCommand } from '@shared/contracts/model'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
@@ -41,7 +40,8 @@ import type {
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper, compareBySortKey } from './protocol-v2/rest-mapper'
-import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList } from './protocol-v2/rest-schemas'
+import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
+import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
 import type { HistoryCategory, StickerManifest } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
@@ -67,6 +67,7 @@ export interface RealBackendOptions {
   handshakeTimeoutMs?: number  // 默认 10000;握手(connect → server_info)超时,测试注入小值
   restTimeoutMs?: number  // 默认 10000;REST 请求超时,测试注入小值
   uploadTimeoutMs?: number  // 默认 60000;附件上传长超时(非 10s,spec §4.4),测试注入小值
+  switchTimeoutMs?: number  // 默认 10000;switch_model/set_tts_voice result 帧等待超时,测试注入小值
 }
 
 /** ack 关联的 pending 发送(按 clientRequestId 幂等) */
@@ -158,6 +159,12 @@ export class RealBackend implements BackendAdapter {
   private connectReject?: (e: unknown) => void
   /** T3:在途 REST 请求的 AbortController;disconnect 时统一 abort,使挂起请求按 NOT_CONNECTED 终止 */
   private readonly activeControllers = new Set<AbortController>()
+  /** server_info.services 归一化（llm/stt/tts 每服务 model 三态：string|null|缺省）；P4-A 由 getActiveModelSelection 消费 */
+  private services?: { llm?: { model?: string | null }; stt?: { model?: string | null }; tts?: { model?: string | null } }
+  /** switch_model result 帧 pending 关联（无 clientRequestId，按 service+model 回显匹配，D-A14）；单服务单 in-flight */
+  private pendingSwitch: Map<ModelServiceType, { model: string; resolve: () => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }> = new Map()
+  /** set_tts_voice result 帧 pending 关联（按 voice 回显匹配）；单 in-flight */
+  private pendingVoice?: { voice: string; resolve: () => void; reject: (e: unknown) => void; timer: ReturnType<typeof setTimeout> }
 
   constructor(options: RealBackendOptions = {}) { this.options = options }
 
@@ -194,6 +201,33 @@ export class RealBackend implements BackendAdapter {
       case 'typing': return // FE-INT-P1-01:输入状态契约识别,renderer 暂不消费(有意忽略,勿误删)
       case 'user_message.ack': this.handleAck(frame); return
       case 'error': this.handleErrorFrame(frame); return
+      case 'switch_model_result': {
+        // 模型 Profile 激活结果：无 clientRequestId，按 service+model 回显匹配 pending（D-A14）；
+        // 不匹配/无 pending：忽略（不 resolve/reject、不告警）；匹配后仍 emit 事件给 store。
+        const pending = this.pendingSwitch.get(frame.service)
+        if (pending && pending.model === frame.model) {
+          clearTimeout(pending.timer)
+          this.pendingSwitch.delete(frame.service)
+          if (frame.ok) pending.resolve()
+          else pending.reject(this.resultFrameError(frame.error))
+        }
+        const ev = this.mapper?.mapFrame(frame)
+        if (ev) this.emit(ev)
+        return
+      }
+      case 'set_tts_voice_result': {
+        // TTS 声音切换结果：按 voice 回显匹配 pending（voice 缺省不匹配，D-A14）；匹配后仍 emit 事件。
+        const pending = this.pendingVoice
+        if (pending && frame.voice !== undefined && pending.voice === frame.voice) {
+          clearTimeout(pending.timer)
+          this.pendingVoice = undefined
+          if (frame.ok) pending.resolve()
+          else pending.reject(this.resultFrameError(frame.error))
+        }
+        const ev = this.mapper?.mapFrame(frame)
+        if (ev) this.emit(ev)
+        return
+      }
       default: {
         try {
           const ev = this.mapper?.mapFrame(frame)
@@ -254,6 +288,22 @@ export class RealBackend implements BackendAdapter {
     })
     this.connectResolve = undefined
     this.connectReject = undefined
+    // services 归一化（版本校验 early-return 之后）：RawServerInfo.services 是 loose record，
+    // 只取每服务 model（string|null），未知形状忽略，绝不直接赋值原始 record。
+    this.services = this.normalizeServices(frame.services)
+  }
+
+  /** RawServerInfo.services 是 loose record（raw-types.ts:53）；只取每服务 model（string|null），未知形状忽略 */
+  private normalizeServices(raw: Record<string, unknown> | undefined): { llm?: { model?: string | null }; stt?: { model?: string | null }; tts?: { model?: string | null } } {
+    const pick = (svc: string): { model?: string | null } | undefined => {
+      const entry = raw?.[svc]
+      if (!entry || typeof entry !== 'object') return undefined
+      const m = (entry as { model?: unknown }).model
+      if (typeof m === 'string') return { model: m }
+      if (m === null) return { model: null }
+      return undefined
+    }
+    return { llm: pick('llm'), stt: pick('stt'), tts: pick('tts') }
   }
 
   private handleAck(frame: RawUserAck): void {
@@ -718,10 +768,115 @@ export class RealBackend implements BackendAdapter {
     return this.restMapper.toStickerManifest(parsed.data)
   }
 
+  // —— 模型/TTS 方法(阶段 4 批次A:真实后端落成)——
+  /** 发无 ACK 帧,需等 result 帧(switch_model/set_tts_voice);未连接抛 NOT_CONNECTED */
+  private requireWs(): void {
+    if (this.state.status !== 'connected' || !this.ws) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法执行模型操作')
+  }
+  private switchTimeoutMs(): number { return this.options.switchTimeoutMs ?? 10000 }
+
+  /** 错误三形状 §3.4 之 3：result 帧 error 为 "<CODE>: <msg>" 前缀串 → {backendCode, message}；缺码保留原文 */
+  private resultFrameError(error: string | undefined): Error {
+    const m = /^([A-Z_]+):\s*(.*)$/.exec(error ?? '')
+    return new CyreneError(CyreneErrorCode.UNKNOWN, m ? m[2] : (error ?? '模型切换失败'), { backendCode: m ? m[1] : undefined })
+  }
+
+  async listModelProfiles(type?: ModelServiceType): Promise<ModelProfile[]> {
+    const res = await this.restFetch('/api/providers')
+    const parsed = parseRestProviders(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, 'providers 响应校验失败')
+    const all = providersToModelProfiles(parsed.data)
+    return type ? all.filter((p) => p.type === type) : all
+  }
+
+  async testModelProfile(input: ModelProfileTestCommand): Promise<ModelProfileTestResult> {
+    const res = await this.restFetch('/api/providers/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        service: input.service, provider: input.provider, model: input.model, level: input.level,
+        ...(input.baseUrl ? { base_url: input.baseUrl } : {}), ...(input.apiKey ? { api_key: input.apiKey } : {})
+      })
+    })
+    const parsed = parseRestProviderTest(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, 'providers/test 响应校验失败')
+    const d = parsed.data
+    return { profileId: `${input.provider}/${input.model}`, service: input.service, level: input.level, ok: d.ok, ...(d.latency_ms !== undefined ? { latencyMs: d.latency_ms } : {}), ...(d.error ? { error: d.error } : {}), ...(d.detail ? { detail: d.detail } : {}) }
+  }
+
+  async saveModelProfile(input: UpsertModelProfileCommand): Promise<ModelProfile> {
+    const res = await this.restFetch('/api/providers', {
+      method: 'POST',
+      body: JSON.stringify({
+        service: input.type,
+        entry: {
+          name: input.name, ...(input.baseUrl ? { base_url: input.baseUrl } : {}),
+          ...(input.apiKey ? { api_key: input.apiKey } : {}), ...(input.apiKeyEnv ? { api_key_env: input.apiKeyEnv } : {}),
+          ...(input.models ? { models: input.models } : {}), ...(input.executionLocation ? { runtime: input.executionLocation } : {}),
+          ...(input.capabilities ? { capabilities: input.capabilities } : {})
+        }
+      })
+    })
+    await res.json() // ApiOk{data: 全量 custom 列表}；api_key 已剔除，弃用
+    // save 响应不含 credentialConfigured（F2）→ 重新 GET 取真实状态
+    const fresh = await this.restFetch('/api/providers')
+    const parsed = parseRestProviders(await fresh.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, 'providers 响应校验失败')
+    const target = providersToModelProfiles(parsed.data).find((p) => p.source === 'custom' && p.model === input.name)
+    if (!target) throw new CyreneError(CyreneErrorCode.UNKNOWN, `保存后未找到 custom/${input.name}`)
+    if (input.makeActive) await this.activateModelProfile({ profileId: target.id, service: target.type })
+    return target
+  }
+
+  async deleteModelProfile(service: ModelServiceType, name: string): Promise<void> {
+    await this.restFetch(`/api/providers/${service}/${encodeURIComponent(name)}`, { method: 'DELETE' })
+  }
+
+  async listTtsVoices(): Promise<TtsVoiceListResult> {
+    const res = await this.restFetch('/api/tts/voices')
+    const parsed = parseRestTtsVoices(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, 'tts/voices 响应校验失败')
+    const d = parsed.data
+    return { voices: d.voices.map((v) => ({ id: v.id, ...(v.name ? { name: v.name } : {}), languages: v.languages ?? [], capabilities: v.capabilities ?? [] })), current: d.current ?? undefined, source: d.source === 'api' ? 'api' : 'static', ...(d.error ? { error: d.error } : {}) }
+  }
+
+  /** 返回 raw（bytes 由 IPC handler 写入 MediaService）；二进制不越 Main */
+  async previewTts(input: TtsPreviewCommand): Promise<{ ok: boolean; mime?: string; bytes?: Uint8Array; durationMs?: number; error?: string }> {
+    const res = await this.restFetch('/api/tts/preview', { method: 'POST', body: JSON.stringify(input.voiceId ? { voice_id: input.voiceId } : {}) })
+    const parsed = parseRestTtsPreview(await res.json())
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, 'tts/preview 响应校验失败')
+    const d = parsed.data
+    if (!d.ok) return { ok: false, ...(d.error ? { error: d.error } : {}) }
+    if (!d.audio_base64) return { ok: false, error: '试听无音频数据' }
+    const bytes = Buffer.from(d.audio_base64, 'base64')
+    return { ok: true, mime: d.mime, bytes: new Uint8Array(bytes), ...(d.duration_ms !== undefined ? { durationMs: d.duration_ms } : {}) }
+  }
+
+  async setTtsVoice(input: SetTtsVoiceCommand): Promise<void> {
+    this.requireWs()
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { this.pendingVoice = undefined; reject(new CyreneError(CyreneErrorCode.TIMEOUT, `set_tts_voice 超时`)) }, this.switchTimeoutMs())
+      this.pendingVoice = { voice: input.voice, resolve, reject, timer }
+      this.ws!.send(JSON.stringify({ type: 'set_tts_voice', voice: input.voice }))
+    })
+  }
+
+  async activateModelProfile(input: ActivateModelProfileCommand): Promise<void> {
+    this.requireWs()
+    return new Promise<void>((resolve, reject) => {
+      const existing = this.pendingSwitch.get(input.service)
+      if (existing) { clearTimeout(existing.timer); existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `同服务切换未完成`)) }
+      const timer = setTimeout(() => { this.pendingSwitch.delete(input.service); reject(new CyreneError(CyreneErrorCode.TIMEOUT, `switch_model 超时`)) }, this.switchTimeoutMs())
+      this.pendingSwitch.set(input.service, { model: input.profileId, resolve, reject, timer })
+      this.ws!.send(JSON.stringify({ type: 'switch_model', service: input.service, model: input.profileId }))
+    })
+  }
+
+  getActiveModelSelection(): ActiveModelSelection {
+    const s = this.services
+    return { ...(s?.llm?.model ? { llmProfileId: s.llm.model } : {}), ...(s?.stt?.model ? { voiceSttProfileId: s.stt.model } : {}), ...(s?.tts?.model ? { ttsProfileId: s.tts.model } : {}) }
+  }
+
   // —— 非目标方法(阶段 3/4/6 实现,不 Mock 假装)——
-  async listModelProfiles(_type?: ModelServiceType): Promise<ModelProfile[]> { throw this.notImplemented('listModelProfiles') }
-  async testModelProfile(_input: TestModelProfileCommand): Promise<ModelProfileTestResult> { throw this.notImplemented('testModelProfile') }
-  async activateModelProfile(_input: ActivateModelProfileCommand): Promise<void> { throw this.notImplemented('activateModelProfile') }
   async startVoiceInput(_input: StartVoiceInputInput): Promise<VoiceInputSession> { throw this.notImplemented('startVoiceInput') }
   async stopVoiceInput(_input: StopVoiceInputInput): Promise<void> { throw this.notImplemented('stopVoiceInput') }
   async startDictation(_input: StartDictationInput): Promise<DictationSession> { throw this.notImplemented('startDictation') }

@@ -7,7 +7,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { BackendEvent, GenerationStartedEvent, Message } from '@shared/contracts'
+import type { BackendEvent, GenerationDeltaEvent, GenerationStartedEvent, Message } from '@shared/contracts'
 
 // mock desktopApi(store 依赖注入)——通过 stores/desktop-api.types.ts 的 DesktopApiLike
 const mockApi = {
@@ -29,7 +29,9 @@ vi.spyOn(console, 'warn').mockImplementation(() => {})
 // started 返回 GenerationStartedEvent(而非 BackendEvent 联合):completed 测试里 {...started(), event:'generation.completed'}
 // 的联合展开会在缺少 responseId 的成员上无法赋给 BackendEvent,typecheck:node 需精确类型。
 function started(): GenerationStartedEvent { return { eventId: 'e', sequence: 1, event: 'generation.started', generationId: 'gen-1', messageId: 'msg-1', responseId: 'gen-1', conversationId: 'conv-1', model: 'm1' } }
-function delta(seg: string, seq: number, text: string): BackendEvent { return { eventId: 'e', sequence: 2, event: 'generation.delta', generationId: 'gen-1', segmentId: seg, segmentIndex: 0, channel: 'public_reply', kind: 'markdown', deltaSequence: seq, text } }
+// delta 用精确 GenerationDeltaEvent（而非 BackendEvent 联合）：Task 4 后 BackendEvent 含无 generationId 的
+// result 事件，{ ...delta(), generationId: 'gen-X' } 的联合展开会报 TS2345；精确类型下 spread 仍保持同一事件。
+function delta(seg: string, seq: number, text: string): GenerationDeltaEvent { return { eventId: 'e', sequence: 2, event: 'generation.delta', generationId: 'gen-1', segmentId: seg, segmentIndex: 0, channel: 'public_reply', kind: 'markdown', deltaSequence: seq, text } }
 function failed(code: string, message: string, retryable?: boolean): BackendEvent { return { eventId: 'e', sequence: 3, event: 'generation.failed', generationId: 'gen-1', error: { code, message, retryable } } }
 
 /** F2:归属守卫依赖 currentId——默认注入当前会话;显式改状态用 setCurrent */

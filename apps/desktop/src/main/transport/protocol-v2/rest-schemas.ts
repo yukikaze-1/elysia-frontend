@@ -143,3 +143,45 @@ export function parseRestMessageContext(input: unknown): { success: true; data: 
 export function parseRestStickerList(input: unknown): { success: true; data: RestStickerListResponse } | { success: false; error: z.ZodError } {
   return RestStickerListResponseSchema.safeParse(input)
 }
+
+// —— 阶段 4 批次A:providers/tts wire 解析（镜像 rest.py；Provider 名动态 key 用 z.record；字段 camelCase 对齐契约）——
+export const ProviderEntryWireSchema = z.object({
+  models: z.array(z.string()), credentialConfigured: z.boolean().default(false),
+  runtime: z.enum(['backend', 'desktop', 'local_worker']).default('backend'),
+  capabilities: z.record(z.string(), z.unknown()).default({})
+})
+export const CustomProviderWireSchema = z.object({
+  name: z.string(), base_url: z.string().optional(), api_key_env: z.string().optional(),
+  models: z.array(z.string()).optional(), runtime: z.enum(['backend', 'desktop', 'local_worker']).default('backend'),
+  credentialConfigured: z.boolean().default(false), capabilities: z.record(z.string(), z.unknown()).default({})
+})
+export const ProvidersResponseWireSchema = z.object({
+  llm: z.record(z.string(), ProviderEntryWireSchema), stt: z.record(z.string(), ProviderEntryWireSchema),
+  tts: z.record(z.string(), ProviderEntryWireSchema), custom: z.record(z.string(), z.array(CustomProviderWireSchema)).default({}),
+  unconfigured: z.record(z.string(), z.array(z.object({ name: z.string(), env_vars: z.array(z.string()) }))).optional()
+})
+export const ProviderTestResultWireSchema = z.object({
+  ok: z.boolean(), latency_ms: z.number().optional(), error: z.string().optional(), detail: z.string().optional()
+})
+export const TtsVoiceEntryWireSchema = z.object({
+  id: z.string(), name: z.string().optional(), languages: z.array(z.string()).optional(), capabilities: z.array(z.string()).optional()
+})
+export const TtsVoicesResponseWireSchema = z.object({
+  voices: z.array(TtsVoiceEntryWireSchema), current: z.string().optional(), source: z.enum(['static', 'api']).default('static'), error: z.string().optional()
+})
+export const TtsPreviewResultWireSchema = z.object({
+  ok: z.boolean(), mime: z.string().optional(), audio_base64: z.string().optional(), duration_ms: z.number().optional(), error: z.string().optional()
+})
+
+export function parseRestProviders(input: unknown): { success: true; data: z.infer<typeof ProvidersResponseWireSchema> } | { success: false } {
+  return ProvidersResponseWireSchema.safeParse(input)
+}
+export function parseRestProviderTest(input: unknown): { success: true; data: z.infer<typeof ProviderTestResultWireSchema> } | { success: false } {
+  return ProviderTestResultWireSchema.safeParse(input)
+}
+export function parseRestTtsVoices(input: unknown): { success: true; data: z.infer<typeof TtsVoicesResponseWireSchema> } | { success: false } {
+  return TtsVoicesResponseWireSchema.safeParse(input)
+}
+export function parseRestTtsPreview(input: unknown): { success: true; data: z.infer<typeof TtsPreviewResultWireSchema> } | { success: false } {
+  return TtsPreviewResultWireSchema.safeParse(input)
+}
