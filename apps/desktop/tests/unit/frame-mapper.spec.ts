@@ -4,7 +4,11 @@ import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type {
   GenerationCompletedEvent, GenerationDeltaEvent, GenerationFailedEvent,
-  GenerationStartedEvent, SegmentCompletedEvent
+  GenerationStartedEvent, SegmentCompletedEvent,
+  VoiceTranscriptEvent, VoiceSessionStartedEvent, VoiceSessionPartialEvent,
+  VoiceSessionTurnEvent, VoiceSessionAckEvent, VoiceSessionEndedEvent,
+  DictationPartialEvent, DictationFinalEvent, DictationCancelledEvent,
+  AudioSessionStartedEvent, AudioSessionReadyEvent, AudioSessionCancelledEvent, VoiceErrorEvent
 } from '@shared/contracts/events'
 import type { RawFrame } from '../../src/main/transport/protocol-v2/raw-types'
 
@@ -188,5 +192,95 @@ describe('FrameMapper raw → 领域', () => {
     expect(mapper.mapFrame({ type: 'session', messages: [] })).toBeNull()
     expect(mapper.mapFrame({ type: 'server_info', protocol_version: '2.0', server_version: 'v', features: {}, services: {} })).toBeNull()
     expect(mapper.mapFrame({ type: 'expression', expression: 'idle' })).toBeNull()
+  })
+})
+
+describe('FrameMapper 语音/TTS 帧 → 领域（阶段4 批次B）', () => {
+  it('voice.transcript → voice.transcript 事件,保留 recordingId/text/emotion', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const ev = mapper.mapFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: '你好', emotion: 'happy' }) as VoiceTranscriptEvent
+    expect(ev!.event).toBe('voice.transcript')
+    expect(ev!.recordingId).toBe('rec_1')
+    expect(ev!.text).toBe('你好')
+    expect(ev!.emotion).toBe('happy')
+  })
+  it('voice_session.* 各帧映射正确（started/partial/turn/ack/ended）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const started = mapper.mapFrame({ type: 'voice_session.started', sessionId: 'vs_1', conversationId: 'conv-1' }) as VoiceSessionStartedEvent
+    expect(started!.event).toBe('voice_session.started')
+    expect(started!.sessionId).toBe('vs_1')
+    expect(started!.conversationId).toBe('conv-1')
+    const partial = mapper.mapFrame({ type: 'voice_session.partial', sessionId: 'vs_1', turnId: 1, segmentIndex: 3, text: '字幕' }) as VoiceSessionPartialEvent
+    expect(partial!.event).toBe('voice_session.partial')
+    expect(partial!.turnId).toBe(1)
+    expect(partial!.segmentIndex).toBe(3)
+    expect(partial!.text).toBe('字幕')
+    const turn = mapper.mapFrame({ type: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'msg-1', conversationId: 'conv-1', text: '确认' }) as VoiceSessionTurnEvent
+    expect(turn!.event).toBe('voice_session.turn')
+    expect(turn!.messageId).toBe('msg-1')
+    expect(turn!.conversationId).toBe('conv-1')
+    expect(turn!.text).toBe('确认')
+    const ack = mapper.mapFrame({ type: 'voice_session.ack', sessionId: 'vs_1', seq: 42 }) as VoiceSessionAckEvent
+    expect(ack!.event).toBe('voice_session.ack')
+    expect(ack!.seq).toBe(42)
+    const ended = mapper.mapFrame({ type: 'voice_session.ended', sessionId: 'vs_1', reason: 'cancelled' }) as VoiceSessionEndedEvent
+    expect(ended!.event).toBe('voice_session.ended')
+    expect(ended!.reason).toBe('cancelled')
+  })
+  it('conversationId 缺省省略,voice_session.started/turn 不抛 PROTOCOL_MISMATCH（非 generation 帧无补齐逻辑）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const started = mapper.mapFrame({ type: 'voice_session.started', sessionId: 'vs_1' }) as VoiceSessionStartedEvent
+    expect(started!.conversationId).toBeUndefined()
+    const turn = mapper.mapFrame({ type: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'm', text: 't' }) as VoiceSessionTurnEvent
+    expect(turn!.conversationId).toBeUndefined()
+  })
+  it('dictation.* 各帧映射正确（partial/final/cancelled）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const partial = mapper.mapFrame({ type: 'dictation.partial', text: '累积' }) as DictationPartialEvent
+    expect(partial!.event).toBe('dictation.partial')
+    expect(partial!.text).toBe('累积')
+    const final = mapper.mapFrame({ type: 'dictation.final', clientRequestId: 'req_1', text: '最终' }) as DictationFinalEvent
+    expect(final!.event).toBe('dictation.final')
+    expect(final!.clientRequestId).toBe('req_1')
+    expect(final!.text).toBe('最终')
+    const cancelled = mapper.mapFrame({ type: 'dictation.cancelled', clientRequestId: 'req_1' }) as DictationCancelledEvent
+    expect(cancelled!.event).toBe('dictation.cancelled')
+    expect(cancelled!.clientRequestId).toBe('req_1')
+  })
+  it('audio_start → audio.session.started（streamId=stream_id,format 透传）;audio_cancelled → audio.session.cancelled', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const started = mapper.mapFrame({ type: 'audio_start', stream_id: 7, format: 'wav', sampleRate: 16000, durationMs: 1200 }) as AudioSessionStartedEvent
+    expect(started!.event).toBe('audio.session.started')
+    expect(started!.streamId).toBe(7)
+    expect(started!.format).toBe('wav')
+    const cancelled = mapper.mapFrame({ type: 'audio_cancelled', stream_id: 7 }) as AudioSessionCancelledEvent
+    expect(cancelled!.event).toBe('audio.session.cancelled')
+    expect(cancelled!.streamId).toBe(7)
+  })
+  it('audio / audio_end 返回 null（transport 消费，不进 mapper）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    expect(mapper.mapFrame({ type: 'audio', stream_id: 7, seq: 0, data: 'x', is_final: false })).toBeNull()
+    expect(mapper.mapFrame({ type: 'audio_end', stream_id: 7 })).toBeNull()
+  })
+  it('stampEvent 与 mapFrame 交错 sequence 严格递增（共享单调计数器不碰撞）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const a = mapper.mapFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: 't' }) as VoiceTranscriptEvent
+    const b = mapper.stampEvent<VoiceErrorEvent>({ event: 'voice.error', code: 'STT_UNAVAILABLE', message: 'STT 未启用' })
+    const c = mapper.mapFrame({ type: 'dictation.partial', text: 'p' }) as DictationPartialEvent
+    const d = mapper.stampEvent<AudioSessionReadyEvent>({ event: 'audio.session.ready', streamId: 9, url: 'cyrene://renderer/__cyrene-media/tts-live/1', format: 'wav' })
+    expect(a!.sequence).toBe(1)
+    expect(b.sequence).toBe(2)
+    expect(c!.sequence).toBe(3)
+    expect(d.sequence).toBe(4)
+    expect([a!.sequence, b.sequence, c!.sequence, d.sequence]).toEqual([1, 2, 3, 4])
+    expect(a!.eventId).toBe('conn-1:1')
+    expect(b.eventId).toBe('conn-1:2')
+    expect(c!.eventId).toBe('conn-1:3')
+    expect(d.eventId).toBe('conn-1:4')
+  })
+  it('stampEvent 打全事件:eventId/sequence 由同一计数器,partial 字段原样保留', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1' })
+    const ready = mapper.stampEvent<AudioSessionReadyEvent>({ event: 'audio.session.ready', streamId: 1, url: 'u', durationMs: 100, format: 'mp3' })
+    expect(ready).toEqual({ eventId: 'conn-1:1', sequence: 1, event: 'audio.session.ready', streamId: 1, url: 'u', durationMs: 100, format: 'mp3' })
   })
 })

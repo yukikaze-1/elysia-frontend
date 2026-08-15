@@ -178,9 +178,159 @@ export interface RawSetTtsVoiceResult {
   voice?: string
 }
 
+/** 普通录音预转写字幕（对齐 ws_message.py VoiceTranscriptMessage；stop 后、commit 前） */
+export interface RawVoiceTranscript {
+  type: 'voice.transcript'
+  recordingId: string
+  text: string
+  emotion?: string
+}
+/** 实时语音会话已开始（对齐 ws_message.py VoiceSessionStartedMessage；conversationId = 解析后实际目标会话） */
+export interface RawVoiceSessionStarted {
+  type: 'voice_session.started'
+  sessionId: string
+  conversationId?: string
+}
+/** 实时语音轮次字幕（对齐 ws_message.py VoiceSessionPartialMessage；每段一条 = 该轮 final 文本，仅显示） */
+export interface RawVoiceSessionPartial {
+  type: 'voice_session.partial'
+  sessionId: string
+  turnId: number
+  segmentIndex: number
+  text: string
+}
+/** 实时语音轮次已提交（对齐 ws_message.py VoiceSessionTurnMessage；自动触发 generation） */
+export interface RawVoiceSessionTurn {
+  type: 'voice_session.turn'
+  sessionId: string
+  turnId: number
+  messageId: string
+  conversationId?: string
+  text: string
+}
+/** 实时语音背压进度通知（对齐 ws_message.py VoiceSessionAckMessage；seq = 服务端已接收 BINARY 帧序数） */
+export interface RawVoiceSessionAck {
+  type: 'voice_session.ack'
+  sessionId: string
+  seq: number
+}
+/** 实时语音会话结束（对齐 ws_message.py VoiceSessionEndedMessage；reason 四值） */
+export interface RawVoiceSessionEnded {
+  type: 'voice_session.ended'
+  sessionId: string
+  reason: 'stopped' | 'cancelled' | 'timeout' | 'stt_disabled'
+}
+/** 输入法转写中间字幕（对齐 ws_message.py DictationPartialMessage；累积文本，仅显示） */
+export interface RawDictationPartial {
+  type: 'dictation.partial'
+  text: string
+}
+/** 输入法转写最终结果（对齐 ws_message.py DictationFinalMessage；只回文字，零消息副作用） */
+export interface RawDictationFinal {
+  type: 'dictation.final'
+  clientRequestId: string
+  text: string
+}
+/** 输入法转写已取消（对齐 ws_message.py DictationCancelledMessage） */
+export interface RawDictationCancelled {
+  type: 'dictation.cancelled'
+  clientRequestId: string
+}
+/** 音频流开始（对齐 ws_message.py AudioStartMessage；stream_id = playback ID；Phase 2 放行后、首 chunk 前） */
+export interface RawAudioStart {
+  type: 'audio_start'
+  stream_id: number
+  format: 'wav' | 'mp3'
+  sampleRate?: number
+  durationMs?: number
+}
+/** 音频流 chunk（对齐 ws_message.py AudioMessage；data 为 base64 字符串；is_final 恒 false，终止由 audio_end 判定） */
+export interface RawAudioChunk {
+  type: 'audio'
+  stream_id: number
+  seq: number
+  data: string
+  is_final: boolean
+}
+/** 音频流结束标记（对齐 ws_message.py AudioEndMessage；format 契约可缺省、缺省 wav） */
+export interface RawAudioEnd {
+  type: 'audio_end'
+  stream_id: number
+  format?: 'wav' | 'mp3'
+}
+/** 音频流被取消（对齐 ws_message.py AudioCancelledMessage；audio.cancel / TTS 中断时发，前端清理孤儿 chunk） */
+export interface RawAudioCancelled {
+  type: 'audio_cancelled'
+  stream_id: number
+}
+
+/** 客户端→服务器语音控制帧（对齐 ws_message.py ClientMessage 各成员；不进 RawFrameSchema/RAW_FRAME_TYPES，Task 4 构造发送用） */
+export interface RawVoiceRecordStart {
+  type: 'voice.record.start'
+  recordingId: string
+}
+export interface RawVoiceRecordStop {
+  type: 'voice.record.stop'
+  recordingId: string
+}
+export interface RawVoiceCommit {
+  type: 'voice.commit'
+  recordingId: string
+  text: string
+  clientRequestId: string
+  clientMessageId?: string
+  conversationId?: string
+}
+export interface RawVoiceDiscard {
+  type: 'voice.discard'
+  recordingId: string
+}
+export interface RawVoiceSessionStart {
+  type: 'voice_session.start'
+  sessionId: string
+  conversationId?: string
+}
+export interface RawVoiceSessionStop {
+  type: 'voice_session.stop'
+  sessionId: string
+}
+export interface RawVoiceSessionCancel {
+  type: 'voice_session.cancel'
+  sessionId: string
+}
+export interface RawDictationStart {
+  type: 'dictation.start'
+  clientRequestId: string
+  sttProfileId?: string
+}
+export interface RawDictationStop {
+  type: 'dictation.stop'
+  clientRequestId: string
+}
+export interface RawDictationCancel {
+  type: 'dictation.cancel'
+  clientRequestId: string
+}
+export interface RawAudioCancel {
+  type: 'audio.cancel'
+  stream_id: number
+}
+
+/** 客户端→服务器帧判别联合（11 型语音控制帧；只作发送契约，不参与 RAW_FRAME_TYPES 计数） */
+export type RawClientFrame =
+  | RawVoiceRecordStart | RawVoiceRecordStop | RawVoiceCommit | RawVoiceDiscard
+  | RawVoiceSessionStart | RawVoiceSessionStop | RawVoiceSessionCancel
+  | RawDictationStart | RawDictationStop | RawDictationCancel
+  | RawAudioCancel
+
 export type RawFrame =
   | RawSessionMessage | RawServerInfo | RawExpression | RawState | RawTyping
   | RawGenerationStarted | RawGenerationSegmentStarted | RawGenerationDelta
   | RawGenerationSegmentCompleted | RawGenerationCompleted | RawGenerationFailed
   | RawUserAck | RawErrorMessage
   | RawSwitchModelResult | RawSetTtsVoiceResult
+  // 阶段 4 批次 B：三种语音（BE-060/061/062）+ TTS 播放控制（BE-063）
+  | RawVoiceTranscript | RawVoiceSessionStarted | RawVoiceSessionPartial | RawVoiceSessionTurn
+  | RawVoiceSessionAck | RawVoiceSessionEnded
+  | RawDictationPartial | RawDictationFinal | RawDictationCancelled
+  | RawAudioStart | RawAudioChunk | RawAudioEnd | RawAudioCancelled

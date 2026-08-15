@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
-import type { RawFrame } from './raw-types'
+import type { RawFrame, RawClientFrame } from './raw-types'
 
 /** 后端 WS v2 raw frame zod schema(判别 type + .strict();字段精确对齐后端契约) */
 
@@ -206,6 +206,96 @@ const RawSetTtsVoiceResultSchema = z.object({
   voice: z.string().optional()
 }).strict()
 
+// —— 阶段 4 批次 B：三种语音（BE-060/061/062）+ TTS 播放控制（BE-063）——
+// 字段逐字对齐 ws_message.py；turnId/segmentIndex/seq/stream_id 为裸 int（后端无下限约束）；
+// audio_start.format 必填（后端非 Optional），audio_end.format 可选（后端 Optional，缺省 wav）。
+
+/** 普通录音预转写字幕（voice.transcript） */
+const RawVoiceTranscriptSchema = z.object({
+  type: z.literal('voice.transcript'),
+  recordingId: z.string().min(1),
+  text: z.string(),
+  emotion: z.string().optional()
+}).strict()
+/** 实时语音会话已开始（voice_session.started） */
+const RawVoiceSessionStartedSchema = z.object({
+  type: z.literal('voice_session.started'),
+  sessionId: z.string().min(1),
+  conversationId: z.string().optional()
+}).strict()
+/** 实时语音轮次字幕（voice_session.partial） */
+const RawVoiceSessionPartialSchema = z.object({
+  type: z.literal('voice_session.partial'),
+  sessionId: z.string().min(1),
+  turnId: z.number().int(),
+  segmentIndex: z.number().int(),
+  text: z.string()
+}).strict()
+/** 实时语音轮次已提交（voice_session.turn；自动触发 generation） */
+const RawVoiceSessionTurnSchema = z.object({
+  type: z.literal('voice_session.turn'),
+  sessionId: z.string().min(1),
+  turnId: z.number().int(),
+  messageId: z.string().min(1),
+  conversationId: z.string().optional(),
+  text: z.string()
+}).strict()
+/** 实时语音背压进度通知（voice_session.ack；seq = 服务端已接收 BINARY 帧序数） */
+const RawVoiceSessionAckSchema = z.object({
+  type: z.literal('voice_session.ack'),
+  sessionId: z.string().min(1),
+  seq: z.number().int()
+}).strict()
+/** 实时语音会话结束（voice_session.ended；reason 四值） */
+const RawVoiceSessionEndedSchema = z.object({
+  type: z.literal('voice_session.ended'),
+  sessionId: z.string().min(1),
+  reason: z.enum(['stopped', 'cancelled', 'timeout', 'stt_disabled'])
+}).strict()
+/** 输入法转写中间字幕（dictation.partial） */
+const RawDictationPartialSchema = z.object({
+  type: z.literal('dictation.partial'),
+  text: z.string()
+}).strict()
+/** 输入法转写最终结果（dictation.final；只回文字，零消息副作用） */
+const RawDictationFinalSchema = z.object({
+  type: z.literal('dictation.final'),
+  clientRequestId: z.string().min(1),
+  text: z.string()
+}).strict()
+/** 输入法转写已取消（dictation.cancelled） */
+const RawDictationCancelledSchema = z.object({
+  type: z.literal('dictation.cancelled'),
+  clientRequestId: z.string().min(1)
+}).strict()
+/** 音频流开始（audio_start；stream_id = playback ID；format 非 Optional 后端恒发） */
+const RawAudioStartSchema = z.object({
+  type: z.literal('audio_start'),
+  stream_id: z.number().int(),
+  format: z.enum(['wav', 'mp3']),
+  sampleRate: z.number().int().optional(),
+  durationMs: z.number().int().optional()
+}).strict()
+/** 音频流 chunk（audio；data 为 base64 字符串） */
+const RawAudioChunkSchema = z.object({
+  type: z.literal('audio'),
+  stream_id: z.number().int(),
+  seq: z.number().int(),
+  data: z.string(),
+  is_final: z.boolean()
+}).strict()
+/** 音频流结束标记（audio_end；format 可缺省、缺省 wav） */
+const RawAudioEndSchema = z.object({
+  type: z.literal('audio_end'),
+  stream_id: z.number().int(),
+  format: z.enum(['wav', 'mp3']).optional()
+}).strict()
+/** 音频流被取消（audio_cancelled；前端清理孤儿 chunk） */
+const RawAudioCancelledSchema = z.object({
+  type: z.literal('audio_cancelled'),
+  stream_id: z.number().int()
+}).strict()
+
 export const RawFrameSchema = z.discriminatedUnion('type', [
   RawSessionMessageSchema,
   RawServerInfoSchema,
@@ -221,7 +311,20 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawTypingSchema,
   RawErrorMessageSchema,
   RawSwitchModelResultSchema,
-  RawSetTtsVoiceResultSchema
+  RawSetTtsVoiceResultSchema,
+  RawVoiceTranscriptSchema,
+  RawVoiceSessionStartedSchema,
+  RawVoiceSessionPartialSchema,
+  RawVoiceSessionTurnSchema,
+  RawVoiceSessionAckSchema,
+  RawVoiceSessionEndedSchema,
+  RawDictationPartialSchema,
+  RawDictationFinalSchema,
+  RawDictationCancelledSchema,
+  RawAudioStartSchema,
+  RawAudioChunkSchema,
+  RawAudioEndSchema,
+  RawAudioCancelledSchema
 ])
 
 export function parseRawFrame(input: unknown): {
@@ -232,6 +335,58 @@ export function parseRawFrame(input: unknown): {
   error: z.ZodError
 } {
   return RawFrameSchema.safeParse(input)
+}
+
+// —— 客户端→服务器语音控制帧 schema（对齐 ws_message.py ClientMessage 各成员；不进 RawFrameSchema/RAW_FRAME_TYPES，Task 4 构造发送用）——
+const RawVoiceRecordStartSchema = z.object({ type: z.literal('voice.record.start'), recordingId: z.string().min(1) }).strict()
+const RawVoiceRecordStopSchema = z.object({ type: z.literal('voice.record.stop'), recordingId: z.string().min(1) }).strict()
+const RawVoiceCommitSchema = z.object({
+  type: z.literal('voice.commit'),
+  recordingId: z.string().min(1),
+  text: z.string(),
+  clientRequestId: z.string().min(1),
+  clientMessageId: z.string().optional(),
+  conversationId: z.string().optional()
+}).strict()
+const RawVoiceDiscardSchema = z.object({ type: z.literal('voice.discard'), recordingId: z.string().min(1) }).strict()
+const RawVoiceSessionStartSchema = z.object({
+  type: z.literal('voice_session.start'),
+  sessionId: z.string().min(1),
+  conversationId: z.string().optional()
+}).strict()
+const RawVoiceSessionStopSchema = z.object({ type: z.literal('voice_session.stop'), sessionId: z.string().min(1) }).strict()
+const RawVoiceSessionCancelSchema = z.object({ type: z.literal('voice_session.cancel'), sessionId: z.string().min(1) }).strict()
+const RawDictationStartSchema = z.object({
+  type: z.literal('dictation.start'),
+  clientRequestId: z.string().min(1),
+  sttProfileId: z.string().optional()
+}).strict()
+const RawDictationStopSchema = z.object({ type: z.literal('dictation.stop'), clientRequestId: z.string().min(1) }).strict()
+const RawDictationCancelSchema = z.object({ type: z.literal('dictation.cancel'), clientRequestId: z.string().min(1) }).strict()
+const RawAudioCancelSchema = z.object({ type: z.literal('audio.cancel'), stream_id: z.number().int() }).strict()
+
+export const RawClientFrameSchema = z.discriminatedUnion('type', [
+  RawVoiceRecordStartSchema,
+  RawVoiceRecordStopSchema,
+  RawVoiceCommitSchema,
+  RawVoiceDiscardSchema,
+  RawVoiceSessionStartSchema,
+  RawVoiceSessionStopSchema,
+  RawVoiceSessionCancelSchema,
+  RawDictationStartSchema,
+  RawDictationStopSchema,
+  RawDictationCancelSchema,
+  RawAudioCancelSchema
+])
+
+export function parseRawClientFrame(input: unknown): {
+  success: true
+  data: RawClientFrame
+} | {
+  success: false
+  error: z.ZodError
+} {
+  return RawClientFrameSchema.safeParse(input)
 }
 
 /** 递归展平 zod union：ACK 在外层按 type、内层按 status 判别。 */

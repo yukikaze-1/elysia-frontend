@@ -59,9 +59,44 @@ export class FrameMapper {
       case 'set_tts_voice_result':
         // TTS 声音切换结果（同 D-A14：ok 必填，voice/error 可选）
         return { ...this.envelope(), event: 'set_tts_voice.result', ok: frame.ok, ...(frame.error ? { error: frame.error } : {}), ...(frame.voice ? { voice: frame.voice } : {}) }
+      // —— 阶段 4 批次 B：三种语音（BE-060/061/062）——
+      case 'voice.transcript':
+        return { ...this.envelope(), event: 'voice.transcript', recordingId: frame.recordingId, text: frame.text, ...(frame.emotion ? { emotion: frame.emotion } : {}) }
+      case 'voice_session.started':
+        return { ...this.envelope(), event: 'voice_session.started', sessionId: frame.sessionId, ...(frame.conversationId ? { conversationId: frame.conversationId } : {}) }
+      case 'voice_session.partial':
+        return { ...this.envelope(), event: 'voice_session.partial', sessionId: frame.sessionId, turnId: frame.turnId, segmentIndex: frame.segmentIndex, text: frame.text }
+      case 'voice_session.turn':
+        return { ...this.envelope(), event: 'voice_session.turn', sessionId: frame.sessionId, turnId: frame.turnId, messageId: frame.messageId, ...(frame.conversationId ? { conversationId: frame.conversationId } : {}), text: frame.text }
+      case 'voice_session.ack':
+        return { ...this.envelope(), event: 'voice_session.ack', sessionId: frame.sessionId, seq: frame.seq }
+      case 'voice_session.ended':
+        return { ...this.envelope(), event: 'voice_session.ended', sessionId: frame.sessionId, reason: frame.reason }
+      case 'dictation.partial':
+        return { ...this.envelope(), event: 'dictation.partial', text: frame.text }
+      case 'dictation.final':
+        return { ...this.envelope(), event: 'dictation.final', clientRequestId: frame.clientRequestId, text: frame.text }
+      case 'dictation.cancelled':
+        return { ...this.envelope(), event: 'dictation.cancelled', clientRequestId: frame.clientRequestId }
+      // —— TTS 播放控制（BE-063）——
+      case 'audio_start':
+        return { ...this.envelope(), event: 'audio.session.started', streamId: frame.stream_id, format: frame.format }
+      case 'audio_cancelled':
+        return { ...this.envelope(), event: 'audio.session.cancelled', streamId: frame.stream_id }
+      case 'audio':
+      case 'audio_end':
+        return null // 音频二进制由 transport（real-backend TTS 缓冲）消费，不进 mapper（D-P9）
       default:
         return null // 握手/工具/音频等帧由连接层分流
     }
+  }
+
+  /**
+   * 用同一私有单调计数器打 eventId/sequence 构造完整事件（transport 构造 audio.session.ready / voice.error 用；
+   * 与 mapFrame 共享 nextSequence 不碰撞、sequence 全局严格递增）。partial 已含 event/其余字段，缺 eventId/sequence。
+   */
+  stampEvent<T extends BackendEvent>(partial: Omit<T, 'eventId' | 'sequence'>): T {
+    return { ...this.envelope(), ...partial } as T
   }
 
   private envelope(): { eventId: string; sequence: number } {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { parseRawFrame, RawFrameSchema, RAW_FRAME_TYPES, rawSchemasFingerprint, rawSchemasFingerprintFor } from '../../src/main/transport/protocol-v2/raw-schemas'
+import { parseRawFrame, parseRawClientFrame, RawFrameSchema, RAW_FRAME_TYPES, rawSchemasFingerprint, rawSchemasFingerprintFor } from '../../src/main/transport/protocol-v2/raw-schemas'
 
 const validCompleted = {
   type: 'generation.completed',
@@ -200,12 +200,17 @@ describe('state/typing 兼容帧（FE-INT-P1-01）', () => {
 })
 
 describe('raw schemas fingerprint(2C)', () => {
-  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6)', () => {
+  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),15 → 28(阶段4 批次B 增 13 语音/TTS 帧)', () => {
+    expect(RAW_FRAME_TYPES).toHaveLength(28)
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
+      'audio', 'audio_cancelled', 'audio_end', 'audio_start',
+      'dictation.cancelled', 'dictation.final', 'dictation.partial',
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',
       'generation.started', 'server_info', 'session', 'set_tts_voice_result', 'state',
-      'switch_model_result', 'typing', 'user_message.ack'
+      'switch_model_result', 'typing', 'user_message.ack',
+      'voice.transcript', 'voice_session.ack', 'voice_session.ended',
+      'voice_session.partial', 'voice_session.started', 'voice_session.turn'
     ])
     expect(RawFrameSchema.safeParse({
       type: 'user_message.ack', messageId: '', clientRequestId: '', receivedAt: 't',
@@ -247,9 +252,84 @@ describe('媒体 ContentPart 过 raw schema + 指纹不变（D7，schemaHash 门
     const r = parseRawFrame(frame)
     expect(r.success).toBe(true)
   })
-  it('rawSchemasFingerprint 不含 content 嵌套结构（指纹不下探嵌套元素）→ 本批不改 schema 故指纹不变', () => {
+  it('rawSchemasFingerprint 不含 content 嵌套结构（指纹不下探嵌套元素）', () => {
     const fp = rawSchemasFingerprint()
     // content 字段 zod 类型仍为 z.unknown().optional()，其 _def.type 不变；断言指纹为 64 位 hex 即可（相对不变性由 wire-fixtures 门禁兜）
     expect(fp).toMatch(/^[0-9a-f]{64}$/)
+  })
+})
+
+describe('阶段4 批次B 语音/TTS server 帧 raw schema', () => {
+  it('13 个新 server 帧合法构造全部通过', () => {
+    expect(parseRawFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: '你好', emotion: 'happy' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.started', sessionId: 'vs_1', conversationId: 'conv-1' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.partial', sessionId: 'vs_1', turnId: 1, segmentIndex: 3, text: '字幕' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'msg-1', conversationId: 'conv-1', text: '确认' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.ack', sessionId: 'vs_1', seq: 42 }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.ended', sessionId: 'vs_1', reason: 'stopped' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'dictation.partial', text: '累积' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'dictation.final', clientRequestId: 'req_1', text: '最终' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'dictation.cancelled', clientRequestId: 'req_1' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'audio_start', stream_id: 7, format: 'wav', sampleRate: 16000, durationMs: 1200 }).success).toBe(true)
+    expect(parseRawFrame({ type: 'audio', stream_id: 7, seq: 0, data: 'U29tZURhdGE=', is_final: false }).success).toBe(true)
+    expect(parseRawFrame({ type: 'audio_end', stream_id: 7, format: 'mp3' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'audio_cancelled', stream_id: 7 }).success).toBe(true)
+  })
+  it('可选字段缺省省略通过（conversationId/emotion/sampleRate/durationMs/audio_end.format）', () => {
+    expect(parseRawFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: 't' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.started', sessionId: 'vs_1' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'm', text: 't' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'audio_start', stream_id: 1, format: 'mp3' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'audio_end', stream_id: 1 }).success).toBe(true)
+  })
+  it('voice_session.ended reason 四值合法、非法值拒绝', () => {
+    for (const reason of ['stopped', 'cancelled', 'timeout', 'stt_disabled']) {
+      expect(parseRawFrame({ type: 'voice_session.ended', sessionId: 'vs_1', reason }).success).toBe(true)
+    }
+    expect(parseRawFrame({ type: 'voice_session.ended', sessionId: 'vs_1', reason: 'paused' }).success).toBe(false)
+  })
+  it('audio_start.format 非法值拒绝（枚举收窄）', () => {
+    expect(parseRawFrame({ type: 'audio_start', stream_id: 1, format: 'ogg' }).success).toBe(false)
+  })
+  it('缺必填字段拒绝（含 stream_id/seq/turnId 类型约束）', () => {
+    expect(parseRawFrame({ type: 'voice.transcript', text: 't' }).success).toBe(false) // 缺 recordingId
+    expect(parseRawFrame({ type: 'voice_session.ack', sessionId: 'vs_1' }).success).toBe(false) // 缺 seq
+    expect(parseRawFrame({ type: 'audio_start', stream_id: 1 }).success).toBe(false) // 缺 format（非 Optional）
+    expect(parseRawFrame({ type: 'audio', stream_id: '7', seq: 0, data: 'x', is_final: false }).success).toBe(false) // stream_id 类型错
+    expect(parseRawFrame({ type: 'audio', stream_id: 7, seq: '0', data: 'x', is_final: false }).success).toBe(false) // seq 类型错
+    expect(parseRawFrame({ type: 'dictation.final', text: 't' }).success).toBe(false) // 缺 clientRequestId
+  })
+  it('strict:新 server 帧未知键被拒绝', () => {
+    expect(parseRawFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: 't', bogus: 1 }).success).toBe(false)
+    expect(parseRawFrame({ type: 'audio', stream_id: 1, seq: 0, data: 'x', is_final: false, extra: 1 }).success).toBe(false)
+  })
+})
+
+describe('阶段4 批次B client 帧 raw schema（不进 RawFrameSchema）', () => {
+  it('11 个 client 帧合法构造经 parseRawClientFrame 通过', () => {
+    expect(parseRawClientFrame({ type: 'voice.record.start', recordingId: 'rec_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'voice.record.stop', recordingId: 'rec_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'voice.commit', recordingId: 'rec_1', text: '确认', clientRequestId: 'req_1', clientMessageId: 'local-1', conversationId: 'conv-1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'voice.discard', recordingId: 'rec_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'voice_session.start', sessionId: 'vs_1', conversationId: 'conv-1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'voice_session.stop', sessionId: 'vs_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'voice_session.cancel', sessionId: 'vs_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'dictation.start', clientRequestId: 'req_1', sttProfileId: 'stt/m1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'dictation.stop', clientRequestId: 'req_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'dictation.cancel', clientRequestId: 'req_1' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'audio.cancel', stream_id: 7 }).success).toBe(true)
+  })
+  it('client 帧不进 RawFrameSchema（parseRawFrame 拒绝）且不计数 RAW_FRAME_TYPES', () => {
+    expect(parseRawFrame({ type: 'voice.record.start', recordingId: 'rec_1' }).success).toBe(false)
+    expect(parseRawFrame({ type: 'voice.commit', recordingId: 'rec_1', text: 't', clientRequestId: 'r' }).success).toBe(false)
+    expect(parseRawFrame({ type: 'audio.cancel', stream_id: 1 }).success).toBe(false)
+    expect(RAW_FRAME_TYPES).not.toContain('voice.record.start')
+    expect(RAW_FRAME_TYPES).not.toContain('voice.commit')
+    expect(RAW_FRAME_TYPES).not.toContain('audio.cancel')
+  })
+  it('client 帧缺必填字段拒绝', () => {
+    expect(parseRawClientFrame({ type: 'voice.record.stop' }).success).toBe(false)
+    expect(parseRawClientFrame({ type: 'dictation.start' }).success).toBe(false)
+    expect(parseRawClientFrame({ type: 'audio.cancel' }).success).toBe(false)
   })
 })
