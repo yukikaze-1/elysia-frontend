@@ -11,17 +11,11 @@ import type {
   ConnectionState,
   ConversationDetail,
   ConversationMessagesQuery,
-  DictationSession,
   GetConversationQuery,
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
-  StartDictationInput,
-  StartVoiceInputInput,
-  StopDictationInput,
-  StopVoiceInputInput,
-  ToolResult,
-  VoiceInputSession
+  ToolResult
 } from '@shared/contracts/backend'
 export type { ConnectionState, ConnectionStatus } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
@@ -43,7 +37,7 @@ import { RestMapper, compareBySortKey } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
 import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
-import type { HistoryCategory, StickerManifest } from '@shared/contracts'
+import type { HistoryCategory, StickerManifest, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceRecordStartInput, VoiceRecordStopInput } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 
@@ -891,11 +885,19 @@ export class RealBackend implements BackendAdapter {
     return { ...(s?.llm?.model ? { llmProfileId: s.llm.model } : {}), ...(s?.stt?.model ? { voiceSttProfileId: s.stt.model } : {}), ...(s?.tts?.model ? { ttsProfileId: s.tts.model } : {}) }
   }
 
-  // —— 非目标方法(阶段 3/4/6 实现,不 Mock 假装)——
-  async startVoiceInput(_input: StartVoiceInputInput): Promise<VoiceInputSession> { throw this.notImplemented('startVoiceInput') }
-  async stopVoiceInput(_input: StopVoiceInputInput): Promise<void> { throw this.notImplemented('stopVoiceInput') }
-  async startDictation(_input: StartDictationInput): Promise<DictationSession> { throw this.notImplemented('startDictation') }
-  async stopDictation(_input: StopDictationInput): Promise<void> { throw this.notImplemented('stopDictation') }
+  // —— P4-B 语音（Task 7 落地真实 wire 实现；Task 3 中间态抛 notImplemented 保持编译绿） ——
+  async startRecordVoice(_input: VoiceRecordStartInput): Promise<{ recordingId: string }> { throw this.notImplemented('startRecordVoice') }
+  async stopRecordVoice(_input: VoiceRecordStopInput): Promise<void> { throw this.notImplemented('stopRecordVoice') }
+  async commitVoice(_input: VoiceCommitInput): Promise<ClientRequestRef> { throw this.notImplemented('commitVoice') }
+  async discardVoice(_input: VoiceDiscardInput): Promise<void> { throw this.notImplemented('discardVoice') }
+  async startRealtimeVoice(_input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> { throw this.notImplemented('startRealtimeVoice') }
+  async stopRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.notImplemented('stopRealtimeVoice') }
+  async cancelRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.notImplemented('cancelRealtimeVoice') }
+  async startDictation(_input: DictationStartInput): Promise<{ clientRequestId: string }> { throw this.notImplemented('startDictation') }
+  async stopDictation(_input: DictationStopInput): Promise<void> { throw this.notImplemented('stopDictation') }
+  async cancelDictation(_input: DictationStopInput): Promise<void> { throw this.notImplemented('cancelDictation') }
+  sendAudioBytes(_bytes: Uint8Array): void { throw this.notImplemented('sendAudioBytes') }
+  async audioCancel(_input: AudioCancelInput): Promise<void> { throw this.notImplemented('audioCancel') }
   async submitToolResult(_input: ToolResult): Promise<void> { throw this.notImplemented('submitToolResult') }
 
   private notImplemented(method: string): CyreneError {

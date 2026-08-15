@@ -13,13 +13,7 @@ import type {
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
-  StartDictationInput,
-  StartVoiceInputInput,
-  StopDictationInput,
-  StopVoiceInputInput,
-  ToolResult,
-  VoiceInputSession,
-  DictationSession
+  ToolResult
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
@@ -37,6 +31,17 @@ import type {
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { AttachmentKind } from '@shared/contracts/message'
 import type { StickerManifest } from '@shared/contracts/sticker'
+import type {
+  AudioCancelInput,
+  DictationStartInput,
+  DictationStopInput,
+  RealtimeVoiceControlInput,
+  RealtimeVoiceStartInput,
+  VoiceCommitInput,
+  VoiceDiscardInput,
+  VoiceRecordStartInput,
+  VoiceRecordStopInput
+} from '@shared/contracts'
 
 /** 上传内容（路径型 Main 直读盘 / 粘贴型 bytes；kind 为客户端提示值，可省略由后端魔数判定） */
 export interface UploadContent {
@@ -98,10 +103,19 @@ export interface BackendAdapter {
   /** 阶段 3 G4：内置表情包清单（StickerManifest{stickers}，D8） */
   listStickers(): Promise<StickerManifest>
 
-  startVoiceInput(input: StartVoiceInputInput): Promise<VoiceInputSession>
-  stopVoiceInput(input: StopVoiceInputInput): Promise<void>
-  startDictation(input: StartDictationInput): Promise<DictationSession>
-  stopDictation(input: StopDictationInput): Promise<void>
+  // —— P4-B 语音（spec §5.4 方法集；Task 4/7 实现，Task 3 仅重写签名） ——
+  startRecordVoice(input: VoiceRecordStartInput): Promise<{ recordingId: string }>
+  stopRecordVoice(input: VoiceRecordStopInput): Promise<void>
+  commitVoice(input: VoiceCommitInput): Promise<ClientRequestRef>
+  discardVoice(input: VoiceDiscardInput): Promise<void>
+  startRealtimeVoice(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }>
+  stopRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void>
+  cancelRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void>
+  startDictation(input: DictationStartInput): Promise<{ clientRequestId: string }>
+  stopDictation(input: DictationStopInput): Promise<void>
+  cancelDictation(input: DictationStopInput): Promise<void>
+  sendAudioBytes(bytes: Uint8Array): void
+  audioCancel(input: AudioCancelInput): Promise<void>
 
   submitToolResult(input: ToolResult): Promise<void>
 

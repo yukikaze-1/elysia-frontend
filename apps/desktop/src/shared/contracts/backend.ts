@@ -128,31 +128,6 @@ export interface ChatHistoryPage {
   snapshotId?: string         // 可选：避免查询期间新消息致分页重复/漏项
 }
 
-export interface VoiceInputSession {
-  sessionId: string
-}
-
-export interface StartVoiceInputInput {
-  conversationId: string
-}
-
-export interface StopVoiceInputInput {
-  sessionId: string
-}
-
-export interface DictationSession {
-  sessionId: string
-}
-
-export interface StartDictationInput {
-  conversationId: string
-  sttProfileId: string
-}
-
-export interface StopDictationInput {
-  sessionId: string
-}
-
 /** 工具结果回传 */
 export interface ToolResult {
   callId: string

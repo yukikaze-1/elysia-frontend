@@ -10,18 +10,12 @@ import type {
   ConnectionState,
   ConversationDetail,
   ConversationMessagesQuery,
-  DictationSession,
   GetConversationQuery,
   HistoryCategory,
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
-  StartDictationInput,
-  StartVoiceInputInput,
-  StopDictationInput,
-  StopVoiceInputInput,
-  ToolResult,
-  VoiceInputSession
+  ToolResult
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
@@ -38,6 +32,17 @@ import type {
   UpsertModelProfileCommand
 } from '@shared/contracts/model'
 import type { StickerManifest } from '@shared/contracts/sticker'
+import type {
+  AudioCancelInput,
+  DictationStartInput,
+  DictationStopInput,
+  RealtimeVoiceControlInput,
+  RealtimeVoiceStartInput,
+  VoiceCommitInput,
+  VoiceDiscardInput,
+  VoiceRecordStartInput,
+  VoiceRecordStopInput
+} from '@shared/contracts'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
 import { isoToLocalDate } from '@shared/domain'
@@ -402,20 +407,22 @@ export class MockBackend implements BackendAdapter {
     ] }
   }
 
-  async startVoiceInput(_input: StartVoiceInputInput): Promise<VoiceInputSession> {
-    return { sessionId: 'mock-voice-1' }
-  }
+  // —— P4-B 语音（Task 4 落地真实 Mock 实现；Task 3 中间态抛 NOT_IMPLEMENTED 保持编译绿） ——
+  async startRecordVoice(_input: VoiceRecordStartInput): Promise<{ recordingId: string }> { throw this.voiceNotImplemented('startRecordVoice') }
+  async stopRecordVoice(_input: VoiceRecordStopInput): Promise<void> { throw this.voiceNotImplemented('stopRecordVoice') }
+  async commitVoice(_input: VoiceCommitInput): Promise<ClientRequestRef> { throw this.voiceNotImplemented('commitVoice') }
+  async discardVoice(_input: VoiceDiscardInput): Promise<void> { throw this.voiceNotImplemented('discardVoice') }
+  async startRealtimeVoice(_input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> { throw this.voiceNotImplemented('startRealtimeVoice') }
+  async stopRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.voiceNotImplemented('stopRealtimeVoice') }
+  async cancelRealtimeVoice(_input: RealtimeVoiceControlInput): Promise<void> { throw this.voiceNotImplemented('cancelRealtimeVoice') }
+  async startDictation(_input: DictationStartInput): Promise<{ clientRequestId: string }> { throw this.voiceNotImplemented('startDictation') }
+  async stopDictation(_input: DictationStopInput): Promise<void> { throw this.voiceNotImplemented('stopDictation') }
+  async cancelDictation(_input: DictationStopInput): Promise<void> { throw this.voiceNotImplemented('cancelDictation') }
+  sendAudioBytes(_bytes: Uint8Array): void { throw this.voiceNotImplemented('sendAudioBytes') }
+  async audioCancel(_input: AudioCancelInput): Promise<void> { throw this.voiceNotImplemented('audioCancel') }
 
-  async stopVoiceInput(_input: StopVoiceInputInput): Promise<void> {
-    // Mock 无操作
-  }
-
-  async startDictation(_input: StartDictationInput): Promise<DictationSession> {
-    return { sessionId: 'mock-dictation-1' }
-  }
-
-  async stopDictation(_input: StopDictationInput): Promise<void> {
-    // Mock 无操作
+  private voiceNotImplemented(method: string): CyreneError {
+    return new CyreneError(CyreneErrorCode.NOT_IMPLEMENTED, `MockBackend.${method} 尚未实现(阶段4批B Task 4 落地)`)
   }
 
   async submitToolResult(_input: ToolResult): Promise<void> {
