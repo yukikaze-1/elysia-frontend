@@ -79,7 +79,19 @@ export const useModelServiceStore = defineStore('modelService', () => {
   async function saveProfile(draft: ProfileDraft, apiKeyInput?: string): Promise<void> {
     saving.value = true; error.value = undefined
     try {
-      const cmd: UpsertModelProfileCommand = { ...draft, ...(apiKeyInput ? { apiKey: apiKeyInput } : {}) }
+      // 显式构造纯对象命令：draft 来自 reactive 容器（drafts.value[key]），其 models/capabilities 是 reactive 数组代理，
+      // 直接 {...draft} 展开会把这些 Proxy 送进 contextBridge→ipcRenderer.invoke 的 structured-clone → DataCloneError「An object could not be cloned.」
+      // （Task 10 真实 Electron 集成测试暴露；Task 8 单测因不经 contextBridge 未覆盖）。此处克隆数组为普通数组。
+      const cmd: UpsertModelProfileCommand = {
+        type: draft.type,
+        name: draft.name,
+        ...(draft.baseUrl !== undefined ? { baseUrl: draft.baseUrl } : {}),
+        ...(draft.apiKeyEnv !== undefined ? { apiKeyEnv: draft.apiKeyEnv } : {}),
+        ...(draft.models !== undefined ? { models: [...draft.models] } : {}),
+        ...(draft.capabilities !== undefined ? { capabilities: [...draft.capabilities] } : {}),
+        ...(draft.executionLocation !== undefined ? { executionLocation: draft.executionLocation } : {}),
+        ...(apiKeyInput ? { apiKey: apiKeyInput } : {})
+      }
       await api.saveModelProfile(cmd)
       delete drafts.value[draft.name]
       delete validation.value[draft.name]

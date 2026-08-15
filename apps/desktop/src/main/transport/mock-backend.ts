@@ -115,7 +115,11 @@ export class MockBackend implements BackendAdapter {
   // —— 阶段 4 P4-A 模型服务（三类内置 + custom CRUD + voices/preview/setVoice；与 real 语义镜像）——
   /** 内置 provider 表（<service> → <provider> → 元数据）；capabilities 键名展开为稳定排序数组 */
   private readonly mockProviders = {
-    llm: { deepseek: { models: ['deepseek-v4-flash', 'deepseek-r1'], credentialConfigured: true, runtime: 'backend', capabilities: { auth: 'api_key' } } },
+    llm: {
+      deepseek: { models: ['deepseek-v4-flash', 'deepseek-r1'], credentialConfigured: true, runtime: 'backend', capabilities: { auth: 'api_key' } },
+      // Task 10 集成测试夹具：local_worker 执行位置行（徽标「不可用·待配置」+ 无调用按钮；P4-A 仅展示）
+      ollama: { models: ['llama3.2', 'qwen3'], credentialConfigured: false, runtime: 'local_worker', capabilities: { chat: 'true' } }
+    },
     stt: { sensevoice: { models: ['sense-voice'], credentialConfigured: false, runtime: 'backend', capabilities: { language: 'zh' } } },
     tts: { edge: { models: ['edge-tts'], credentialConfigured: true, runtime: 'backend', capabilities: { stream: 'true' } } }
   }
@@ -304,7 +308,7 @@ export class MockBackend implements BackendAdapter {
     for (const s of services) {
       for (const [name, entry] of Object.entries(this.mockProviders[s])) {
         for (const m of (entry.models.length ? entry.models : [name])) {
-          out.push({ id: `${name}/${m}`, type: s, displayName: name, source: 'built_in', provider: name, model: m, models: entry.models, executionLocation: 'backend', credentialStatus: entry.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(entry.capabilities).sort(), builtIn: true })
+          out.push({ id: `${name}/${m}`, type: s, displayName: name, source: 'built_in', provider: name, model: m, models: entry.models, executionLocation: (entry.runtime ?? 'backend') as ModelExecutionLocation, credentialStatus: entry.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(entry.capabilities).sort(), builtIn: true })
         }
       }
       for (const c of this.customProviders[s]) {
