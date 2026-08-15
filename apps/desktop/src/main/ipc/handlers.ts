@@ -14,6 +14,8 @@ import type { SessionStore } from '../persistence/session-store'
 import { registerAttachmentsHandlers } from '../attachments/attachments-handlers'
 import type { UploadService } from '../attachments/upload-service'
 import type { MediaService } from '../attachments/media-service'
+import type { BackendAdapter } from '../transport/backend-adapter'
+import { registerModelHandlers } from '../models/model-handlers'
 import { createIpcHandler } from './executor'
 import { registerHandler } from './registry'
 import { appInfoSchema } from './channels'
@@ -22,6 +24,7 @@ import { app } from 'electron'
 export function registerHandlers(deps: {
   credentials: CredentialStore; logger: Logger; chat: ChatService; connectionConfig: ConnectionConfig; sessionStore: SessionStore;
   attachments: { svc: UploadService; media: MediaService }
+  models: { adapter: BackendAdapter; media: MediaService }
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -33,4 +36,5 @@ export function registerHandlers(deps: {
   registerChatHandlers({ svc: deps.chat, sanitize, logger: deps.logger })
   registerPersistenceHandlers({ sessionStore: deps.sessionStore, sanitize, logger: deps.logger })
   registerAttachmentsHandlers({ svc: deps.attachments.svc, media: deps.attachments.media, sanitize, logger: deps.logger })
+  registerModelHandlers({ adapter: deps.models.adapter, media: deps.models.media, sanitize, logger: deps.logger })
 }

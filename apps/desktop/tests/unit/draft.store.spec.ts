@@ -14,7 +14,9 @@ const mockApi = {
   connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
   send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
   renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {})
+  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
+  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
+  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn()
 }
 
 describe('draftStore（spec §4.4.1）', () => {

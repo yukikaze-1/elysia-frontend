@@ -16,7 +16,9 @@ const mockApi = {
   onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
   hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
   attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn()
+  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
+  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
+  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn()
 }
 
 vi.spyOn(console, 'warn').mockImplementation(() => {})

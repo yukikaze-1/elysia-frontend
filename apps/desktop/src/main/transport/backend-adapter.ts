@@ -24,7 +24,16 @@ import type {
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
 import type { ClientRequestRef, SendMessageInput } from '@shared/contracts/message'
-import type { ModelProfile, ModelProfileTestCommand, ModelServiceType } from '@shared/contracts/model'
+import type {
+  ActiveModelSelection,
+  ModelProfile,
+  ModelProfileTestCommand,
+  ModelServiceType,
+  SetTtsVoiceCommand,
+  TtsPreviewCommand,
+  TtsVoiceListResult,
+  UpsertModelProfileCommand
+} from '@shared/contracts/model'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { AttachmentKind } from '@shared/contracts/message'
 import type { StickerManifest } from '@shared/contracts/sticker'
@@ -71,8 +80,19 @@ export interface BackendAdapter {
   signAttachmentUrl(attachmentId: string): Promise<AttachmentSignResult>
 
   listModelProfiles(type?: ModelServiceType): Promise<ModelProfile[]>
+  /** 保存自定义 Profile（apiKey 一次性，仅存在于请求侧；出参 ModelProfile 永不含凭据） */
+  saveModelProfile(input: UpsertModelProfileCommand): Promise<ModelProfile>
+  deleteModelProfile(service: ModelServiceType, name: string): Promise<void>
   testModelProfile(input: ModelProfileTestCommand): Promise<ModelProfileTestResult>
   activateModelProfile(input: ActivateModelProfileCommand): Promise<void>
+  /** 当前激活选择快照（llm/stt/tts 每服务 profile id，取自 server_info.services） */
+  getActiveModelSelection(): ActiveModelSelection
+  /** TTS 声音清单（静态清单 / API 拉取；source 区分） */
+  listTtsVoices(): Promise<TtsVoiceListResult>
+  /** TTS 试听：返回 raw（bytes 二进制仅 Main 内流转，由 IPC handler 写入 MediaService；传输面不越 Main） */
+  previewTts(input: TtsPreviewCommand): Promise<{ ok: boolean; mime?: string; bytes?: Uint8Array; durationMs?: number; error?: string }>
+  /** TTS 声音切换（wire set_tts_voice；单 in-flight，重入 supersede 旧 pending） */
+  setTtsVoice(input: SetTtsVoiceCommand): Promise<void>
 
   queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>
   /** 阶段 3 G4：内置表情包清单（StickerManifest{stickers}，D8） */

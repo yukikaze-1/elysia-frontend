@@ -18,7 +18,9 @@ const mockApi = {
   setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
   onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
   hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(), attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn()
+  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
+  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
+  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn()
 }
 
 const convA = { id: 'c1', title: '会话A', updatedAt: '2026-08-11T00:00:00Z', preview: 'hi' }

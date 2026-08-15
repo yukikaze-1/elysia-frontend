@@ -1,5 +1,7 @@
 import type {
   ActivateConversationResult,
+  ActivateModelProfileCommand,
+  ActiveModelSelection,
   AppInfo,
   AttachmentCheckResult,
   AttachmentsUploadResponse,
@@ -19,13 +21,22 @@ import type {
   Message,
   MessageContextQuery,
   MessagePage,
+  ModelProfile,
+  ModelProfileTestCommand,
+  ModelProfileTestResult,
+  ModelServiceType,
   Page,
   PageQuery,
   PersistSessionInput,
   PersistSessionResult,
   RuntimeInfo,
   SendMessageInput,
-  SessionPersistenceState
+  SessionPersistenceState,
+  SetTtsVoiceCommand,
+  TtsPreviewCommand,
+  TtsPreviewOutcome,
+  TtsVoiceListResult,
+  UpsertModelProfileCommand
 } from '@shared/contracts'
 import type { StickerManifest } from '@shared/contracts/sticker'
 
@@ -70,6 +81,16 @@ declare global {
       attachmentsUpload(input: { uploadId: string; files: Array<import('./desktop-api').AttachmentInputFile> }): Promise<AttachmentsUploadResponse>
       attachmentsCancel(uploadId: string): Promise<void>
       attachmentsCheck(attachmentId: string): Promise<AttachmentCheckResult>
+      // —— 阶段 4 批次 A 模型服务/TTS 面 ——
+      listModelProfiles(input?: { type?: ModelServiceType }): Promise<ModelProfile[]>
+      saveModelProfile(input: UpsertModelProfileCommand): Promise<ModelProfile>
+      deleteModelProfile(service: ModelServiceType, name: string): Promise<void>
+      testModelProfile(input: ModelProfileTestCommand): Promise<ModelProfileTestResult>
+      activateModelProfile(input: ActivateModelProfileCommand): Promise<void>
+      getActiveModelSelection(): Promise<ActiveModelSelection>
+      listTtsVoices(): Promise<TtsVoiceListResult>
+      previewTts(input: TtsPreviewCommand): Promise<TtsPreviewOutcome>
+      setTtsVoice(input: SetTtsVoiceCommand): Promise<void>
     }
   }
 }

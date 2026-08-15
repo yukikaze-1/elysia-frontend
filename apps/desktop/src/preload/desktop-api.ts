@@ -4,6 +4,8 @@ import { BACKEND_TOKEN_KEY, IpcChannels, PushChannels, type CredentialStatus, ty
 import type { AppInfo } from '@shared/contracts'
 import type {
   ActivateConversationResult,
+  ActivateModelProfileCommand,
+  ActiveModelSelection,
   AttachmentCheckResult,
   AttachmentsUploadResponse,
   BackendEvent,
@@ -21,19 +23,29 @@ import type {
   Message,
   MessageContextQuery,
   MessagePage,
+  ModelProfile,
+  ModelProfileTestCommand,
+  ModelProfileTestResult,
+  ModelServiceType,
   Page,
   PageQuery,
   PersistSessionInput,
   PersistSessionResult,
   RuntimeInfo,
   SendMessageInput,
-  SessionPersistenceState
+  SessionPersistenceState,
+  SetTtsVoiceCommand,
+  TtsPreviewCommand,
+  TtsPreviewOutcome,
+  TtsVoiceListResult,
+  UpsertModelProfileCommand
 } from '@shared/contracts'
 import type { StickerManifest } from '@shared/contracts/sticker'
 import { parseBackendEvent } from '@shared/schemas'
 import { z } from 'zod'
 import {
   ActivateConversationResultSchema,
+  ActiveModelSelectionSchema,
   AttachmentCheckResultSchema,
   AttachmentsUploadResponseSchema,
   BackendSessionSchema,
@@ -45,11 +57,16 @@ import {
   FileValidationResultSchema,
   MessagePageSchema,
   MessageSchema,
+  ModelProfileSchema,
+  ModelProfileTestResultSchema,
+  ModelProfilesSchema,
   PageSchema,
   PersistSessionResultSchema,
   RuntimeInfoSchema,
   SessionPersistenceStateSchema,
-  StickerManifestSchema
+  StickerManifestSchema,
+  TtsPreviewOutcomeSchema,
+  TtsVoiceListResultSchema
 } from '@shared/schemas'
 
 async function invoke<T>(channel: IpcChannelName): Promise<IpcResult<T>> {
@@ -265,6 +282,36 @@ async function attachmentsCheck(attachmentId: string): Promise<AttachmentCheckRe
   return unwrap(await invokeWithArgs<AttachmentCheckResult>(IpcChannels.attachmentsCheck, { attachmentId }), AttachmentCheckResultSchema)
 }
 
+// —— 阶段 4 批次 A 模型服务/TTS 面（spec §4.6）：九通道信封解包；apiKey 仅存在于请求侧，出参永不含凭据 ——
+async function listModelProfiles(input?: { type?: ModelServiceType }): Promise<ModelProfile[]> {
+  // 通道 arity 1（registry 校验恰好 1 参）：无参调用须补空对象以满足 arity（modelsListProfilesSchema type optional 接受 {}）
+  return unwrap(await invokeWithArgs<ModelProfile[]>(IpcChannels.modelsListProfiles, input ?? {}), ModelProfilesSchema)
+}
+async function saveModelProfile(input: UpsertModelProfileCommand): Promise<ModelProfile> {
+  return unwrap(await invokeWithArgs<ModelProfile>(IpcChannels.modelsSaveProfile, input), ModelProfileSchema)
+}
+async function deleteModelProfile(service: ModelServiceType, name: string): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.modelsDeleteProfile, { service, name }), z.undefined())
+}
+async function testModelProfile(input: ModelProfileTestCommand): Promise<ModelProfileTestResult> {
+  return unwrap(await invokeWithArgs<ModelProfileTestResult>(IpcChannels.modelsTestProfile, input), ModelProfileTestResultSchema)
+}
+async function activateModelProfile(input: ActivateModelProfileCommand): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.modelsActivateProfile, input), z.undefined())
+}
+async function getActiveModelSelection(): Promise<ActiveModelSelection> {
+  return unwrap(await invoke<ActiveModelSelection>(IpcChannels.modelsGetActiveSelection), ActiveModelSelectionSchema)
+}
+async function listTtsVoices(): Promise<TtsVoiceListResult> {
+  return unwrap(await invoke<TtsVoiceListResult>(IpcChannels.ttsListVoices), TtsVoiceListResultSchema)
+}
+async function previewTts(input: TtsPreviewCommand): Promise<TtsPreviewOutcome> {
+  return unwrap(await invokeWithArgs<TtsPreviewOutcome>(IpcChannels.ttsPreview, input), TtsPreviewOutcomeSchema)
+}
+async function setTtsVoice(input: SetTtsVoiceCommand): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.ttsSetVoice, input), z.undefined())
+}
+
 type ChatEventHandler = (event: BackendEvent) => void
 type ChatStateHandler = (state: ConnectionState) => void
 type ChatReplayHandler = (payload: ReplayPayload) => void
@@ -365,7 +412,17 @@ export const desktopApi = {
   attachmentsValidate,
   attachmentsUpload,
   attachmentsCancel,
-  attachmentsCheck
+  attachmentsCheck,
+  // —— 阶段 4 批次 A 模型服务/TTS 面 ——
+  listModelProfiles,
+  saveModelProfile,
+  deleteModelProfile,
+  testModelProfile,
+  activateModelProfile,
+  getActiveModelSelection,
+  listTtsVoices,
+  previewTts,
+  setTtsVoice
 }
 
 export type DesktopApi = typeof desktopApi
