@@ -335,6 +335,7 @@ describe('voiceStore', () => {
     expect(store.record.awaitingTranscript).toBe(false)
     await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS) // 原 45s timer 已清
     expect(store.record.transcript).toBe('慢字幕') // 未被兜底清空
+    expect(store.caption).toBe('慢字幕') // 字幕同样未被 45s 兜底清空——若 handler 未清 timer 则此断言失败
     expect(store.record.awaitingTranscript).toBe(false)
   })
 

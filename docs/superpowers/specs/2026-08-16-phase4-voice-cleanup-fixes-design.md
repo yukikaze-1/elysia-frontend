@@ -1,7 +1,7 @@
 # Cyrene 阶段4 真实联调整改设计：普通录音异常清理（FE-S4-RUN-P0-01 / P1-01 / P1-02）
 
 **日期：** 2026-08-16
-**依据：** 真实联调 review [阶段4真实联调前端整改清单](../../review/2026-08-16-阶段4真实联调前端整改清单.md)（binding authority）+ 配套 [后端整改清单](../../../elysia-agent/docs/review/2026-08-16-阶段4真实联调后端整改清单.md)（跨仓契约冻结目标）
+**依据：** 真实联调 review [阶段4真实联调前端整改清单](../../review/2026-08-16-阶段4真实联调前端整改清单.md)（binding authority）+ 配套 [后端整改清单](../../../../elysia-agent/docs/review/2026-08-16-阶段4真实联调后端整改清单.md)（跨仓契约冻结目标）
 **前端基线：** `main@37a78e3`（P4-B 验收后 HEAD）
 **后端对照：** `/home/yomu/elysia-agent` `main@fc5b45e`（protocol 2.0）
 
@@ -10,7 +10,7 @@
 阶段 4（Profile / TTS / 三种语音）已在真实 Windows Electron + Ubuntu 后端（REAL 模式）完成主链联调：实体麦克风采集、SenseVoice 字幕、dictation、realtime、TTS 自动朗读均通过。剩余问题全部集中在**普通录音的异常/空结果清理**，三处：
 
 | 编号 | 优先级 | 一句话 |
-|---|---|---:|---|
+|---|---|---:|
 | FE-S4-RUN-P0-01 | P0 | 采集启动失败后前端立即回 idle 并假定 fire-and-forget `voiceDiscard()` 已取消后端会话——后端实际拒绝 RECORDING 态 discard，下一次 start 被 `VOICE_SESSION_CONFLICT` 拒（必须补 stop 或重连） |
 | FE-S4-RUN-P1-01 | P1 | Mock/测试把 discard 建模为同步成功，未覆盖空录音后服务端已 IDLE 的异步 `VOICE_RECORDING_NOT_FOUND`——正常删除被协议记为错误（`voice.error`/`onChatError` 噪声），测试无法发现真实契约漂移 |
 | FE-S4-RUN-P1-02 | P1 | stop 后字幕仍在转写时立即展示「未识别，请重试」，45s timer 无可观察等待状态——慢转写被误报，与 D-P17「等待终态」不符 |
@@ -92,7 +92,7 @@ wire schema 无新增字段（`voice.discard` 状态机语义修订）。
 
 ## 5. 设计
 
-### 5.0 决策表（本批 Rulings，R-S4-01~R-S4-07）
+### 5.0 决策表（本批 Rulings，R-S4-01~R-S4-08）
 
 | # | 决策 | 理由 |
 |---|---|---|
@@ -214,7 +214,7 @@ async discardVoice(input: VoiceDiscardInput): Promise<void> {
 
 - 错误码以配套后端修复后实际返回为准（实现时对齐；mock 与 real-backend 协议桩共用同一码表）；
 - 同步对齐 [real-backend.ts:1052-1056](apps/desktop/src/main/transport/real-backend.ts#L1052-L1056) 的本地行为不变（wire send-only）；
-- 新增 `parseMockVoiceTranscriptDelayEnv(value)`（[mock-backend.ts:104](apps/desktop/src/main/transport/mock-backend.ts#L104) 旁）：`undefined → undefined`，否则 `Number(value)` 钳制 `[0, 30000]`；`MockBackendOptions.transcriptDelayMs` 缺省 0；`stopRecordVoice` 控制帧 invoke **立即 resolve**（与 real send-only 语义一致），非空 transcript 的 emit **fire-and-forget** 延迟 `setTimeout(transcriptDelayMs)`（定时器 tracked、`dispose()` 清理），`activeVoice` 同步清（停被接受即清，不随延迟 emit 顺延）——**R-S4-08 ruling（Task 5 修正）：本 spec 原示例「`stopRecordVoice` 非空 transcript 时 `await sleep(transcriptDelayMs)` 再 emit」在 invoke resolve 前等待，与真实后端 stop send-only/快返回语义不符，且「正在识别…」等待态不可观察；fire-and-forget 使等待态在 delay 窗口内可观察、transcript 到达后无闪烁**（[mock-backend.ts:458-465](apps/desktop/src/main/transport/mock-backend.ts#L458-L465)）；仅 `CYRENE_BACKEND=mock` 时经 [index.ts:139](apps/desktop/src/main/index.ts#L139) 接线（`!== undefined` 才注入）。
+- 新增 `parseMockVoiceTranscriptDelayEnv(value)`（[mock-backend.ts:104](apps/desktop/src/main/transport/mock-backend.ts#L104) 旁）：`undefined → undefined`，否则 `Number(value)` 钳制 `[0, 30000]`；`MockBackendOptions.transcriptDelayMs` 缺省 0；`stopRecordVoice` 控制帧 invoke **立即 resolve**（与 real send-only 语义一致），非空 transcript 的 emit **fire-and-forget** 延迟 `setTimeout(transcriptDelayMs)`（定时器 tracked、`dispose()` 清理），`activeVoice` 同步清（停被接受即清，不随延迟 emit 顺延）——**R-S4-08 ruling（Task 5 修正）：本 spec 原示例「`stopRecordVoice` 非空 transcript 时 `await sleep(transcriptDelayMs)` 再 emit」在 invoke resolve 前等待，与真实后端 stop send-only/快返回语义不符，且「正在识别…」等待态不可观察；fire-and-forget 使等待态在 delay 窗口内可观察、transcript 到达后无闪烁**（[mock-backend.ts:479-497](apps/desktop/src/main/transport/mock-backend.ts#L479-L497)）；仅 `CYRENE_BACKEND=mock` 时经 [index.ts:139](apps/desktop/src/main/index.ts#L139) 接线（`!== undefined` 才注入）。
 
 ### 5.6 real-backend 协议桩测试（P0-01 / P1-01）
 
@@ -294,7 +294,7 @@ async discardVoice(input: VoiceDiscardInput): Promise<void> {
 - **doc 02 §14**（错误码目录）：`VOICE_RECORDING_NOT_FOUND` 补注「IDLE 迟到 discard 幂等成功，不再产生」；
 - **doc 11 §3**（待发送条/语音子页）：停后「正在识别…」等待态 + 45s 兜底「未识别，请重试」+ 等待期操作可用；
 - **doc 13 §13**：增量 Review——阶段 4 真实联调整改同步（trigger：语音语义/协议变更）；
-- **决策记录**（`docs/review/2026-08-16-阶段4批次B-决策记录.md`）：新增「真实联调整改」段，落 R-S4-01~R-S4-07 + 跨仓依赖（BE-S4-RUN-P0-01）；
+- **决策记录**（`docs/review/2026-08-16-阶段4批次B-决策记录.md`）：新增「真实联调整改」段，落 R-S4-01~R-S4-08 + 跨仓依赖（BE-S4-RUN-P0-01）；
 - **doc 16 §7/§8**：阶段 4 真实联调整改落地状态（整改后仍待配套后端复验）；
 - **check:contract**：配套后端更新 `frontend_contract` 中 discard 相关样例（backend review §3.5「contract/golden trace 增加 start 后直接 discard 和重复 discard 样例」）后，前端 `check:contract` 复跑对齐；本批不新增 wire 字段，无需改前端 schema 镜像；
 - 结构回归（表格列数/代码围栏/重复标题/失效相对链接）随提交检查。

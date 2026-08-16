@@ -350,7 +350,7 @@
 | 02 §13.2 | 普通录音 `voice.discard` 语义更新：**可取消任意未提交阶段（RECORDING/TRANSCRIBING/PENDING）+ 幂等成功**（IDLE 迟到/重复 discard 亦成功、不发 `VOICE_RECORDING_NOT_FOUND`）；删「RECORDING 态先 stop 再 discard」「IDLE 迟到 discard → NOT_FOUND」口径；标注依赖配套后端修订 BE-S4-RUN-P0-01 |
 | 02 §14 | 关键码补 `VOICE_RECORDING_NOT_FOUND` 注：「IDLE 迟到 discard 幂等成功，不再产生」；现保留码含义为「另一普通录音活跃时 mismatch recordingId 拒绝」 |
 | 11 §3 | 普通模式补停止后等待态：停后「正在识别…」（`record.awaitingTranscript`）→ 等 `voice.transcript`/`voice.error` 终态 → 仅真实 45s 超时兜底翻转「未识别，请重试」；等待期试听/删除/重录可用、确认发送禁用；错误与字幕可并存 |
-| 13 §13 | 阶段 4 批次 B 同步段「定案」/「自动回归」文字与计数对齐（1284/73） |
+| 13 §13 | 未改动（批次 B 历史记录保留，计数仍为 1245/100 + 70/15），本次仅新增 §14 |
 | 16 §7 | 阶段 4 真实联调整改落地状态：discard 幂等语义 + 等待态 + voice.error 门控 + mock 冻结契约建模 + 协议桩漂移 canary；测试计数更新（1284 单测（100 files）+ 73 集成（15 files））；整改后仍待配套后端复验（三态保持） |
 | 决策记录 | `2026-08-16-阶段4批次B-决策记录.md` 新增「真实联调整改」段（§10）：R-S4-01~R-S4-08 全表 + 跨仓依赖（BE-S4-RUN-P0-01）+ 漂移 canary 定位说明 + 后续（配套后端修复 SHA 复验） |
 | README / CLAUDE.md | 测试计数更新（1245/100 + 70/15 → 1284/100 + 73/15）+ 阶段 4 真实联调整改落地注记（REAL 复验仍待下一轮） |
