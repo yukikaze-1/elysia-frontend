@@ -1,0 +1,475 @@
+// src/renderer/src/stores/voice.store.ts
+// 阶段 4 批次 B（spec §5.9 / design doc）：voiceStore——三模式语音会话编排。
+// - 普通录音 / 实时会话 / 输入法转写三 start 统一守卫（D-P11：mode==='idle' && connected）+ consent（D-P16）；
+// - D-P19：控制帧先于采集——各 start 先 await api.voiceStartXxx 成功，再 PcmCapture.start；
+// - 背压（D-P3/D-P12）：realtime unacked-lastAckedSeq > MAX_UNACKED_FRAMES → pause，ack 恢复；
+//   5s 无 ack 兜底 resume（Important-10：ack-stall 定时器每次 ack/ended 重臂/清）；
+// - TTS 播放门（D-P8）：audio.session.ready 仅在 autoReadReply 时置 playing（Task 14 CyTtsPlayer 消费）；
+// - 独立订阅 onChatEvent（D-P10）：messageStore 处理 voice_session.turn 消息归属 + sendVoiceCommit，
+//   本 store 不重复插入消息、不重复提交。
+// - 采集可注入（PcmCaptureLike）：setCaptureFactory 供单测注入 fake（D-P19 断言控制帧先于采集）。
+import { defineStore } from 'pinia'
+import { ref } from 'vue'
+import type { BackendEvent } from '@shared/contracts'
+import { api } from './desktop-api'
+import { useConnectionStore } from './connection.store'
+import { useConversationStore } from './conversation.store'
+import { useSettingsStore } from './settings.store'
+import { useMessageStore } from './message.store'
+import { PcmCapture, type PcmCaptureLike } from '../voice/voice-capture'
+import { parsePublicError, type PublicError } from '../utils/public-error'
+
+/** 背压窗口：unacked - lastAckedSeq 超窗暂停采集（≈4s @50帧/s，含 1s ack 周期余量） */
+export const MAX_UNACKED_FRAMES = 200
+/** 无 ack 兜底恢复延迟（D-P12）：宁可继续发，不永久暂停 */
+export const ACK_STALL_MS = 5000
+/** 录音转写 45s 兜底：无 transcript/error → 判「未识别」（D-P17），仅丢弃/重录 */
+export const TRANSCRIPT_WAIT_MS = 45000
+/** 录音硬上限（与后端一致）：≥600s 自动停止 + toast */
+export const RECORD_HARD_CAP_MS = 600000
+/** 录音接近上限提示阈值：≥300s toast 提示 */
+export const RECORD_WARN_MS = 300000
+
+/** 采集工厂（可注入）：测试 setCaptureFactory 注入 fake PcmCapture；生产用真实 PcmCapture */
+let captureFactory: () => PcmCaptureLike = () => new PcmCapture()
+export function setCaptureFactory(fn: () => PcmCaptureLike): void {
+  captureFactory = fn
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+export const useVoiceStore = defineStore('voice', () => {
+  // —— spec §5.9 state ——
+  const mode = ref<'idle' | 'recording' | 'record_pending' | 'realtime' | 'dictating'>('idle')
+  const caption = ref('')
+  const record = ref<{ elapsedMs: number; audioBuffer: AudioBuffer | null; transcript?: string }>({ elapsedMs: 0, audioBuffer: null })
+  const realtime = ref<{ sessionId?: string; caption: string; turnCount: number; unacked: number; lastAckedSeq: number }>({ caption: '', turnCount: 0, unacked: 0, lastAckedSeq: 0 })
+  const dictation = ref<{ caption: string; finalText?: string }>({ caption: '' })
+  const tts = ref<{ playingStreamId?: number; url?: string; playing: boolean; durationMs?: number }>({ playing: false })
+  const micError = ref<PublicError>()
+  const error = ref<PublicError>()
+  const captureReady = ref(false)
+  const consentPending = ref(false)
+  const pendingAction = ref<(() => Promise<void>) | null>(null)
+  /** store 级瞬时提示（录音 300s/600s toast；Task 14 消费），同 layout.store.notice 机制 */
+  const notice = ref<string | null>(null)
+
+  // —— 非响应式会话标识与句柄（spec state 不含，组件不消费） ——
+  let activeRecordingId: string | undefined
+  let dictationClientRequestId: string | undefined
+  let capture: PcmCaptureLike | null = null
+
+  // —— 定时器句柄 ——
+  let recordTimer: ReturnType<typeof setInterval> | undefined
+  let recordWarnShown = false
+  let transcriptTimer: ReturnType<typeof setTimeout> | undefined
+  let ackStallTimer: ReturnType<typeof setTimeout> | undefined
+
+  function setNotice(text: string): void { notice.value = text }
+  function clearNotice(): void { notice.value = null }
+
+  function clearTranscriptTimer(): void {
+    if (transcriptTimer !== undefined) clearTimeout(transcriptTimer)
+    transcriptTimer = undefined
+  }
+
+  function clearAckStallTimer(): void {
+    if (ackStallTimer !== undefined) clearTimeout(ackStallTimer)
+    ackStallTimer = undefined
+  }
+
+  /** Important-10：ack-stall 定时器——无 ack 时 capture.resume() 兜底；每次 ack/ended 重臂/清 */
+  function armAckStallTimer(): void {
+    clearAckStallTimer()
+    ackStallTimer = setTimeout(() => {
+      void capture?.resume()
+    }, ACK_STALL_MS)
+  }
+
+  function clearRecordState(): void {
+    if (recordTimer !== undefined) { clearInterval(recordTimer); recordTimer = undefined }
+    clearTranscriptTimer()
+    activeRecordingId = undefined
+    record.value = { elapsedMs: 0, audioBuffer: null }
+    caption.value = ''
+    mode.value = 'idle'
+  }
+
+  function clearRealtimeState(): void {
+    clearAckStallTimer()
+    realtime.value = { caption: '', turnCount: 0, unacked: 0, lastAckedSeq: 0 }
+  }
+
+  function clearDictationState(): void {
+    dictationClientRequestId = undefined
+    dictation.value = { caption: '' }
+  }
+
+  function clearTtsState(): void {
+    tts.value = { playing: false }
+  }
+
+  // —— 事件路由（D-P10：独立订阅 onChatEvent，voice_store.spec 经 mockApi.onChatEvent handler 驱动） ——
+
+  function handleEvent(e: BackendEvent): void {
+    switch (e.event) {
+      case 'voice.transcript': {
+        clearTranscriptTimer()
+        record.value.transcript = e.text
+        caption.value = e.text // 字幕只展示，不写草稿；mode 保持 record_pending
+        return
+      }
+      case 'voice_session.started': {
+        realtime.value.sessionId = e.sessionId
+        mode.value = 'realtime'
+        return
+      }
+      case 'voice_session.partial': {
+        realtime.value.caption = e.text
+        return
+      }
+      case 'voice_session.turn': {
+        // 消息插入由 messageStore 处理，本 store 只计数轮次
+        realtime.value.turnCount++
+        return
+      }
+      case 'voice_session.ack': {
+        realtime.value.lastAckedSeq = e.seq
+        if (realtime.value.unacked - e.seq <= MAX_UNACKED_FRAMES) void capture?.resume()
+        armAckStallTimer() // 每次 ack 重臂
+        return
+      }
+      case 'voice_session.ended': {
+        clearAckStallTimer()
+        void capture?.stop()
+        capture = null
+        captureReady.value = false
+        clearRealtimeState()
+        mode.value = 'idle'
+        return
+      }
+      case 'dictation.partial': {
+        dictation.value.caption = e.text
+        return
+      }
+      case 'dictation.final': {
+        // 不直接插入——选区在组件，Task 14 消费后调 clearDictationFinal()
+        dictation.value.caption = e.text
+        dictation.value.finalText = e.text
+        return
+      }
+      case 'dictation.cancelled': {
+        clearDictationState()
+        mode.value = 'idle'
+        return
+      }
+      case 'audio.session.started': {
+        // 新句打断旧播放（若有且不同 streamId；后端已 supersede 旧流，本处只清本地播放态）
+        if (tts.value.playing && tts.value.playingStreamId !== undefined && tts.value.playingStreamId !== e.streamId) {
+          clearTtsState()
+        }
+        tts.value.playingStreamId = e.streamId
+        return
+      }
+      case 'audio.session.ready': {
+        // D-P8 播放门：autoReadReply 为真才置 playing（触发 CyTtsPlayer）；为假忽略（不播、不置 playing）
+        if (!useSettingsStore().voice.autoReadReply) return
+        tts.value.playingStreamId = e.streamId
+        tts.value.url = e.url
+        tts.value.durationMs = e.durationMs
+        tts.value.playing = true
+        return
+      }
+      case 'audio.session.cancelled': {
+        clearTtsState()
+        return
+      }
+      case 'voice.error': {
+        // PLAYBACK_NOT_FOUND（audio.cancel 竞态）良性忽略
+        if (e.code === 'PLAYBACK_NOT_FOUND') return
+        error.value = parsePublicError(`[${e.code}] ${e.message ?? ''}`)
+        if (mode.value === 'record_pending') clearTranscriptTimer() // STT 失败终态，45s 等待终止
+        return
+      }
+      default:
+        return
+    }
+  }
+
+  /** bootstrap 调用：独立订阅 onChatEvent（D-P10），返回退订 */
+  function init(): () => void {
+    return api.onChatEvent((e) => handleEvent(e))
+  }
+
+  // —— 统一守卫（D-P11）+ consent（D-P16） ——
+
+  function guardStart(): boolean {
+    return mode.value === 'idle' && useConnectionStore().state.status === 'connected'
+  }
+
+  /**
+   * consent（D-P16）：consentBackendStt 为 true → 返回 true（调用方直接执行主体）；
+   * false → consentPending=true + pendingAction=action + 返回 false（挂起待 UI 确认）。
+   * 返回 boolean 而非「直接执行 action」：避免未同意分支的自递归（confirmConsent 再派发同一 start 入口）。
+   */
+  function requireConsent(action: () => Promise<void>): boolean {
+    if (useSettingsStore().voice.consentBackendStt) return true
+    consentPending.value = true
+    pendingAction.value = action
+    return false
+  }
+
+  /** Task 14 对话框同意回调：持久化「不再提示」+ 清 pending + 重发挂起的动作 */
+  async function confirmConsent(): Promise<void> {
+    await useSettingsStore().setVoice({ consentBackendStt: true })
+    const action = pendingAction.value
+    consentPending.value = false
+    pendingAction.value = null
+    if (action) await action()
+  }
+
+  /** 拒绝 → 中止（清 pending，不执行） */
+  function dismissConsent(): void {
+    consentPending.value = false
+    pendingAction.value = null
+  }
+
+  // —— 普通录音 ——
+
+  async function startRecord(): Promise<void> {
+    if (!guardStart()) return
+    if (!useSettingsStore().voice.enabled) return
+    if (!requireConsent(() => startRecord())) return
+    const recordingId = `rec_${crypto.randomUUID()}`
+    // D-P19：控制帧先于采集——await 成功才开麦克风
+    await api.voiceStartRecord({ recordingId })
+    activeRecordingId = recordingId // 控制帧成功后才记入（失败不残留可被 stop/discard 误引用的 id）
+    capture = captureFactory()
+    try {
+      await capture.start({
+        onChunk: (b) => api.voiceSendAudio(b),
+        onStop: (ab) => { record.value.audioBuffer = ab },
+        deviceId: useSettingsStore().voice.micDeviceId
+      })
+    } catch (e) {
+      // Important-3：getUserMedia/AudioContext 拒绝 → micError + 模式回 idle + 取消后端会话（discard 无 transcript）
+      micError.value = parsePublicError(messageOf(e))
+      capture = null
+      captureReady.value = false
+      activeRecordingId = undefined
+      mode.value = 'idle'
+      try { await api.voiceDiscard({ recordingId }) } catch { /* 后端取消失败不阻塞 */ }
+      return
+    }
+    captureReady.value = true
+    mode.value = 'recording'
+    record.value.elapsedMs = 0
+    recordWarnShown = false
+    recordTimer = setInterval(() => {
+      record.value.elapsedMs += 1000
+      if (record.value.elapsedMs >= RECORD_HARD_CAP_MS) {
+        setNotice('录音已达 10 分钟上限，已自动停止')
+        void stopRecord()
+      } else if (record.value.elapsedMs >= RECORD_WARN_MS && !recordWarnShown) {
+        recordWarnShown = true
+        setNotice('录音即将达到 10 分钟上限')
+      }
+    }, 1000)
+  }
+
+  async function stopRecord(): Promise<void> {
+    if (!activeRecordingId) return
+    if (recordTimer !== undefined) { clearInterval(recordTimer); recordTimer = undefined }
+    await capture?.stop()
+    capture = null
+    captureReady.value = false
+    await api.voiceStopRecord({ recordingId: activeRecordingId })
+    mode.value = 'record_pending'
+    // 45s 兜底判「未识别」（D-P17）：到时无 transcript/error → 仅丢弃/重录
+    clearTranscriptTimer()
+    transcriptTimer = setTimeout(() => {
+      caption.value = ''
+      record.value.transcript = undefined
+    }, TRANSCRIPT_WAIT_MS)
+  }
+
+  /** 本地试听（AudioContext + BufferSource，不走 blob URL） */
+  function replayRecord(): void {
+    const ab = record.value.audioBuffer
+    if (!ab) return
+    const AudioContextCtor = globalThis.AudioContext
+    if (typeof AudioContextCtor !== 'function') return
+    const ctx = new AudioContextCtor()
+    const src = ctx.createBufferSource()
+    src.buffer = ab
+    src.connect(ctx.destination)
+    void src.start()
+  }
+
+  async function discardRecord(): Promise<void> {
+    if (!activeRecordingId) return
+    await api.voiceDiscard({ recordingId: activeRecordingId })
+    clearRecordState()
+  }
+
+  /** 确认发送：transcript 非空才发；sendVoiceCommit 成功 → 清态 */
+  async function commitRecord(): Promise<boolean> {
+    const text = record.value.transcript?.trim()
+    if (!text || !activeRecordingId) return false
+    const ok = await useMessageStore().sendVoiceCommit(activeRecordingId, record.value.transcript ?? '')
+    if (ok) clearRecordState()
+    return ok
+  }
+
+  // —— 实时会话 ——
+
+  async function startRealtime(): Promise<void> {
+    if (!guardStart()) return
+    if (!useSettingsStore().voice.realtimeEnabled) return
+    if (!requireConsent(() => startRealtime())) return
+    const current = useConversationStore().currentId
+    const sessionId = `vs_${crypto.randomUUID()}`
+    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 sessionId（失败不残留可被 stop 误引用的 id）
+    await api.voiceStartRealtime({ sessionId, ...(current ? { conversationId: current } : {}) })
+    realtime.value.sessionId = sessionId
+    capture = captureFactory()
+    try {
+      await capture.start({
+        onChunk: (b) => {
+          api.voiceSendAudio(b)
+          realtime.value.unacked++
+          if (realtime.value.unacked - realtime.value.lastAckedSeq > MAX_UNACKED_FRAMES) void capture?.pause()
+        }
+      })
+    } catch (e) {
+      micError.value = parsePublicError(messageOf(e))
+      capture = null
+      captureReady.value = false
+      realtime.value.sessionId = undefined
+      mode.value = 'idle'
+      try { await api.voiceCancelRealtime({ sessionId }) } catch { /* 后端取消失败不阻塞 */ }
+      return
+    }
+    captureReady.value = true
+    mode.value = 'realtime'
+    // Important-10：ack-stall 定时器——无 ack 时 capture.resume()（兜底）；ack/ended 重臂/清
+    armAckStallTimer()
+  }
+
+  async function stopRealtime(): Promise<void> {
+    const sessionId = realtime.value.sessionId
+    if (!sessionId) return
+    clearAckStallTimer()
+    await capture?.stop()
+    capture = null
+    captureReady.value = false
+    try { await api.voiceStopRealtime({ sessionId }) } catch { /* ended 事件清态 */ }
+  }
+
+  async function cancelRealtime(): Promise<void> {
+    const sessionId = realtime.value.sessionId
+    if (!sessionId) return
+    clearAckStallTimer()
+    await capture?.stop()
+    capture = null
+    captureReady.value = false
+    try { await api.voiceCancelRealtime({ sessionId }) } catch { /* ended 事件清态 */ }
+  }
+
+  // —— 输入法转写 ——
+
+  async function startDictation(): Promise<void> {
+    if (!guardStart()) return
+    if (!useSettingsStore().voice.enabled) return
+    if (!requireConsent(() => startDictation())) return
+    const clientRequestId = `req_${crypto.randomUUID()}`
+    const sttProfileId = useSettingsStore().dictation.sttProfileId
+    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 clientRequestId
+    await api.voiceStartDictation({ clientRequestId, ...(sttProfileId ? { sttProfileId } : {}) })
+    dictationClientRequestId = clientRequestId
+    capture = captureFactory()
+    try {
+      await capture.start({ onChunk: (b) => api.voiceSendAudio(b) })
+    } catch (e) {
+      micError.value = parsePublicError(messageOf(e))
+      capture = null
+      captureReady.value = false
+      dictationClientRequestId = undefined
+      mode.value = 'idle'
+      try { await api.voiceCancelDictation({ clientRequestId }) } catch { /* 后端取消失败不阻塞 */ }
+      return
+    }
+    captureReady.value = true
+    dictation.value.caption = ''
+    mode.value = 'dictating'
+  }
+
+  async function stopDictation(): Promise<void> {
+    const id = dictationClientRequestId
+    if (!id) return
+    await capture?.stop()
+    capture = null
+    captureReady.value = false
+    try { await api.voiceStopDictation({ clientRequestId: id }) } catch { /* final 事件清态 */ }
+  }
+
+  async function cancelDictation(): Promise<void> {
+    const id = dictationClientRequestId
+    if (!id) return
+    await capture?.stop()
+    capture = null
+    captureReady.value = false
+    try { await api.voiceCancelDictation({ clientRequestId: id }) } catch { /* cancelled 事件清态 */ }
+  }
+
+  /** Task 14 组件插入 final 后调用：finalText 清位 + 清态（mode 回 idle，允许下一次转写） */
+  function clearDictationFinal(): void {
+    clearDictationState()
+    mode.value = 'idle'
+  }
+
+  // —— TTS 播放控制（Task 14 CyTtsPlayer 回调） ——
+
+  function onTtsPlaybackEnded(): void { clearTtsState() }
+  function onTtsPlaybackError(): void { clearTtsState() }
+
+  async function stopTtsPlayback(): Promise<void> {
+    if (tts.value.playingStreamId !== undefined) {
+      try { await api.audioCancel({ streamId: tts.value.playingStreamId }) } catch { /* 后端取消失败不阻塞 */ }
+    }
+    clearTtsState()
+  }
+
+  // —— reset（断线/会话切换，Task 13 bootstrap handleConnectionStateChange 接线） ——
+
+  async function reset(): Promise<void> {
+    if (recordTimer !== undefined) { clearInterval(recordTimer); recordTimer = undefined }
+    clearAckStallTimer()
+    await capture?.stop()
+    capture = null
+    captureReady.value = false
+    clearRecordState()      // 清 record 态 + caption + transcript 等待 timer + mode='idle'
+    clearRealtimeState()    // 清 realtime 态 + ack-stall timer
+    clearDictationState()
+    clearTtsState()
+    micError.value = undefined
+    error.value = undefined
+    consentPending.value = false
+    pendingAction.value = null
+    notice.value = null
+  }
+
+  return {
+    mode, caption, record, realtime, dictation, tts, micError, error, captureReady,
+    consentPending, pendingAction, notice,
+    init, handleEvent, guardStart, requireConsent, confirmConsent, dismissConsent,
+    startRecord, stopRecord, replayRecord, discardRecord, commitRecord,
+    startRealtime, stopRealtime, cancelRealtime,
+    startDictation, stopDictation, cancelDictation, clearDictationFinal,
+    onTtsPlaybackEnded, onTtsPlaybackError, stopTtsPlayback,
+    setNotice, clearNotice,
+    reset
+  }
+})
