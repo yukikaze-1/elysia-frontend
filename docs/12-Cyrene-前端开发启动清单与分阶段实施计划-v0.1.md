@@ -134,9 +134,9 @@
 | [ ] | E-02 | P1 | 内置与自定义 Profile 字段、Provider、模型 ID、能力和模型执行位置枚举 | 后端字段与前端模型完成映射 | 4 |
 | [ ] | E-03 | P0 | 凭据由后端、Main 还是 Local Worker 保存；一次性提交和更新规则 | Renderer 无法读取已保存密钥明文 | 1 |
 | [ ] | E-04 | P1 | 自定义 OpenAI Compatible/Custom REST 的 Endpoint、HTTPS/本机模式、DNS/重定向/私网规则和 Header 白名单 | 危险 Header、远程 HTTP、云元数据/未授权私网、跨域携密重定向和空模型被拒绝 | 4 |
-| [ ] | E-05 | P1 | 普通录音输入、实时语音会话的音频格式、采样率、字幕、VAD、断句和语音轮次事件 | 两种模式各完成一次真实语音输入，字幕均不进入文字草稿 | 4 |
-| [ ] | E-06 | P1 | TTS 是整段还是流式；音频格式、声音、取消和播放完成事件 | 完成一次试听和一次回复播放 | 4 |
-| [~] | E-07 | P1 | 输入法转写专用 STT Profile 选择，以及 Demo 启用 Backend、本机、Local Worker 中哪些模型执行位置 | 契约已确认（后端 `556117a`）：转写可经 `dictation.start.sttProfileId`（`<provider>/<model>`）独立选择兼容 STT Profile，缺省用全局活动 STT，会话内快照不改全局活动 STT | 4 |
+| [~] | E-05 | P1 | 普通录音输入、实时语音会话的音频格式、采样率、字幕、VAD、断句和语音轮次事件 | **阶段 4 批次 B 已实现（Mock 驱动，已开发、未联调，2026-08-16）**：固定 `pcm_s16le/16000/1` + `voice.record.*`/`voice_session.*` 全态 + BINARY 上行 + 背压（ack 窗口/5s 兜底）；真实 Windows Electron（REAL）联调为验收方 | 4 |
+| [~] | E-06 | P1 | TTS 是整段还是流式；音频格式、声音、取消和播放完成事件 | **阶段 4 批次 B 已实现（整段缓冲、非流式；`audio_start/audio/audio_end`，完成由前端本地 `onended` 判定，`audio.cancel` 打断，mock 占位 URL 404 → onerror 清态）**；真实发声随 REAL 联调验证 | 4 |
+| [~] | E-07 | P1 | 输入法转写专用 STT Profile 选择，以及 Demo 启用 Backend、本机、Local Worker 中哪些模型执行位置 | 契约已确认（后端 `556117a`）：转写可经 `dictation.start.sttProfileId`（`<provider>/<model>`）独立选择兼容 STT Profile，缺省用全局活动 STT，会话内快照不改全局活动 STT；**阶段 4 批次 B 已实现**（`settingsStore.dictation.sttProfileId` 本地设置透传，D-P14；下拉过滤 backend+enabled，删除引用回退全局 STT + toast） | 4 |
 | [ ] | E-08 | P1 | 输入法转写的按下、松开、取消、最终文字和临时音频清理规则 | 转写只写入草稿且不会自动发送 | 4 |
 | [ ] | E-09 | P2 | Local Worker 的启动、发现、版本、模型下载和资源占用接口 | 若进入 Demo，可检测安装与不可用状态 | 4 |
 

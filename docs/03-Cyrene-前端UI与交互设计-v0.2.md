@@ -285,6 +285,8 @@ AI 消息：复制 Public Reply、复制完整回复组、折叠 Inner Voice、�
 - 实时会话不可用时只能提示用户改用普通录音，不能静默改变数据上传位置；
 - STT 字幕失败不丢弃已经录制或正在处理的语音输入。
 
+> **阶段 4 批次 B 落地（2026-08-16，Mock 驱动，标「已开发、未联调」）：** 输入区语音入口已实现——**🎤 普通录音**（click 开始/停止，录音中按钮高亮 + 时长）、**🔊 实时会话**（进入后输入区替换为 `CyRealtimeBar` 实时状态条：聆听状态 + 字幕 + 轮次数 + 停止；实时进行中聊天发送按钮禁用）、**⌨️ 输入法转写**（pointerdown 开始 / pointerup 提交 / 上滑取消，`CyDictationHint` 字幕浮层）；入口**禁用态**：语音输入总开关 `enabled` 关 → 🎤/⌨️ 禁用，`realtimeEnabled` 关 → 🔊 禁用（`voiceStore` 统一守卫）。录音停止后 `CyVoicePending` 待发送条（转写字幕或「未识别，请重试」+ 试听/重录/删除/确认发送，无字幕时确认发送禁用）；**后端 STT 首次操作前一次性同意对话框**（D-P16，「不再提示」持久化 `voice.consentBackendStt`）；TTS 自动朗读经 `CyTtsPlayer`（隐藏 `<audio>`，宿主 CyChatView，`autoReadReply` 播放门 D-P1）；**会话切换守卫**（语音会话活跃 `mode≠idle` 时禁止切换/新建会话，提示先结束，D-P5）。
+
 ### 8.5 表情与表情包
 
 - 输入区提供常用 Emoji 和表情包两级面板，最近使用项优先；
@@ -302,6 +304,8 @@ AI 消息：复制 Public Reply、复制完整回复组、折叠 Inner Voice、�
 - 设置中有独立的输入法转写开关和专用 STT Profile 选择；
 - STT Profile 的执行位置可为 Backend、本机或 Local Worker；选择 Backend 时明确提示音频会离开设备；
 - 底层是否复用普通 STT 模型和接口仍待前后端讨论，前端保持独立功能开关和 Profile ID，避免产品行为耦合。
+
+> **阶段 4 批次 B 落地（2026-08-16）：** 转写「按住→松开→final 写草稿」已实现（`CyDictationHint` 浮层字幕；`dictation.final` 按 `dictationInsertMode` 追加草稿末尾或替换当前选区，**不创建语音消息、不自动发送**；上滑取消 → `dictation.cancelled` 清态）；转写可独立选择 STT Profile（语音设置子页下拉，D-P14/D-P20）。
 
 ## 9. 工具调用卡片
 
@@ -386,6 +390,8 @@ P0 操作：
 ### 12.3 聊天与语音
 
 发送快捷键、自动滚动、TTS 自动播放、普通录音输入、实时语音会话、输入法转写专用 STT Profile、麦克风设备和语音活动检测。界面必须说明直接语音字幕不会进入文字草稿，输入法转写才会修改输入框。
+
+> **阶段 4 批次 B 落地（2026-08-16）：** 设置中心导航分组增「语音」→ `CyVoicePane` 语音子页——启用语音输入 `voice.enabled` / 启用实时语音 `voice.realtimeEnabled` / TTS 自动朗读 `voice.autoReadReply`（D3）/ 显示直接语音字幕 `voice.showCaptions` 开关 + 麦克风设备下拉（`enumerateDevices()` audioinput）+ **测试麦克风**（录 3s → 本地试听 + 时长 + 错误显示）+ **转写专用 STT Profile 下拉**（过滤 backend+enabled）+ 转写插入位置（追加草稿末尾 / 替换当前选区）。语音设置经 `settingsStore` 持久化（重开保留，损坏 fail-open 回默认）。
 
 ### 12.4 Live2D 与外观
 

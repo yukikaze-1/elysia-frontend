@@ -92,6 +92,8 @@ interface ModelServiceProfile {
 - 设为当前 STT；
 - 显示延迟、转写文字和错误。
 
+> **阶段 4 批次 B 落地（2026-08-16，语音子页 `CyVoicePane`）：** 测试麦克风已实现——录 3s 后本地 AudioContext 试听 + 时长显示 + 错误显示（权限拒绝/无设备）；**转写测试复用 dictation 链路（用户实际输入时自然验证，不做专用入口）**。
+
 ### 2.4 TTS 设置
 
 - Provider、模型、声音和执行位置；
@@ -131,6 +133,8 @@ Endpoint 安全规则：远程 Provider 默认只允许 HTTPS；需要连接 `lo
 - 后端执行必须在设置和首次使用时说明音频会上传；本机/Local Worker 必须展示模型下载、可用性或资源占用；
 - 转写结果只进入草稿，不自动发送、不创建语音消息；原始音频默认不保留；
 - 删除被输入法转写使用的 STT Profile 前，必须先选择替代项或关闭输入法转写。
+
+> **阶段 4 批次 B 落地（2026-08-16，语音子页）：** 转写专用 STT 下拉已实现——数据源 `modelServiceStore.profiles` 过滤 **`type==='stt' && enabled && executionLocation==='backend'`**（D-P20：desktop/local profile 会 `STT_PROFILE_NOT_FOUND`，不列），绑 **`settingsStore.dictation.sttProfileId`**（本地设置，D-P14，非激活选择数据源），含「使用全局活动 STT」空选项；**删除被转写引用的 STT Profile → 自动清空 `dictation.sttProfileId`（回退全局活动 STT）+ toast**。转写插入位置仅 `追加草稿末尾 / 替换当前选区`（`dictationInsertMode` 两值，D-P4）——**「光标级插入」列为后续**（P4-B 子集）。
 
 ### 2.7 切换规则
 
@@ -184,6 +188,8 @@ Endpoint 安全规则：远程 Provider 默认只允许 HTTPS；需要连接 `lo
 - 最终文字写入当前光标位置并保持可编辑；
 - 切换会话、窗口失焦或权限撤销时安全取消，不把残余音频发送到其他会话；
 - 不与“发送语音消息”共用同一个视觉状态，防止用户误判发送内容类型。
+
+> **阶段 4 批次 B 落地（2026-08-16）：** 语音输入整体已实现（Mock 驱动，标「已开发、未联调」）——`CyChatInput` 增三入口：**🎤 普通录音**（click 开始/停止，录音中按钮高亮 + 时长）、**🔊 实时会话**（进入后输入区替换为 `CyRealtimeBar` 实时状态条，聆听状态 + 字幕 + 轮次数 + 停止，进行中发送按钮禁用）、**⌨️ 转写**（pointerdown 开始 / pointerup 提交 / 上滑取消，`CyDictationHint` 字幕浮层）；录音停止后 `CyVoicePending` 待发送条（转写字幕或「未识别，请重试」+ 试听/重录/删除/确认发送，**无字幕时确认发送禁用**）；TTS 播放经 `CyTtsPlayer`（隐藏 `<audio>`，宿主 CyChatView，`autoReadReply` 播放门）；**后端 STT 首次操作前一次性同意**（D-P16）；**会话切换守卫**（语音会话活跃 `mode≠idle` 时禁止切换/新建，提示先结束，D-P5）；语音设置子页 `CyVoicePane`（启用/实时/TTS 自动朗读/字幕开关 + 麦克风设备下拉 + 测试麦克风 + 转写 STT 下拉 + 插入位置）。**「保留录音」设置项不在本批**（音频不落盘，该设置随保存/附件功能后续引入）；「光标级插入」为后续（见 §2.6）。
 
 ## 4. 安全策略
 

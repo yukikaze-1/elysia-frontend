@@ -219,10 +219,19 @@ interface BackendAdapter {
   testModelProfile(input: TestModelProfileCommand): Promise<ModelProfileTestResult>;
   activateModelProfile(input: ActivateModelProfileCommand): Promise<void>;
   queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>;
-  startVoiceInput(input: StartVoiceInputInput): Promise<VoiceInputSession>;
-  stopVoiceInput(input: StopVoiceInputInput): Promise<void>;
-  startDictation(input: StartDictationInput): Promise<DictationSession>;
-  stopDictation(input: StopDictationInput): Promise<void>;
+  // —— 阶段 4 批次 B：语音（spec §5.4 方法集，Task 3 重写签名、Task 4/7 实现） ——
+  startRecordVoice(input: VoiceRecordStartInput): Promise<{ recordingId: string }>;
+  stopRecordVoice(input: VoiceRecordStopInput): Promise<void>;
+  commitVoice(input: VoiceCommitInput): Promise<ClientRequestRef>;   // 发 voice.commit，await user_message.ack（幂等，按 clientRequestId）
+  discardVoice(input: VoiceDiscardInput): Promise<void>;
+  startRealtimeVoice(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }>;
+  stopRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void>;
+  cancelRealtimeVoice(input: RealtimeVoiceControlInput): Promise<void>;
+  startDictation(input: DictationStartInput): Promise<{ clientRequestId: string }>;
+  stopDictation(input: DictationStopInput): Promise<void>;
+  cancelDictation(input: DictationStopInput): Promise<void>;
+  sendAudioBytes(bytes: Uint8Array): void;   // 同步 fire-and-forget（唯一同步方法）：连接 + 活动语音会话双 guard，否则丢弃 + warn
+  audioCancel(input: AudioCancelInput): Promise<void>;
   submitToolResult(input: ToolResult): Promise<void>;
   subscribe(handler: BackendEventHandler): () => void;
 }
@@ -239,10 +248,21 @@ interface DesktopApi {
   requestToolExecution(input: DesktopToolRequest): Promise<ToolExecutionReceipt>;
   respondPermission(input: PermissionDecision): Promise<void>;
   cancelTool(input: CancelToolInput): Promise<void>;
-  startSpeechInput(input: StartSpeechInput): Promise<SpeechInputSession>;
-  stopSpeechInput(input: StopSpeechInput): Promise<void>;
-  startLocalDictation(input: StartDictationInput): Promise<DictationSession>;
-  stopLocalDictation(input: StopDictationInput): Promise<void>;
+  // —— 阶段 4 批次 B：语音与本地设置（preload desktopApi，ipc.ts 通道） ——
+  voiceStartRecord(input: VoiceRecordStartInput): Promise<{ recordingId: string }>;
+  voiceStopRecord(input: VoiceRecordStopInput): Promise<void>;
+  voiceCommit(input: VoiceCommitInput): Promise<ClientRequestRef>;
+  voiceDiscard(input: VoiceDiscardInput): Promise<void>;
+  voiceStartRealtime(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }>;
+  voiceStopRealtime(input: RealtimeVoiceControlInput): Promise<void>;
+  voiceCancelRealtime(input: RealtimeVoiceControlInput): Promise<void>;
+  voiceStartDictation(input: DictationStartInput): Promise<{ clientRequestId: string }>;
+  voiceStopDictation(input: DictationStopInput): Promise<void>;
+  voiceCancelDictation(input: DictationStopInput): Promise<void>;
+  voiceSendAudio(bytes: Uint8Array): void;   // 单向 send（voice:audio-chunk，一次性 Uint8Array 拷贝防 DataCloneError）
+  audioCancel(input: AudioCancelInput): Promise<void>;
+  settingsLoad(): Promise<SettingsState>;
+  settingsSave(patch: SettingsPatch): Promise<SettingsState>;
   listSecurityPolicy(): Promise<PublicSecurityPolicy>;
   updateSecurityPolicy(input: SecurityPolicyUpdate): Promise<PublicSecurityPolicy>;
   listPermissionHistory(input: PageQuery): Promise<Page<PermissionHistoryItem>>;
@@ -322,6 +342,8 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 2. **输入法转写：** 按住说话，松开后只把最终文字插入当前会话草稿；不创建语音消息，也不自动发送。
 
 两条链路都由 Main 管理麦克风会话和数据路由。输入法转写根据 `dictationSttProfileId` 选择兼容 STT Profile，执行位置由该 Profile 声明为 Backend、Local Worker 或受控本机适配层；后端执行前必须公开音频上传事实。取消或失败不改变既有草稿，临时音频按策略清理。
+
+> **阶段 4 批次 B（2026-08-16）落地同步：** 三种语音（普通录音 / 实时语音会话 / 输入法转写）+ TTS 自动朗读已实现（Mock 驱动，标「已开发、未联调」）。实现面：Renderer `PcmCapture` 承担麦克风采集（AudioWorklet/ScriptProcessor 降级），Main 负责麦克风权限决策（`decideMicrophoneAllow`/`registerMicrophonePermission`，仅 audio + 受信 origin）、`voice:audio-chunk` 单向 IPC 守卫（`registerOneWayHandler`，1 MiB 上限）、TTS base64 帧解码 → MediaService `tts-live` 路由、语音族错误 `voice.error` 路由（D-P15）；Renderer `voiceStore` 三模式编排 + `settingsStore` 本地设置持久化。BINARY 上行与 TTS 播放映射见 doc 02 §13；接口方法见 §6.1。
 
 ### 7.6 聊天历史与表情
 

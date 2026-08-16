@@ -34,6 +34,8 @@
 > **实施注记（2026-08-11，阶段 2 块 C）：** `connectionStore`/`conversationStore`/`messageStore` 三 store 已落地（`renderer/src/stores/`），命名与职责遵循本节；`messageStore` 经 2A `StreamAccumulator` 应用领域事件、乐观发送用 `clientMessageId` key、断线 in-flight 置 `interrupted`、重连回放经 `onSessionReplay`→`loadReplay`。其余 store（tool/live2d/settings 等）随对应阶段落地。
 >
 > **实施注记（2026-08-14，阶段 3）：** 新增 `layoutStore`（G1 布局响应式，见 §3.13）、`draftStore`（G2 每会话草稿）、`cacheStore`（G2 离线缓存）、`attachmentStore`（G3 附件待发送队列/上传）、`historyViewerStore`（G4 历史查看器查询/分页/跳转）；CyMessageList 虚拟列表与滚动锚点由 messageStore 消费；草稿/滚动锚点经 Main 持久化（`persistSession`/`hydratePersistence`/`cacheMessages` IPC + `session-store.ts`），附件上传/媒体代理经 attachment 通道与 `main/attachments/`（`media-service.ts`/`upload-service.ts`）。
+>
+> **实施注记（2026-08-16，阶段 4 批次 B）：** 新增 `voiceStore`（三模式语音编排 + TTS 播放状态 + 麦克风错误，见 §3.9 落地形状）与 `settingsStore`（voice/dictation 本地设置，见 §3.7 落地形状；启动 `hydrate()` 装载 + 500ms 防抖 `settingsSave` 持久化，fail-open 回默认）。语音设置存 Main `dirs.config/settings.json`（受管目录，`main/settings/settings-service.ts` 原子写 + zod + 版本化 + 损坏隔离），非后端契约。`messageStore` 扩展：`applyEvent` 增 `voice_session.turn` 分支（后端预分配 messageId 装配 user 消息）+ `sendVoiceCommit(recordingId, text)`（乐观消息 + `api.voiceCommit` + migrate，复用 send 路径）。`connectionStore` 对 `VOICE_ERROR_CODES`（`shared/contracts/voice.ts`）不展示全局连接错误横幅（语音族错误经 `voice.error` 在语音 UI 展示，D-P15）。
 
 ### 3.1 `appStore`
 
@@ -51,6 +53,7 @@
 - 最近心跳；
 - 重连次数；
 - 可公开的认证状态；
+- **语音族错误横幅抑制（阶段 4 批次 B，D-P15）：** `setError` 对语音族错误码（`VOICE_ERROR_CODES`：`STT_UNAVAILABLE`/`STT_PROFILE_NOT_FOUND`/`VOICE_SESSION_CONFLICT`/`VOICE_SESSION_NOT_FOUND`/`VOICE_RECORDING_TOO_LONG`/`VOICE_RECORDING_NOT_FOUND`/`DICTATION_NOT_FOUND`/`PLAYBACK_NOT_FOUND`）不展示全局连接错误横幅——语音错误是会话级预期错误，经 `voice.error` 在语音 UI 展示；
 - 不保存认证 Token 明文。
 
 ### 3.3 `conversationStore`
@@ -96,6 +99,8 @@
 - 更新通过 Desktop API 交给 Main；
 - Main 是持久化事实来源。
 
+**落地形状（阶段 4 批次 B）：** `settingsStore` 持有 `SettingsState{version:1, voice, dictation}`（`shared/contracts/voice.ts`）——`voice{enabled, realtimeEnabled, autoReadReply, showCaptions, consentBackendStt, micDeviceId?}` + `dictation{sttProfileId?, insertMode: 'append'|'replace_selection'}`；`hydrate()` 启动装载（失败 fail-open 用默认）、`setVoice`/`setDictation` 本地改 + **500ms 防抖** `api.settingsSave` 持久化（`saveError`/`saved` 供 UI）；`applyDictationInsert(text)` 按 `insertMode` 追加草稿末尾或替换当前选区（D-P4）。持久化落 Main `dirs.config/settings.json`（§8.1），**不是后端契约**（backend 无对应端点）。
+
 ### 3.8 `modelServiceStore`
 
 - LLM、STT、TTS 三类 Profile 的公开配置；
@@ -114,6 +119,8 @@
 - 按住说话转文字会话、选定 STT Profile、执行位置和最终草稿插入结果；
 - 当前音频输入设备；
 - 原始音频缓冲不进入 Pinia 持久化。
+
+**落地形状（阶段 4 批次 B）：** state 为 `mode: 'idle'|'recording'|'record_pending'|'realtime'|'dictating'` + `caption`（仅展示，**绝不写草稿**）+ `record{elapsedMs, audioBuffer, transcript?}` + `realtime{sessionId?, caption, turnCount, unacked, lastAckedSeq}` + `dictation{caption}` + `tts{playingStreamId?, url?, playing, durationMs?}` + `micError?/error?/captureReady`；动作 `init()`（bootstrap 调用，独立订阅 `onChatEvent`）、`handleEvent` 路由（`voice.transcript`/`voice_session.*`/`dictation.*`/`audio.session.*`/`voice.error`）、三模式 start/stop/discard/commit（**D-P19：控制帧先于采集**；统一守卫 `mode==='idle' && connected` + enabled 开关）、consent（D-P16）、背压窗口（D-P12：`MAX_UNACKED_FRAMES=200` 暂停采集、ack 恢复、5s 无 ack 兜底）、TTS 播放门（D-P8/D-P1：`autoReadReply` 关则丢弃、`onended`/`onerror` 清态）、`reset()`（断线/会话切换停采集清态，不调后端 cancel——adapter socket close 已清）。采集走 `renderer/src/voice/PcmCapture`（getUserMedia 16k mono + AudioWorklet→ScriptProcessor 降级，20ms=320 样本=640B 聚合）。
 
 ### 3.10 `searchStore`
 
@@ -306,6 +313,8 @@ interface PersistedSettingsV2 {
 ```
 
 > **迁移注记（2026-08-14，阶段 3 G1）：** `PersistedSettingsV2.layout` 字段（`conversationPaneCollapsed`/`live2dPaneVisible`/`live2dPaneWidth`）已从普通配置**移除**，布局属「UI 状态·选择性持久化」，改走 Renderer localStorage（键 `cyrene.layout.v1`，见 §8.5）。旧配置中的 `layout` 块在迁移时**忽略**（不读取、不迁移）；清除 localStorage 即恢复默认布局。
+>
+> **迁移注记（2026-08-16，阶段 4 批次 B）：** 语音与转写本地设置（`voice.enabled`/`realtimeEnabled`/`autoReadReply`/`showCaptions`/`consentBackendStt`/`micDeviceId` + `dictation.sttProfileId`/`insertMode`）不再走 `PersistedSettingsV2.voice` 旧形状（含 `dictationEnabled`/`voiceActivityDetection`），改由独立 `SettingsState` 持久化到 Main **`dirs.config/settings.json`**（`main/settings/settings-service.ts`：注入 `safeRoot` + 复用 `atomicWriteFile` tmp+rename + zod + 版本化 + 损坏备份 `.corrupt` 回默认 fail-open）。`SettingsState` 结构见 §3.7；默认值 `enabled=true`、`realtimeEnabled=false`、`autoReadReply=true`、`showCaptions=true`、`consentBackendStt=false`、`micDeviceId=undefined`、`dictation.sttProfileId=undefined`、`dictation.insertMode='append'`。
 
 输入法转写的执行位置由 `dictationSttProfileId` 所指 Profile 决定，不再另存一个可能冲突的 `dictationRuntime`。切换 STT Profile 时，Store 必须从 Profile 重新派生并展示 Backend、本机或 Local Worker 数据去向。
 

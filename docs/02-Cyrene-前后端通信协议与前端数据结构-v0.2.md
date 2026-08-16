@@ -4,9 +4,11 @@
 **文档状态：** 已按后端交接包（frontend-handoff-v2 **批次 7 时点**）填写 §19 对齐表 / 待真实事件联调确认；**注意：后端 local main 已领先至批次 8a/8b/8c（`frontend_contract` 单源），批次 7 交接包已归档仅参考**——新旧差异与真实后端契约审计见 `docs/18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md`
 **适用范围：** Electron 客户端与现有 Agent 后端  
 **文档日期：** 2026-08-03
-**最后复核日期：** 2026-08-08
+**最后复核日期：** 2026-08-16
 
 > 本文定义前端需要的稳定语义，不宣称现有后端已经使用相同 URL 或字段名。接入时由 `BackendAdapter` 把现有后端协议映射为本文的前端领域事件。
+
+> **阶段 4 批次 B（2026-08-16）同步：** §13.1 音频传输（BINARY 上行 + TTS base64 JSON 帧）、§13.2 直接语音、§13.3 输入法转写、§13.4 TTS 播放与 §19 语音行已按实际实现更新（领域契约以 `shared/contracts/voice.ts` / `events.ts` 为准）。语音链路为 Mock 驱动，标「**已开发、未联调**」；真实 Windows Electron（REAL）联调为验收方。`voice.error` 语音族错误路由（D-P15）、`dictation.start.sttProfileId`（D-P14）、后端 STT 一次性同意（D-P16）为本批新增口径。
 
 ---
 
@@ -732,113 +734,80 @@ interface DictationSettings {
 
 ### 13.1 音频传输公共结构
 
+**音频输入（WS BINARY 上行）：** 输入描述符收敛为**唯一支持格式**（P4-B 定稿，`shared/contracts/voice.ts`）：
+
 ```typescript
-type AudioCodec = "pcm_s16le" | "opus" | "webm_opus" | "wav" | "mp3" | "aac";
+type AudioCodec = "pcm_s16le";   // wire 唯一支持；不符 → error{CONTRACT_VALIDATION}，不建会话
 
-interface AudioStreamDescriptor {
-  sessionId: string;
-  codec: AudioCodec;
-  sampleRate: number;
-  channels: 1 | 2;
-  chunkDurationMs?: number;
-}
-
-interface AudioChunkMeta {
-  sessionId: string;
-  sequence: number;
-  durationMs: number;
-  isFinal: boolean;
+interface AudioInputDescriptor {
+  codec: "pcm_s16le";
+  sampleRate: 16000;
+  channels: 1;
 }
 ```
 
-JSON 只传描述符、控制事件和块元数据；原始音频使用附件上传或与 `sessionId/sequence` 关联的受控二进制帧，不能 Base64 塞入普通事件 JSON。实时链路必须定义最大未确认块数、背压、乱序/丢块、暂停、取消和最终块规则。普通录音优先走附件上传；录音、实时输入、输入法转写和 TTS 使用不同 `sessionId/playbackId`。
+前端采集即默认格式，各 `start` 控制帧不带 `audio` 字段（契约上可带，缺省按默认）。其后 PCM 原始字节以 WS **BINARY 帧**上行（`send(Uint8Array)`，无描述符/块元数据 JSON 帧）；单帧上限 `MAX_CHUNK_BYTES` = 1 MiB（Main 单向通道 `voice:audio-chunk` 运行时校验，超限丢弃 + warn）；**网络 chunk 无需 640B 对齐**（后端跨 chunk 重组 640B/20ms VAD 帧）。实时链路背压经 `voice_session.ack{seq}`（seq = 服务端已收 BINARY 帧序数）：前端最大未确认 200 帧（≈4s @ 50帧/s，含 1s ack 周期余量）超窗本地暂停采集不丢帧、ack 恢复，无 ack 5s 兜底恢复。
+
+**TTS 播放（base64 JSON 帧）：** TTS 不下发二进制，`data` 以 base64 内嵌普通事件 JSON——`audio_start{stream_id, format(wav|mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data(base64), is_final}` ×N → `audio_end{stream_id, format?}` / `audio_cancelled{stream_id}`；**`is_final` 恒 false，终止由 `audio_end` 判定，不得依赖**。完成语义与取消规则见 §13.4。
+
+**原始音频生命周期：** 录音 BINARY 上行与 TTS 二进制均**不落盘、不入消息**；录音试听走 Renderer AudioContext 本地回放（内存 AudioBuffer），TTS 二进制仅 Main 内存 + MediaService `tts-live` 短期缓存（TTL 5min，惰性清理参照 `tts-preview`）。录音、实时输入、输入法转写与 TTS 使用不同会话键：`recordingId`（record）/ `sessionId`（realtime）/ `clientRequestId`（dictation）/ `stream_id`（TTS 播放）。
 
 ### 13.2 直接语音输入
 
-普通录音输入和实时语音会话都属于直接语音交互。STT 可以提供字幕，但字幕不会修改文字输入框。
+普通录音输入和实时语音会话都属于直接语音交互。STT 可以提供字幕，但字幕不会修改文字输入框。**状态：已实现（阶段 4 批次 B，Mock 驱动，标「已开发、未联调」；真实 Windows Electron（REAL）联调为验收方）**——三种语音模式经 `BackendAdapter` 真实 WS 命令 + Renderer 麦克风采集 + voiceStore 编排全链路落地。领域契约见 `shared/contracts/voice.ts`，核心形状：
 
 ```typescript
-interface VoiceInputSession {
-  sessionId: string;
-  mode: "recorded" | "realtime";
-  sttProfileId?: string;
-  state: "starting" | "listening" | "processing" | "ready_to_send" | "active" | "completed" | "failed" | "cancelled";
+// —— 普通录音（voice.record.* + BINARY + commit/discard） ——
+interface VoiceRecordStartInput { recordingId: string }   // wire voice.record.start 仅 {recordingId, audio?}（无 conversationId；会话归属在 commit）
+interface VoiceCommitInput {
+  recordingId: string; text: string; conversationId: string
+  clientRequestId: string; clientMessageId: string
 }
+// 事件：voice.transcript{recordingId, text, emotion?}（PENDING 字幕）
 
-interface VoiceCaptionEvent {
-  sessionId: string;
-  kind: "partial" | "final";
-  text: string;
-  sequence: number;
-  startedAtMs?: number;
-  endedAtMs?: number;
-}
-
-interface RecordedVoiceInputReadyEvent {
-  sessionId: string;
-  attachmentId: string;
-  durationMs: number;
-  caption?: string;
-}
+// —— 实时语音会话（voice_session.* 全态 + 背压） ——
+interface RealtimeVoiceStartInput { sessionId: string; conversationId?: string }
+// 事件：voice_session.started{sessionId, conversationId?} / partial{sessionId, turnId, segmentIndex, text}
+//      / turn{sessionId, turnId, messageId, conversationId?, text} / ack{sessionId, seq} / ended{sessionId, reason}
 ```
 
-普通模式停止后生成待发送的音频输入，由用户确认发送；实时模式在用户明确启动的会话中按已确认的 VAD/断句规则提交语音轮次。`VoiceCaptionEvent` 只能进入字幕状态，不得合并到 `ConversationDraft.text`。
+普通模式停止后生成待发送的音频输入，由用户确认发送；实时模式在用户明确启动的会话中按后端 VAD/断句规则自动提交语音轮次。字幕只能进入字幕状态，不得合并到 `ConversationDraft.text`。
 
-**已确认映射（2026-08-08，protocol-v2 §12，三种语音均 v2-only）：** 后端把「唯一 WS BINARY → VAD 自动提交」链路拆成三种隔离模式，与上文领域形状对齐：
+**已确认映射（wire，protocol-v2 §12，直接语音两种模式均 v2-only；输入法转写见 §13.3）：**
 
-- **普通录音**：`voice.record.start{recordingId(rec_)}` → BINARY PCM（全段缓冲，不 VAD）→ `voice.record.stop{recordingId}` → `voice.transcript{recordingId, text, emotion?}`（PENDING 字幕）→ `voice.commit{recordingId, text, clientRequestId, clientMessageId?, conversationId?}`（幂等，text 为确认文本）→ `user_message.ack` + generation.*；`voice.discard{recordingId}` 丢弃；音频**不落盘、不入消息**；
-- **实时语音**：`voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation，多轮只响应最后一轮为预期）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped|cancelled|timeout|stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压；
-- **输入法转写**：`dictation.start{clientRequestId}` → BINARY PCM → `dictation.partial{text}`（累积字幕）→ `dictation.stop{clientRequestId}` → `dictation.final{clientRequestId, text}`（**只回文字、零消息副作用**）→ 前端据此写草稿；`dictation.cancel` → `dictation.cancelled`；
-- 无活动会话再 start → `VOICE_SESSION_CONFLICT`；`agent.stt` 未启用 → `STT_UNAVAILABLE`；未知 sessionId → `VOICE_SESSION_NOT_FOUND`（见 §14 错误目录）。
+- **普通录音**：`voice.record.start{recordingId(rec_)}` → BINARY PCM ×N（全段缓冲，不 VAD）→ `voice.record.stop{recordingId}` → `voice.transcript{recordingId, text, emotion?}`（PENDING 字幕）→ `voice.commit{recordingId, text, clientRequestId, clientMessageId?, conversationId?}`（幂等，text 为确认文本）→ `user_message.ack` + generation.*；`voice.discard{recordingId}` 丢弃；空转写不发 `voice.transcript`（`< 640B` 视为空转写）；录音 >600s → `error{VOICE_RECORDING_TOO_LONG}`；stop 时 STT 已关 → `error{STT_UNAVAILABLE}`；音频**不落盘、不入消息**；
+- **实时语音**：`voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation，多轮只响应最后一轮为预期）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped|cancelled|timeout|stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压（§13.1）；300s 无音频 → `ended{timeout}`；wire `pause/resume` 帧契约存在但本批 UI 只暴露 stop/cancel，背压由前端本地 `PcmCapture.pause()` 控制（D-P3）；
+- **语音族错误路由（D-P15）**：`voice.commit` 违规 → `user_message.ack{rejected}`；`voice.record.start/stop/discard` 与 `voice_session.*`/`dictation.*`/`audio.cancel` 违规 → `error{code}`；已有活动会话再 start → `VOICE_SESSION_CONFLICT`；`agent.stt` 未启用 → `STT_UNAVAILABLE`；未知 sessionId/recordingId → `VOICE_SESSION_NOT_FOUND`/`VOICE_RECORDING_NOT_FOUND`。real-backend 对 `VOICE_ERROR_CODES`（`STT_UNAVAILABLE`/`STT_PROFILE_NOT_FOUND`/`VOICE_SESSION_CONFLICT`/`VOICE_SESSION_NOT_FOUND`/`VOICE_RECORDING_TOO_LONG`/`VOICE_RECORDING_NOT_FOUND`/`DICTATION_NOT_FOUND`/`PLAYBACK_NOT_FOUND`）**额外** emit `voice.error{code, message}`（经既有 `onError` 日志/审计保留），connectionStore 对这类码**不展示全局连接错误横幅**（语音错误是会话级预期错误，非连接级）。
 
 ### 13.3 输入法转写
 
-```typescript
-interface DictationSession {
-  sessionId: string;
-  sttProfileId: string;
-  executionLocation: ModelExecutionLocation;
-  state: "holding" | "transcribing" | "completed" | "failed" | "cancelled";
-  discardAudioAfterFinal: true;
-}
+**状态：已实现（阶段 4 批次 B，Mock 驱动，标「已开发、未联调」）**。wire 契约：`dictation.start{clientRequestId, sttProfileId?}` → BINARY PCM ×N（VAD 分段）→ `dictation.partial{text}`（累积字幕）→ `dictation.stop{clientRequestId}` → `dictation.final{clientRequestId, text}`（**只回文字、零消息副作用**）→ 前端写草稿；`dictation.cancel` → `dictation.cancelled`。领域契约形状（`shared/contracts/voice.ts`）：
 
-interface DictationFinalEvent {
-  sessionId: string;
-  text: string;
-  insertMode: "cursor" | "append";
-}
+```typescript
+interface DictationStartInput { clientRequestId: string; sttProfileId?: string }
+interface DictationStopInput { clientRequestId: string }
+// 事件：dictation.partial{text} / dictation.final{clientRequestId, text} / dictation.cancelled{clientRequestId}
 ```
 
-输入法转写按住期间采集临时音频，松开后只把 `DictationFinalEvent.text` 写入当前聊天草稿，不创建语音 `MessagePart`，也不自动发送。它通过 `dictationSttProfileId` 选择兼容 STT Profile；若执行位置为后端，开始前必须明确提示音频将离开设备；本机或 Local Worker 执行时展示模型可用性、下载和资源占用。取消、失败或会话切换不得把残余音频或文字写到其他会话。
+`sttProfileId` = `<provider>/<model>`，缺省用全局活动 STT，会话内快照不改全局活动（D-8 已确认）；profile 不存在 / runtime=desktop|local → `error{STT_PROFILE_NOT_FOUND}`。按住期间采集临时音频，松开后只把 `dictation.final.text` 按 `dictationInsertMode`（`append` 追加草稿末尾 / `replace_selection` 替换当前选区——P4-B 子集；**光标级插入列为后续**）写入当前聊天草稿，不创建语音 `MessagePart`，也不自动发送。它经 `settingsStore.dictation.sttProfileId` 独立选择兼容 STT Profile（**本地设置，非激活选择数据源，D-P14**）；若执行位置为后端，**首个 backend-STT 语音操作前弹一次性同意**（「音频将发送至后端识别（本机不保留）」，「不再提示」持久化 `voice.consentBackendStt`，D-P16）；本机或 Local Worker 执行时展示模型可用性、下载和资源占用。取消、失败或会话切换不得把残余音频或文字写到其他会话。
 
 ### 13.4 TTS 播放
 
-```typescript
-interface TtsPlaybackSession {
-  playbackId: string;
-  messageId?: string;
-  profileId: string;
-  delivery: "attachment" | "stream";
-  state: "starting" | "buffering" | "playing" | "paused" | "completed" | "failed" | "cancelled";
-  audio?: AudioStreamDescriptor;
-  attachmentId?: string;
-}
+**状态：已实现（阶段 4 批次 B，Mock 驱动，标「已开发、未联调」）**。TTS 播放为**整段缓冲**（后端默认非流式合成，`audio_start` → `audio_end` 收齐后播，不做边收边播）。领域事件（`shared/contracts/events.ts`）：
 
-interface TtsChunkEvent {
-  playbackId: string;
-  sequence: number;
-  durationMs: number;
-  isFinal: boolean;
-}
+```typescript
+interface AudioSessionStartedEvent { streamId: number; format?: "wav" | "mp3" }
+interface AudioSessionReadyEvent  { streamId: number; url: string; durationMs?: number; format?: "wav" | "mp3" }
+interface AudioSessionCancelledEvent { streamId: number }
 ```
 
-整段 TTS 通过音频附件播放；流式 TTS 使用有序二进制块和独立缓冲区。切换消息、停止生成或用户点击停止时，必须取消对应 `playbackId`、清空未播放缓冲并把 Live2D 嘴部值平滑归零。TTS 默认只朗读 Public Reply，不把 Inner Voice 发送给 TTS Provider。
+整段 TTS 经 MediaService `tts-live` 媒体路由播放（`<audio>` cyrene:// URL，Renderer 只持有 URL 不接触二进制）；`autoReadReply` 是**本地播放门**（D-P1，关 → 丢弃 `audio.session.ready` 不播放），不联动 `set_service('tts')`。切换消息、停止生成或用户点击停止时，必须取消对应 `stream_id`、清空未播放缓冲。TTS 默认只朗读 Public Reply，不把 Inner Voice 发送给 TTS Provider（后端行为，前端不干预）。
 
-**已确认映射（2026-08-08，protocol-v2 §12.5）：** 后端 TTS 播放 wire 以 `stream_id` 为 playback ID（全链路统一键）：
+**已确认映射（wire，protocol-v2 §12.5）：** 后端 TTS 播放 wire 以 `stream_id` 为 playback ID（全链路统一键）：
 
-- `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data(base64), is_final}` ×N → `audio_end{stream_id}`（**字节全发 ≠ 播完**，播放完成由前端本地 `onended` 判定，不引入上行回执）；
-- 取消：客户端 `audio.cancel{stream_id}`（v2-only **全局**播放操作）→ 服务端 `audio_cancelled{stream_id}`（前端清理孤儿 chunk）；未知/已结束 stream_id → 可忽略良性 `error{PLAYBACK_NOT_FOUND}`；
-- 前端 `TtsPlaybackSession.playbackId` ↔ wire `stream_id`；`TtsChunkEvent.sequence` ↔ wire `seq`；二进制数据走 `data` 字段（base64），不另建附件。
+- `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data(base64), is_final}` ×N → `audio_end{stream_id, format?}`（**format 契约可缺省、缺省 wav**；**字节全发 ≠ 播完**，播放完成由前端本地 `onended` 判定，不引入上行回执）；`audio`/`audio_end` 原始帧不进 BackendEvent（Main 内解码缓冲后 emit `audio.session.*`）；
+- 取消：客户端 `audio.cancel{stream_id}`（v2-only **全局**播放操作）→ 服务端 `audio_cancelled{stream_id}`（前端清理孤儿 chunk）；未知/已结束 stream_id → 可忽略良性 `error{PLAYBACK_NOT_FOUND}`（前端忽略，不展示）；
+- 前端 `stream_id` ↔ wire `stream_id`；二进制数据走 `data` 字段（base64 JSON 帧，见 §13.1），不另建附件；新 `audio_start` 到达即 supersede 旧 stream（后端中断语义）；播放 `onended` 清播放态、`onerror`（如 mock 占位 URL 404）同样清态防播放态卡死（D-P8）。
 
 ## 14. 错误结构
 
@@ -979,10 +948,12 @@ idle → connecting → connected
 | LLM/STT/TTS Profile 配置接口 | `GET/POST /api/providers` → `ProvidersResponse{llm, stt, tts, custom, unconfigured}`（条目含 `credentialConfigured` / `runtime` / `capabilities`）；WS `switch_model{service, model}` / `set_service{service, enabled}`；TTS `GET /api/tts/voices` + `POST /api/tts/preview` + WS `set_tts_voice{voice}` | `ModelProfile` |
 | 自定义模型新增/编辑/删除 | `POST /api/providers`（custom 条目，同名更新；`api_key` 一次性提交入 Secret Store **永不读回**，非 backend runtime 带 key → 400 `PROFILE_INVALID_RUNTIME`）；删除激活中 profile → 409 `PROFILE_IN_USE` | `UpsertCustomModelProfileCommand` |
 | 模型连接测试与切换接口 | `POST /api/providers/test`（base_url 非空一律 SSRF 校验）→ `ProviderTestResult{ok, latency_ms?, error?, detail?}`；切换经 WS `switch_model` / `set_tts_voice` → `switch_model_result` / `set_tts_voice_result{ok, error?}` | `ModelProfileTestResult` |
-| 输入法转写专用 STT 选择 | **契约已确认（后端 `556117a`）**：`dictation.start.sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），会话内快照不改全局活动 STT | `dictationSttProfileId` / `DictationSettings` |
-| 普通录音输入与发送确认 | WS `voice.record.start{recordingId(rec_)}` → BINARY PCM ×N（全段缓冲）→ `voice.record.stop{recordingId}` → `voice.transcript{recordingId, text, emotion?}` → `voice.commit{recordingId, text, clientRequestId, clientMessageId?, conversationId?}` → `user_message.ack` + generation.*（复用字幕文本不重转写）；`voice.discard{recordingId}` | `VoiceInputSession` / `RecordedVoiceInputReadyEvent` |
-| 实时语音字幕、断句与轮次提交 | WS `voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped/cancelled/timeout/stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压 | `VoiceCaptionEvent` / 后端轮次事件映射 |
-| TTS 整段/流式音频、取消和完成 | WS `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data, is_final}` ×N → `audio_end{stream_id}`（字节全发≠播完，完成由前端 `onended` 判定）；`audio.cancel{stream_id}`（全局）→ `audio_cancelled{stream_id}` | `TtsPlaybackSession` / `TtsChunkEvent` |
+| 输入法转写专用 STT 选择 | **契约已确认（后端 `556117a`）**：`dictation.start.sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），会话内快照不改全局活动 STT | `settingsStore.dictation.sttProfileId`（**本地设置，D-P14**；缺省不带 → 全局活动 STT） |
+| 输入法转写 | WS `dictation.start{clientRequestId, sttProfileId?}` → BINARY PCM（VAD 分段）→ `dictation.partial{text}`（累积字幕）→ `dictation.stop{clientRequestId}` → `dictation.final{clientRequestId, text}`（**只回文字、零消息副作用**）→ 前端写草稿；`dictation.cancel` → `dictation.cancelled` | `startDictation`/`stopDictation`/`cancelDictation`（BackendAdapter）；`dictation.partial` → `voiceStore`（字幕）；`dictation.final` → `settingsStore.applyDictationInsert` → `draftStore`（append / replace_selection，不建消息不发送） |
+| 普通录音输入与发送确认 | WS `voice.record.start{recordingId(rec_)}` → BINARY PCM ×N（全段缓冲）→ `voice.record.stop{recordingId}` → `voice.transcript{recordingId, text, emotion?}` → `voice.commit{recordingId, text, clientRequestId, clientMessageId?, conversationId?}` → `user_message.ack` + generation.*（复用字幕文本不重转写）；`voice.discard{recordingId}` | `startRecordVoice`/`commitVoice`/`discardVoice`（BackendAdapter）；`voice.transcript` → `voiceStore`（待发送字幕，不写草稿） |
+| 实时语音字幕、断句与轮次提交 | WS `voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped/cancelled/timeout/stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压 | `voice_session.started/partial/ack/ended` → `voiceStore`（实时状态+字幕）；`voice_session.turn` → `messageStore`（后端预分配 messageId 装配 user 消息） |
+| TTS 整段音频、取消和完成 | WS `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data(base64), is_final}` ×N → `audio_end{stream_id, format?}`（format 缺省 wav；字节全发≠播完，完成由前端 `onended` 判定）；`audio.cancel{stream_id}`（全局）→ `audio_cancelled{stream_id}` | `audio.session.started/ready/cancelled` → `voiceStore`（TTS 播放门 D-P1；`autoReadReply` 关则丢弃不播放） |
+| 语音族错误路由 | WS `error{code}`（语音族码：`STT_UNAVAILABLE`/`STT_PROFILE_NOT_FOUND`/`VOICE_SESSION_CONFLICT`/`VOICE_SESSION_NOT_FOUND`/`VOICE_RECORDING_TOO_LONG`/`VOICE_RECORDING_NOT_FOUND`/`DICTATION_NOT_FOUND`/`PLAYBACK_NOT_FOUND`）→ real-backend **额外** emit `voice.error{code, message}`（D-P15，`onError` 日志/审计保留）；connectionStore 对语音族码不展示全局连接横幅 | `voice.error` → `voiceStore.error`（语音 UI 展示；`PLAYBACK_NOT_FOUND` 良性忽略） |
 | 重连/续传方式 | **无断点续传**；重连后 WS `session` 回放历史；生成中断由客户端据回放判断（消息无对应 `generation.completed` → 视为中断 → 用新 `clientRequestId` 重发）；补充 `GET /api/sessions/{id}/pending`（pendingMessages / pendingApprovals）+ `GET /api/sessions/{id}/generations`（GenerationStatus） | `resume` |
 | 错误结构 | WS `error` 帧 / `ErrorMessage{message, code?, requestId?, retryable?, details?}`；REST `ProtocolError{code, message, retryable, requestId, error(=message 别名), details}`；`generation.failed{code, message, retryable, details}`；ACK rejected 带 `error{code, message, retryable}`；40 码目录见 protocol-v2 §9.1 | `PublicError` |
 

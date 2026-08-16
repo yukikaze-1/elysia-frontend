@@ -259,6 +259,13 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 - 临时音频按任务生命周期清理；
 - 原始音频和完整转写默认不进入日志。
 
+**阶段 4 批次 B 落地（2026-08-16）：**
+
+- **Main 麦克风权限处理器（D-P7）**：`decideMicrophoneAllow`/`registerMicrophonePermission`（`main/windows/mic-permission.ts`，纯 Node 可单测）——`setPermissionCheckHandler` + `setPermissionRequestHandler` 仅放行 `media` 权限且仅音频（deny camera/video，含 `mediaTypes` 数组判别）、且 requesting origin/URL 为受信 renderer（prod `cyrene://renderer` / dev 回环或白名单 http，复用 `isAppRendererUrl`，不新建谓词）；非受信 origin 一律 deny。
+- **单向语音 IPC 守卫（D-P18）**：`voice:audio-chunk` 走 `ipcMain.on`（fire-and-forget，不 invoke），经 IPC registry 新增 `registerOneWayHandler`（`main/ipc/registry.ts`）——回调内复用 `isTrustedSender`（`senderFrame===mainFrame` + 发送 frame 当前 URL 受信校验，FE-S1-P2-01）+ zod 校验载荷 `{ bytes: Uint8Array }`，`bytes.byteLength ≤ MAX_CHUNK_BYTES`（1 MiB = 后端 BINARY 上限，超限丢弃 + warn）；**仓库零裸 `ipcMain.on`，单向通道不得绕过可信发送者纵深**（`ipc-security.spec.ts` desktopApi 白名单同步）。
+- **Renderer 采集安全**：`PcmCapture`（`renderer/src/voice/`）只在本端 Renderer 内 getUserMedia + AudioWorklet；音频样本仅经 `voice:audio-chunk` 送 Main→后端，内存态，不触达文件系统/凭据/后端路径；`voiceSendAudio` 显式构造 `Uint8Array` 拷贝（防 DataCloneError，P4-A 教训）；TTS 二进制仅 Main 内存 + MediaService `tts-live` 短期缓存（TTL 5min），Renderer 只持有 `cyrene://` URL。
+- **后端 STT 一次性同意（D-P16）**：首个 backend-STT 语音操作（record/realtime/dictation）前弹「音频将发送至后端识别（本机不保留）」确认；接受后持久化 `voice.consentBackendStt` 不再提示，拒绝则中止。
+
 ## 12. 日志与隐私
 
 允许记录：

@@ -304,3 +304,37 @@
 对修订后的 00/01/03/06/08/10/12/13/16 与 README/CLAUDE.md 执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
 
 > 说明：本次为阶段 3 落地的文档同步增量 Review，未重跑完整交叉 Review（Live2D SDK 许可与模型资源、语音产品语义、平台范围等仍待外部输入）；对应阶段进入前仍需各自验证。
+
+## 13. 增量 Review：阶段 4 批次 B 语音落地同步（2026-08-16）
+
+**触发条件：** doc 13 §9——「修改 Inner Voice、语音或模型服务语义」与「修改安全策略或权限模型」；阶段 4 批次 B 落地语音链路（普通录音 / 实时语音会话 / 输入法转写 / TTS 自动朗读）与语音安全策略（麦克风权限处理器、单向语音 IPC 守卫、后端 STT 一次性同意）。
+
+### 13.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 02 §13.1 | **内容重写**（F-9）：`AudioStreamDescriptor` 收敛为固定 `pcm_s16le/16000/1` `AudioInputDescriptor`（BINARY 上行，1 MiB 上限）；TTS 播放为 base64 JSON 帧（`audio_start/audio/audio_end/audio_cancelled`，`is_final` 恒 false）；**删「不能 Base64 塞入普通事件 JSON」矛盾表述**；背压窗口与原始音频生命周期落文 |
+| 02 §13.2/§13.3 | 三种语音状态改「已实现」（阶段 4 批次 B，Mock 驱动，已开发、未联调）；领域类型按 `shared/contracts/voice.ts` 重写（`recordingId`/`sessionId`/`clientRequestId`）；`dictation.start.sttProfileId`、D-P14/D-P16 落文 |
+| 02 §13.4 | `audio_end{stream_id, format?}` 补齐（format 缺省 wav；完成由前端本地 `onended` 判定）；领域事件改 `audio.session.*` |
+| 02 §19 | 语音行确认：普通录音/实时/转写/TTS wire ↔ 域契约 ↔ Store 消费（`voice.transcript`→voiceStore、`voice_session.turn`→messageStore、`dictation.final`→settingsStore+draftStore、`audio.session.*`→voiceStore）；新增「语音族错误路由」行（`voice.error`，D-P15） |
+| 01 §6.1/§6.2 | BackendAdapter/DesktopApi 接口片段同步 P4-B 语音方法集（Task 3 接口重写暴露 §6.1 过时的 Ruling 落文） |
+| 03 §8.4/§8.6/§12.3 | 语音三入口 + 待发送条 + 实时条 + 转写浮层 + TTS 播放器 + 语音设置子页 + consent 落地状态 |
+| 06 §3.2/§3.7/§3.9/§8.1 | `voiceStore`/`settingsStore` 落地形状；connectionStore 语音族错误横幅抑制（D-P15）；语音设置持久化改走 `settings.json`（SettingsState） |
+| 07 §11.1 | Main 麦克风权限处理器（`decideMicrophoneAllow`/`registerMicrophonePermission`）+ 单向语音 IPC 守卫（`registerOneWayHandler`，1 MiB 上限）+ 后端 STT 一次性同意（D-P16） |
+| 08 E2E-12 | spec §8 验收清单增补（独立启停 / 待发送条 / consent / 语音错误横幅抑制 / 设置持久化 / 会话守卫 / 断线清理 / deleteProfile 回退） |
+| 10 §7 / 11 §2.3/§2.6/§3 / 12 E-05~E-07 / 16 §7 | 阶段 4 批 B 落地状态与进度 |
+| README / CLAUDE.md | 阶段 4 批 B 落地 + 测试计数（1230/100 + 70/15） |
+
+### 13.2 阶段 4 批次 B 定案记录（语音语义与安全）
+
+- **语音族错误路由（D-P15）**：语音族错误码经 real-backend 额外 emit `voice.error`（`onError` 日志/审计保留），connectionStore 对 `VOICE_ERROR_CODES` 不展示全局连接错误横幅——语音错误是会话级预期错误，非连接级。
+- **后端 STT 一次性同意（D-P16）**：首个 backend-STT 语音操作（record/realtime/dictation）前弹「音频将发送至后端识别（本机不保留）」确认，「不再提示」持久化 `voice.consentBackendStt`，拒绝则中止。
+- **录音字幕终态（D-P17）**：普通录音字幕等 `voice.transcript` 或 `voice.error`（后端 STT 超时/失败恒发 `error{STT_UNAVAILABLE}`），45s 兜底判「未识别」（仅丢弃/重录，不 commit）。
+- **单向 IPC 守卫（D-P18）**：`voice:audio-chunk` 经 registry `registerOneWayHandler` 复用 `isTrustedSender` + zod 校验载荷（`bytes.byteLength ≤ 1 MiB`）；仓库零裸 `ipcMain.on`，单向通道不得绕过可信发送者纵深。
+- **安全口径**：麦克风权限仅 `media`+audio+受信 renderer origin（deny camera/video）；TTS 二进制不跨 IPC（仅 Main 内存 + MediaService `tts-live` 短期缓存）；转写/内语音不入日志（既有敏感面）。
+
+### 13.3 自动回归
+
+对修订后的 01/02/03/06/07/08/10/11/12/13/16 与 README/CLAUDE.md 执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+> 说明：本次为阶段 4 批次 B 落地的文档同步增量 Review，未重跑完整交叉 Review（真实语音联调、Live2D SDK 许可与模型资源等仍待外部输入）；语音链路 Mock 驱动，真实 Windows Electron（REAL）联调为验收方。

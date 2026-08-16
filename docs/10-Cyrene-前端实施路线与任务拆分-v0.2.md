@@ -150,6 +150,8 @@
 
 ## 7. 阶段 4：模型服务与语音
 
+> **实施注记（2026-08-16，阶段 4 分两块落地）：** **批 A（模型服务 Profile 管理 + TTS 试听 + 设置中心框架）已落地并全量验证（2026-08-15）**：LLM/STT/TTS 三类 Profile 查询/新增/编辑/复制/删除保护/类型化测试/激活切换 + TTS 声音列表/试听（一次性 `tts-preview` media 路由）+ 设置中心框架；**批 B（语音：普通录音 + 实时语音会话 + 输入法转写 + TTS 自动朗读 + 设置持久化）已落地并全量验证（2026-08-16，Mock 驱动，标「已开发、未联调」）**：领域契约/raw 帧/schema 镜像（13 新事件）→ real-backend 三模式命令 + BINARY 上行 + TTS base64 帧 + `voice.error` 路由 → mock 语音/TTS 模拟 → Main 设置持久化（`settings.json`）+ `tts-live` 媒体路由 → 麦克风权限处理器 + `voice:audio-chunk` 单向守卫 → Renderer `PcmCapture` → `voiceStore`/`settingsStore`/`messageStore` 扩展 → UI（三入口 + 待发送条 + 实时条 + 转写浮层 + 语音设置子页 + consent + 会话守卫）。spec/plan 见 `docs/superpowers/specs|plans/2026-08-15-phase4a-model-services-settings-*`、`docs/superpowers/specs|plans/2026-08-16-phase4b-voice-settings-*`；决策见 `docs/review/2026-08-15-阶段4批次A-决策记录.md`、`docs/review/2026-08-16-阶段4批次B-决策记录.md`。阶段 4 新功能（A/B 两批）均保持「已开发、未联调」，真实 Windows Electron（REAL）联调为验收方；阶段 3/阶段 2 主链保持「已真实联调」。
+
 ### 7.1 技术任务
 
 - LLM、STT、TTS 三类内置/自定义 Profile；
