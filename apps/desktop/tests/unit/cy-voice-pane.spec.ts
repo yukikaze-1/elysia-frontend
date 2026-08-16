@@ -3,7 +3,7 @@
 // Task 14（spec §5.12 / Minor 24）：CyVoicePane——STT 下拉排除 desktop/local_worker profile（D-P20）、
 // 开关绑定 settingsStore.voice、测试麦克风点击调 voiceStore.startRecord。
 // 环境 happy-dom：Vue Test Utils 挂载（navigator.mediaDevices.enumerateDevices stub 为 []）。
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import type { ModelProfile } from '@shared/contracts'
@@ -50,6 +50,10 @@ beforeEach(() => {
   })
 })
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('CyVoicePane', () => {
   it('STT 下拉只列 enabled+backend profile，排除 desktop/local_worker（D-P20）', async () => {
     useModelServiceStore().$patch({
@@ -94,6 +98,74 @@ describe('CyVoicePane', () => {
     // unmount 清 micTestTimer（onBeforeUnmount），不残留 3s 真实定时器
     wrapper.unmount()
     startSpy.mockRestore()
+  })
+
+  it('consent 挂起超时不漏录音：>5s 后确认 → 迟到 recording 仍武装 3s 自停（评审 Important）', async () => {
+    vi.useFakeTimers()
+    const voice = useVoiceStore()
+    // startRecord 模拟 consent 挂起：只置 pending，mode 保持 idle
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.consentPending = true
+    })
+    // confirmConsent 模拟：清 pending + 迟到恢复进入 recording（confirmConsent 重发挂起动作的等价态）
+    const confirmSpy = vi.spyOn(voice, 'confirmConsent').mockImplementation(async () => {
+      voice.consentPending = false
+      voice.mode = 'recording'
+    })
+    const stopSpy = vi.spyOn(voice, 'stopRecord').mockResolvedValue(undefined)
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    expect(startSpy).toHaveBeenCalledTimes(1)
+    expect(voice.consentPending).toBe(true)
+    expect(wrapper.find('button').text()).toBe('录音中…')
+
+    // 用户停留 >5s：不得误判失败、不得提前自停、按钮保持等待态（评审竞态的根因修复）
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(stopSpy).not.toHaveBeenCalled()
+    expect(discardSpy).not.toHaveBeenCalled()
+    expect(wrapper.find('button').text()).toBe('录音中…')
+
+    // 点击「同意」→ 迟到进入 recording → 仍须武装 3s 自停（修复前此处永远丢失）
+    await voice.confirmConsent()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(voice.mode).toBe('recording')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(stopSpy).toHaveBeenCalledTimes(1)
+    expect(discardSpy).toHaveBeenCalledTimes(1)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('button').text()).toBe('测试麦克风')
+
+    wrapper.unmount()
+    startSpy.mockRestore()
+    confirmSpy.mockRestore()
+    stopSpy.mockRestore()
+    discardSpy.mockRestore()
+  })
+
+  it('consent 取消 → 测试收口：不启动录音、按钮回 idle + 失败提示', async () => {
+    vi.useFakeTimers()
+    const voice = useVoiceStore()
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.consentPending = true
+    })
+    const stopSpy = vi.spyOn(voice, 'stopRecord').mockResolvedValue(undefined)
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    expect(voice.consentPending).toBe(true)
+
+    // 用户在 consent 对话框点「取消」→ dismissConsent 清 pending + mode 仍 idle → waitForRecording 判失败收口
+    voice.dismissConsent()
+    await vi.advanceTimersByTimeAsync(0)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('button').text()).toBe('测试麦克风')
+    expect(stopSpy).not.toHaveBeenCalled() // 从未进入录音
+    expect(wrapper.text()).toContain('麦克风启动失败')
+
+    wrapper.unmount()
+    startSpy.mockRestore()
+    stopSpy.mockRestore()
   })
 })
 

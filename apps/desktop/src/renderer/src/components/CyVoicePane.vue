@@ -58,19 +58,22 @@ const micTestDuration = ref<number>()
 const micTestError = ref<string>()
 let micTestTimer: ReturnType<typeof setTimeout> | undefined
 
-/** 等待进入 recording 态：startRecord 可能先过 consent（D-P16 挂起对话框）再恢复；超时/确定失败 → false */
-function waitForRecording(timeoutMs: number): Promise<boolean> {
+/** 等待进入 recording 态：startRecord 可能先过 consent（D-P16 挂起对话框）再恢复。
+ *  评审 Important：**consent 挂起期间不得超时判失败**——否则用户停留 >5s 再点「同意」，
+ *  confirmConsent 迟到的 startRecord 恢复会进入 recording 而无 3s 自停（无监督持续录音至 10 分钟硬上限）。
+ *  判定：mode==='recording' → true；mode==='idle' 且 !consentPending → 确定失败（权限拒绝/后端拒绝/consent 取消）→ false；否则继续等。 */
+let recordingWaitStop: (() => void) | undefined
+function waitForRecording(): Promise<boolean> {
   return new Promise((resolve) => {
     if (voiceStore.mode === 'recording') { resolve(true); return }
-    let timer: ReturnType<typeof setTimeout> | undefined
     const stop = watch(
-      () => voiceStore.mode,
-      (m) => {
-        if (m === 'recording') { stop(); if (timer) clearTimeout(timer); resolve(true) }
-        else if (m === 'idle' && !voiceStore.consentPending) { stop(); if (timer) clearTimeout(timer); resolve(false) }
+      () => [voiceStore.mode, voiceStore.consentPending] as const,
+      ([mode, pending]) => {
+        if (mode === 'recording') { recordingWaitStop = undefined; stop(); resolve(true) }
+        else if (mode === 'idle' && !pending) { recordingWaitStop = undefined; stop(); resolve(false) }
       }
     )
-    timer = setTimeout(() => { stop(); resolve(voiceStore.mode === 'recording') }, timeoutMs)
+    recordingWaitStop = stop
   })
 }
 
@@ -80,12 +83,13 @@ async function onTestMic(): Promise<void> {
   micTestError.value = undefined
   micTestDuration.value = undefined
   await voiceStore.startRecord()
-  const started = await waitForRecording(5000)
+  const started = await waitForRecording()
   if (!started) {
     micTesting.value = false
     micTestError.value = voiceStore.micError?.message ?? voiceStore.error?.message ?? '麦克风启动失败'
     return
   }
+  // 已进 recording（直接成功或 consent 确认后迟到恢复）→ 武装 3s 自停
   micTestTimer = setTimeout(() => { void finishMicTest() }, MIC_TEST_MS)
 }
 
@@ -99,10 +103,14 @@ async function finishMicTest(): Promise<void> {
 }
 
 onBeforeUnmount(() => {
+  recordingWaitStop?.()
   if (micTestTimer !== undefined) clearTimeout(micTestTimer)
   // 离开设置页时若仍有本页发起的测试录音（测试中/待发送态）→ 清理，不残留聊天待发送条
   if (micTesting.value || micTestDuration.value !== undefined) {
-    if (voiceStore.mode === 'recording' || voiceStore.mode === 'record_pending') {
+    // consent 挂起 → 取消本页测试麦克风的挂起动作：防 pane 卸载后点「同意」启动无监督录音
+    if (voiceStore.consentPending) {
+      voiceStore.dismissConsent()
+    } else if (voiceStore.mode === 'recording' || voiceStore.mode === 'record_pending') {
       void voiceStore.reset()
     }
   }
@@ -148,7 +156,7 @@ onBeforeUnmount(() => {
         </select>
       </label>
       <div class="cy-vp-mictest">
-        <button class="cy-vp-btn" :disabled="micTesting" @click="onTestMic">
+        <button class="cy-vp-btn" :disabled="micTesting || !settings.voice.enabled" @click="onTestMic">
           {{ micTesting ? '录音中…' : '测试麦克风' }}
         </button>
         <span v-if="micTestDuration !== undefined" class="cy-vp-mictest-result">录音 {{ micTestDuration }}s，已试听</span>
