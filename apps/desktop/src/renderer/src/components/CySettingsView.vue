@@ -3,10 +3,23 @@
 // 布局纪律同 CyHistoryViewer——fixed 定位于标题栏下方、面板定高、左右区域内部滚动、不溢出窗口视口。
 // 模态无障碍:role=dialog + aria-modal、初始焦点关闭按钮、Tab 焦点陷阱、Esc 关闭 + 回焦触发按钮。
 // 本批仅「模型服务」子页实现，其余分组占位（阶段 4 P4-B / 阶段 5 / 阶段 6）。
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CyModelServicesPane from './CyModelServicesPane.vue'
+import CyVoicePane from './CyVoicePane.vue'
+import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
+import { useVoiceStore } from '../stores/voice.store'
+
+const voiceStore = useVoiceStore()
 
 const emit = defineEmits<{ close: [] }>()
+
+// voiceStore.notice 瞬时提示（D-P20 转写回退全局 STT 等）——同 layout.notice 机制，3s 自动清除
+let voiceNoticeTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => voiceStore.notice, (n) => {
+  if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer)
+  if (n) voiceNoticeTimer = setTimeout(() => voiceStore.clearNotice(), 3000)
+})
+onBeforeUnmount(() => { if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer) })
 
 const NAV_ITEMS = [
   { key: 'model', label: '模型服务', note: '阶段4 P4-A', placeholder: '' },
@@ -82,6 +95,7 @@ onBeforeUnmount(() => { triggerElement = null })
 
         <div class="cy-settings-body">
           <CyModelServicesPane v-if="activeNav === 'model'" />
+          <CyVoicePane v-else-if="activeNav === 'voice'" />
           <div v-else class="cy-settings-placeholder" role="status">
             <strong>{{ currentNavLabel }}功能页</strong>
             <span>占位：{{ currentNavNote }} 落地</span>
@@ -89,6 +103,11 @@ onBeforeUnmount(() => { triggerElement = null })
           </div>
         </div>
       </div>
+
+      <!-- P4-B voiceStore 瞬时提示（D-P20 删除回退等），设置 overlay 内可读 -->
+      <div v-if="voiceStore.notice" class="cy-settings-toast" role="status">{{ voiceStore.notice }}</div>
+      <!-- P4-B consent（D-P16）：测试麦克风也走 backend-STT 确认 -->
+      <CyVoiceConsentDialog />
     </div>
   </div>
 </template>
@@ -168,5 +187,20 @@ onBeforeUnmount(() => { triggerElement = null })
   text-align: center;
 }
 .cy-muted { color: var(--cy-muted); font-size: 12px; }
+.cy-settings-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: 70vw;
+  padding: 8px 14px;
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
+  border: 1px solid var(--cy-border);
+  border-radius: 12px;
+  font-size: 12px;
+  box-shadow: var(--cy-shadow);
+}
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

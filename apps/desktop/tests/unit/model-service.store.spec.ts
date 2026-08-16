@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useModelServiceStore } from '../../src/renderer/src/stores/model-service.store'
+import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
+import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 
 const mockApi = {
@@ -63,6 +65,28 @@ describe('modelServiceStore', () => {
     const s = useModelServiceStore()
     await s.deleteProfile({ type: 'llm', model: 'x' } as never)
     expect(s.error?.backendCode).toBe('PROFILE_IN_USE')
+  })
+  it('deleteProfile 删除被转写引用的 STT Profile → dictation.sttProfileId 清空 + toast（D-P20）', async () => {
+    mockApi.deleteModelProfile.mockResolvedValue(undefined)
+    const settings = useSettingsStore()
+    settings.$patch({ dictation: { sttProfileId: 'stt/foo', insertMode: 'append' } })
+    const s = useModelServiceStore()
+    await s.deleteProfile({ type: 'stt', provider: 'stt', model: 'foo' })
+    expect(settings.dictation.sttProfileId).toBeUndefined()
+    expect(useVoiceStore().notice).toBe('转写已回退全局 STT')
+    expect(mockApi.deleteModelProfile).toHaveBeenCalledWith('stt', 'foo')
+  })
+  it('deleteProfile 删除未被转写引用的 STT/LLM Profile → sttProfileId 不变、无 toast（D-P20）', async () => {
+    mockApi.deleteModelProfile.mockResolvedValue(undefined)
+    const settings = useSettingsStore()
+    settings.$patch({ dictation: { sttProfileId: 'stt/keep', insertMode: 'append' } })
+    const s = useModelServiceStore()
+    await s.deleteProfile({ type: 'stt', provider: 'stt', model: 'other' })
+    expect(settings.dictation.sttProfileId).toBe('stt/keep')
+    expect(useVoiceStore().notice).toBeNull()
+    await s.deleteProfile({ type: 'llm', provider: 'stt', model: 'keep' })
+    expect(settings.dictation.sttProfileId).toBe('stt/keep')
+    expect(useVoiceStore().notice).toBeNull()
   })
   it('saveProfile 一次性 apiKey 提交；drafts 不含 apiKey', async () => {
     mockApi.saveModelProfile.mockResolvedValue(PROFILES[1])

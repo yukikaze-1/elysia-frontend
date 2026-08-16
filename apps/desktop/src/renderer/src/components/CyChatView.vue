@@ -10,6 +10,7 @@ import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
 import CyConnectionPanel from './CyConnectionPanel.vue'
+import CyTtsPlayer from './CyTtsPlayer.vue'
 
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
@@ -89,6 +90,8 @@ async function newConversation(): Promise<void> {
 
     <CyMessageList />
     <CyChatInput />
+    <!-- P4-B TTS 播放宿主：隐藏 <audio>，由 voiceStore.tts.url 驱动（spec §5.12 / D-P8） -->
+    <CyTtsPlayer />
   </section>
 </template>
 

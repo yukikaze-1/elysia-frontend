@@ -2,7 +2,7 @@
 // CyChatInput:输入区。回车发送/Shift+Enter 换行;发送按钮;sending 期间禁用(F3,Task 4 review);
 // 停止按钮(activeGenerationId 存在时);断线横幅(connectionStore.state.status 为 reconnecting/error)。
 // G2(§4.4.1):草稿源改 draftStore(内存态 + 防抖持久化归 Main);发送成功清草稿、失败保留;超限/淘汰横幅。
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { isCompositionEnter } from '@shared/domain'
 import type { PendingSticker } from '@shared/contracts/attachments'
 import { useConnectionStore } from '../stores/connection.store'
@@ -10,18 +10,100 @@ import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import { useDraftStore } from '../stores/draft.store'
 import { useAttachmentStore } from '../stores/attachment.store'
+import { useVoiceStore } from '../stores/voice.store'
+import { useSettingsStore } from '../stores/settings.store'
 import CyAttachmentQueue from './CyAttachmentQueue.vue'
 import CyDropOverlay from './CyDropOverlay.vue'
 import CyEmojiPicker from './CyEmojiPicker.vue'
+import CyVoicePending from './CyVoicePending.vue'
+import CyRealtimeBar from './CyRealtimeBar.vue'
+import CyDictationHint from './CyDictationHint.vue'
+import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
 const draftStore = useDraftStore()
 const attachmentStore = useAttachmentStore()
+const voiceStore = useVoiceStore()
+const settingsStore = useSettingsStore()
 const fileInput = ref<HTMLInputElement>()
 const dragActive = ref(false)
 let dragDepth = 0
+
+// —— P4-B 语音三入口（spec §5.12）：语音活跃（mode!=='idle'）→ 文本发送/附件禁用 ——
+const voiceActive = computed(() => voiceStore.mode !== 'idle')
+/** 🎤 录音：语音关闭禁用；其它语音模式进行中禁用（录音中保留可点 = 停止） */
+const recordDisabled = computed(() => !settingsStore.voice.enabled || (voiceStore.mode !== 'idle' && voiceStore.mode !== 'recording'))
+/** 🔊 实时会话：语音关闭或实时子开关关闭禁用；其它语音模式进行中禁用 */
+const realtimeDisabled = computed(() => !settingsStore.voice.enabled || !settingsStore.voice.realtimeEnabled || voiceStore.mode !== 'idle')
+/** ⌨️ 转写：语音关闭禁用；其它语音模式进行中禁用（转写中保留可松手 = stop/cancel） */
+const dictationDisabled = computed(() => !settingsStore.voice.enabled || (voiceStore.mode !== 'idle' && voiceStore.mode !== 'dictating'))
+
+function formatElapsed(ms: number): string {
+  const s = Math.floor(ms / 1000)
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+function onToggleRecord(): void {
+  if (voiceStore.mode === 'recording') void voiceStore.stopRecord()
+  else void voiceStore.startRecord()
+}
+
+const isRealtime = computed(() => voiceStore.mode === 'realtime')
+
+function onToggleRealtime(): void {
+  if (voiceStore.mode === 'realtime') void voiceStore.stopRealtime()
+  else void voiceStore.startRealtime()
+}
+
+// —— ⌨️ 转写：按住 pointerdown 开始 / pointerup 提交 / pointercancel 取消；上滑 60px 置 cancel 标记 → pointerup 走 cancel ——
+const dictationHold = ref<{ startY: number; cancel: boolean } | null>(null)
+function onDictationPointerDown(e: PointerEvent): void {
+  if (voiceActive.value && voiceStore.mode !== 'dictating') return
+  dictationHold.value = { startY: e.clientY, cancel: false }
+  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  void voiceStore.startDictation()
+}
+function onDictationPointerMove(e: PointerEvent): void {
+  if (!dictationHold.value) return
+  if (e.clientY < dictationHold.value.startY - 60) dictationHold.value.cancel = true
+}
+function onDictationPointerUp(): void {
+  const hold = dictationHold.value
+  dictationHold.value = null
+  if (!hold) return
+  if (hold.cancel) void voiceStore.cancelDictation()
+  else void voiceStore.stopDictation()
+}
+function onDictationPointerCancel(): void {
+  dictationHold.value = null
+  void voiceStore.cancelDictation()
+}
+
+// —— 转写 final 插入（D-P4）：finalText 置位 → 组件读 textarea 选区 → applyDictationInsert → clearDictationFinal ——
+watch(
+  () => voiceStore.dictation.finalText,
+  (t) => {
+    if (t === undefined) return
+    const ta = textareaRef.value
+    const sel = ta && ta.selectionStart !== undefined
+      ? { start: ta.selectionStart, end: ta.selectionEnd }
+      : undefined
+    settingsStore.applyDictationInsert(t, sel)
+    voiceStore.clearDictationFinal()
+  }
+)
+
+// —— voiceStore.notice 瞬时提示（录音 300s/600s、D-P20 转写回退）——同 layout.notice 机制，3s 自动清除 ——
+let voiceNoticeTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => voiceStore.notice, (n) => {
+  if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer)
+  if (n) voiceNoticeTimer = setTimeout(() => voiceStore.clearNotice(), 3000)
+})
+onBeforeUnmount(() => {
+  if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer)
+})
 // —— G4 Emoji/表情接线（D7/D8）：面板弹出 + 待发送贴图队列 ——
 const showPicker = ref(false)
 const pendingStickers = ref<PendingSticker[]>([])
@@ -37,8 +119,10 @@ const overLimit = computed(() => (currentId.value ? !!draftStore.overLimit[curre
 const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
 /** 发送条件:非空/有附件/有待发送贴图 + 未在发送 + 无阻断(附件 failed/validating/uploading) + 有激活会话 + 已连接且会话就绪
- *  P1-5：canSend 计入 pendingStickers 非空——纯贴图也能点发送按钮；附件阻断只挡附件/文本路径（贴图不经附件编排，不受影响），保证按钮/Enter 一致 */
+ *  P1-5：canSend 计入 pendingStickers 非空——纯贴图也能点发送按钮；附件阻断只挡附件/文本路径（贴图不经附件编排，不受影响），保证按钮/Enter 一致
+ *  P4-B：语音会话活跃（mode!=='idle'）→ 文本发送禁用（spec §5.12） */
 const canSend = computed(() =>
+  voiceStore.mode === 'idle' &&
   (draft.value.trim().length > 0 || attachmentStore.hasReady || pendingStickers.value.length > 0) &&
   !messageStore.sending && (pendingStickers.value.length > 0 || !attachmentStore.canSend.blockReason) &&
   !!conversationStore.currentId && connectionStore.state.status === 'connected' && conversationStore.ready
@@ -179,6 +263,20 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       <button class="cy-clear-draft" @click="draftStore.dismissEviction()">知道了</button>
     </div>
 
+    <!-- D-P5 会话切换守卫提示：语音会话活跃时切换/新建被拒（Task 13 conversationStore.blockReason） -->
+    <div v-if="conversationStore.blockReason" class="cy-banner" role="status">
+      <span class="cy-banner-dot" />
+      <span>{{ conversationStore.blockReason }}</span>
+    </div>
+
+    <!-- voiceStore 瞬时提示（录音 300s/600s 上限、D-P20 转写回退全局 STT） -->
+    <div v-if="voiceStore.notice" class="cy-banner" role="status">
+      <span class="cy-banner-dot" />
+      <span>{{ voiceStore.notice }}</span>
+    </div>
+
+    <!-- P4-B 待发送语音条：录音停止后显示（转写字幕 + 试听/重录/删除/确认发送） -->
+    <CyVoicePending v-if="voiceStore.mode === 'record_pending'" />
     <!-- G3 附件发送阻断提示（failed/validating/uploading 时展示原因） -->
     <div v-if="attachmentStore.canSend.blockReason" class="cy-banner" role="status">
       <span class="cy-banner-dot" />
@@ -186,40 +284,86 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
     </div>
 
     <!-- G3 待发送附件队列 + 拖拽覆盖层 -->
-    <CyAttachmentQueue />
-    <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" @leave="dragActive = false" />
+    <template v-if="!isRealtime">
+      <CyAttachmentQueue />
+      <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" @leave="dragActive = false" />
 
-    <div class="cy-composer-box">
-      <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" @click="fileInput?.click()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-      </button>
-      <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
-      <textarea
-        ref="textareaRef"
-        v-model="draft"
-        :disabled="messageStore.sending"
-        placeholder="输入消息，Enter 发送"
-        rows="1"
-        aria-label="消息输入框"
-        @keydown.enter.exact="onEnter"
-      />
-      <button
-        v-if="hasActiveGeneration"
-        class="cy-stop-btn"
-        title="停止生成"
-        aria-label="停止生成"
-        @click="stop"
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-          <rect x="6" y="6" width="12" height="12" rx="2" />
-        </svg>
-      </button>
-      <button class="cy-send-btn" :disabled="!canSend" title="发送" aria-label="发送" @click="send">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M5 12h14M13 6l6 6-6 6" />
-        </svg>
-      </button>
-    </div>
+      <div class="cy-composer-box">
+        <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" :disabled="voiceActive" @click="fileInput?.click()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+        <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
+        <!-- P4-B 语音三入口（spec §5.12）：🎤 普通录音 / 🔊 实时会话 / ⌨️ 转写（按住说话） -->
+        <button
+          class="cy-voice-btn"
+          :class="{ active: voiceStore.mode === 'recording' }"
+          :disabled="recordDisabled"
+          :aria-pressed="voiceStore.mode === 'recording'"
+          :title="voiceStore.mode === 'recording' ? '停止录音' : '普通录音'"
+          :aria-label="voiceStore.mode === 'recording' ? '停止录音' : '普通录音'"
+          @click="onToggleRecord"
+        >
+          <template v-if="voiceStore.mode === 'recording'">
+            <i class="cy-rec-dot" aria-hidden="true" />
+            <span class="cy-rec-timer">{{ formatElapsed(voiceStore.record.elapsedMs) }}</span>
+          </template>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
+        </button>
+        <button
+          class="cy-voice-btn"
+          :class="{ active: voiceStore.mode === 'realtime' }"
+          :disabled="realtimeDisabled"
+          :aria-pressed="voiceStore.mode === 'realtime'"
+          title="实时会话"
+          aria-label="实时会话"
+          @click="onToggleRealtime"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 010 7" /><path d="M18.5 5.5a9 9 0 010 13" /></svg>
+        </button>
+        <button
+          class="cy-voice-btn"
+          :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel }"
+          :disabled="dictationDisabled"
+          title="转写（按住说话）"
+          aria-label="输入法转写（按住说话）"
+          @pointerdown="onDictationPointerDown"
+          @pointermove="onDictationPointerMove"
+          @pointerup="onDictationPointerUp"
+          @pointercancel="onDictationPointerCancel"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h4M12 20h6" /><path d="M8 4h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+        </button>
+        <textarea
+          ref="textareaRef"
+          v-model="draft"
+          :disabled="messageStore.sending || voiceActive"
+          placeholder="输入消息，Enter 发送"
+          rows="1"
+          aria-label="消息输入框"
+          @keydown.enter.exact="onEnter"
+        />
+        <button
+          v-if="hasActiveGeneration"
+          class="cy-stop-btn"
+          title="停止生成"
+          aria-label="停止生成"
+          @click="stop"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+        </button>
+        <button class="cy-send-btn" :disabled="!canSend" title="发送" aria-label="发送" @click="send">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M5 12h14M13 6l6 6-6 6" />
+          </svg>
+        </button>
+      </div>
+    </template>
+    <!-- P4-B 实时会话：输入区替换为实时状态条（聆听 + 字幕 + 轮次 + 停止） -->
+    <CyRealtimeBar v-else />
+    <!-- P4-B 转写浮层：按住说话期间显示字幕 + 「松开提交 · 上滑取消」 -->
+    <CyDictationHint v-if="voiceStore.mode === 'dictating'" />
     <!-- G4 Emoji/表情包：面板弹出（Esc 关闭回焦点）+ 待发送贴图队列 -->
     <div class="cy-composer-tools">
       <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
@@ -238,6 +382,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
     <div class="cy-composer-status">
       <span class="cy-muted">Enter 发送 · Shift+Enter 换行</span>
     </div>
+
+    <!-- P4-B consent（D-P16）：首个 backend-STT 语音操作前确认对话框 -->
+    <CyVoiceConsentDialog />
   </footer>
 </template>
 
@@ -285,7 +432,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 
 .cy-composer-box {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto auto auto auto 1fr auto auto;  /* 附件 + 语音三入口 + textarea + stop + send */
   align-items: end;
   gap: 8px;
   padding: 8px;
@@ -313,12 +460,68 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-stop-btn,
-.cy-send-btn {
+.cy-send-btn,
+.cy-voice-btn {
   display: grid;
   place-items: center;
   width: 32px;
   height: 32px;
   border-radius: 9px;
+}
+
+/* P4-B 语音三入口：与 attach 同尺寸；录音中红点 + 计时高亮；转写按住高亮/上滑取消变体 */
+.cy-voice-btn {
+  gap: 4px;
+  color: var(--cy-muted);
+  background: transparent;
+  border: 1px solid var(--cy-border);
+}
+
+.cy-voice-btn:hover:not(:disabled) {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-voice-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cy-voice-btn.active {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
+  border-color: var(--cy-accent);
+}
+
+.cy-voice-btn.active.cancel {
+  color: var(--cy-danger);
+  background: var(--cy-surface-soft);
+  border-color: var(--cy-danger);
+}
+
+.cy-voice-btn.active {
+  width: auto;
+  min-width: 32px;
+  padding: 0 9px;
+}
+
+.cy-rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cy-danger);
+  animation: cy-rec-blink 1.1s ease-in-out infinite;
+}
+
+.cy-rec-timer {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@keyframes cy-rec-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 
 .cy-hidden-input {

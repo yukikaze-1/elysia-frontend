@@ -6,6 +6,8 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, ModelServiceType, TtsPreviewCommand, TtsVoice, UpsertModelProfileCommand } from '@shared/contracts'
 import { api } from './desktop-api'
+import { useSettingsStore } from './settings.store'
+import { useVoiceStore } from './voice.store'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 
 export interface ProfileDraft {
@@ -100,11 +102,19 @@ export const useModelServiceStore = defineStore('modelService', () => {
     } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { saving.value = false }
   }
 
-  async function deleteProfile(profile: Pick<ModelProfile, 'type' | 'model'>): Promise<void> {
+  async function deleteProfile(profile: Pick<ModelProfile, 'type' | 'model' | 'provider'>): Promise<void> {
     deleting.value = true; error.value = undefined
     try {
       await api.deleteModelProfile(profile.type, profile.model)
       await load()
+      // D-P20：删除被转写引用的 STT Profile → 回退全局活动 STT + toast（I4：无 id，比较须拼 <provider>/<model>）
+      if (profile.type === 'stt') {
+        const sttRef = `${profile.provider}/${profile.model}`
+        if (useSettingsStore().dictation.sttProfileId === sttRef) {
+          useSettingsStore().setDictation({ sttProfileId: undefined })
+          useVoiceStore().setNotice('转写已回退全局 STT')
+        }
+      }
     } catch (e) { error.value = parsePublicError(messageOf(e)) } finally { deleting.value = false }
   }
 
