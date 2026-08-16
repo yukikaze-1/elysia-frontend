@@ -33,6 +33,12 @@ export default defineConfig(({ mode }) => ({
   },
   renderer: {
     plugins: [vue(), devCspPlugin()],
-    resolve: { alias: { '@renderer': resolve('src/renderer/src'), '@shared': resolve('src/shared') } }
+    resolve: { alias: { '@renderer': resolve('src/renderer/src'), '@shared': resolve('src/shared') } },
+    build: {
+      // P4-B Task 10：pcm-worklet.js 必须以同源文件 asset 输出（cyrene://renderer），
+      // 不能被 Vite 默认 4KB assetsInlineLimit 内联为 data: URL——CSP script-src 'self' 会拦 data:，
+      // AudioWorklet.addModule 将加载失败（design §4.8 / D-P7：CSP 零改动）。
+      assetsInlineLimit: 0
+    }
   }
 }))
