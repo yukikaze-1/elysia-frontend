@@ -72,6 +72,8 @@ wire schema 无新增字段（`voice.discard` 状态机语义修订）。
 
 ## 4. 现状（前端代码证据，3 findings 定位）
 
+> 本节行号为**修复前基线**（联调 review 时点）；本批落地后代码已按 §5 修复，行号随之漂移，描述的是当时定位到的缺陷（历史证据，非现行状态）。
+
 ### 4.1 P0-01 采集启动失败残留后端会话
 
 - [voice.store.ts:281-289](apps/desktop/src/renderer/src/stores/voice.store.ts#L281-L289)：`capture.start()` catch 内**先**清 `activeRecordingId`/`mode='idle'`（:286-287）**再** `try { await api.voiceDiscard({ recordingId }) } catch {}`（:288）——本地状态在取消帧完成前丢失，且 discard 失败被静默吞掉；
