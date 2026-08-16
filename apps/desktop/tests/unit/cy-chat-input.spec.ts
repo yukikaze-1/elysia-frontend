@@ -116,3 +116,36 @@ describe('CyChatInput 转写 final 插入（D-P4）', () => {
     void draftStore.flush('conv-1')
   })
 })
+
+describe('CyChatInput 麦克风拒绝 composer banner（final-review round2）', () => {
+  it('voice.micError 置位（mode idle）→ 输入区上方 banner 展示 micError.message（麦克风拒绝不再静默）', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'idle'
+    voice.micError = { code: 'MIC_ACCESS_DENIED', message: '麦克风权限被拒绝' }
+    const wrapper = mountInput()
+    const banner = wrapper.find('.cy-mic-error-banner')
+    expect(banner.exists()).toBe(true)
+    expect(banner.text()).toContain('麦克风权限被拒绝')
+    expect(banner.attributes('role')).toBe('alert')
+    wrapper.unmount()
+  })
+
+  it('micError 清空（下次 start* 开头清陈旧错误，Task 12）→ banner 随之消失', async () => {
+    const voice = useVoiceStore()
+    voice.mode = 'idle'
+    voice.micError = { code: 'MIC_ACCESS_DENIED', message: '麦克风权限被拒绝' }
+    const wrapper = mountInput()
+    expect(wrapper.find('.cy-mic-error-banner').exists()).toBe(true)
+    // start* 新操作开头 micError=undefined（voice.store 已测），此处验证组件响应式隐藏
+    voice.micError = undefined
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.cy-mic-error-banner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('micError 未置位 → 无 banner', () => {
+    const wrapper = mountInput()
+    expect(wrapper.find('.cy-mic-error-banner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})

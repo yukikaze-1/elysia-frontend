@@ -276,17 +276,6 @@ describe('CyVoicePending 待发送语音条——错误展示（final-review Imp
     wrapper.unmount()
   })
 
-  it('record_pending + micError（麦克风权限拒绝）→ 展示 micError.message', () => {
-    const voice = useVoiceStore()
-    voice.mode = 'record_pending'
-    voice.record.transcript = undefined
-    voice.micError = { code: 'MIC_ACCESS_DENIED', message: '麦克风权限被拒绝' }
-    const wrapper = mount(CyVoicePending)
-    expect(wrapper.text()).toContain('麦克风权限被拒绝')
-    expect(wrapper.text()).not.toContain('未识别，请重试')
-    wrapper.unmount()
-  })
-
   it('record_pending + error 置位 + transcript 存在 → 错误与字幕并存，确认发送仍可用', () => {
     const voice = useVoiceStore()
     voice.mode = 'record_pending'

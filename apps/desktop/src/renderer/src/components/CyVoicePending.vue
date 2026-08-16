@@ -10,10 +10,11 @@ const voiceStore = useVoiceStore()
 const transcript = computed(() => voiceStore.record.transcript?.trim() ?? '')
 const hasTranscript = computed(() => transcript.value.length > 0)
 const hasAudio = computed(() => !!voiceStore.record.audioBuffer)
-// final-review Important-1a：record_pending 态展示 voiceStore.error（后端明确失败如 STT_UNAVAILABLE）/ micError（麦克风权限拒绝，
-// spec §5.12 line 323）——区别于 D-P17「未识别，请重试」兜底（后者是 45s 无 transcript/error 的模糊判词）。
-// micError 优先（麦克风拒绝是更可操作的原因）；error 与 transcript 可并存展示。
-const errorText = computed(() => voiceStore.micError?.message ?? voiceStore.error?.message)
+// final-review Important-1a：record_pending 态展示 voiceStore.error（后端明确失败如 STT_UNAVAILABLE）——区别于
+// D-P17「未识别，请重试」兜底（后者是 45s 无 transcript/error 的模糊判词）。round2：移除 micError 分支——
+// store 各 start* 的 capture 失败在同一同步块置 micError + mode='idle'，待发送条恰好卸载，该分支是死路径
+// （麦克风拒绝改由 CyChatInput composer banner 展示，spec §5.12 line 323）。
+const errorText = computed(() => voiceStore.error?.message)
 const committing = ref(false)
 
 function onReplay(): void { voiceStore.replayRecord() }

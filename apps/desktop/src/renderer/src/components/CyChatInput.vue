@@ -269,6 +269,14 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       <span>{{ conversationStore.blockReason }}</span>
     </div>
 
+    <!-- final-review round2：麦克风拒绝 composer banner（spec §5.12 line 323）——store 各 start* 在 capture 失败
+         同一同步块置 micError + mode='idle'（待发送条恰好卸载，micError 仅设置页可达）→ 聊天区麦克风拒绝原为静默失败；
+         此处 mode==='idle' 且 micError 有值时展示（下次 start* 开头清陈旧错误，banner 随之消失，无需定时器） -->
+    <div v-if="voiceStore.micError && voiceStore.mode === 'idle'" class="cy-banner cy-mic-error-banner" role="alert">
+      <span class="cy-banner-dot" />
+      <span>{{ voiceStore.micError.message }}</span>
+    </div>
+
     <!-- voiceStore 瞬时提示（录音 300s/600s 上限、D-P20 转写回退全局 STT） -->
     <div v-if="voiceStore.notice" class="cy-banner" role="status">
       <span class="cy-banner-dot" />
