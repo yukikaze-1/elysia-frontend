@@ -14,8 +14,13 @@ class FakeWs {
   private handlers: Record<string, (arg?: unknown, arg2?: unknown) => void> = {}
   sent: SentFrame[] = []
   send = vi.fn((data: string | Uint8Array) => {
-    if (typeof data === 'string') this.sent.push({ kind: 'text', frame: JSON.parse(data) })
-    else this.sent.push({ kind: 'binary', bytes: data })
+    if (typeof data === 'string') {
+      const frame = JSON.parse(data) as Record<string, unknown>
+      this.sent.push({ kind: 'text', frame })
+      this.applyControl(frame)
+    } else {
+      this.sent.push({ kind: 'binary', bytes: data })
+    }
   })
   close = vi.fn()
   readyState = 1
@@ -26,6 +31,62 @@ class FakeWs {
   pushBinary(bytes: Uint8Array): void { this.handlers['message']?.(Buffer.from(bytes), true) }
   /** 触发 socket close（真实 ws close 事件 → onSocketClosed → 重连退避；测试模拟掉线） */
   pushClose(): void { this.handlers['close']?.() }
+
+  /** —— 有状态虚拟后端（Task 4 冻结 discard 契约；P0-01 / P1-01） —— */
+  /** 服务端侧活动语音会话（RECORDING/TRANSCRIBING/PENDING/IDLE × record/realtime/dictation） */
+  voiceSession: { kind: 'record' | 'realtime' | 'dictation'; key: string } | undefined
+  /** 旧契约模式：RECORDING 态 discard → CONTRACT_VALIDATION（拒且保留会话）；持会话时再 start → VOICE_SESSION_CONFLICT */
+  strictOldContract = false
+  /** rejectControl 一次性配置：下一次 start/discard 收到时 deferred push error{code,message}（拒绝不清既有会话） */
+  private nextReject: { code: string; message: string } | undefined
+
+  /** 桩状态 API：直接置服务端侧会话（独立于客户端本地注册表） */
+  setVoice(kind: 'record' | 'realtime' | 'dictation', key: string): void { this.voiceSession = { kind, key } }
+  clearVoice(): void { this.voiceSession = undefined }
+  /** 下一次 start/discard 收到时 deferred push error{code,message}；拒绝语义=服务端会话保留（不误清） */
+  rejectControl(code: string, message: string): void { this.nextReject = { code, message } }
+
+  /** 虚拟后端状态机：按冻结契约（默认）或旧契约（strictOldContract）处理语音控制帧（由 send 调用） */
+  private applyControl(frame: Record<string, unknown>): void {
+    const type = frame.type
+    if (type === 'voice.record.start' || type === 'voice_session.start' || type === 'dictation.start') {
+      this.handleStart(type, frame)
+    } else if (type === 'voice.discard') {
+      this.handleDiscard(frame)
+    } else if (type === 'voice.record.stop') {
+      // stop → 服务端进入转写/自动 IDLE，普通录音不再占用活动注册表（<640B 空转写即 IDLE）
+      if (this.voiceSession?.kind === 'record') this.voiceSession = undefined
+    }
+  }
+
+  private handleStart(type: string, frame: Record<string, unknown>): void {
+    if (this.nextReject) { const { code, message } = this.nextReject; this.nextReject = undefined; this.schedulePush({ type: 'error', code, message }); return }
+    if (this.strictOldContract && this.voiceSession) {
+      // 旧契约：服务端仍持会话时再 start → 拒（漂移 canary 失配第二拍）
+      this.schedulePush({ type: 'error', code: 'VOICE_SESSION_CONFLICT', message: '已有活动语音会话' })
+      return
+    }
+    const kind = type === 'voice.record.start' ? 'record' : type === 'voice_session.start' ? 'realtime' : 'dictation'
+    const key = (frame.recordingId ?? frame.sessionId ?? frame.clientRequestId) as string
+    this.voiceSession = { kind, key }
+  }
+
+  private handleDiscard(frame: Record<string, unknown>): void {
+    if (this.nextReject) { const { code, message } = this.nextReject; this.nextReject = undefined; this.schedulePush({ type: 'error', code, message }); return }
+    if (this.strictOldContract && this.voiceSession?.kind === 'record') {
+      // 旧契约：RECORDING 态 discard → CONTRACT_VALIDATION（拒且保留会话）
+      this.schedulePush({ type: 'error', code: 'CONTRACT_VALIDATION', message: '录音中，先 stop 再 discard' })
+      return
+    }
+    // 冻结契约：匹配当前录音 → 清回 IDLE；IDLE/迟到/重复 → 幂等成功（不发 VOICE_RECORDING_NOT_FOUND）
+    if (this.voiceSession?.kind === 'record' && this.voiceSession.key === frame.recordingId) {
+      this.voiceSession = undefined
+    }
+  }
+  /** deferred push：对齐真实错误帧走网络到达的时序（发送方同步体先跑完再到达） */
+  private schedulePush(frame: unknown): void {
+    queueMicrotask(() => this.push(frame))
+  }
 }
 
 /** 建立已连接 backend（同步推握手帧使 connect resolve）；返回 warnings/errors 捕获数组 */
@@ -56,6 +117,13 @@ async function makeBackend(opts: Partial<RealBackendOptions> = {}): Promise<{
 }
 
 const binaryCount = (ws: FakeWs): number => ws.sent.filter((s) => s.kind === 'binary').length
+
+/** onError 收到的 CyreneError 中透传的 wire 错误码（details.code） */
+const errorCodes = (errors: unknown[]): (string | undefined)[] =>
+  errors.map((e) => (e as { details?: { code?: string } }).details?.code)
+
+/** 冲刷 microtask（queueMicrotask）+ macrotask（setTimeout 0）——deferred push 在 flush 后已到达 */
+const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => { vi.clearAllMocks() })
 
@@ -309,6 +377,99 @@ describe('RealBackend 语音族错误路由（Task 4 / D-P15）', () => {
     ws.push({ type: 'error', message: 'STT 不可用', code: 'STT_UNAVAILABLE' })
     expect(events.some((e) => e.event === 'voice.error' && e.code === 'STT_UNAVAILABLE')).toBe(true)
     expect(errors).toHaveLength(1)
+  })
+})
+
+describe('RealBackend 冻结 discard 契约（Task 4 真实联调 P0-01/P1-01；有状态协议桩）', () => {
+  it('桩状态 API：setVoice/clearVoice 驱动服务端侧会话（独立于客户端本地注册表）', async () => {
+    const ws = new FakeWs()
+    ws.setVoice('realtime', 'vs-1')
+    expect(ws.voiceSession).toEqual({ kind: 'realtime', key: 'vs-1' })
+    ws.clearVoice()
+    expect(ws.voiceSession).toBeUndefined()
+  })
+
+  it('start(A)→discard(A)→start(B)：wire 严格 [start,discard,start]、全程无 error/voice.error（无需重连）', async () => {
+    const { backend, ws, events, errors } = await makeBackend()
+    await backend.startRecordVoice({ recordingId: 'rec-A' })
+    await backend.discardVoice({ recordingId: 'rec-A' })
+    await backend.startRecordVoice({ recordingId: 'rec-B' })
+    await flush()
+    const textFrames = ws.sent.filter((s) => s.kind === 'text').map((s) => s.frame)
+    expect(textFrames).toEqual([
+      { type: 'voice.record.start', recordingId: 'rec-A' },
+      { type: 'voice.discard', recordingId: 'rec-A' },
+      { type: 'voice.record.start', recordingId: 'rec-B' }
+    ])
+    expect(ws.voiceSession).toEqual({ kind: 'record', key: 'rec-B' })   // 服务端已完成 A 的 discard → 清位
+    expect(errorCodes(errors)).toEqual([])                              // 无 CONTRACT_VALIDATION / VOICE_SESSION_CONFLICT
+    expect(events.some((e) => e.event === 'voice.error')).toBe(false)
+  })
+
+  it('空转写序列 <640B → stop → discard：幂等成功、errors 空、events 无 voice.error', async () => {
+    const { backend, ws, events, errors } = await makeBackend()
+    await backend.startRecordVoice({ recordingId: 'rec-A' })
+    await backend.stopRecordVoice({ recordingId: 'rec-A' })   // 服务端自动回 IDLE（<640B 不发 transcript）
+    await backend.discardVoice({ recordingId: 'rec-A' })      // IDLE 迟到 discard → 幂等成功
+    await flush()
+    expect(ws.voiceSession).toBeUndefined()
+    expect(errorCodes(errors)).toEqual([])
+    expect(events.some((e) => e.event === 'voice.error')).toBe(false)
+  })
+
+  it('discard → discard 重复：两次均成功、无错误帧（IDLE 幂等）', async () => {
+    const { backend, ws, events, errors } = await makeBackend()
+    await backend.discardVoice({ recordingId: 'rec-A' })
+    await backend.discardVoice({ recordingId: 'rec-A' })
+    await flush()
+    const textFrames = ws.sent.filter((s) => s.kind === 'text').map((s) => s.frame)
+    expect(textFrames).toEqual([
+      { type: 'voice.discard', recordingId: 'rec-A' },
+      { type: 'voice.discard', recordingId: 'rec-A' }
+    ])
+    expect(errorCodes(errors)).toEqual([])
+    expect(events.some((e) => e.event === 'voice.error')).toBe(false)
+  })
+
+  it('realtime 活跃 + discard：stub 拒 VOICE_SESSION_CONFLICT、realtime 会话不被误清', async () => {
+    const { backend, ws, events, errors } = await makeBackend()
+    await backend.startRealtimeVoice({ sessionId: 'vs-1' })
+    expect(ws.voiceSession).toEqual({ kind: 'realtime', key: 'vs-1' })
+    ws.rejectControl('VOICE_SESSION_CONFLICT', '已有活动语音会话')
+    await backend.discardVoice({ recordingId: 'rec-9' })
+    await flush()
+    expect(ws.voiceSession).toEqual({ kind: 'realtime', key: 'vs-1' })  // 拒绝不动既有会话
+    expect(events.some((e) => e.event === 'voice.error' && e.code === 'VOICE_SESSION_CONFLICT')).toBe(true)
+    expect(errorCodes(errors)).toContain('VOICE_SESSION_CONFLICT')
+  })
+
+  it('mismatch discard（rec-X≠rec-A 且另一录音活跃）：stub 拒 VOICE_RECORDING_NOT_FOUND、原录音不被误清', async () => {
+    const { backend, ws, events, errors } = await makeBackend()
+    await backend.startRecordVoice({ recordingId: 'rec-A' })
+    ws.rejectControl('VOICE_RECORDING_NOT_FOUND', '无此活动录音')
+    await backend.discardVoice({ recordingId: 'rec-X' })
+    await flush()
+    expect(ws.voiceSession).toEqual({ kind: 'record', key: 'rec-A' })   // 原录音 A 未被误清
+    expect(events.some((e) => e.event === 'voice.error' && e.code === 'VOICE_RECORDING_NOT_FOUND')).toBe(true)
+    expect(errorCodes(errors)).toContain('VOICE_RECORDING_NOT_FOUND')
+  })
+})
+
+describe('RealBackend 契约漂移 canary（Task 4 真实联调 §5.6 末行；证明 harness 可发现失配）', () => {
+  it('旧契约：RECORDING 态 discard 拒 CONTRACT_VALIDATION（本地已清 vs 服务端仍持会话）+ 下次 start 触发 VOICE_SESSION_CONFLICT', async () => {
+    const { backend, ws, events, errors } = await makeBackend()
+    ws.strictOldContract = true
+    await backend.startRecordVoice({ recordingId: 'rec-A' })
+    // discardVoice 同步体（send → 清 activeVoice）先跑完；延迟到达的 CONTRACT_VALIDATION 帧只走 onError（activeVoice 已清）
+    await backend.discardVoice({ recordingId: 'rec-A' })
+    await flush()
+    expect(errorCodes(errors)).toContain('CONTRACT_VALIDATION')          // load-bearing：harness 捕获「本地清 vs 服务端仍持」
+    // 服务端仍持会话 A（旧契约拒 discard 不清）→ 下一次 start 本地放行、wire 发出，stub 拒 VOICE_SESSION_CONFLICT
+    await expect(backend.startRecordVoice({ recordingId: 'rec-B' })).resolves.toEqual({ recordingId: 'rec-B' })
+    await flush()
+    expect(ws.voiceSession).toEqual({ kind: 'record', key: 'rec-A' })
+    expect(errorCodes(errors)).toContain('VOICE_SESSION_CONFLICT')
+    expect(events.some((e) => e.event === 'voice.error' && e.code === 'VOICE_SESSION_CONFLICT')).toBe(true)
   })
 })
 
