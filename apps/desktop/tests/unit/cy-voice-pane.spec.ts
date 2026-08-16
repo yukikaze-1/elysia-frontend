@@ -156,10 +156,9 @@ describe('CyVoicePane', () => {
     await wrapper.find('button').trigger('click')
     expect(voice.consentPending).toBe(true)
 
-    // 用户在 consent 对话框点「取消」→ dismissConsent 清 pending + mode 仍 idle + 无错误
-    // → 进入宽限窗口（区分「取消」与「confirm 后 startRecord 恢复的瞬时 idle」），宽限到点才判失败收口
+    // dismissConsent：清 pending + confirmDispatching 保持 false → waitForRecording 立即判失败收口（无宽限）
     voice.dismissConsent()
-    await vi.advanceTimersByTimeAsync(3000)
+    await vi.advanceTimersByTimeAsync(0)
     await wrapper.vm.$nextTick()
     expect(wrapper.find('button').text()).toBe('测试麦克风')
     expect(stopSpy).not.toHaveBeenCalled() // 从未进入录音
@@ -168,6 +167,43 @@ describe('CyVoicePane', () => {
     wrapper.unmount()
     startSpy.mockRestore()
     stopSpy.mockRestore()
+  })
+
+  it('confirm 重发中（confirmDispatching=true）慢 getUserMedia >3s 不误判失败 → 迟到 recording 仍武装 3s 自停（评审轮3）', async () => {
+    vi.useFakeTimers()
+    const voice = useVoiceStore()
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.consentPending = true
+    })
+    const stopSpy = vi.spyOn(voice, 'stopRecord').mockResolvedValue(undefined)
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    expect(voice.consentPending).toBe(true)
+
+    // 模拟 store confirmConsent：清 pending + confirmDispatching=true（同帧批处理，无瞬时窗）
+    voice.consentPending = false
+    voice.confirmDispatching = true
+    await vi.advanceTimersByTimeAsync(0)
+    // 慢 getUserMedia 权限提示：mode 保持 idle 超过 3s——不得误判失败、不得提前自停
+    await vi.advanceTimersByTimeAsync(6000)
+    expect(wrapper.find('button').text()).toBe('录音中…')
+    expect(stopSpy).not.toHaveBeenCalled()
+
+    // getUserMedia 授权 → 进入 recording + 动作 settle（confirmDispatching=false）→ 武装 3s 自停
+    voice.mode = 'recording'
+    voice.confirmDispatching = false
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(stopSpy).toHaveBeenCalledTimes(1)
+    expect(discardSpy).toHaveBeenCalledTimes(1)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('button').text()).toBe('测试麦克风')
+
+    wrapper.unmount()
+    startSpy.mockRestore()
+    stopSpy.mockRestore()
+    discardSpy.mockRestore()
   })
 
   it('startRecord 失败（mode idle + 无 consent，初始态已定格）→ 立即判失败：按钮回 idle + 错误展示（评审 re-review）', async () => {

@@ -183,8 +183,27 @@ describe('voiceStore', () => {
     expect(useSettingsStore().voice.consentBackendStt).toBe(true)
     expect(store.consentPending).toBe(false)
     expect(store.pendingAction).toBeNull()
+    expect(store.confirmDispatching).toBe(false) // settle 后复位
     expect(mockApi.voiceStartRecord).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
     expect(fake.start).toHaveBeenCalled()
+    expect(store.mode).toBe('recording')
+  })
+
+  it('confirmConsent：动作在途期间 confirmDispatching=true，settle 后 false（评审轮3 在途信号）', async () => {
+    useSettingsStore().voice.consentBackendStt = false
+    const store = useVoiceStore()
+    await store.startRecord()
+    expect(store.consentPending).toBe(true)
+    // capture.start 挂起（模拟 getUserMedia 权限提示慢）：confirm 重发动作在途时 confirmDispatching 保持 true
+    let release: () => void = () => {}
+    fake.start.mockImplementationOnce(() => new Promise<void>((r) => { release = r }))
+    const confirmPromise = store.confirmConsent()
+    await vi.waitFor(() => expect(store.confirmDispatching).toBe(true))
+    expect(store.consentPending).toBe(false)
+    expect(store.mode).toBe('idle') // 动作未定型：不误判成功
+    release()
+    await confirmPromise
+    expect(store.confirmDispatching).toBe(false)
     expect(store.mode).toBe('recording')
   })
 
@@ -196,6 +215,7 @@ describe('voiceStore', () => {
     store.dismissConsent()
     expect(store.consentPending).toBe(false)
     expect(store.pendingAction).toBeNull()
+    expect(store.confirmDispatching).toBe(false) // 取消不进入重发
     expect(mockApi.voiceStartDictation).not.toHaveBeenCalled()
     expect(store.mode).toBe('idle')
   })
@@ -680,6 +700,7 @@ describe('voiceStore', () => {
     expect(store.error).toBeUndefined()
     expect(store.consentPending).toBe(false)
     expect(store.pendingAction).toBeNull()
+    expect(store.confirmDispatching).toBe(false) // reset 复位在途信号
     expect(store.notice).toBeNull()
   })
 

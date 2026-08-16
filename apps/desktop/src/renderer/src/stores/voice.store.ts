@@ -52,6 +52,10 @@ export const useVoiceStore = defineStore('voice', () => {
   const error = ref<PublicError>()
   const captureReady = ref(false)
   const consentPending = ref(false)
+  /** confirm 重发中的在途信号（Task 14 轮 3）：confirmConsent 已开始执行挂起动作（true）→
+   *  UI 据此刻不判失败——重发的 startRecord 可能因 getUserMedia 权限提示 >3s 才进 recording；
+   *  动作 settle（成功/失败）/取消/复位 → false。 */
+  const confirmDispatching = ref(false)
   const pendingAction = ref<(() => Promise<void>) | null>(null)
   /** store 级瞬时提示（录音 300s/600s toast；Task 14 消费），同 layout.store.notice 机制 */
   const notice = ref<string | null>(null)
@@ -223,19 +227,28 @@ export const useVoiceStore = defineStore('voice', () => {
     return false
   }
 
-  /** Task 14 对话框同意回调：持久化「不再提示」+ 清 pending + 重发挂起的动作 */
+  /** Task 14 对话框同意回调：持久化「不再提示」+ 清 pending + 重发挂起的动作。
+   *  confirmDispatching 在动作执行期间为 true（try/finally 保证失败也复位）——UI 据此避免把
+   *  「confirm 已开始但动作尚未定型」判成失败（getUserMedia 权限提示可能 >3s）。 */
   async function confirmConsent(): Promise<void> {
     await useSettingsStore().setVoice({ consentBackendStt: true })
     const action = pendingAction.value
     consentPending.value = false
     pendingAction.value = null
-    if (action) await action()
+    if (!action) return
+    confirmDispatching.value = true
+    try {
+      await action()
+    } finally {
+      confirmDispatching.value = false
+    }
   }
 
   /** 拒绝 → 中止（清 pending，不执行） */
   function dismissConsent(): void {
     consentPending.value = false
     pendingAction.value = null
+    confirmDispatching.value = false
   }
 
   // —— 普通录音 ——
@@ -492,12 +505,13 @@ export const useVoiceStore = defineStore('voice', () => {
     error.value = undefined
     consentPending.value = false
     pendingAction.value = null
+    confirmDispatching.value = false
     notice.value = null
   }
 
   return {
     mode, caption, record, realtime, dictation, tts, micError, error, captureReady,
-    consentPending, pendingAction, notice,
+    consentPending, confirmDispatching, pendingAction, notice,
     init, handleEvent, guardStart, requireConsent, confirmConsent, dismissConsent,
     startRecord, stopRecord, replayRecord, discardRecord, commitRecord,
     startRealtime, stopRealtime, cancelRealtime,
