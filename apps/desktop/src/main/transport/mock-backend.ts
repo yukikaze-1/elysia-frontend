@@ -98,6 +98,13 @@ export function parseMockHistoryCountEnv(value: string | undefined): number | un
   return 120
 }
 
+/** CYRENE_MOCK_VOICE_TRANSCRIPT env → voiceTranscriptText：未设 → undefined（Mock 缺省文案）；
+ *  设值原样透传——**显式空串也必须保留**（= 未识别场景：mock stopRecordVoice 不发 transcript）。
+ *  与 parseMockHistoryCountEnv 的「空串=不开」语义刻意不同：空串对转写是合法注入值（Task 15 env 桥）。 */
+export function parseMockVoiceTranscriptEnv(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : value
+}
+
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number

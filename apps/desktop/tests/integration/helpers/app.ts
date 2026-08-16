@@ -8,6 +8,15 @@ import { type AddressInfo } from 'node:net'
 
 export interface LaunchedApp { app: ElectronApplication; page: Page; userData: string }
 
+export interface LaunchOptions {
+  env?: Record<string, string>
+  /** 复用既有 userData（Task 15 重启持久化）：传则沿用该路径（仍 mkdir + seedFiles），不传维持 mkdtemp 现状 */
+  userData?: string
+  /** 追加 Electron/Chromium 命令行开关（Task 15 语音：--use-fake-device-for-media-stream 等，无头环境确定性采集）；
+   *  附于 args 末尾，向后兼容——既有调用方省略即可 */
+  extraArgs?: string[]
+}
+
 const ROOT = join(__dirname, '../../..')        // apps/desktop（helpers → integration → tests → apps/desktop）
 const RENDERER_OUT = join(ROOT, 'out/renderer') // apps/desktop/out/renderer
 const PRELOAD_OUT = join(ROOT, 'out/preload/index.js')
@@ -26,9 +35,10 @@ const MIME: Record<string, string> = {
  *  seedFiles：启动时预置文件（relPath 相对 userData 根，如 'app-cache/message-cache-v1.json'）——损坏恢复测试在 load() 前注入非法 JSON。
  *  opts.env：附加环境变量（合并到 env 构造末尾；Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
  *  目录 0700、文件 0600：否则 ensureUserDataDirs（0700 无 group/other）与 openSafeFile 读（0400 无 group/other）会因权限误判损坏/拒绝启动 */
-export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>, opts: { env?: Record<string, string> } = {}): Promise<LaunchedApp> {
+export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>, opts: LaunchOptions = {}): Promise<LaunchedApp> {
   const electronPath = ELECTRON_EXEC
-  const userData = mkdtempSync(join(tmpdir(), 'cy-int-ud-'))
+  const userData = opts.userData ?? mkdtempSync(join(tmpdir(), 'cy-int-ud-'))
+  mkdirSync(userData, { recursive: true, mode: 0o700 }) // 复用路径时保证存在（mkdtemp 路径已存在，幂等）
   for (const f of seedFiles ?? []) {
     const p = join(userData, 'Cyrene', f.relPath)
     mkdirSync(dirname(p), { recursive: true, mode: 0o700 })
@@ -43,15 +53,16 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
     ...(opts.env ?? {})
   }
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
-  const app = await _electron.launch({ executablePath: electronPath, args: [ROOT], cwd: ROOT, env, timeout: 30000 })
+  const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...(opts.extraArgs ?? [])], cwd: ROOT, env, timeout: 30000 })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   return { app, page, userData }
 }
 
-export async function closeApp(launched: LaunchedApp): Promise<void> {
+export async function closeApp(launched: LaunchedApp, opts: { keepUserData?: boolean } = {}): Promise<void> {
   try { await launched.app.close() } catch { /* 已退出 */ }
-  try { rmSync(launched.userData, { recursive: true, force: true }) } catch { /* 清理尽力 */ }
+  // 重启持久化（Task 15）：keepUserData 时保留 userData 供下次 launchApp(opts.userData) 复用
+  if (!opts.keepUserData) { try { rmSync(launched.userData, { recursive: true, force: true }) } catch { /* 清理尽力 */ } }
 }
 
 /** 静态服务 out/renderer（信任边界测试用；普通浏览器无 preload → desktopApi undefined） */
