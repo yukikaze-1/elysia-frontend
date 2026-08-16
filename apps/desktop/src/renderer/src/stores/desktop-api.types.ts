@@ -8,6 +8,7 @@ import type {
   ActiveModelSelection,
   AttachmentCheckResult,
   AttachmentsUploadResponse,
+  AudioCancelInput,
   BackendEvent,
   BackendSession,
   CacheMessagesInput,
@@ -20,6 +21,8 @@ import type {
   ConversationMessagesQuery,
   CreateConversationInput,
   CredentialStatus,
+  DictationStartInput,
+  DictationStopInput,
   FileValidationResult,
   Message,
   MessageContextQuery,
@@ -32,14 +35,22 @@ import type {
   PageQuery,
   PersistSessionInput,
   PersistSessionResult,
+  RealtimeVoiceControlInput,
+  RealtimeVoiceStartInput,
   RuntimeInfo,
   SendMessageInput,
   SessionPersistenceState,
   SetTtsVoiceCommand,
+  SettingsPatch,
+  SettingsState,
   TtsPreviewCommand,
   TtsPreviewOutcome,
   TtsVoiceListResult,
-  UpsertModelProfileCommand
+  UpsertModelProfileCommand,
+  VoiceCommitInput,
+  VoiceDiscardInput,
+  VoiceRecordStartInput,
+  VoiceRecordStopInput
 } from '@shared/contracts'
 import type { StickerManifest } from '@shared/contracts/sticker'
 
@@ -93,4 +104,20 @@ export interface DesktopApiLike {
   listTtsVoices(): Promise<TtsVoiceListResult>
   previewTts(input: TtsPreviewCommand): Promise<TtsPreviewOutcome>
   setTtsVoice(input: SetTtsVoiceCommand): Promise<void>
+  // —— 阶段 4 批次 B 语音面 ——
+  voiceStartRecord(input: VoiceRecordStartInput): Promise<{ recordingId: string }>
+  voiceStopRecord(input: VoiceRecordStopInput): Promise<void>
+  voiceCommit(input: VoiceCommitInput): Promise<ClientRequestRef>
+  voiceDiscard(input: VoiceDiscardInput): Promise<void>
+  voiceStartRealtime(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }>
+  voiceStopRealtime(input: RealtimeVoiceControlInput): Promise<void>
+  voiceCancelRealtime(input: RealtimeVoiceControlInput): Promise<void>
+  voiceStartDictation(input: DictationStartInput): Promise<{ clientRequestId: string }>
+  voiceStopDictation(input: DictationStopInput): Promise<void>
+  voiceCancelDictation(input: DictationStopInput): Promise<void>
+  audioCancel(input: AudioCancelInput): Promise<void>
+  voiceSendAudio(bytes: Uint8Array): void
+  // —— 阶段 4 批次 B 设置面 ——
+  settingsLoad(): Promise<SettingsState>
+  settingsSave(patch: SettingsPatch): Promise<SettingsState>
 }

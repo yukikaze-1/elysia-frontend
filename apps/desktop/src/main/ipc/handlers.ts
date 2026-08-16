@@ -18,6 +18,7 @@ import type { BackendAdapter } from '../transport/backend-adapter'
 import { registerModelHandlers } from '../models/model-handlers'
 import { registerSettingsHandlers } from '../settings/settings-handlers'
 import type { SettingsService } from '../settings/settings-service'
+import { registerVoiceHandlers } from '../voice/voice-handlers'
 import { createIpcHandler } from './executor'
 import { registerHandler } from './registry'
 import { appInfoSchema } from './channels'
@@ -28,6 +29,7 @@ export function registerHandlers(deps: {
   attachments: { svc: UploadService; media: MediaService }
   models: { adapter: BackendAdapter; media: MediaService }
   settings: { svc: SettingsService }
+  voice: { adapter: BackendAdapter; media: MediaService }
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -41,4 +43,5 @@ export function registerHandlers(deps: {
   registerAttachmentsHandlers({ svc: deps.attachments.svc, media: deps.attachments.media, sanitize, logger: deps.logger })
   registerModelHandlers({ adapter: deps.models.adapter, media: deps.models.media, sanitize, logger: deps.logger })
   registerSettingsHandlers({ settings: deps.settings.svc, sanitize, logger: deps.logger })
+  registerVoiceHandlers({ adapter: deps.voice.adapter, media: deps.voice.media, sanitize, logger: deps.logger })
 }

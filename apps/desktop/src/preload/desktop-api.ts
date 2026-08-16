@@ -8,6 +8,7 @@ import type {
   ActiveModelSelection,
   AttachmentCheckResult,
   AttachmentsUploadResponse,
+  AudioCancelInput,
   BackendEvent,
   BackendSession,
   CacheMessagesInput,
@@ -19,6 +20,8 @@ import type {
   Conversation,
   ConversationMessagesQuery,
   CreateConversationInput,
+  DictationStartInput,
+  DictationStopInput,
   FileValidationResult,
   Message,
   MessageContextQuery,
@@ -31,14 +34,22 @@ import type {
   PageQuery,
   PersistSessionInput,
   PersistSessionResult,
+  RealtimeVoiceControlInput,
+  RealtimeVoiceStartInput,
   RuntimeInfo,
   SendMessageInput,
   SessionPersistenceState,
   SetTtsVoiceCommand,
+  SettingsPatch,
+  SettingsState,
   TtsPreviewCommand,
   TtsPreviewOutcome,
   TtsVoiceListResult,
-  UpsertModelProfileCommand
+  UpsertModelProfileCommand,
+  VoiceCommitInput,
+  VoiceDiscardInput,
+  VoiceRecordStartInput,
+  VoiceRecordStopInput
 } from '@shared/contracts'
 import type { StickerManifest } from '@shared/contracts/sticker'
 import { parseBackendEvent } from '@shared/schemas'
@@ -64,6 +75,7 @@ import {
   PersistSessionResultSchema,
   RuntimeInfoSchema,
   SessionPersistenceStateSchema,
+  SettingsStateSchema,
   StickerManifestSchema,
   TtsPreviewOutcomeSchema,
   TtsVoiceListResultSchema
@@ -312,6 +324,59 @@ async function setTtsVoice(input: SetTtsVoiceCommand): Promise<void> {
   unwrap(await invokeWithArgs<void>(IpcChannels.ttsSetVoice, input), z.undefined())
 }
 
+// —— 阶段 4 批次 B 语音面（spec §5.4；11 控制帧 invoke + audio-chunk 单向二进制上行）——
+async function voiceStartRecord(input: VoiceRecordStartInput): Promise<{ recordingId: string }> {
+  return unwrap(await invokeWithArgs<{ recordingId: string }>(IpcChannels.voiceStartRecord, input), z.object({ recordingId: z.string() }))
+}
+async function voiceStopRecord(input: VoiceRecordStopInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.voiceStopRecord, input), z.undefined())
+}
+async function voiceCommit(input: VoiceCommitInput): Promise<ClientRequestRef> {
+  return unwrap(await invokeWithArgs<ClientRequestRef>(IpcChannels.voiceCommit, input), ClientRequestRefSchema)
+}
+async function voiceDiscard(input: VoiceDiscardInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.voiceDiscard, input), z.undefined())
+}
+async function voiceStartRealtime(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> {
+  return unwrap(await invokeWithArgs<{ sessionId: string }>(IpcChannels.voiceStartRealtime, input), z.object({ sessionId: z.string() }))
+}
+async function voiceStopRealtime(input: RealtimeVoiceControlInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.voiceStopRealtime, input), z.undefined())
+}
+async function voiceCancelRealtime(input: RealtimeVoiceControlInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.voiceCancelRealtime, input), z.undefined())
+}
+async function voiceStartDictation(input: DictationStartInput): Promise<{ clientRequestId: string }> {
+  return unwrap(await invokeWithArgs<{ clientRequestId: string }>(IpcChannels.voiceStartDictation, input), z.object({ clientRequestId: z.string() }))
+}
+async function voiceStopDictation(input: DictationStopInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.voiceStopDictation, input), z.undefined())
+}
+async function voiceCancelDictation(input: DictationStopInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.voiceCancelDictation, input), z.undefined())
+}
+async function audioCancel(input: AudioCancelInput): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.audioCancel, input), z.undefined())
+}
+
+// —— 阶段 4 批次 B 设置面（spec §5.1 本地设置：load/save invoke，响应 SettingsStateSchema）——
+async function settingsLoad(): Promise<SettingsState> {
+  return unwrap(await invoke<SettingsState>(IpcChannels.settingsLoad), SettingsStateSchema)
+}
+async function settingsSave(patch: SettingsPatch): Promise<SettingsState> {
+  return unwrap(await invokeWithArgs<SettingsState>(IpcChannels.settingsSave, patch), SettingsStateSchema)
+}
+
+/**
+ * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
+ * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
+ * 拷贝用 Uint8Array.from（元素迭代）：`new Uint8Array(proxy)` 会因 TypedArray 内部槽检查对 Proxy 抛
+ * "this is not a typed array"（Vue reactive 包装的 Uint8Array 命中）——from 走迭代/类数组路径，两者皆可。
+ */
+function voiceSendAudio(bytes: Uint8Array): void {
+  ipcRenderer.send(IpcChannels.voiceAudioChunk, { bytes: Uint8Array.from(bytes) })
+}
+
 type ChatEventHandler = (event: BackendEvent) => void
 type ChatStateHandler = (state: ConnectionState) => void
 type ChatReplayHandler = (payload: ReplayPayload) => void
@@ -422,7 +487,23 @@ export const desktopApi = {
   getActiveModelSelection,
   listTtsVoices,
   previewTts,
-  setTtsVoice
+  setTtsVoice,
+  // —— 阶段 4 批次 B 语音面 ——
+  voiceStartRecord,
+  voiceStopRecord,
+  voiceCommit,
+  voiceDiscard,
+  voiceStartRealtime,
+  voiceStopRealtime,
+  voiceCancelRealtime,
+  voiceStartDictation,
+  voiceStopDictation,
+  voiceCancelDictation,
+  audioCancel,
+  voiceSendAudio,
+  // —— 阶段 4 批次 B 设置面 ——
+  settingsLoad,
+  settingsSave
 }
 
 export type DesktopApi = typeof desktopApi

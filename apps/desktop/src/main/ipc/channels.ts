@@ -139,3 +139,30 @@ export const ttsSetVoiceSchema: z.ZodType<SetTtsVoiceCommand> = z.object({ voice
 // —— 阶段 4 批次 B 设置命令 request schema（响应 schema 在 shared/schemas/ipc-response SettingsStateSchema；save 入参=SettingsPatchSchema）——
 export const settingsLoadSchema = z.undefined()
 export const settingsSaveSchema = SettingsPatchSchema
+
+// —— 阶段 4 批次 B 语音命令 request schema（spec §5.4 方法集；严格镜像 contracts/voice.ts 输入形状；响应 schema 由 voice-handlers 内联）——
+export const voiceStartRecordSchema = z.object({ recordingId: z.string().min(1) })
+export const voiceStopRecordSchema = z.object({ recordingId: z.string().min(1) })
+export const voiceCommitSchema = z.object({
+  recordingId: z.string().min(1),
+  text: z.string(),                       // 转写文本可为空（未识别提交）
+  conversationId: z.string().min(1),
+  clientRequestId: z.string().min(1),
+  clientMessageId: z.string().min(1)
+})
+export const voiceDiscardSchema = z.object({ recordingId: z.string().min(1) })
+export const voiceStartRealtimeSchema = z.object({
+  sessionId: z.string().min(1),
+  conversationId: z.string().min(1).optional()
+})
+export const voiceStopRealtimeSchema = z.object({ sessionId: z.string().min(1) })
+export const voiceCancelRealtimeSchema = z.object({ sessionId: z.string().min(1) })
+export const voiceStartDictationSchema = z.object({
+  clientRequestId: z.string().min(1),
+  sttProfileId: z.string().optional()     // 缺省 → dictation.start 不带 → 全局活动 STT（D-P14）
+})
+export const voiceStopDictationSchema = z.object({ clientRequestId: z.string().min(1) })
+export const voiceCancelDictationSchema = z.object({ clientRequestId: z.string().min(1) })
+/** 音频二进制上行（单向 send 通道）：bytes 必须为真实 Uint8Array；1MiB 运行期上限在 voice-handlers 处校验（schema 只查类型） */
+export const voiceAudioChunkSchema = z.object({ bytes: z.instanceof(Uint8Array) })
+export const audioCancelSchema = z.object({ streamId: z.number().int() })

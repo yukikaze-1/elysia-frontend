@@ -134,6 +134,10 @@ async function main(): Promise<void> {
     // 用 const 桥容器打破 adapter→svc 环引用(adapter 构造在前、svc 在后,回调只在 connect/disconnect/会话回放时触发,此时已装配完)。
     const useMock = resolveBackendMode(app.isPackaged, process.env) === 'mock'
     const mockHistoryCount = parseMockHistoryCountEnv(process.env.CYRENE_MOCK_HISTORY_LARGE)
+    // P4-B TTS 实时朗读音频 sink 桥容器（Task 5 RealBackend getTtsMedia → Task 6 MediaService putTtsAudio）：
+    // mediaSvc 在 adapter 之后创建，用 const 桥打破 adapter→media 环引用（与 chatBridge 同款模式）；
+    // getTtsMedia 回调只在 audio_end 帧到达时触发，此时 mediaSvc 已装配完。
+    const mediaBridge: { media: MediaService | undefined } = { media: undefined }
     const chatBridge: { svc: ChatService | undefined } = { svc: undefined }
     const onState = (state: ConnectionState) => chatBridge.svc?.pushState(state)
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
@@ -155,7 +159,11 @@ async function main(): Promise<void> {
             onConnectionStateChange: onState,
             onSessionReplay: onReplay,
             onProtocolWarning: errorHandlers.onProtocolWarning,
-            onError: errorHandlers.onError
+            onError: errorHandlers.onError,
+            // P4-B：TTS 音频 sink（Task 5/6）。mediaBridge.media 未装配前返回 undefined → real-backend 告警丢弃（TTS_MEDIA_SINK_MISSING）
+            getTtsMedia: () => mediaBridge.media
+              ? { putTtsAudio: (id, bytes, mime) => mediaBridge.media!.putTtsAudio(id, bytes, mime) }
+              : undefined
           })
         })()
     // connection-config：注入 CredentialStore 端口（token 与 origin 绑定同仓不同 key）——
@@ -208,7 +216,8 @@ async function main(): Promise<void> {
       backend: adapter,
       baseUrl: () => connConfig.getEndpoint()?.baseUrl
     })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, audit })
+    mediaBridge.media = mediaSvc // audio_end 触发 getTtsMedia 回调前必须先就位（装配期完成，远早于用户 connect）
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },

@@ -1,11 +1,12 @@
 // apps/desktop/src/main/windows/main-window.ts
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, session, shell } from 'electron'
 import { join } from 'path'
 import { getMainWindow, setMainWindow } from '../ipc/registry'
 import { getAppConfig, shouldUseViteDevServer } from '../config'
 import { evaluateDevRendererUrl } from '../config/trusted-renderer-origin'
 import { PROTOCOL_SCHEME, RENDERER_HOST } from '../protocol'
 import { classifyNavigation } from './navigation'
+import { registerMicrophonePermission } from './mic-permission'
 
 let pendingFocus = false
 let appStarted = false
@@ -13,7 +14,16 @@ function setPendingFocus(): void { pendingFocus = true }
 function consumePendingFocus(): boolean { const p = pendingFocus; pendingFocus = false; return p }
 export function markAppStarted(): void { appStarted = true }
 
+// D-P7：麦克风权限处理器只注册一次（setPermission*Handler 全局覆盖；热重载/多窗重复调用会重复覆盖）
+let micPermissionRegistered = false
+function registerMicrophonePermissionOnce(): void {
+  if (micPermissionRegistered) return
+  micPermissionRegistered = true
+  registerMicrophonePermission(session.defaultSession)
+}
+
 export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
+  registerMicrophonePermissionOnce()
   const config = getAppConfig()
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // 加载/导航统一谓词（shouldUseViteDevServer = 未打包 && 有 dev server）：
