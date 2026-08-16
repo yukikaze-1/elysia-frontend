@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { isKeyAllowed, type ActivateModelProfileCommand, type CredentialStatus, type ModelProfileTestCommand, type SetTtsVoiceCommand, type TtsPreviewCommand, type UpsertModelProfileCommand } from '@shared/contracts'
-import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema } from '@shared/schemas'
+import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema, SettingsPatchSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
   name: z.string(),
@@ -135,3 +135,7 @@ export const modelsGetActiveSelectionSchema = z.undefined()
 export const ttsListVoicesSchema = z.undefined()
 export const ttsPreviewSchema: z.ZodType<TtsPreviewCommand> = z.object({ voiceId: z.string().max(200).optional() })
 export const ttsSetVoiceSchema: z.ZodType<SetTtsVoiceCommand> = z.object({ voice: z.string().min(1).max(200) })
+
+// —— 阶段 4 批次 B 设置命令 request schema（响应 schema 在 shared/schemas/ipc-response SettingsStateSchema；save 入参=SettingsPatchSchema）——
+export const settingsLoadSchema = z.undefined()
+export const settingsSaveSchema = SettingsPatchSchema

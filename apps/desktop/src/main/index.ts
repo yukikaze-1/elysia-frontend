@@ -21,6 +21,7 @@ import type { AuditEvent } from './diagnostics/audit'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
 import { SessionStore } from './persistence/session-store'
+import { SettingsService } from './settings/settings-service'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
 import { MockBackend, parseMockHistoryCountEnv } from './transport/mock-backend'
@@ -181,6 +182,10 @@ async function main(): Promise<void> {
       getActiveConversationId: () => chatBridge.svc?.getConnectionState().activeConversationId
     })
     await sessionStore.load() // 损坏隔离，不阻塞启动
+    // 阶段 4 批次 B SettingsService（前端自有设置持久化，spec §5.1；存 dirs.config/settings.json）：
+    // 必须在 registerHandlers 之前装配并 eager load——save 在内存态上 merge，未装载即 save 会以默认值覆盖已有落盘值。
+    const settingsSvc = new SettingsService({ dir: dirs.config, safeRoot, logger: diagnostics.logger })
+    await settingsSvc.load() // fail-open：损坏/版本不匹配隔离备份 + 回默认，不阻塞启动
     const chatSvc = createChatService({
       adapter,
       send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },   // P3:webContents 守卫(窗口未建不崩)
@@ -203,7 +208,7 @@ async function main(): Promise<void> {
       backend: adapter,
       baseUrl: () => connConfig.getEndpoint()?.baseUrl
     })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
