@@ -96,6 +96,24 @@ async function startRecord(page: Page): Promise<void> {
   await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
 }
 
+/** 覆写 renderer 的 navigator.mediaDevices.getUserMedia 为拒绝（NotAllowedError，与真实权限拒绝走同一 capture 失败路径）；
+ *  原函数先存 window.__origGUM，供 restoreGetUserMedia 还原。 */
+async function stubGetUserMediaReject(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const md = navigator.mediaDevices as unknown as Record<string, unknown>
+    ;(window as unknown as Record<string, unknown>).__origGUM = md.getUserMedia
+    md.getUserMedia = () => Promise.reject(new DOMException('NotAllowedError', 'NotAllowedError'))
+  })
+}
+
+async function restoreGetUserMedia(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const md = navigator.mediaDevices as unknown as Record<string, unknown>
+    const orig = (window as unknown as Record<string, unknown>).__origGUM
+    if (orig) md.getUserMedia = orig
+  })
+}
+
 describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => {
   it('1. 录音闭环：🎤→录音态（计时）→停止→待发送条字幕→确认发送→用户消息出现', async () => {
     const launched = await launchVoiceWithSize(VW, VH)
@@ -119,19 +137,50 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
     } finally { await closeApp(launched) }
   })
 
-  it('2. 未识别：CYRENE_MOCK_VOICE_TRANSCRIPT="" → 「未识别，请重试」+ 确认发送禁用 + 删除收口', async () => {
+  it('2. 未识别：CYRENE_MOCK_VOICE_TRANSCRIPT="" → 「正在识别…」等待态（非未识别）+确认发送禁用 + 删除收口', async () => {
     const launched = await launchVoiceWithSize(VW, VH, { env: { CYRENE_MOCK_VOICE_TRANSCRIPT: '' } })
     try {
       const page = launched.page
       await connectAndActivateFirst(page)
       await startRecord(page)
       await page.getByRole('button', { name: '停止录音', exact: true }).click()
-      await expect.poll(() => page.locator('.cy-vp-empty').count(), POLL).toBe(1)
-      await expect.poll(() => page.locator('.cy-vp-empty').textContent(), POLL).toContain('未识别，请重试')
+      // P1-02：空/慢转写在 45s 兜底前显示「正在识别…」等待态，而非立即误报「未识别，请重试」
+      await expect.poll(() => page.locator('.cy-vp-waiting').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-vp-waiting').textContent(), POLL).toContain('正在识别…')
+      // 短窗 2s 内「未识别，请重试」不得出现（慢转写不被误报）。注：空转写 mock 不发 transcript，
+      // awaitingTranscript 持续 true，45s timer 后才翻「未识别」——此处只用 count() 断言（textContent 会因
+      // Playwright auto-wait 阻塞到 45s 后元素出现而误报）。
+      await page.waitForTimeout(2000)
+      expect(await page.locator('.cy-vp-empty').count()).toBe(0)
+      // 无字幕 → 确认发送禁用（R-S4-07：等待期可删除、试听，但不可发送）
       expect(await page.getByRole('button', { name: '确认发送', exact: true }).isDisabled()).toBe(true)
-      // 删除收口 → 回 idle（无残留待发送条）
+      // 删除收口 → 回 idle（无残留待发送条）+ 普通录音按钮恢复 + 连接保持
       await pendingBtn(page, '删除').click()
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
+      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('已连接')
+    } finally { await closeApp(launched) }
+  })
+
+  it('2b. 慢转写不闪烁：CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS=1500 → 等待期不误报未识别 → 字幕到达（无闪烁）→确认发送可用', async () => {
+    const launched = await launchVoiceWithSize(VW, VH, { env: { CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS: '1500' } })
+    try {
+      const page = launched.page
+      await connectAndActivateFirst(page)
+      await startRecord(page)
+      await page.getByRole('button', { name: '停止录音', exact: true }).click()
+      // 慢转写等待期（< delay 1500ms）：「未识别，请重试」不得出现（R-S4-07 慢转写不误报）。
+      // 注：Mock 延迟置于 stopRecordVoice 控制帧响应内（Task 3），renderer 的 awaitingTranscript 在 IPC
+      // resolve（≈1500ms）才置位——此时 transcript 已到达，故「正在识别…」仅被 case 2（空转写）可观察；
+      // 本用例聚焦「等待期→字幕到达全程无未识别闪烁」的契约。
+      await page.waitForTimeout(800)
+      expect(await page.locator('.cy-vp-empty').count()).toBe(0)
+      // transcript 到达（≈1500ms）→ 字幕显示；等待态退出；全程无「未识别」闪烁
+      await expect.poll(() => page.locator('.cy-vp-text').textContent(), POLL).toContain('这是一段测试录音的转写文本')
+      await expect.poll(() => page.locator('.cy-vp-waiting').count(), POLL).toBe(0)
+      expect(await page.locator('.cy-vp-empty').count()).toBe(0)
+      // 确认发送可用（字幕就绪）
+      expect(await page.getByRole('button', { name: '确认发送', exact: true }).isDisabled()).toBe(false)
     } finally { await closeApp(launched) }
   })
 
@@ -382,6 +431,75 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       const sttSel2 = page.locator('.cy-vp-field', { hasText: '转写 STT Profile' }).locator('select')
       await expect.poll(() => sttSel2.inputValue(), POLL).toBe('')
       await expect.poll(() => page.locator('.cy-settings-toast').textContent(), POLL).toContain('转写已回退全局 STT')
+    } finally { await closeApp(launched) }
+  })
+
+  it('12. 采集失败免重连：getUserMedia 拒绝 → micError banner + 按钮恢复(mode idle) → 还原同连接三语音各自成功', async () => {
+    const launched = await launchVoiceWithSize(VW, VH, {
+      seed: [{ relPath: 'config/settings.json', content: REALTIME_SETTINGS }], // realtimeEnabled+consent 预开
+    })
+    try {
+      const page = launched.page
+      await connectAndActivateFirst(page)
+      // 1) 覆写 getUserMedia 拒绝（NotAllowedError，真实权限拒绝同路径），原函数存 window.__origGUM
+      await stubGetUserMediaReject(page)
+      // 2) 点普通录音 → control 帧先行（voice.record.start）→ capture 拒绝 → composer micError banner + 按钮恢复（mode 回 idle）
+      await expect.poll(() => page.locator('.cy-status-text').textContent(), POLL).toContain('已连接')
+      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(1)
+      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      expect(await page.getByRole('button', { name: '停止录音', exact: true }).count()).toBe(0)
+      // 3) 还原 getUserMedia → 同一连接普通录音成功：进入 recording（P0-01：后端会话已由 discard 释放，无 VOICE_SESSION_CONFLICT）
+      await restoreGetUserMedia(page)
+      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(0)
+      // 4) stop → 删除（discardRecord：待发送条消失 + mode 回 idle）——realtime/dictation 的 guardStart 要求 idle，必须先 discard
+      await page.getByRole('button', { name: '停止录音', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)
+      await pendingBtn(page, '删除').click()
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
+      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      // 5) 实时 start+stop（同连接，无需重连）
+      await page.getByRole('button', { name: '实时会话', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-rt-status').textContent(), POLL).toContain('聆听中')
+      await page.getByRole('button', { name: '停止', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(0)
+      // 6) 转写 start+stop（按住说话，同连接）
+      const dictBtn = page.getByRole('button', { name: '输入法转写（按住说话）', exact: true })
+      await dictBtn.hover()
+      await page.mouse.down()
+      await expect.poll(() => page.locator('.cy-dictation-hint').count(), POLL).toBe(1)
+      await page.mouse.up()
+      await expect.poll(() => page.locator('.cy-dictation-hint').count(), POLL).toBe(0)
+      // 全程连接保持（未重连）
+      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('已连接')
+    } finally { await closeApp(launched) }
+  })
+
+  it('13. 设置页 mic 失败退出后聊天可立即语音：micTestError 展示 + 无残留 composer banner(clearTransientErrors)', async () => {
+    const launched = await launchVoiceWithSize(VW, VH)
+    try {
+      const page = launched.page
+      await connectAndActivateFirst(page)
+      await stubGetUserMediaReject(page)
+      // 设置 → 语音 → 「测试麦克风」→ getUserMedia 拒绝 → micTestError 展示（micTesting 回落 idle）
+      await openSettings(page)
+      await openVoicePane(page)
+      await page.getByRole('button', { name: '测试麦克风', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-vp-mictest .cy-vp-error').count(), POLL).toBe(1)
+      // 退出设置 → CyVoicePane 卸载 clearTransientErrors → 聊天页无残留 composer banner（mode-idle micError 残差不误展示）
+      await closeSettings(page)
+      await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(0)
+      // 还原 getUserMedia → 普通录音按钮可立即启动（进入 recording）
+      await restoreGetUserMedia(page)
+      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
+      await page.getByRole('button', { name: '停止录音', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)
+      await pendingBtn(page, '删除').click()
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
     } finally { await closeApp(launched) }
   })
 })
