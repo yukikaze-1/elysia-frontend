@@ -326,7 +326,7 @@ describe('parseMockVoiceTranscriptDelayEnv（Task 3，R-S4-05）', () => {
 })
 
 describe('stopRecordVoice transcriptDelayMs 延迟 emit（Task 3，R-S4-05）', () => {
-  it('transcriptDelayMs=50：延迟到达前不 emit，到达后 emit 且 emit 后清 activeVoice', async () => {
+  it('transcriptDelayMs=50：延迟到达前不 emit，到达后 emit（fire-and-forget）且 active 同步清', async () => {
     vi.useFakeTimers()
     try {
       backend = new MockBackend({ transcriptDelayMs: 50 })
@@ -343,7 +343,7 @@ describe('stopRecordVoice transcriptDelayMs 延迟 emit（Task 3，R-S4-05）', 
       expect(trs).toHaveLength(1)
       expect(trs[0]?.recordingId).toBe('rec1')
       expect(trs[0]?.text).toBe('这是一段测试录音的转写文本')
-      // emit 后 activeVoice 已清（顺序：emit 后清）：随后 discard 落入 IDLE 幂等成功——
+      // activeVoice 于停被接受时同步清（Task 5 修正：不随延迟 emit 顺延）：随后 discard 落入 IDLE 幂等成功——
       // 若 activeVoice 未清，discard(other) 会因 mismatch 抛 VOICE_RECORDING_NOT_FOUND
       await expect(backend.discardVoice({ recordingId: 'other-rec' })).resolves.toBeUndefined()
     } finally {

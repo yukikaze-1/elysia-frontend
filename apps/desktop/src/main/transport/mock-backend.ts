@@ -168,6 +168,8 @@ export class MockBackend implements BackendAdapter {
   private readonly conversations: Conversation[] = createMockConversations()
   private activeConversationId?: string
   private generationTimers = new Map<string, ReturnType<typeof setTimeout>[]>()
+  /** 延迟 transcript emit 句柄（R-S4-05 fire-and-forget；stopRecordVoice 立即 resolve、仅延迟 emit，dispose 清理） */
+  private transcriptTimers: ReturnType<typeof setTimeout>[] = []
   private idCounter = 0
   /** 大 seed 条数（构造体内先于 messageRecords 赋值，seedMessages() 才能读到；spec §4.3.1） */
   private readonly seedHistoryCount: number
@@ -475,12 +477,21 @@ export class MockBackend implements BackendAdapter {
 
   async stopRecordVoice(input: VoiceRecordStopInput): Promise<void> {
     const text = this.transcriptText
-    // 显式空串测「未识别」：不发 transcript（Minor 18）；非空才 emit voice.transcript
+    // R-S4-05（ruling，Task 5 修正）：控制帧 invoke **立即 resolve**（与 real send-only 语义一致），
+    // 非空 transcript 的 emit 单独延迟 fire-and-forget——renderer `await api.voiceStopRecord` 后即置
+    // awaitingTranscript=true，「正在识别…」等待态在 delay 窗口内可观察（spec §7.2 用例 2b 依赖此顺序）。
+    // 空串测「未识别」：不发 transcript（Minor 18）。
     if (text.length > 0) {
-      // R-S4-05（Task 3）：非空 transcript 且配置延迟 >0 → await 满延迟再 emit（mock 慢转写；集成可观察「正在识别…」等待态）
-      if (this.transcriptDelayMs > 0) await new Promise((r) => setTimeout(r, this.transcriptDelayMs))
-      this.emit({ ...this.stamp(), event: 'voice.transcript', recordingId: input.recordingId, text } satisfies VoiceTranscriptEvent)
+      const emit = (): void => {
+        this.emit({ ...this.stamp(), event: 'voice.transcript', recordingId: input.recordingId, text } satisfies VoiceTranscriptEvent)
+      }
+      if (this.transcriptDelayMs > 0) {
+        this.transcriptTimers.push(setTimeout(emit, this.transcriptDelayMs))
+      } else {
+        emit()
+      }
     }
+    // 停被接受即清 active（同步，不随延迟 emit 顺延）——保证 stop 后立刻可 start/discard 走 IDLE 幂等
     if (this.activeVoice?.kind === 'record') this.activeVoice = undefined
   }
 
@@ -648,6 +659,8 @@ export class MockBackend implements BackendAdapter {
   private clearTimers(): void {
     this.generationTimers.forEach((timers) => timers.forEach((t) => clearTimeout(t)))
     this.generationTimers.clear()
+    this.transcriptTimers.forEach((t) => clearTimeout(t))
+    this.transcriptTimers = []
   }
 
   private emit(event: BackendEvent): void {

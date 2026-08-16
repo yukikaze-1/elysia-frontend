@@ -162,17 +162,19 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
     } finally { await closeApp(launched) }
   })
 
-  it('2b. 慢转写不闪烁：CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS=1500 → 等待期不误报未识别 → 字幕到达（无闪烁）→确认发送可用', async () => {
+  it('2b. 等待态不闪烁：CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS=1500 →「正在识别…」可见 → 字幕到达（无未识别闪烁）→确认发送可用', async () => {
     const launched = await launchVoiceWithSize(VW, VH, { env: { CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS: '1500' } })
     try {
       const page = launched.page
       await connectAndActivateFirst(page)
       await startRecord(page)
       await page.getByRole('button', { name: '停止录音', exact: true }).click()
-      // 慢转写等待期（< delay 1500ms）：「未识别，请重试」不得出现（R-S4-07 慢转写不误报）。
-      // 注：Mock 延迟置于 stopRecordVoice 控制帧响应内（Task 3），renderer 的 awaitingTranscript 在 IPC
-      // resolve（≈1500ms）才置位——此时 transcript 已到达，故「正在识别…」仅被 case 2（空转写）可观察；
-      // 本用例聚焦「等待期→字幕到达全程无未识别闪烁」的契约。
+      // R-S4-05（Task 5 修正）：stopRecordVoice 控制帧立即 resolve → renderer 即刻置 awaitingTranscript=true，
+      // 慢转写延迟窗口（1500ms）内「正在识别…」等待态可观察
+      await expect.poll(() => page.locator('.cy-vp-waiting').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-vp-waiting').textContent(), POLL).toContain('正在识别…')
+      // 短窗（< delay 1500ms）内「未识别，请重试」不得出现——慢转写不误报（R-S4-07）。
+      // 缺席断言用 count()：locator.textContent() 会对不存在的元素 auto-wait 到 45s 翻转才返回。
       await page.waitForTimeout(800)
       expect(await page.locator('.cy-vp-empty').count()).toBe(0)
       // transcript 到达（≈1500ms）→ 字幕显示；等待态退出；全程无「未识别」闪烁
