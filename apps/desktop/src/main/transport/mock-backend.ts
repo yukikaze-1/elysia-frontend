@@ -105,6 +105,17 @@ export function parseMockVoiceTranscriptEnv(value: string | undefined): string |
   return value === undefined ? undefined : value
 }
 
+/** CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS env → transcriptDelayMs（Task 3 / R-S4-05）：
+ *  undefined → undefined（未接线，不注入）；否则 Number(value) 钳制 [0, 30000]（NaN/负数 → 0，超上限 → 30000）。
+ *  与 parseMockVoiceTranscriptEnv 的「显式空串 = 合法注入」语义刻意不同：延迟 env 的空/空白非合法注入——
+ *  空串 → Number('') = 0 → 钳 0（无延迟），语义即「不等待」。集成（Task 5）以此 env 观察「正在识别…」等待态。 */
+export function parseMockVoiceTranscriptDelayEnv(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const n = Number(value)
+  if (Number.isNaN(n)) return 0
+  return Math.min(30000, Math.max(0, n))
+}
+
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number
@@ -122,6 +133,10 @@ export interface MockBackendOptions {
   voiceError?: { code: string; message?: string }
   /** 普通录音转写文本（P4-B Mock）：stopRecordVoice 缺省 `'这是一段测试录音的转写文本'`；显式空串测「未识别」（stop 不发 transcript） */
   voiceTranscriptText?: string
+  /** 普通录音转写输出延迟 ms（Task 3 R-S4-05）：>0 且 transcript 非空时，stopRecordVoice `await` 满延迟再 emit
+   *  voice.transcript（mock 慢转写；集成用 CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS 注入可观察「正在识别…」等待态）。
+   *  缺省 0 不延迟（emit 后清 activeVoice 顺序不变）。 */
+  transcriptDelayMs?: number
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -159,6 +174,8 @@ export class MockBackend implements BackendAdapter {
   /** P4-B 语音选项：voiceError 注入 + 录音转写文本（缺省测试文案） */
   private readonly voiceErrorOpt?: { code: string; message?: string }
   private readonly transcriptText: string
+  /** R-S4-05（Task 3）：录音转写输出延迟 ms（缺省 0 不延迟；>0 + transcript 非空 → stopRecordVoice 延迟 emit） */
+  private readonly transcriptDelayMs: number
   /** 实时语音会话归属会话（startRealtimeVoice 携带；turn 内 conversationId 取此优先于活动会话） */
   private realtimeConversationId?: string
   /** 实时会话 turn 已发标志（每会话首个 chunk 仅发一次 partial+turn；realtime start/stop/cancel 时重置） */
@@ -230,6 +247,7 @@ export class MockBackend implements BackendAdapter {
     this.seedHistoryCount = options.seedHistoryCount ?? 0
     this.voiceErrorOpt = options.voiceError
     this.transcriptText = options.voiceTranscriptText ?? '这是一段测试录音的转写文本'
+    this.transcriptDelayMs = options.transcriptDelayMs ?? 0
     this.messageRecords = this.seedMessages()
     this.emitDelayMs = options.emitDelayMs ?? 30
     this.onConnectionStateChange = options.onConnectionStateChange
@@ -459,6 +477,8 @@ export class MockBackend implements BackendAdapter {
     const text = this.transcriptText
     // 显式空串测「未识别」：不发 transcript（Minor 18）；非空才 emit voice.transcript
     if (text.length > 0) {
+      // R-S4-05（Task 3）：非空 transcript 且配置延迟 >0 → await 满延迟再 emit（mock 慢转写；集成可观察「正在识别…」等待态）
+      if (this.transcriptDelayMs > 0) await new Promise((r) => setTimeout(r, this.transcriptDelayMs))
       this.emit({ ...this.stamp(), event: 'voice.transcript', recordingId: input.recordingId, text } satisfies VoiceTranscriptEvent)
     }
     if (this.activeVoice?.kind === 'record') this.activeVoice = undefined
@@ -482,8 +502,19 @@ export class MockBackend implements BackendAdapter {
     return { clientRequestId: input.clientRequestId, serverMessageId }
   }
 
-  async discardVoice(_input: VoiceDiscardInput): Promise<void> {
-    if (this.activeVoice?.kind === 'record') this.activeVoice = undefined
+  /** discard 冻结契约五态（Task 3 / R-S4-03，spec §5.5 逐字）：
+   *  ① record 匹配 → 清 active；② record mismatch（另一录音活跃）→ VOICE_RECORDING_NOT_FOUND 拒绝、不误清；
+   *  ③ realtime/dictation 活跃 → VOICE_SESSION_CONFLICT 拒绝、不动；
+   *  ④ 无活动会话（IDLE / 已自动重置）→ 幂等成功，**不发** VOICE_RECORDING_NOT_FOUND。 */
+  async discardVoice(input: VoiceDiscardInput): Promise<void> {
+    const active = this.activeVoice
+    if (active?.kind === 'record') {
+      if (active.key !== input.recordingId) throw new CyreneError(CyreneErrorCode.VOICE_RECORDING_NOT_FOUND, '无此活动录音')  // mismatch 拒绝，不误清
+      this.activeVoice = undefined                                                                                           // match 清
+      return
+    }
+    if (active) throw new CyreneError(CyreneErrorCode.VOICE_SESSION_CONFLICT, '已有活动语音会话')  // realtime/dictation 拒绝不动
+    // 无活动会话（IDLE / 已自动重置）→ 幂等成功，不发 VOICE_RECORDING_NOT_FOUND（冻结契约）
   }
 
   async startRealtimeVoice(input: RealtimeVoiceStartInput): Promise<{ sessionId: string }> {

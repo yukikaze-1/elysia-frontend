@@ -24,7 +24,7 @@ import { SessionStore } from './persistence/session-store'
 import { SettingsService } from './settings/settings-service'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
-import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptEnv } from './transport/mock-backend'
+import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
@@ -137,6 +137,9 @@ async function main(): Promise<void> {
     // P4-B Task 15 最小 env 桥：测试注入普通录音转写文本（显式空串=未识别，mock 不发 transcript）。
     // 仅跨 voiceTranscriptText——voiceError 注入不需要 env 桥（错误路由已有单测/集成覆盖）。
     const mockVoiceTranscript = parseMockVoiceTranscriptEnv(process.env.CYRENE_MOCK_VOICE_TRANSCRIPT)
+    // Task 3 env 桥（R-S4-05）：mock 慢转写，集成可观察「正在识别…」等待态（Task 5 用）。undefined 不注入（缺省 0）；
+    // 与 voiceTranscriptText 的「空串合法」语义刻意不同——延迟 env 空串 → Number('')=0 → 钳 0（无延迟），合法。
+    const mockVoiceTranscriptDelay = parseMockVoiceTranscriptDelayEnv(process.env.CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS)
     // P4-B TTS 实时朗读音频 sink 桥容器（Task 5 RealBackend getTtsMedia → Task 6 MediaService putTtsAudio）：
     // mediaSvc 在 adapter 之后创建，用 const 桥打破 adapter→media 环引用（与 chatBridge 同款模式）；
     // getTtsMedia 回调只在 audio_end 帧到达时触发，此时 mediaSvc 已装配完。
@@ -145,7 +148,7 @@ async function main(): Promise<void> {
     const onState = (state: ConnectionState) => chatBridge.svc?.pushState(state)
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}) })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}) })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,

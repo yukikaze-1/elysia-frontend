@@ -16,7 +16,11 @@ export enum CyreneErrorCode {
   AUTHENTICATION_FAILED = 'AUTHENTICATION_FAILED',
   BACKEND_REJECTED = 'BACKEND_REJECTED',
   DRAFT_LIMIT_EXCEEDED = 'DRAFT_LIMIT_EXCEEDED',   // G2：单草稿 UTF-8 >100KB（Main 权威校验）
-  IPC_MESSAGE_TOO_LARGE = 'IPC_MESSAGE_TOO_LARGE'  // G2：单条 IPC 消息超 MAX_IPC_MESSAGE_BYTES（docs/07 §6.3）
+  IPC_MESSAGE_TOO_LARGE = 'IPC_MESSAGE_TOO_LARGE',  // G2：单条 IPC 消息超 MAX_IPC_MESSAGE_BYTES（docs/07 §6.3）
+  /** 语音族 IPC 错误码（Task 3 R-S4-03，对齐 wire VoiceErrorCode）：录音 discard recordingId 不匹配（另一录音活跃）→ 拒绝不误清 */
+  VOICE_RECORDING_NOT_FOUND = 'VOICE_RECORDING_NOT_FOUND',
+  /** 语音族 IPC 错误码（Task 3 R-S4-03，对齐 wire VoiceErrorCode）：realtime/dictation 活跃时 discard 普通录音 → 拒绝不动 */
+  VOICE_SESSION_CONFLICT = 'VOICE_SESSION_CONFLICT'
 }
 
 export class CyreneError extends Error {

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { MockBackend } from '../../src/main/transport/mock-backend'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MockBackend, parseMockVoiceTranscriptDelayEnv } from '../../src/main/transport/mock-backend'
 import { parseBackendEvent } from '@shared/schemas'
 import type { BackendEvent } from '@shared/contracts'
 
@@ -238,5 +238,132 @@ describe('MockBackend 语音模拟（P4-B Task 7）', () => {
     const cancels = ev.filter((e) => e.event === 'audio.session.cancelled')
     expect(cancels).toHaveLength(1)
     expect(cancels[0]?.streamId).toBe(7)
+  })
+})
+
+describe('MockBackend discardVoice 冻结契约五态（Task 3，R-S4-03）', () => {
+  it('record 活跃 + recordingId 匹配 → 清 active；随后 IDLE 幂等', async () => {
+    backend = new MockBackend()
+    await backend.startRecordVoice({ recordingId: 'rec1' })
+    await backend.discardVoice({ recordingId: 'rec1' })
+    // 已清回 IDLE：再次 discard 幂等成功，不发 VOICE_RECORDING_NOT_FOUND
+    await expect(backend.discardVoice({ recordingId: 'rec1' })).resolves.toBeUndefined()
+  })
+
+  it('record 活跃 + recordingId 不匹配（另一录音活跃）→ VOICE_RECORDING_NOT_FOUND，原录音不误清', async () => {
+    backend = new MockBackend()
+    await backend.startRecordVoice({ recordingId: 'rec-a' })
+    await backend.startRecordVoice({ recordingId: 'rec-b' }) // Mock 单活动录音槽：rec-b 为当前录音
+    await expect(backend.discardVoice({ recordingId: 'rec-a' })).rejects.toMatchObject({
+      code: 'VOICE_RECORDING_NOT_FOUND', message: '无此活动录音'
+    })
+    // 原录音（rec-b）未被误清：正确 recordingId 仍可 discard（match 清）
+    await expect(backend.discardVoice({ recordingId: 'rec-b' })).resolves.toBeUndefined()
+    // 清后幂等
+    await expect(backend.discardVoice({ recordingId: 'rec-b' })).resolves.toBeUndefined()
+  })
+
+  it('realtime 活跃 → VOICE_SESSION_CONFLICT，会话不动', async () => {
+    backend = new MockBackend()
+    const ev: BackendEvent[] = []
+    backend.subscribe((e) => ev.push(e))
+    await backend.startRealtimeVoice({ sessionId: 'vs1', conversationId: 'conv-1001' })
+    await expect(backend.discardVoice({ recordingId: 'whatever' })).rejects.toMatchObject({
+      code: 'VOICE_SESSION_CONFLICT', message: '已有活动语音会话'
+    })
+    // 会话未动：仍可收 turn（同一会话仍活跃），正常结束
+    backend.sendAudioBytes(new Uint8Array(0))
+    expect(ev.filter((e) => e.event === 'voice_session.turn')).toHaveLength(1)
+    await backend.stopRealtimeVoice({ sessionId: 'vs1' })
+  })
+
+  it('dictation 活跃 → VOICE_SESSION_CONFLICT，会话不动', async () => {
+    backend = new MockBackend()
+    const ev: BackendEvent[] = []
+    backend.subscribe((e) => ev.push(e))
+    await backend.startDictation({ clientRequestId: 'd1' })
+    await expect(backend.discardVoice({ recordingId: 'whatever' })).rejects.toMatchObject({ code: 'VOICE_SESSION_CONFLICT' })
+    // dictation 未动：仍可正常 stop（final 照发）
+    await backend.stopDictation({ clientRequestId: 'd1' })
+    expect(ev.filter((e) => e.event === 'dictation.final')).toHaveLength(1)
+  })
+
+  it('无活动会话（IDLE / 已自动重置）→ 幂等成功，不发 VOICE_RECORDING_NOT_FOUND', async () => {
+    backend = new MockBackend()
+    await expect(backend.discardVoice({ recordingId: 'rec1' })).resolves.toBeUndefined()
+    await expect(backend.discardVoice({ recordingId: 'rec1' })).resolves.toBeUndefined()
+  })
+})
+
+describe('parseMockVoiceTranscriptDelayEnv（Task 3，R-S4-05）', () => {
+  it('undefined → undefined（未接线，不注入）', () => {
+    expect(parseMockVoiceTranscriptDelayEnv(undefined)).toBeUndefined()
+  })
+
+  it("'0' → 0", () => {
+    expect(parseMockVoiceTranscriptDelayEnv('0')).toBe(0)
+  })
+
+  it("'' 空串 → Number('')=0 → 0（延迟空串非合法注入，钳 0 无延迟）", () => {
+    expect(parseMockVoiceTranscriptDelayEnv('')).toBe(0)
+  })
+
+  it('负数 → 钳 0', () => {
+    expect(parseMockVoiceTranscriptDelayEnv('-5')).toBe(0)
+  })
+
+  it('超上限 → 钳 30000', () => {
+    expect(parseMockVoiceTranscriptDelayEnv('50000')).toBe(30000)
+  })
+
+  it('NaN（非数字）→ 0', () => {
+    expect(parseMockVoiceTranscriptDelayEnv('abc')).toBe(0)
+  })
+
+  it('正常正值原样透传', () => {
+    expect(parseMockVoiceTranscriptDelayEnv('1500')).toBe(1500)
+  })
+})
+
+describe('stopRecordVoice transcriptDelayMs 延迟 emit（Task 3，R-S4-05）', () => {
+  it('transcriptDelayMs=50：延迟到达前不 emit，到达后 emit 且 emit 后清 activeVoice', async () => {
+    vi.useFakeTimers()
+    try {
+      backend = new MockBackend({ transcriptDelayMs: 50 })
+      const ev: BackendEvent[] = []
+      backend.subscribe((e) => ev.push(e))
+      await backend.startRecordVoice({ recordingId: 'rec1' })
+      const p = backend.stopRecordVoice({ recordingId: 'rec1' })
+      expect(ev.filter((e) => e.event === 'voice.transcript')).toHaveLength(0) // 未到延迟不 emit
+      await vi.advanceTimersByTimeAsync(49)
+      expect(ev.filter((e) => e.event === 'voice.transcript')).toHaveLength(0) // 50ms 前仍不 emit
+      await vi.advanceTimersByTimeAsync(1)
+      await p
+      const trs = ev.filter((e) => e.event === 'voice.transcript')
+      expect(trs).toHaveLength(1)
+      expect(trs[0]?.recordingId).toBe('rec1')
+      expect(trs[0]?.text).toBe('这是一段测试录音的转写文本')
+      // emit 后 activeVoice 已清（顺序：emit 后清）：随后 discard 落入 IDLE 幂等成功——
+      // 若 activeVoice 未清，discard(other) 会因 mismatch 抛 VOICE_RECORDING_NOT_FOUND
+      await expect(backend.discardVoice({ recordingId: 'other-rec' })).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('transcriptDelayMs>0 但 transcript 空（显式空串）→ 不延迟、不发 transcript、active 仍清', async () => {
+    vi.useFakeTimers()
+    try {
+      backend = new MockBackend({ voiceTranscriptText: '', transcriptDelayMs: 50 })
+      const ev: BackendEvent[] = []
+      backend.subscribe((e) => ev.push(e))
+      await backend.startRecordVoice({ recordingId: 'rec1' })
+      await backend.stopRecordVoice({ recordingId: 'rec1' })
+      // 空 transcript：不 emit，也不需要推进延迟计时器
+      expect(ev.filter((e) => e.event === 'voice.transcript')).toHaveLength(0)
+      await expect(backend.discardVoice({ recordingId: 'rec1' })).resolves.toBeUndefined() // active 已清 → IDLE 幂等
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
