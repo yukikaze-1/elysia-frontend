@@ -10,6 +10,7 @@ const voiceStore = useVoiceStore()
 const transcript = computed(() => voiceStore.record.transcript?.trim() ?? '')
 const hasTranscript = computed(() => transcript.value.length > 0)
 const hasAudio = computed(() => !!voiceStore.record.audioBuffer)
+const awaitingTranscript = computed(() => voiceStore.record.awaitingTranscript) // P1-02：stop 后等待 STT 终态
 // final-review Important-1a：record_pending 态展示 voiceStore.error（后端明确失败如 STT_UNAVAILABLE）——区别于
 // D-P17「未识别，请重试」兜底（后者是 45s 无 transcript/error 的模糊判词）。round2：移除 micError 分支——
 // store 各 start* 的 capture 失败在同一同步块置 micError + mode='idle'，待发送条恰好卸载，该分支是死路径
@@ -39,6 +40,7 @@ async function onConfirm(): Promise<void> {
     <div class="cy-vp-caption">
       <span v-if="errorText" class="cy-vp-error" role="alert">{{ errorText }}</span>
       <span v-if="hasTranscript" class="cy-vp-text">{{ transcript }}</span>
+      <span v-else-if="!errorText && awaitingTranscript" class="cy-vp-waiting" role="status">正在识别…</span>
       <span v-else-if="!errorText" class="cy-vp-empty">未识别，请重试</span>
     </div>
     <div class="cy-vp-actions">
@@ -78,7 +80,8 @@ async function onConfirm(): Promise<void> {
 }
 
 .cy-vp-text,
-.cy-vp-empty {
+.cy-vp-empty,
+.cy-vp-waiting {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -89,7 +92,8 @@ async function onConfirm(): Promise<void> {
   font-weight: 500;
 }
 
-.cy-vp-empty {
+.cy-vp-empty,
+.cy-vp-waiting {
   color: var(--cy-muted);
 }
 

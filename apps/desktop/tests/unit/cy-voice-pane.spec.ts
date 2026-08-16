@@ -262,6 +262,20 @@ describe('CyVoicePending 待发送语音条（spec §5.12 / Minor 24）', () => 
     expect((confirmBtn!.element as HTMLButtonElement).disabled).toBe(false)
     wrapper.unmount()
   })
+
+  it('record_pending + awaitingTranscript=true + 无 error/transcript → 显示「正在识别…」+ 不显示「未识别，请重试」+ 确认发送禁用（P1-02）', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'record_pending'
+    voice.record.transcript = undefined
+    voice.record.awaitingTranscript = true
+    const wrapper = mount(CyVoicePending)
+    expect(wrapper.text()).toContain('正在识别…')
+    expect(wrapper.text()).not.toContain('未识别，请重试')
+    const confirmBtn = wrapper.findAll('button').find((b) => b.text().includes('确认发送'))
+    expect(confirmBtn).toBeDefined()
+    expect((confirmBtn!.element as HTMLButtonElement).disabled).toBe(true)
+    wrapper.unmount()
+  })
 })
 
 describe('CyVoicePending 待发送语音条——错误展示（final-review Important-1a）', () => {

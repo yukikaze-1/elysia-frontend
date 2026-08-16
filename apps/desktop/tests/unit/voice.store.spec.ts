@@ -273,9 +273,11 @@ describe('voiceStore', () => {
     const store = useVoiceStore()
     await store.startRecord()
     await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true) // P1-02：stop 后进入等待态
     await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS)
     expect(store.caption).toBe('')
     expect(store.record.transcript).toBeUndefined()
+    expect(store.record.awaitingTranscript).toBe(false) // P1-02：45s 到时翻转「未识别」
     const ok = await store.commitRecord()
     expect(ok).toBe(false)
   })
@@ -301,6 +303,93 @@ describe('voiceStore', () => {
     expect(store.mode).toBe('idle')
     expect(store.record.elapsedMs).toBe(0)
     expect(store.caption).toBe('')
+  })
+
+  // —— P1-02 record 等待态 + R-S4-06 voice.error 门控 ——
+
+  it('record：P1-02 stop 后 awaitingTranscript=true；45s 到时翻转 false（未识别）', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord()
+    expect(store.record.awaitingTranscript).toBe(false) // 录音中非等待态
+    await store.stopRecord()
+    expect(store.mode).toBe('record_pending')
+    expect(store.record.awaitingTranscript).toBe(true)
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS - 1)
+    expect(store.record.awaitingTranscript).toBe(true) // 0~44.999s 不翻转
+    await vi.advanceTimersByTimeAsync(1)
+    expect(store.record.awaitingTranscript).toBe(false) // 45s 到时翻转
+    expect(store.caption).toBe('')
+  })
+
+  it('record：P1-02 慢字幕第 30s 到达 → transcript 置位 + awaiting 清 + timer 清除（45s 不被清空）', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord()
+    await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true)
+    const handler = subscribe(store)
+    await vi.advanceTimersByTimeAsync(30000)
+    handler(ev({ event: 'voice.transcript', recordingId: lastRecordingId(), text: '慢字幕' }))
+    expect(store.record.transcript).toBe('慢字幕')
+    expect(store.record.awaitingTranscript).toBe(false)
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS) // 原 45s timer 已清
+    expect(store.record.transcript).toBe('慢字幕') // 未被兜底清空
+    expect(store.record.awaitingTranscript).toBe(false)
+  })
+
+  it('record：P1-02 等待中收到 STT voice.error → error 置位 + awaiting 清 + timer 清除', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord()
+    await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true)
+    const handler = subscribe(store)
+    handler(ev({ event: 'voice.error', code: 'STT_UNAVAILABLE', message: 'STT 服务不可用' }))
+    expect(store.error?.code).toBe('STT_UNAVAILABLE')
+    expect(store.record.awaitingTranscript).toBe(false)
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS) // timer 已清，不再触发
+    expect(store.record.transcript).toBeUndefined()
+    expect(store.record.awaitingTranscript).toBe(false)
+  })
+
+  it('record：R-S4-06 recording 态 voice.error 丢弃；record_pending 消费', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord() // mode = recording，未 stop
+    expect(store.mode).toBe('recording')
+    const handler = subscribe(store)
+    handler(ev({ event: 'voice.error', code: 'VOICE_RECORDING_NOT_FOUND', message: '旧会话迟到错误' }))
+    expect(store.error).toBeUndefined() // recording 态丢弃（R-S4-06）
+    await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true)
+    handler(ev({ event: 'voice.error', code: 'STT_UNAVAILABLE', message: 'STT 服务不可用' }))
+    expect(store.error?.code).toBe('STT_UNAVAILABLE') // record_pending 消费
+    expect(store.record.awaitingTranscript).toBe(false)
+  })
+
+  it('record：P1-02 等待中 discard → clearRecordState（awaiting 复位 + timer 清）', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord()
+    await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true)
+    await store.discardRecord()
+    expect(store.record.awaitingTranscript).toBe(false)
+    expect(store.mode).toBe('idle')
+    await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS) // timer 已清
+    expect(store.record.transcript).toBeUndefined()
+  })
+
+  it('record：P1-02 等待中 reset → awaiting 复位 + timer 清', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord()
+    await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true)
+    await store.reset()
+    expect(store.record.awaitingTranscript).toBe(false)
+    expect(store.mode).toBe('idle')
   })
 
   it('record：300s 接近上限 toast 提示一次（继续录音）', async () => {
@@ -661,14 +750,16 @@ describe('voiceStore', () => {
 
   // —— voice.error ——
 
-  it('voice.error → error 结构化（STT_UNAVAILABLE）', async () => {
+  it('voice.error → error 结构化（STT_UNAVAILABLE）+ record_pending 等待态清除', async () => {
     const store = useVoiceStore()
     await store.startRecord()
     await store.stopRecord()
+    expect(store.record.awaitingTranscript).toBe(true) // P1-02：record_pending 等待中
     const handler = subscribe(store)
     handler(ev({ event: 'voice.error', code: 'STT_UNAVAILABLE', message: 'STT 服务不可用' }))
     expect(store.error?.code).toBe('STT_UNAVAILABLE')
     expect(store.error?.message).toBe('STT 服务不可用')
+    expect(store.record.awaitingTranscript).toBe(false) // R-S4-06：error 终态清除等待
   })
 
   it('voice.error PLAYBACK_NOT_FOUND → 良性忽略', () => {

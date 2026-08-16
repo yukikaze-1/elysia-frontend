@@ -44,7 +44,7 @@ export const useVoiceStore = defineStore('voice', () => {
   // —— spec §5.9 state ——
   const mode = ref<'idle' | 'recording' | 'record_pending' | 'realtime' | 'dictating'>('idle')
   const caption = ref('')
-  const record = ref<{ elapsedMs: number; audioBuffer: AudioBuffer | null; transcript?: string }>({ elapsedMs: 0, audioBuffer: null })
+  const record = ref<{ elapsedMs: number; audioBuffer: AudioBuffer | null; transcript?: string; awaitingTranscript: boolean }>({ elapsedMs: 0, audioBuffer: null, awaitingTranscript: false })
   const realtime = ref<{ sessionId?: string; caption: string; turnCount: number; unacked: number; lastAckedSeq: number }>({ caption: '', turnCount: 0, unacked: 0, lastAckedSeq: 0 })
   const dictation = ref<{ caption: string; finalText?: string }>({ caption: '' })
   const tts = ref<{ playingStreamId?: number; url?: string; playing: boolean; durationMs?: number }>({ playing: false })
@@ -96,7 +96,7 @@ export const useVoiceStore = defineStore('voice', () => {
     if (recordTimer !== undefined) { clearInterval(recordTimer); recordTimer = undefined }
     clearTranscriptTimer()
     activeRecordingId = undefined
-    record.value = { elapsedMs: 0, audioBuffer: null }
+    record.value = { elapsedMs: 0, audioBuffer: null, awaitingTranscript: false }
     caption.value = ''
     mode.value = 'idle'
   }
@@ -124,6 +124,7 @@ export const useVoiceStore = defineStore('voice', () => {
         if (e.recordingId !== activeRecordingId) return
         clearTranscriptTimer()
         record.value.transcript = e.text
+        record.value.awaitingTranscript = false // P1-02：字幕终态到达，等待结束
         caption.value = e.text // 字幕只展示，不写草稿；mode 保持 record_pending
         return
       }
@@ -195,8 +196,9 @@ export const useVoiceStore = defineStore('voice', () => {
       case 'voice.error': {
         // PLAYBACK_NOT_FOUND（audio.cancel 竞态）良性忽略
         if (e.code === 'PLAYBACK_NOT_FOUND') return
+        if (mode.value === 'recording') return // R-S4-06：recording 态丢弃（无 UI 消费者 + 防旧会话迟到错误污染 record_pending 展示）
         error.value = parsePublicError(`[${e.code}] ${e.message ?? ''}`)
-        if (mode.value === 'record_pending') clearTranscriptTimer() // STT 失败终态，45s 等待终止
+        if (mode.value === 'record_pending') { clearTranscriptTimer(); record.value.awaitingTranscript = false } // STT 失败终态，45s 等待终止
         return
       }
       default:
@@ -312,11 +314,12 @@ export const useVoiceStore = defineStore('voice', () => {
     captureReady.value = false
     await api.voiceStopRecord({ recordingId: activeRecordingId })
     mode.value = 'record_pending'
+    record.value.awaitingTranscript = true // P1-02：等待 STT 终态（transcript/error/45s timeout 清）
     // 45s 兜底判「未识别」（D-P17）：到时无 transcript/error → 仅丢弃/重录
     clearTranscriptTimer()
     transcriptTimer = setTimeout(() => {
       caption.value = ''
-      record.value.transcript = undefined
+      record.value.awaitingTranscript = false // 唯一可观察翻转——transcript 本就 undefined，不再重复赋空
     }, TRANSCRIPT_WAIT_MS)
   }
 
