@@ -349,6 +349,8 @@
 - [ ] 隐藏后停止高频渲染
 - [ ] GPU/资源异常不影响聊天与权限操作
 
+> **规划注记（2026-08-17，未落地、待 spec）：** 阶段 5 评估为 **3 批次 18 task**，先做批次 A（地基）。资源已到位（Web SDK 5-r.5 + 用户 3 模型 + 官方 8 示例模型，见 `/home/yomu/elysia-frontend/tmp/`）。批次 A 范围：A1 SDK vendoring + CSP `wasm-unsafe-eval` 最小放宽 / A2 Live2DAdapter（GL 抽象，WebGL1）/ A3 Main 模型注册表 + integrity 校验 + IPC / A4 cyrene:// live2d 专用供给分支 / A5 模型装配 dev 工具 / A6 Live2DController + live2dStore + 最小切换。批次 B 表现（状态映射/待机/动作/无动作参数回退/设置子页/面板）、批次 C 收口（口型/性能降级/后端指令/测试/文档/真实联调）。已拍板：管理范围 P0 原样（doc 05，无导入/卸载 UI）；模型免费版个人开发验证；模型放 `userData/models` + Main 校验 + cyrene:// 供给。完整评估与决策点见会话记忆 phase5-live2d-plan。
+
 ---
 
 ## 9. 阶段 6：工具、权限与 Desktop P0 能力
