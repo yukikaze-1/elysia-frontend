@@ -91,6 +91,21 @@ describe('connectionStore', () => {
     expect(store.error?.retryable).toBe(true)
   })
 
+  it('D-P15：语音族错误码 → 不置连接错误态（不展示全局连接横幅）', () => {
+    const store = useConnectionStore()
+    store.error = { code: 'PREV', message: '旧错误' }
+    store.setError({ code: 'VOICE_SESSION_CONFLICT', message: '已有语音会话' })
+    expect(store.error?.code).toBe('PREV')           // 语音族错误不覆盖既有错误
+    store.setError({ code: 'STT_UNAVAILABLE', message: 'STT 不可用' })
+    expect(store.error?.code).toBe('PREV')           // 仍保持原错误
+  })
+
+  it('D-P15：非语音族错误码 → 照旧 setError', () => {
+    const store = useConnectionStore()
+    store.setError({ code: 'BACKEND_REJECTED', message: 'm' })
+    expect(store.error?.code).toBe('BACKEND_REJECTED')
+  })
+
   it('setState 更新连接状态(onChatState 推送)', () => {
     const store = useConnectionStore()
     store.setState({ status: 'reconnecting', serverUrl: 'http://x' })

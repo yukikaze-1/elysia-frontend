@@ -7,6 +7,7 @@ import { useConversationStore } from '../../src/renderer/src/stores/conversation
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useCacheStore } from '../../src/renderer/src/stores/cache.store'
+import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Message } from '@shared/contracts'
 
@@ -423,5 +424,44 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
     expect(loadContextWindow).toHaveBeenCalledWith('m1')          // 经 activate(anchor) 分支
     expect(setHighlight).toHaveBeenCalledWith('m1', 'seg1')
     expect(cs.currentId).toBe('c9')
+  })
+})
+
+describe('P4-B Task 13：D-P5 会话切换守卫（语音会话活跃时禁止切换/新建）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    setDesktopApi(mockApi)
+    vi.resetAllMocks()
+  })
+
+  it('activate：voiceStore.mode≠idle → blockReason 置位 + 不调 api.activate + 不切换', async () => {
+    useVoiceStore().$patch({ mode: 'recording' })
+    const store = useConversationStore()
+    store.$patch({ currentId: 'c1' })
+    await store.activate('c2')
+    expect(mockApi.activate).not.toHaveBeenCalled()
+    expect(store.blockReason).toBe('请先结束当前语音会话')
+    expect(store.currentId).toBe('c1')   // 不切换
+  })
+
+  it('create：voiceStore.mode≠idle → blockReason 置位 + 不调 api.createConversation + 不新建', async () => {
+    useVoiceStore().$patch({ mode: 'realtime' })
+    const store = useConversationStore()
+    await store.create()
+    expect(mockApi.createConversation).not.toHaveBeenCalled()
+    expect(store.blockReason).toBe('请先结束当前语音会话')
+    expect(store.currentId).toBeUndefined()
+  })
+
+  it('activate：voiceStore.mode===idle → 放行 + 清 blockReason（同附件 canSend 短横幅语义）', async () => {
+    useVoiceStore().$patch({ mode: 'idle' })
+    const store = useConversationStore()
+    store.$patch({ blockReason: '请先结束当前语音会话' })   // 陈旧提示残留
+    mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+    await store.activate('c1')
+    expect(mockApi.activate).toHaveBeenCalledWith('c1')
+    expect(store.blockReason).toBeUndefined()   // 放行时清陈旧提示
+    expect(store.currentId).toBe('c1')
   })
 })

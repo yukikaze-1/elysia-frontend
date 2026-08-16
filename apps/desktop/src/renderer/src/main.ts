@@ -9,6 +9,8 @@ import { useConversationStore } from './stores/conversation.store'
 import { useLayoutStore } from './stores/layout.store'
 import { useDraftStore } from './stores/draft.store'
 import { useCacheStore } from './stores/cache.store'
+import { useVoiceStore } from './stores/voice.store'
+import { useSettingsStore } from './stores/settings.store'
 import { createRendererBootstrap } from './bootstrap'
 
 const app = createApp(App)
@@ -27,7 +29,9 @@ if (window.desktopApi) {
     message: useMessageStore(),
     conversation: useConversationStore(),
     draft: useDraftStore(),
-    cache: useCacheStore()
+    cache: useCacheStore(),
+    voice: useVoiceStore(),
+    settings: useSettingsStore()
   }).register()
 }
 

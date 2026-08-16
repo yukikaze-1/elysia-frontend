@@ -9,6 +9,7 @@ import { useMessageStore } from './message.store'
 import { useConnectionStore } from './connection.store'
 import { useCacheStore } from './cache.store'
 import { useDraftStore } from './draft.store'
+import { useVoiceStore } from './voice.store'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 
 /** F8:messageOf 仅在 message.store 内定义(非导出),conversation.store 自定模块内 helper */
@@ -26,6 +27,7 @@ export const useConversationStore = defineStore('conversation', () => {
   const error = ref<PublicError>()       // 会话操作错误(供 UI 展示,§4.2.4/I2)
   const busy = ref(false)                // 会话操作进行中(D22,供按钮 loading/防重复)
   const offlineView = ref(false) // 离线视图：activateLocal/setOfflineCache 置位，恢复后 false
+  const blockReason = ref<string>()      // D-P5：语音会话活跃时切换/新建被拒的 UI 提示（同附件 canSend.blockReason 短横幅语义）
   let epoch = 0                          // 激活竞态守卫(§4.2.3/D6):数字递增,最新请求才提交
   let initializingFor: string | undefined
   let initializationPromise: Promise<void> | undefined
@@ -121,6 +123,12 @@ export const useConversationStore = defineStore('conversation', () => {
   /** §4.2.3 activate:epoch 大者胜;currentId 立即切走;resetConversation + applyPendingReplay + 拉首屏。
    *  G4 扩展（D5）：anchor 存在时改拉 loadContextWindow 上下文窗口（替代首页）+ setHighlight；anchor 缺省行为完全不变。 */
   async function activate(id: string, anchor?: { messageId: string; segmentId?: string }): Promise<void> {
+    // D-P5 会话切换守卫：语音会话活跃（mode≠idle）→ 禁止切换，UI 提示先结束（实时模式同理）
+    if (useVoiceStore().mode !== 'idle') {
+      blockReason.value = '请先结束当前语音会话'
+      return
+    }
+    blockReason.value = undefined
     if (offlineView.value && useConnectionStore().state.status === 'disconnected') {
       error.value = { code: 'OFFLINE_VIEW', message: '离线视图下请使用本地缓存会话' }
       return
@@ -186,6 +194,12 @@ export const useConversationStore = defineStore('conversation', () => {
 
   /** §4.2.4 create:try/catch 写 error + busy;内部 list 改 safeList */
   async function create(): Promise<void> {
+    // D-P5 会话切换守卫：语音会话活跃（mode≠idle）→ 禁止新建会话，UI 提示先结束
+    if (useVoiceStore().mode !== 'idle') {
+      blockReason.value = '请先结束当前语音会话'
+      return
+    }
+    blockReason.value = undefined
     busy.value = true
     try {
       const c = await api.createConversation({})
@@ -260,5 +274,5 @@ export const useConversationStore = defineStore('conversation', () => {
     error.value = undefined
   }
 
-  return { items, currentId, hasMore, nextCursor, initializedFor, ready, error, busy, offlineView, list, safeList, onConnected, onActiveConversationAppeared, activate, jumpToMessage, getMore, create, rename, remove, setOfflineCache, activateLocal }
+  return { items, currentId, hasMore, nextCursor, initializedFor, ready, error, busy, offlineView, blockReason, list, safeList, onConnected, onActiveConversationAppeared, activate, jumpToMessage, getMore, create, rename, remove, setOfflineCache, activateLocal }
 })

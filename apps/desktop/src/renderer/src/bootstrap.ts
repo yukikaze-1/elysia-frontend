@@ -18,16 +18,25 @@ export interface BootstrapStores {
   }
   draft: { hydrate(state: SessionPersistenceState): void }
   cache: { hydrate(state: SessionPersistenceState): void }
+  // P4-B：voiceStore 独立订阅（D-P10）/断线 reset（Important-2）；settingsStore 启动水合（fail-open 不阻塞）
+  voice: { init(): void; reset(): void }
+  settings: { hydrate(): void }
 }
 
 export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapStores): { register(): void } {
   let stateEpoch = 0
+  let prevStatus: ConnectionState['status'] = 'disconnected'
   const applyChatState = (s: ConnectionState): void => {
+    const leavingConnected = prevStatus === 'connected' && s.status !== 'connected'
+    prevStatus = s.status
     stores.connection.setState(s)
     stores.message.handleConnectionStateChange(s)
     if (s.status === 'connected') {
       void stores.conversation.onConnected(s.connectionId)
       if (s.activeConversationId) void stores.conversation.onActiveConversationAppeared(s.activeConversationId)
+    } else if (leavingConnected) {
+      // Important-2：连接离开 connected → 停采集 + 取消语音会话 + 清态 + 停 TTS（voiceStore.reset 幂等）
+      void stores.voice.reset()
     }
   }
   const register = (): void => {
@@ -59,6 +68,10 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
       // 持久化水合失败 fail-open：不影响启动，随后连接建立由后端全量调和
       stores.connection.setError(e instanceof Error ? { code: 'UNKNOWN', message: e.message } : { code: 'UNKNOWN', message: String(e) })
     })
+    // P4-B：settings 水合 + voice 独立订阅（D-P10，与 messageStore 订阅并存，voice 事件互不干扰）。
+    // 均不阻塞启动：settings.hydrate 内部 fail-open；voice.init 返回退订（常驻订阅，不持有）。
+    void stores.settings.hydrate()
+    stores.voice.init()
   }
   return { register }
 }

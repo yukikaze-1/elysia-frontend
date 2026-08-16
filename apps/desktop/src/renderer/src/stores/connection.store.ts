@@ -5,6 +5,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { ConnectionState } from '@shared/contracts'
+import { VOICE_ERROR_CODES } from '@shared/contracts'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 
@@ -37,8 +38,10 @@ export const useConnectionStore = defineStore('connection', () => {
     if (s.status === 'connected' || s.status === 'reconnecting') error.value = undefined
   }
 
-  /** onChatError 消费入口:显式置公开错误(Main 侧已结构化,renderer 仅保存展示) */
+  /** onChatError 消费入口:显式置公开错误(Main 侧已结构化,renderer 仅保存展示)。
+   *  D-P15:语音族错误码 → 不展示全局连接横幅(语音错误是会话级预期错误,由 voiceStore.error 展示) */
   function setError(err: PublicError): void {
+    if ((VOICE_ERROR_CODES as readonly string[]).includes(err.code)) return
     error.value = err
   }
 

@@ -26,7 +26,9 @@ function makeStores() {
     message: { applyEvent: vi.fn(), handleConnectionStateChange: vi.fn(), loadReplay: vi.fn() },
     conversation: { onConnected: vi.fn(async () => {}), onActiveConversationAppeared: vi.fn(async () => {}), setOfflineCache: vi.fn(), activateLocal: vi.fn(async () => {}) },
     draft: { hydrate: vi.fn() },                    // G2 新增
-    cache: { hydrate: vi.fn() }                     // G2 新增
+    cache: { hydrate: vi.fn() },                    // G2 新增
+    voice: { init: vi.fn(), reset: vi.fn() },       // P4-B Task 13
+    settings: { hydrate: vi.fn() }                  // P4-B Task 13
   }
 }
 
@@ -134,5 +136,36 @@ describe('G2 持久化水合 + 离线视图（spec §4.5.3 P1-1/P2-2）', () => 
     expect(stores.conversation.setOfflineCache).not.toHaveBeenCalled()
     expect(stores.conversation.activateLocal).not.toHaveBeenCalled()
     expect(stores.conversation.onConnected).toHaveBeenCalledWith('c1')
+  })
+})
+
+describe('P4-B Task 13：voice/settings 接线 + 断线 reset（Important-2）', () => {
+  it('register 调 settings.hydrate + voice.init（P4-B 并行水合与独立订阅接线）', async () => {
+    const api = makeFake(); const stores = makeStores()
+    createRendererBootstrap(api as never, stores as never).register()
+    expect(stores.settings.hydrate).toHaveBeenCalled()
+    expect(stores.voice.init).toHaveBeenCalled()
+  })
+  it('connected push → 不调 voice.reset（语音会话在连接内保持）', async () => {
+    const api = makeFake(); const stores = makeStores()
+    createRendererBootstrap(api as never, stores as never).register()
+    api.fireState({ status: 'connected', connectionId: 'c1' })
+    expect(stores.voice.reset).not.toHaveBeenCalled()
+  })
+  it('connected → disconnected 状态迁移 → 调 voice.reset（断线停采集/取消会话/清态/停 TTS）', async () => {
+    const api = makeFake(); const stores = makeStores()
+    createRendererBootstrap(api as never, stores as never).register()
+    api.fireState({ status: 'connected', connectionId: 'c1' })
+    expect(stores.voice.reset).not.toHaveBeenCalled()
+    api.fireState({ status: 'disconnected' })
+    expect(stores.voice.reset).toHaveBeenCalledTimes(1)
+  })
+  it('初始 disconnected snapshot（启动离线）→ 不调 voice.reset（非离开 connected 语义）', async () => {
+    const api = makeFake(); const stores = makeStores()
+    createRendererBootstrap(api as never, stores as never).register()
+    await Promise.resolve()
+    api.resolveSnapshot({ status: 'disconnected' })
+    await Promise.resolve()
+    expect(stores.voice.reset).not.toHaveBeenCalled()
   })
 })
