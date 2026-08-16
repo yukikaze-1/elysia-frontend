@@ -62,9 +62,11 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function scheduleSave(patch: SettingsPatch): void {
+    // 跨子树累积（评审 Important-1）：setDictation 后紧跟 setVoice 时，两棵子树的待持久化 patch 都保留，
+    // 否则前一个子树的修改在 500ms 窗口内被丢（如 autoReadReply 与 STT Profile 同窗口操作后重启丢失）
     pending = {
-      ...(patch.voice ? { voice: { ...pending.voice, ...patch.voice } } : {}),
-      ...(patch.dictation ? { dictation: { ...pending.dictation, ...patch.dictation } } : {})
+      voice: patch.voice ? { ...pending.voice, ...patch.voice } : pending.voice,
+      dictation: patch.dictation ? { ...pending.dictation, ...patch.dictation } : pending.dictation
     }
     saved.value = false
     if (saveTimer !== undefined) clearTimeout(saveTimer)

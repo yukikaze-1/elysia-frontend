@@ -108,6 +108,22 @@ describe('settingsStore', () => {
     expect(s.dictation.insertMode).toBe('replace_selection')
   })
 
+  it('跨子树累积：setDictation 后紧跟 setVoice → 单次 save 载荷含两棵子树修改（评审 Important-1）', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setDictation({ sttProfileId: 'stt/p1' })
+    s.setVoice({ autoReadReply: false })
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)
+    expect(mockApi.settingsSave).toHaveBeenCalledWith({
+      voice: { autoReadReply: false },
+      dictation: { sttProfileId: 'stt/p1' }
+    })
+    expect(s.voice.autoReadReply).toBe(false)
+    expect(s.dictation.sttProfileId).toBe('stt/p1')
+  })
+
   it('setVoice 失败 → saveError 置位 + 本地改保留（fail-open UI 可展示）', async () => {
     vi.useFakeTimers()
     mockApi.settingsSave.mockRejectedValue(new Error('[IPC_ERROR] [UNKNOWN] 写盘失败'))
