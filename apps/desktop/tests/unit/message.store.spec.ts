@@ -636,3 +636,102 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     expect(sent[0]).toMatchObject({ conversationId: 'c1', text: '', stickerId: 'st_1' })
   })
 })
+
+describe('P4-B 语音扩展：voice_session.turn + sendVoiceCommit（spec §5.11）', () => {
+  function turn(msgId: string, text: string, conversationId?: string): BackendEvent {
+    return { eventId: 'e', sequence: 9, event: 'voice_session.turn', sessionId: 'sess-1', turnId: 1, messageId: msgId, conversationId, text }
+  }
+
+  beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi); setCurrent('conv-1'); vi.clearAllMocks() })
+
+  it('voice_session.turn 匹配当前会话 → 插入 user acknowledged 消息（后端预分配 messageId，非乐观）', () => {
+    const store = useMessageStore()
+    store.applyEvent(turn('msg-v1', '实时语音内容', 'conv-1'))
+    expect(store.byId['msg-v1']).toBeDefined()
+    expect(store.byId['msg-v1']?.role).toBe('user')
+    expect(store.byId['msg-v1']?.status).toBe('acknowledged')
+    expect(store.byId['msg-v1']?.content).toBe('实时语音内容')
+    expect(store.byId['msg-v1']?.conversationId).toBe('conv-1')
+    expect(store.droppedEvents).toBe(0)
+  })
+
+  it('voice_session.turn 无 conversationId → 归属当前会话插入', () => {
+    const store = useMessageStore()
+    store.applyEvent(turn('msg-v2', '无会话字段'))
+    expect(store.byId['msg-v2']?.conversationId).toBe('conv-1')
+    expect(store.droppedEvents).toBe(0)
+  })
+
+  it('voice_session.turn 归属不匹配 → guardDropEvent 丢弃 + 计数', () => {
+    setCurrent('conv-2')
+    const store = useMessageStore()
+    store.applyEvent(turn('msg-v3', '别的会话', 'conv-1'))
+    expect(store.byId['msg-v3']).toBeUndefined()
+    expect(store.droppedEvents).toBe(1)
+  })
+
+  it('voice_session.turn 无活动会话 → 丢弃（不插入无 conversationId 消息）', () => {
+    setCurrent(undefined)
+    const store = useMessageStore()
+    store.applyEvent(turn('msg-v4', '无会话'))
+    expect(store.byId['msg-v4']).toBeUndefined()
+    expect(store.droppedEvents).toBe(1)
+  })
+
+  it('sendVoiceCommit 乐观 pending → migrateKey + acknowledged + push cache → true', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.voiceCommit.mockResolvedValue({ clientRequestId: 'c1', serverMessageId: 'msg-voice-1' })
+    const store = useMessageStore()
+    const ok = await store.sendVoiceCommit('rec-1', '语音内容')
+    expect(ok).toBe(true)
+    expect(mockApi.voiceCommit).toHaveBeenCalledWith(expect.objectContaining({
+      recordingId: 'rec-1', text: '语音内容', conversationId: 'conv-1',
+      clientRequestId: expect.any(String), clientMessageId: expect.any(String)
+    }))
+    expect(store.byId['msg-voice-1']).toBeDefined()   // migrateKey 后正式 ID
+    expect(store.byId['msg-voice-1']?.role).toBe('user')
+    expect(store.byId['msg-voice-1']?.status).toBe('acknowledged')
+    expect(store.byId['msg-voice-1']?.content).toBe('语音内容')
+    expect(store.order).not.toContain(expect.stringMatching(/^local-/))
+  })
+
+  it('sendVoiceCommit 失败 → failed + lastError + false（调用方保留待发送条）', async () => {
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    mockApi.voiceCommit.mockRejectedValue(new Error('[BACKEND_REJECTED] 队列已满'))
+    const store = useMessageStore()
+    const ok = await store.sendVoiceCommit('rec-1', '语音内容')
+    expect(ok).toBe(false)
+    const user = Object.values(store.byId).find((m) => m.role === 'user')
+    expect(user?.status).toBe('failed')
+    expect(store.lastError?.message).toContain('队列已满')
+    expect(store.sending).toBe(false)
+  })
+
+  it('sendVoiceCommit 无活动会话 → false 且不插入消息', async () => {
+    setCurrent(undefined)
+    const store = useMessageStore()
+    const ok = await store.sendVoiceCommit('rec-1', 'x')
+    expect(ok).toBe(false)
+    expect(mockApi.voiceCommit).not.toHaveBeenCalled()
+    expect(Object.keys(store.byId)).toHaveLength(0)
+  })
+
+  it('sendVoiceCommit 断线清理（I5 同口径）：未确认乐观消息随断线移除', async () => {
+    let resolveCommit!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    mockApi.voiceCommit.mockImplementationOnce(() => new Promise((res) => { resolveCommit = res }))
+    const conv = useConversationStore()
+    conv.$patch({ currentId: 'conv-1' })
+    const store = useMessageStore()
+    const p = store.sendVoiceCommit('rec-1', '语音')
+    const localKey = Object.keys(store.byId).find((k) => k.startsWith('local-'))
+    expect(localKey).toBeDefined()
+    expect(store.byId[localKey!]?.status).toBe('pending')
+    store.handleConnectionStateChange({ status: 'reconnecting' })
+    expect(store.byId[localKey!]).toBeUndefined()   // pending local-* 乐观消息被清
+    resolveCommit({ clientRequestId: 'c1', serverMessageId: 'msg-voice-1' })
+    await p
+    expect(store.byId['msg-voice-1']).toBeUndefined() // I1：旧 key 已清，migrate 不重插
+  })
+})

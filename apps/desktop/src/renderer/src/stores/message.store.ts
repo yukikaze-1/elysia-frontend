@@ -204,6 +204,22 @@ export const useMessageStore = defineStore('message', () => {
         activeGenerationId.value = undefined
         break
       }
+      case 'voice_session.turn': {
+        // P4-B（spec §5.11）：实时语音轮次自动提交——后端预分配 messageId（非乐观）；
+        // 归属取 event.conversationId ?? currentId；匹配当前会话插入 user 消息（后续 generation.* 正常装配），不匹配丢弃
+        const currentId = useConversationStore().currentId
+        const conv = event.conversationId ?? currentId
+        if (!conv || conv !== currentId) { guardDropEvent('voice_session.turn', conv); break }
+        upsertMessage({
+          messageId: event.messageId,
+          conversationId: conv,
+          role: 'user',
+          status: 'acknowledged',
+          content: event.text,
+          createdAt: nowIso()
+        })
+        break
+      }
     }
   }
 
@@ -249,6 +265,46 @@ export const useMessageStore = defineStore('message', () => {
       optimistic.status = 'failed'
       lastError.value = parsePublicError(messageOf(e))
       return false // P2-2：失败返回 false，调用方保留草稿
+    } finally {
+      sending.value = false
+    }
+  }
+
+  /** P4-B（spec §5.11）：录音确认发送——镜像 send()：乐观 user 消息 + api.voiceCommit + migrateKey + acknowledged + push cache；
+   *  失败 → failed + lastError → false（调用方据此保留待发送条/草稿语义）。 */
+  async function sendVoiceCommit(recordingId: string, text: string): Promise<boolean> {
+    const conversationId = useConversationStore().currentId
+    if (!conversationId) return false
+    lastError.value = undefined   // 新发送清旧错误,避免失败横幅残留
+    const clientRequestId = crypto.randomUUID()
+    const key = `local-${clientRequestId}`
+    const optimistic: Message = {
+      messageId: key,
+      conversationId,
+      role: 'user',
+      status: 'pending',
+      clientMessageId: clientRequestId,
+      content: text,
+      createdAt: nowIso()
+    }
+    upsertMessage(optimistic)
+    sending.value = true
+    try {
+      const ref = await api.voiceCommit({
+        recordingId,
+        text,
+        conversationId,
+        clientRequestId,
+        clientMessageId: clientRequestId
+      })
+      if (ref?.serverMessageId) migrateKey(key, ref.serverMessageId, optimistic)
+      optimistic.status = 'acknowledged' // 无 serverMessageId 也 acknowledged(与 send 同口径)
+      void useCacheStore().pushMessages(conversationId, [optimistic], nowIso())
+      return true
+    } catch (e) {
+      optimistic.status = 'failed'
+      lastError.value = parsePublicError(messageOf(e))
+      return false
     } finally {
       sending.value = false
     }
@@ -437,6 +493,7 @@ export const useMessageStore = defineStore('message', () => {
     resetConversation,
     applyEvent,
     send,
+    sendVoiceCommit,
     cancel,
     setHighlight,
     clearHighlight,
