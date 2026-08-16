@@ -61,19 +61,46 @@ let micTestTimer: ReturnType<typeof setTimeout> | undefined
 /** 等待进入 recording 态：startRecord 可能先过 consent（D-P16 挂起对话框）再恢复。
  *  评审 Important：**consent 挂起期间不得超时判失败**——否则用户停留 >5s 再点「同意」，
  *  confirmConsent 迟到的 startRecord 恢复会进入 recording 而无 3s 自停（无监督持续录音至 10 分钟硬上限）。
- *  判定：mode==='recording' → true；mode==='idle' 且 !consentPending → 确定失败（权限拒绝/后端拒绝/consent 取消）→ false；否则继续等。 */
+ *  评审 re-review：失败路径（startRecord 早退/控制帧拒绝/权限拒绝）的终态 `idle && !consentPending`
+ *  在 watcher 注册前已定格，无「变化」事件可触发 → 必须注册前做**初始终态检查**。
+ *  判定：
+ *  - 注册时 mode==='recording' → true（直接成功）；
+ *  - 注册时 mode==='idle' && !consentPending → false（初始即失败，终态已定格）；
+ *  - consent 挂起中 → 等确认/取消：
+ *    - mode→'recording' → true（含 confirm 后迟到恢复）；
+ *    - consent 关闭后 micError/error 置位 → false（confirm 恢复动作已显式失败，立即收口）；
+ *    - consent 关闭后无错误 → 宽限窗口（取消 vs confirm 恢复中——confirm 的 startRecord 恢复会
+ *      瞬时 idle&&!pending，不得立即判失败）；宽限到点仍 idle → false（取消）。 */
+const CONSENT_SETTLE_GRACE_MS = 3000
 let recordingWaitStop: (() => void) | undefined
+let recordingGraceTimer: ReturnType<typeof setTimeout> | undefined
 function waitForRecording(): Promise<boolean> {
   return new Promise((resolve) => {
     if (voiceStore.mode === 'recording') { resolve(true); return }
-    const stop = watch(
-      () => [voiceStore.mode, voiceStore.consentPending] as const,
-      ([mode, pending]) => {
-        if (mode === 'recording') { recordingWaitStop = undefined; stop(); resolve(true) }
-        else if (mode === 'idle' && !pending) { recordingWaitStop = undefined; stop(); resolve(false) }
+    if (voiceStore.mode === 'idle' && !voiceStore.consentPending) { resolve(false); return }
+
+    let settled = false
+    let stopWatch: (() => void) | undefined
+    const settle = (v: boolean): void => {
+      if (settled) return
+      settled = true
+      if (recordingGraceTimer !== undefined) { clearTimeout(recordingGraceTimer); recordingGraceTimer = undefined }
+      recordingWaitStop = undefined
+      stopWatch?.()
+      resolve(v)
+    }
+    stopWatch = watch(
+      () => [voiceStore.mode, voiceStore.consentPending, voiceStore.micError, voiceStore.error] as const,
+      ([mode, pending, micErr, err]) => {
+        if (mode === 'recording') { settle(true); return }
+        if (mode === 'idle' && !pending) {
+          if (micErr || err) { settle(false); return }
+          if (recordingGraceTimer !== undefined) clearTimeout(recordingGraceTimer)
+          recordingGraceTimer = setTimeout(() => settle(false), CONSENT_SETTLE_GRACE_MS)
+        }
       }
     )
-    recordingWaitStop = stop
+    recordingWaitStop = stopWatch
   })
 }
 
@@ -104,6 +131,7 @@ async function finishMicTest(): Promise<void> {
 
 onBeforeUnmount(() => {
   recordingWaitStop?.()
+  if (recordingGraceTimer !== undefined) { clearTimeout(recordingGraceTimer); recordingGraceTimer = undefined }
   if (micTestTimer !== undefined) clearTimeout(micTestTimer)
   // 离开设置页时若仍有本页发起的测试录音（测试中/待发送态）→ 清理，不残留聊天待发送条
   if (micTesting.value || micTestDuration.value !== undefined) {

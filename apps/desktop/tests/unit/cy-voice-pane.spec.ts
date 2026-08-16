@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import type { ModelProfile } from '@shared/contracts'
+import type { PublicError } from '../../src/renderer/src/utils/public-error'
 import CyVoicePane from '../../src/renderer/src/components/CyVoicePane.vue'
 import CyVoicePending from '../../src/renderer/src/components/CyVoicePending.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -155,9 +156,10 @@ describe('CyVoicePane', () => {
     await wrapper.find('button').trigger('click')
     expect(voice.consentPending).toBe(true)
 
-    // 用户在 consent 对话框点「取消」→ dismissConsent 清 pending + mode 仍 idle → waitForRecording 判失败收口
+    // 用户在 consent 对话框点「取消」→ dismissConsent 清 pending + mode 仍 idle + 无错误
+    // → 进入宽限窗口（区分「取消」与「confirm 后 startRecord 恢复的瞬时 idle」），宽限到点才判失败收口
     voice.dismissConsent()
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(3000)
     await wrapper.vm.$nextTick()
     expect(wrapper.find('button').text()).toBe('测试麦克风')
     expect(stopSpy).not.toHaveBeenCalled() // 从未进入录音
@@ -166,6 +168,35 @@ describe('CyVoicePane', () => {
     wrapper.unmount()
     startSpy.mockRestore()
     stopSpy.mockRestore()
+  })
+
+  it('startRecord 失败（mode idle + 无 consent，初始态已定格）→ 立即判失败：按钮回 idle + 错误展示（评审 re-review）', async () => {
+    const voice = useVoiceStore()
+    // 模拟「早退/拒绝」：startRecord 不改任何状态（mode 保持 idle、无 consent 挂起、无 micError）
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => { /* no-op */ })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(startSpy).toHaveBeenCalledTimes(1)
+    // 修复前：waitForRecording 无变化事件可触发 → 永久挂起「录音中…」
+    expect(wrapper.find('button').text()).toBe('测试麦克风')
+    expect(wrapper.text()).toContain('麦克风启动失败')
+    wrapper.unmount()
+    startSpy.mockRestore()
+  })
+
+  it('startRecord 权限拒绝（micError 置位）→ 展示具体错误（评审 re-review）', async () => {
+    const voice = useVoiceStore()
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.micError = { message: '麦克风权限被拒绝' } as PublicError
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('button').text()).toBe('测试麦克风')
+    expect(wrapper.text()).toContain('麦克风权限被拒绝')
+    wrapper.unmount()
+    startSpy.mockRestore()
   })
 })
 
