@@ -78,6 +78,11 @@ function subscribe(store: ReturnType<typeof useVoiceStore>): (e: BackendEvent) =
   return mockApi.onChatEvent.mock.calls.at(-1)?.[0] as unknown as (e: BackendEvent) => void
 }
 
+/** store 生成的当前录音 recordingId（从 voiceStartRecord 调用参数取） */
+function lastRecordingId(): string {
+  return mockApi.voiceStartRecord.mock.calls.at(-1)![0].recordingId
+}
+
 describe('voiceStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -221,7 +226,7 @@ describe('voiceStore', () => {
     expect(store.mode).toBe('record_pending')
     expect(mockApi.voiceStopRecord).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
     const handler = subscribe(store)
-    handler(ev({ event: 'voice.transcript', recordingId: 'rec_1', text: '你好世界' }))
+    handler(ev({ event: 'voice.transcript', recordingId: lastRecordingId(), text: '你好世界' }))
     expect(store.record.transcript).toBe('你好世界')
     expect(store.caption).toBe('你好世界')
     const ok = await store.commitRecord()
@@ -261,7 +266,7 @@ describe('voiceStore', () => {
     await store.startRecord()
     await store.stopRecord()
     const handler = subscribe(store)
-    handler(ev({ event: 'voice.transcript', recordingId: 'rec_1', text: '文本' }))
+    handler(ev({ event: 'voice.transcript', recordingId: lastRecordingId(), text: '文本' }))
     await vi.advanceTimersByTimeAsync(TRANSCRIPT_WAIT_MS)
     expect(store.record.transcript).toBe('文本') // 未被 45s 兜底清掉
   })
@@ -308,6 +313,78 @@ describe('voiceStore', () => {
     expect(store.mode).toBe('idle')
     expect(store.captureReady).toBe(false)
     expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
+  })
+
+  it('review-Important：成功重试清除陈旧 micError（修复权限后重录不残留旧错误）', async () => {
+    fake.start.mockRejectedValueOnce(new Error('[NOT_ALLOWED] 麦克风权限被拒绝'))
+    const store = useVoiceStore()
+    await store.startRecord()
+    expect(store.micError?.code).toBe('NOT_ALLOWED')
+    expect(store.mode).toBe('idle')
+    await store.startRecord() // 修复后重试成功
+    expect(store.micError).toBeUndefined()
+    expect(store.error).toBeUndefined()
+    expect(store.mode).toBe('recording')
+  })
+
+  it('review-Important：新 start 清除陈旧 error（voice.error 后重试）', async () => {
+    const store = useVoiceStore()
+    const handler = subscribe(store)
+    handler(ev({ event: 'voice.error', code: 'STT_UNAVAILABLE', message: 'x' }))
+    expect(store.error?.code).toBe('STT_UNAVAILABLE')
+    await store.startDictation()
+    expect(store.error).toBeUndefined()
+    expect(store.mode).toBe('dictating')
+  })
+
+  it('review-Minor：新 start 清除 notice（录音上限提示后重录不残留）', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    await store.startRecord()
+    await vi.advanceTimersByTimeAsync(RECORD_WARN_MS)
+    expect(store.notice).not.toBeNull()
+    await store.stopRecord()
+    await store.discardRecord()
+    await store.startRecord()
+    expect(store.notice).toBeNull()
+    expect(store.mode).toBe('recording')
+  })
+
+  it('review-Minor：控制帧拒绝 → error 置位 + 模式 idle（不抛未处理拒绝，record）', async () => {
+    mockApi.voiceStartRecord.mockRejectedValue(new Error('[VOICE_SESSION_CONFLICT] 已有语音会话'))
+    const store = useVoiceStore()
+    await store.startRecord()
+    expect(store.error?.code).toBe('VOICE_SESSION_CONFLICT')
+    expect(store.mode).toBe('idle')
+    expect(fake.start).not.toHaveBeenCalled()
+    expect(store.captureReady).toBe(false)
+  })
+
+  it('review-Minor：控制帧拒绝 → error 置位 + 模式 idle（realtime/dictation）', async () => {
+    mockApi.voiceStartRealtime.mockRejectedValue(new Error('[VOICE_SESSION_CONFLICT] 已有实时会话'))
+    const store = useVoiceStore()
+    await store.startRealtime()
+    expect(store.error?.code).toBe('VOICE_SESSION_CONFLICT')
+    expect(store.realtime.sessionId).toBeUndefined()
+    expect(store.mode).toBe('idle')
+    expect(fake.start).not.toHaveBeenCalled()
+    mockApi.voiceStartDictation.mockRejectedValue(new Error('[DICTATION_NOT_FOUND] 转写会话不存在'))
+    await store.startDictation()
+    expect(store.error?.code).toBe('DICTATION_NOT_FOUND')
+    expect(store.mode).toBe('idle')
+    expect(fake.start).not.toHaveBeenCalled()
+  })
+
+  it('review-Minor：voice.transcript recordingId 不匹配（discard 后迟到字幕）→ 忽略', async () => {
+    const store = useVoiceStore()
+    const handler = subscribe(store)
+    await store.startRecord()
+    await store.stopRecord()
+    const oldId = lastRecordingId()
+    await store.discardRecord()
+    handler(ev({ event: 'voice.transcript', recordingId: oldId, text: '迟到字幕' }))
+    expect(store.record.transcript).toBeUndefined()
+    expect(store.mode).toBe('idle')
   })
 
   it('record：replayRecord——audioBuffer 存在 → AudioContext BufferSource 播放（不走 blob URL）', () => {

@@ -116,6 +116,8 @@ export const useVoiceStore = defineStore('voice', () => {
   function handleEvent(e: BackendEvent): void {
     switch (e.event) {
       case 'voice.transcript': {
+        // review-Minor：recordingId 不匹配（discard/commit 后迟到的旧录音字幕）→ 忽略
+        if (e.recordingId !== activeRecordingId) return
         clearTranscriptTimer()
         record.value.transcript = e.text
         caption.value = e.text // 字幕只展示，不写草稿；mode 保持 record_pending
@@ -241,10 +243,20 @@ export const useVoiceStore = defineStore('voice', () => {
   async function startRecord(): Promise<void> {
     if (!guardStart()) return
     if (!useSettingsStore().voice.enabled) return
+    // review-Important：新操作开始即清陈旧错误（micError/error/notice），防成功重试后残留旧错误展示
+    micError.value = undefined
+    error.value = undefined
+    notice.value = null
     if (!requireConsent(() => startRecord())) return
     const recordingId = `rec_${crypto.randomUUID()}`
-    // D-P19：控制帧先于采集——await 成功才开麦克风
-    await api.voiceStartRecord({ recordingId })
+    // D-P19：控制帧先于采集——await 成功才开麦克风；拒绝 → error 置位 + 回 idle（不抛未处理拒绝）
+    try {
+      await api.voiceStartRecord({ recordingId })
+    } catch (e) {
+      error.value = parsePublicError(messageOf(e))
+      mode.value = 'idle'
+      return
+    }
     activeRecordingId = recordingId // 控制帧成功后才记入（失败不残留可被 stop/discard 误引用的 id）
     capture = captureFactory()
     try {
@@ -328,11 +340,22 @@ export const useVoiceStore = defineStore('voice', () => {
   async function startRealtime(): Promise<void> {
     if (!guardStart()) return
     if (!useSettingsStore().voice.realtimeEnabled) return
+    // review-Important：新操作开始即清陈旧错误
+    micError.value = undefined
+    error.value = undefined
+    notice.value = null
     if (!requireConsent(() => startRealtime())) return
     const current = useConversationStore().currentId
     const sessionId = `vs_${crypto.randomUUID()}`
-    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 sessionId（失败不残留可被 stop 误引用的 id）
-    await api.voiceStartRealtime({ sessionId, ...(current ? { conversationId: current } : {}) })
+    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 sessionId；拒绝 → error 置位 + 回 idle
+    try {
+      await api.voiceStartRealtime({ sessionId, ...(current ? { conversationId: current } : {}) })
+    } catch (e) {
+      error.value = parsePublicError(messageOf(e))
+      realtime.value.sessionId = undefined
+      mode.value = 'idle'
+      return
+    }
     realtime.value.sessionId = sessionId
     capture = captureFactory()
     try {
@@ -383,11 +406,22 @@ export const useVoiceStore = defineStore('voice', () => {
   async function startDictation(): Promise<void> {
     if (!guardStart()) return
     if (!useSettingsStore().voice.enabled) return
+    // review-Important：新操作开始即清陈旧错误
+    micError.value = undefined
+    error.value = undefined
+    notice.value = null
     if (!requireConsent(() => startDictation())) return
     const clientRequestId = `req_${crypto.randomUUID()}`
     const sttProfileId = useSettingsStore().dictation.sttProfileId
-    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 clientRequestId
-    await api.voiceStartDictation({ clientRequestId, ...(sttProfileId ? { sttProfileId } : {}) })
+    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 clientRequestId；拒绝 → error 置位 + 回 idle
+    try {
+      await api.voiceStartDictation({ clientRequestId, ...(sttProfileId ? { sttProfileId } : {}) })
+    } catch (e) {
+      error.value = parsePublicError(messageOf(e))
+      dictationClientRequestId = undefined
+      mode.value = 'idle'
+      return
+    }
     dictationClientRequestId = clientRequestId
     capture = captureFactory()
     try {
