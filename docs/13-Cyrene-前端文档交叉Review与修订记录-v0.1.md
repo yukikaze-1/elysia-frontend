@@ -323,7 +323,7 @@
 | 07 §11.1 | Main 麦克风权限处理器（`decideMicrophoneAllow`/`registerMicrophonePermission`）+ 单向语音 IPC 守卫（`registerOneWayHandler`，1 MiB 上限）+ 后端 STT 一次性同意（D-P16） |
 | 08 E2E-12 | spec §8 验收清单增补（独立启停 / 待发送条 / consent / 语音错误横幅抑制 / 设置持久化 / 会话守卫 / 断线清理 / deleteProfile 回退） |
 | 10 §7 / 11 §2.3/§2.6/§3 / 12 E-05~E-07 / 16 §7 | 阶段 4 批 B 落地状态与进度 |
-| README / CLAUDE.md | 阶段 4 批 B 落地 + 测试计数（1230/100 + 70/15） |
+| README / CLAUDE.md | 阶段 4 批 B 落地 + 测试计数（1245/100 + 70/15） |
 
 ### 13.2 阶段 4 批次 B 定案记录（语音语义与安全）
 
