@@ -338,3 +338,33 @@
 对修订后的 01/02/03/06/07/08/10/11/12/13/16 与 README/CLAUDE.md 执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
 
 > 说明：本次为阶段 4 批次 B 落地的文档同步增量 Review，未重跑完整交叉 Review（真实语音联调、Live2D SDK 许可与模型资源等仍待外部输入）；语音链路 Mock 驱动，真实 Windows Electron（REAL）联调为验收方。
+
+## 14. 增量 Review：阶段 4 真实联调整改同步（2026-08-16）
+
+**触发条件：** doc 13 §9——「修改 Inner Voice、语音或模型服务语义」；阶段 4 真实联调整改（普通录音异常清理 FE-S4-RUN-P0-01/P1-01/P1-02）修订 `voice.discard` 语义（配套后端修订 BE-S4-RUN-P0-01）+ 新增录音停止后「正在识别…」等待态 + `voice.error` recording 态消费门控。
+
+### 14.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 02 §13.2 | 普通录音 `voice.discard` 语义更新：**可取消任意未提交阶段（RECORDING/TRANSCRIBING/PENDING）+ 幂等成功**（IDLE 迟到/重复 discard 亦成功、不发 `VOICE_RECORDING_NOT_FOUND`）；删「RECORDING 态先 stop 再 discard」「IDLE 迟到 discard → NOT_FOUND」口径；标注依赖配套后端修订 BE-S4-RUN-P0-01 |
+| 02 §14 | 关键码补 `VOICE_RECORDING_NOT_FOUND` 注：「IDLE 迟到 discard 幂等成功，不再产生」；现保留码含义为「另一普通录音活跃时 mismatch recordingId 拒绝」 |
+| 11 §3 | 普通模式补停止后等待态：停后「正在识别…」（`record.awaitingTranscript`）→ 等 `voice.transcript`/`voice.error` 终态 → 仅真实 45s 超时兜底翻转「未识别，请重试」；等待期试听/删除/重录可用、确认发送禁用；错误与字幕可并存 |
+| 13 §13 | 阶段 4 批次 B 同步段「定案」/「自动回归」文字与计数对齐（1284/73） |
+| 16 §7 | 阶段 4 真实联调整改落地状态：discard 幂等语义 + 等待态 + voice.error 门控 + mock 冻结契约建模 + 协议桩漂移 canary；测试计数更新（1284 单测（100 files）+ 73 集成（15 files））；整改后仍待配套后端复验（三态保持） |
+| 决策记录 | `2026-08-16-阶段4批次B-决策记录.md` 新增「真实联调整改」段（§10）：R-S4-01~R-S4-08 全表 + 跨仓依赖（BE-S4-RUN-P0-01）+ 漂移 canary 定位说明 + 后续（配套后端修复 SHA 复验） |
+| README / CLAUDE.md | 测试计数更新（1245/100 + 70/15 → 1284/100 + 73/15）+ 阶段 4 真实联调整改落地注记（REAL 复验仍待下一轮） |
+
+### 14.2 阶段 4 真实联调整改定案记录（R-S4-01~R-S4-08 摘要）
+
+- **取消收敛（R-S4-01）**：录音取消收敛单一 helper `discardRecord()`——停采集 → await `api.voiceDiscard` → 清态；`startRecord` 采集失败路径改走 helper、不再提前清 recordingId；发送失败 `console.warn` 留痕 + 本地清态（连接 reset 收口）。
+- **discard 冻结契约（R-S4-02/R-S4-03）**：不做版本门控 stop fallback，配套后端修订 BE-S4-RUN-P0-01 为唯一取消原语；`MockBackend.discardVoice` 建模冻结契约边界（match 清 / mismatch 拒绝不误清 / realtime·dictation 拒绝不动 / IDLE 幂等成功）。
+- **等待态（R-S4-04/R-S4-05/R-S4-07）**：`record.awaitingTranscript` 等待态——stop 后置 true，transcript/error/45s timeout/discard/commit/reset 清；`CyVoicePending` 渲染 错误 > 字幕 > 正在识别 > 未识别（错误与字幕可并存）；空/过短/空转写录音需等满 45s 才显示「未识别」，等待期试听/删除/重录可用、确认发送禁用；集成用 Main 侧 mock env `CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS`（无 renderer env 桥）。
+- **`voice.error` 门控（R-S4-06）**：`mode==='recording'` 丢弃（防旧会话迟到错误污染新录音展示），其余态照常消费；D-P15 路由与日志/审计不变。
+- **fire-and-forget 延迟（R-S4-08，Task 5 ruling）**：`MockBackend.stopRecordVoice` 控制帧 invoke 立即 resolve（与 real send-only 语义一致），仅非空 transcript 的 emit fire-and-forget 延迟 `setTimeout`（tracked + `dispose()` 清理），`activeVoice` 同步清；spec §5.5 与 mock-backend JSDoc 已回写。
+
+### 14.3 自动回归
+
+对修订后的 02/11/13/16 与 README/CLAUDE.md、决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+> 说明：本次为阶段 4 真实联调整改的文档同步增量 Review，未重跑完整交叉 Review（P0 最终复验依赖配套后端修订 BE-S4-RUN-P0-01 的真实 Windows Electron 复跑，下一轮）；阶段 4 新功能（A/B）保持「已开发、未联调」。

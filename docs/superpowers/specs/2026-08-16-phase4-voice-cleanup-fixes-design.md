@@ -214,7 +214,7 @@ async discardVoice(input: VoiceDiscardInput): Promise<void> {
 
 - 错误码以配套后端修复后实际返回为准（实现时对齐；mock 与 real-backend 协议桩共用同一码表）；
 - 同步对齐 [real-backend.ts:1052-1056](apps/desktop/src/main/transport/real-backend.ts#L1052-L1056) 的本地行为不变（wire send-only）；
-- 新增 `parseMockVoiceTranscriptDelayEnv(value)`（[mock-backend.ts:104](apps/desktop/src/main/transport/mock-backend.ts#L104) 旁）：`undefined → undefined`，否则 `Number(value)` 钳制 `[0, 30000]`；`MockBackendOptions.transcriptDelayMs` 缺省 0；`stopRecordVoice` 非空 transcript 时 `await sleep(transcriptDelayMs)` 再 emit（[mock-backend.ts:458-465](apps/desktop/src/main/transport/mock-backend.ts#L458-L465)）；仅 `CYRENE_BACKEND=mock` 时经 [index.ts:139](apps/desktop/src/main/index.ts#L139) 接线（`!== undefined` 才注入）。
+- 新增 `parseMockVoiceTranscriptDelayEnv(value)`（[mock-backend.ts:104](apps/desktop/src/main/transport/mock-backend.ts#L104) 旁）：`undefined → undefined`，否则 `Number(value)` 钳制 `[0, 30000]`；`MockBackendOptions.transcriptDelayMs` 缺省 0；`stopRecordVoice` 控制帧 invoke **立即 resolve**（与 real send-only 语义一致），非空 transcript 的 emit **fire-and-forget** 延迟 `setTimeout(transcriptDelayMs)`（定时器 tracked、`dispose()` 清理），`activeVoice` 同步清（停被接受即清，不随延迟 emit 顺延）——**R-S4-08 ruling（Task 5 修正）：本 spec 原示例「`stopRecordVoice` 非空 transcript 时 `await sleep(transcriptDelayMs)` 再 emit」在 invoke resolve 前等待，与真实后端 stop send-only/快返回语义不符，且「正在识别…」等待态不可观察；fire-and-forget 使等待态在 delay 窗口内可观察、transcript 到达后无闪烁**（[mock-backend.ts:458-465](apps/desktop/src/main/transport/mock-backend.ts#L458-L465)）；仅 `CYRENE_BACKEND=mock` 时经 [index.ts:139](apps/desktop/src/main/index.ts#L139) 接线（`!== undefined` 才注入）。
 
 ### 5.6 real-backend 协议桩测试（P0-01 / P1-01）
 

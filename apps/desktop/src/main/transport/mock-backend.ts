@@ -133,9 +133,10 @@ export interface MockBackendOptions {
   voiceError?: { code: string; message?: string }
   /** 普通录音转写文本（P4-B Mock）：stopRecordVoice 缺省 `'这是一段测试录音的转写文本'`；显式空串测「未识别」（stop 不发 transcript） */
   voiceTranscriptText?: string
-  /** 普通录音转写输出延迟 ms（Task 3 R-S4-05）：>0 且 transcript 非空时，stopRecordVoice `await` 满延迟再 emit
-   *  voice.transcript（mock 慢转写；集成用 CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS 注入可观察「正在识别…」等待态）。
-   *  缺省 0 不延迟（emit 后清 activeVoice 顺序不变）。 */
+  /** 普通录音转写输出延迟 ms（Task 5 ruling / R-S4-08）：>0 且 transcript 非空时，stopRecordVoice 控制帧 invoke
+   *  **立即 resolve**（与 real send-only 语义一致），仅 transcript 的 emit fire-and-forget 延迟 setTimeout
+   *  （定时器 tracked、dispose() 清理）；activeVoice 同步清（停被接受即清，不随延迟 emit 顺延）——
+   *  集成用 CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS 注入可观察「正在识别…」等待态。缺省 0 不延迟。 */
   transcriptDelayMs?: number
 }
 
