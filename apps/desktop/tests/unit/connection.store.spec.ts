@@ -100,6 +100,19 @@ describe('connectionStore', () => {
     expect(store.error?.code).toBe('PREV')           // 仍保持原错误
   })
 
+  it('D-P15：真实路径形状（code=UNKNOWN + backendCode=STT_UNAVAILABLE）→ 同样抑制（不覆盖既有错误）', () => {
+    const store = useConnectionStore()
+    store.error = { code: 'PREV', message: '旧错误' }
+    store.setError({ code: 'UNKNOWN', message: 'STT 不可用', backendCode: 'STT_UNAVAILABLE' })
+    expect(store.error?.code).toBe('PREV')           // backendCode 命中语音族 → 不覆盖既有错误
+  })
+
+  it('D-P15：backendCode 非语音族 → 照旧 setError', () => {
+    const store = useConnectionStore()
+    store.setError({ code: 'UNKNOWN', message: 'm', backendCode: 'AUTHENTICATION_FAILED' })
+    expect(store.error?.code).toBe('UNKNOWN')
+  })
+
   it('D-P15：非语音族错误码 → 照旧 setError', () => {
     const store = useConnectionStore()
     store.setError({ code: 'BACKEND_REJECTED', message: 'm' })

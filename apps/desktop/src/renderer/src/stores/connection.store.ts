@@ -39,9 +39,14 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   /** onChatError 消费入口:显式置公开错误(Main 侧已结构化,renderer 仅保存展示)。
-   *  D-P15:语音族错误码 → 不展示全局连接横幅(语音错误是会话级预期错误,由 voiceStore.error 展示) */
+   *  D-P15:语音族错误码 → 不展示全局连接横幅(语音错误是会话级预期错误,由 voiceStore.error 展示)。
+   *  真实路径形状:real-backend handleErrorFrame 以 CyreneError(UNKNOWN, …, {code: frame.code}) 构造,
+   *  backend-error-handlers 经 extractPublic 把语音码上提为 backendCode → 校验 code 与 backendCode 双路径。 */
   function setError(err: PublicError): void {
-    if ((VOICE_ERROR_CODES as readonly string[]).includes(err.code)) return
+    if (
+      (VOICE_ERROR_CODES as readonly string[]).includes(err.code) ||
+      (err.backendCode !== undefined && (VOICE_ERROR_CODES as readonly string[]).includes(err.backendCode))
+    ) return
     error.value = err
   }
 

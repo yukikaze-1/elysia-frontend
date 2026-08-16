@@ -10,6 +10,8 @@ import type { ModelProfile } from '@shared/contracts'
 import type { PublicError } from '../../src/renderer/src/utils/public-error'
 import CyVoicePane from '../../src/renderer/src/components/CyVoicePane.vue'
 import CyVoicePending from '../../src/renderer/src/components/CyVoicePending.vue'
+import CyRealtimeBar from '../../src/renderer/src/components/CyRealtimeBar.vue'
+import CyDictationHint from '../../src/renderer/src/components/CyDictationHint.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
@@ -258,6 +260,123 @@ describe('CyVoicePending 待发送语音条（spec §5.12 / Minor 24）', () => 
     expect(wrapper.text()).not.toContain('未识别，请重试')
     const confirmBtn = wrapper.findAll('button').find((b) => b.text().includes('确认发送'))
     expect((confirmBtn!.element as HTMLButtonElement).disabled).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('CyVoicePending 待发送语音条——错误展示（final-review Important-1a）', () => {
+  it('record_pending + voiceStore.error（STT 明确失败）→ 展示 error.message，不显示「未识别，请重试」', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'record_pending'
+    voice.record.transcript = undefined
+    voice.error = { code: 'STT_UNAVAILABLE', message: 'STT 服务不可用' }
+    const wrapper = mount(CyVoicePending)
+    expect(wrapper.text()).toContain('STT 服务不可用')
+    expect(wrapper.text()).not.toContain('未识别，请重试')
+    wrapper.unmount()
+  })
+
+  it('record_pending + micError（麦克风权限拒绝）→ 展示 micError.message', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'record_pending'
+    voice.record.transcript = undefined
+    voice.micError = { code: 'MIC_ACCESS_DENIED', message: '麦克风权限被拒绝' }
+    const wrapper = mount(CyVoicePending)
+    expect(wrapper.text()).toContain('麦克风权限被拒绝')
+    expect(wrapper.text()).not.toContain('未识别，请重试')
+    wrapper.unmount()
+  })
+
+  it('record_pending + error 置位 + transcript 存在 → 错误与字幕并存，确认发送仍可用', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'record_pending'
+    voice.record.transcript = '转写字幕'
+    voice.error = { code: 'STT_UNAVAILABLE', message: 'STT 服务不可用' }
+    const wrapper = mount(CyVoicePending)
+    expect(wrapper.text()).toContain('STT 服务不可用')
+    expect(wrapper.text()).toContain('转写字幕')
+    const confirmBtn = wrapper.findAll('button').find((b) => b.text().includes('确认发送'))
+    expect((confirmBtn!.element as HTMLButtonElement).disabled).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('Minor-2：showCaptions=false → 待发送条 transcript 仍渲染（确认发送内容必须可见）', () => {
+    useSettingsStore().voice.showCaptions = false
+    const voice = useVoiceStore()
+    voice.mode = 'record_pending'
+    voice.record.transcript = '确认发送内容'
+    const wrapper = mount(CyVoicePending)
+    expect(wrapper.text()).toContain('确认发送内容')
+    wrapper.unmount()
+  })
+})
+
+describe('CyRealtimeBar 实时条——错误展示 + 字幕门控（final-review Important-1a / Minor-2）', () => {
+  it('realtime + voiceStore.error → 条内展示 error.message，不再显示「聆听中」误导态', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'realtime'
+    voice.realtime.caption = '实时字幕'
+    voice.error = { code: 'VOICE_SESSION_CONFLICT', message: '已有语音会话' }
+    const wrapper = mount(CyRealtimeBar)
+    expect(wrapper.text()).toContain('已有语音会话')
+    expect(wrapper.text()).not.toContain('聆听中')
+    expect(wrapper.text()).toContain('停止')   // 停止按钮仍在（可终止会话）
+    wrapper.unmount()
+  })
+
+  it('realtime 无错误 → 正常显示「聆听中」+ 字幕（showCaptions=true 默认）', () => {
+    useSettingsStore().voice.showCaptions = true
+    const voice = useVoiceStore()
+    voice.mode = 'realtime'
+    voice.realtime.caption = '实时字幕'
+    const wrapper = mount(CyRealtimeBar)
+    expect(wrapper.text()).toContain('聆听中')
+    expect(wrapper.text()).toContain('实时字幕')
+    wrapper.unmount()
+  })
+
+  it('Minor-2：showCaptions=false → 实时 live caption 不渲染（聆听中/轮次仍显示）', () => {
+    useSettingsStore().voice.showCaptions = false
+    const voice = useVoiceStore()
+    voice.mode = 'realtime'
+    voice.realtime.caption = '实时字幕'
+    const wrapper = mount(CyRealtimeBar)
+    expect(wrapper.text()).not.toContain('实时字幕')
+    expect(wrapper.text()).toContain('聆听中')
+    expect(wrapper.text()).toContain('已说 0 轮')
+    wrapper.unmount()
+  })
+})
+
+describe('CyDictationHint 转写浮层——错误展示 + 字幕门控（final-review Important-1a / Minor-2）', () => {
+  it('dictating + voiceStore.error → 浮层展示 error.message', () => {
+    const voice = useVoiceStore()
+    voice.mode = 'dictating'
+    voice.dictation.caption = '转写中字幕'
+    voice.error = { code: 'DICTATION_NOT_FOUND', message: '转写会话不存在' }
+    const wrapper = mount(CyDictationHint)
+    expect(wrapper.text()).toContain('转写会话不存在')
+    wrapper.unmount()
+  })
+
+  it('showCaptions=true（默认）→ dictation partial caption 渲染', () => {
+    useSettingsStore().voice.showCaptions = true
+    const voice = useVoiceStore()
+    voice.mode = 'dictating'
+    voice.dictation.caption = '转写中字幕'
+    const wrapper = mount(CyDictationHint)
+    expect(wrapper.text()).toContain('转写中字幕')
+    wrapper.unmount()
+  })
+
+  it('Minor-2：showCaptions=false → dictation partial caption 不渲染（提示语仍显示）', () => {
+    useSettingsStore().voice.showCaptions = false
+    const voice = useVoiceStore()
+    voice.mode = 'dictating'
+    voice.dictation.caption = '转写中字幕'
+    const wrapper = mount(CyDictationHint)
+    expect(wrapper.text()).not.toContain('转写中字幕')
+    expect(wrapper.text()).toContain('松开提交 · 上滑取消')
     wrapper.unmount()
   })
 })

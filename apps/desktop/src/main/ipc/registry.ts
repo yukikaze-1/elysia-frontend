@@ -59,7 +59,11 @@ export function registerOneWayHandler<T>(
     throw new CyreneError(CyreneErrorCode.UNKNOWN, `重复注册 IPC 通道 ${channel}`)
   }
   ipcMain.on(channel, (event, payload) => {
-    if (!isTrustedSender(event)) return
+    if (!isTrustedSender(event)) {
+      // Minor-7：非受信 sender 同样 warn（fire-and-forget 无响应面，静默拒收难排查——调试友好）
+      opts.logger?.warn('ipc:oneway-untrusted', { channel })
+      return
+    }
     const parsed = schema.safeParse(payload)
     if (!parsed.success) {
       opts.logger?.warn('ipc:oneway-invalid', { channel })

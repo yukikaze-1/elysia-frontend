@@ -10,6 +10,10 @@ const voiceStore = useVoiceStore()
 const transcript = computed(() => voiceStore.record.transcript?.trim() ?? '')
 const hasTranscript = computed(() => transcript.value.length > 0)
 const hasAudio = computed(() => !!voiceStore.record.audioBuffer)
+// final-review Important-1a：record_pending 态展示 voiceStore.error（后端明确失败如 STT_UNAVAILABLE）/ micError（麦克风权限拒绝，
+// spec §5.12 line 323）——区别于 D-P17「未识别，请重试」兜底（后者是 45s 无 transcript/error 的模糊判词）。
+// micError 优先（麦克风拒绝是更可操作的原因）；error 与 transcript 可并存展示。
+const errorText = computed(() => voiceStore.micError?.message ?? voiceStore.error?.message)
 const committing = ref(false)
 
 function onReplay(): void { voiceStore.replayRecord() }
@@ -32,8 +36,9 @@ async function onConfirm(): Promise<void> {
 <template>
   <div class="cy-voice-pending" role="status" aria-label="待发送语音">
     <div class="cy-vp-caption">
+      <span v-if="errorText" class="cy-vp-error" role="alert">{{ errorText }}</span>
       <span v-if="hasTranscript" class="cy-vp-text">{{ transcript }}</span>
-      <span v-else class="cy-vp-empty">未识别，请重试</span>
+      <span v-else-if="!errorText" class="cy-vp-empty">未识别，请重试</span>
     </div>
     <div class="cy-vp-actions">
       <button class="cy-vp-btn" :disabled="!hasAudio" title="试听录音" @click="onReplay">试听</button>
@@ -64,11 +69,23 @@ async function onConfirm(): Promise<void> {
 .cy-vp-caption {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--cy-text);
+}
+
+.cy-vp-text,
+.cy-vp-empty {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
-  color: var(--cy-text);
+}
+
+.cy-vp-error {
+  color: var(--cy-danger);
+  font-weight: 500;
 }
 
 .cy-vp-empty {

@@ -2,7 +2,7 @@
 // 会话列表/当前会话/激活/历史。activate 里 resetConversation(id) + 拉第一页历史(loadPage 去重按 messageId,P1-3)。
 // 批次B T8:初始化编排(FE-P1-03 §4.1)+ epoch 守卫(FE-P1-04 §4.2.3/4)+ ready/busy/error + 补激活(§4.1.3)。
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type { Conversation } from '@shared/contracts'
 import { api } from './desktop-api'
 import { useMessageStore } from './message.store'
@@ -28,6 +28,12 @@ export const useConversationStore = defineStore('conversation', () => {
   const busy = ref(false)                // 会话操作进行中(D22,供按钮 loading/防重复)
   const offlineView = ref(false) // 离线视图：activateLocal/setOfflineCache 置位，恢复后 false
   const blockReason = ref<string>()      // D-P5：语音会话活跃时切换/新建被拒的 UI 提示（同附件 canSend.blockReason 短横幅语义）
+  // Minor-3：语音 mode 回 idle 时归口清除切换守卫横幅——停止/删除录音、实时会话结束、转写取消后
+  // 「请先结束当前语音会话」不得残留（activate/create 开头的 idle 清除只覆盖「放行路径」）。
+  watch(
+    () => useVoiceStore().mode,
+    (m) => { if (m === 'idle') blockReason.value = undefined }
+  )
   let epoch = 0                          // 激活竞态守卫(§4.2.3/D6):数字递增,最新请求才提交
   let initializingFor: string | undefined
   let initializationPromise: Promise<void> | undefined

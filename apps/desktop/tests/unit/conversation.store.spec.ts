@@ -3,6 +3,7 @@
 // env=node:store 经 stores/desktop-api 注入 mock api;pinia 用 createPinia + setActivePinia。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
@@ -451,6 +452,15 @@ describe('P4-B Task 13：D-P5 会话切换守卫（语音会话活跃时禁止�
     expect(mockApi.createConversation).not.toHaveBeenCalled()
     expect(store.blockReason).toBe('请先结束当前语音会话')
     expect(store.currentId).toBeUndefined()
+  })
+
+  it('Minor-3：blockReason 置位后语音 mode 回 idle → 自动清除（停止/删除录音、实时结束、转写取消后横幅不残留）', async () => {
+    useVoiceStore().$patch({ mode: 'recording' })
+    const store = useConversationStore()
+    store.$patch({ blockReason: '请先结束当前语音会话' })   // 陈旧横幅残留
+    useVoiceStore().$patch({ mode: 'idle' })               // 语音会话结束
+    await nextTick()                                        // watch 默认 flush:'pre'，微任务队列
+    expect(store.blockReason).toBeUndefined()
   })
 
   it('activate：voiceStore.mode===idle → 放行 + 清 blockReason（同附件 canSend 短横幅语义）', async () => {

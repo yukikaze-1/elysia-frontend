@@ -203,11 +203,12 @@ describe('voice:audio-chunk 单向通道守卫（registerOneWayHandler）', () =
     expect(adapter.sendAudioBytes).toHaveBeenCalledTimes(1)
     expect(adapter.sendAudioBytes).toHaveBeenCalledWith(bytes)
   })
-  it('非受信 sender → 拒收，不调 adapter（trusted-sender guard）', async () => {
+  it('非受信 sender → 拒收 + warn（ipc:oneway-untrusted），不调 adapter（trusted-sender guard）', async () => {
     const adapter = makeVoiceAdapter()
-    const { emitOneWay } = await registerOnce(adapter, { load: vi.fn(), save: vi.fn() })
+    const { emitOneWay, logger } = await registerOnce(adapter, { load: vi.fn(), save: vi.fn() })
     emitOneWay(IpcChannels.voiceAudioChunk, evilEvent, { bytes: new Uint8Array(4) })
     expect(adapter.sendAudioBytes).not.toHaveBeenCalled()
+    expect(logger.warn).toHaveBeenCalledWith('ipc:oneway-untrusted', expect.objectContaining({ channel: IpcChannels.voiceAudioChunk }))
   })
   it('超 1MiB → 丢弃 + warn（voice:audio-chunk-too-large），不调 adapter', async () => {
     const adapter = makeVoiceAdapter()
