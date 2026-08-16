@@ -126,15 +126,19 @@ async function finishMicTest(): Promise<void> {
 onBeforeUnmount(() => {
   recordingWaitStop?.()
   if (micTestTimer !== undefined) clearTimeout(micTestTimer)
-  // 离开设置页时若仍有本页发起的测试录音（测试中/待发送态）→ 清理，不残留聊天待发送条
+  // 卸载契约（P0-01 §5.1）：离开设置页时若仍有本页发起的测试录音 → 清理，不残留聊天待发送条；
+  // guard 仅由本页 mic 测试痕迹触发（不误杀聊天页进行中的录音，§10 残留不动）
   if (micTesting.value || micTestDuration.value !== undefined) {
     // consent 挂起 → 取消本页测试麦克风的挂起动作：防 pane 卸载后点「同意」启动无监督录音
     if (voiceStore.consentPending) {
       voiceStore.dismissConsent()
     } else if (voiceStore.mode === 'recording' || voiceStore.mode === 'record_pending') {
-      void voiceStore.reset()
+      void voiceStore.discardRecord() // 替代 reset()：仍清理后端会话（discardRecord 清态回 idle）
     }
   }
+  // 无条件清瞬时错误：覆盖 onTestMic 失败残留在 idle 的 micError（防聊天页 composer banner 误展示）；
+  // clearTransientErrors 仅清 micError/error/notice，不触采集/录音
+  voiceStore.clearTransientErrors()
 })
 </script>
 

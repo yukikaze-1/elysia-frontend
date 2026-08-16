@@ -413,15 +413,26 @@ describe('voiceStore', () => {
     expect(store.notice).toBe('录音已达 10 分钟上限，已自动停止')
   })
 
-  it('record：micError——capture.start 拒绝 → micError + 模式回 idle + 取消后端会话(discard)', async () => {
+  it('record：micError——capture.start 拒绝 → micError + voiceDiscard 同 recordingId + discard resolve 后清态（P0-01）', async () => {
     fake.start.mockRejectedValue(new Error('[NOT_ALLOWED] 麦克风权限被拒绝'))
+    let resolveDiscard!: () => void
+    mockApi.voiceDiscard.mockImplementationOnce(() => new Promise<void>((r) => { resolveDiscard = r }))
     const store = useVoiceStore()
-    await store.startRecord()
+    const p = store.startRecord()
+    await vi.waitFor(() => expect(mockApi.voiceDiscard).toHaveBeenCalled())
     expect(store.micError?.code).toBe('NOT_ALLOWED')
     expect(store.micError?.message).toContain('麦克风权限被拒绝')
+    // 同一 recordingId：discard 保留 startRecord 生成的 id（不提前清、不丢关联）
+    const startId = mockApi.voiceStartRecord.mock.calls[0][0].recordingId as string
+    expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: startId })
+    resolveDiscard()
+    await p
+    // order：discard resolve 后才清态（mode=idle / record / caption）
     expect(store.mode).toBe('idle')
     expect(store.captureReady).toBe(false)
-    expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
+    expect(store.record.elapsedMs).toBe(0)
+    expect(store.record.audioBuffer).toBeNull()
+    expect(store.caption).toBe('')
   })
 
   it('review-Important：成功重试清除陈旧 micError（修复权限后重录不残留旧错误）', async () => {
@@ -434,6 +445,66 @@ describe('voiceStore', () => {
     expect(store.micError).toBeUndefined()
     expect(store.error).toBeUndefined()
     expect(store.mode).toBe('recording')
+  })
+
+  it('record：P0-01 capture 失败 + voiceDiscard reject（断线）→ 无未处理拒绝、本地态清、micError 保留', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fake.start.mockRejectedValue(new Error('[NOT_ALLOWED] 麦克风权限被拒绝'))
+    mockApi.voiceDiscard.mockRejectedValue(new Error('[IPC_ERROR] 连接已断开'))
+    const store = useVoiceStore()
+    await expect(store.startRecord()).resolves.toBeUndefined() // 不抛未处理拒绝
+    expect(store.micError?.code).toBe('NOT_ALLOWED') // micError 保留（clearRecordState 不碰；composer banner 依赖）
+    expect(store.mode).toBe('idle')
+    expect(store.captureReady).toBe(false)
+    expect(store.record.elapsedMs).toBe(0)
+    expect(store.caption).toBe('')
+    expect(mockApi.voiceDiscard).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalled() // R-S4-01 不静默：console.warn 留痕
+    warnSpy.mockRestore()
+  })
+
+  it('record：P0-01 待发送删除 + voiceDiscard reject → 清态 + 不 throw', async () => {
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockApi.voiceDiscard.mockRejectedValue(new Error('[IPC_ERROR] 连接已断开'))
+    const store = useVoiceStore()
+    await store.startRecord()
+    await store.stopRecord()
+    expect(store.mode).toBe('record_pending')
+    await expect(store.discardRecord()).resolves.toBeUndefined() // reject 被收敛，不 throw
+    expect(store.mode).toBe('idle')
+    expect(store.record.elapsedMs).toBe(0)
+    expect(store.record.awaitingTranscript).toBe(false)
+    expect(store.caption).toBe('')
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+
+  it('record：P0-01 污染闭环——重录后旧会话迟到 voice.error 不污染新录音展示（R-S4-06 门控）', async () => {
+    vi.useFakeTimers()
+    const store = useVoiceStore()
+    const handler = subscribe(store)
+    // 第一轮：record → discard
+    await store.startRecord()
+    const oldId = lastRecordingId()
+    await store.stopRecord()
+    await store.discardRecord()
+    expect(store.mode).toBe('idle')
+    // 第二轮：新录音进入 recording（重录已清陈旧 error）
+    await store.startRecord()
+    const newId = lastRecordingId()
+    expect(newId).not.toBe(oldId)
+    expect(store.mode).toBe('recording')
+    // 旧会话迟到 voice.error 在 recording 态被门控丢弃（R-S4-06）
+    handler(ev({ event: 'voice.error', code: 'VOICE_RECORDING_NOT_FOUND', message: '旧会话迟到错误' }))
+    expect(store.error).toBeUndefined()
+    // stop → 新字幕到达 → error 仍 undefined + 待发送条显示新字幕
+    await store.stopRecord()
+    handler(ev({ event: 'voice.transcript', recordingId: newId, text: '新录音字幕' }))
+    expect(store.error).toBeUndefined()
+    expect(store.record.transcript).toBe('新录音字幕')
+    expect(store.caption).toBe('新录音字幕')
+    expect(store.mode).toBe('record_pending')
   })
 
   it('review-Important：新 start 清除陈旧 error（voice.error 后重试）', async () => {

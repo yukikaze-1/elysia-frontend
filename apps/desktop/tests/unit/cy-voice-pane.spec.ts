@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import type { ModelProfile } from '@shared/contracts'
+import type { BackendEvent } from '@shared/contracts'
 import type { PublicError } from '../../src/renderer/src/utils/public-error'
 import CyVoicePane from '../../src/renderer/src/components/CyVoicePane.vue'
 import CyVoicePending from '../../src/renderer/src/components/CyVoicePending.vue'
@@ -41,6 +42,11 @@ function sttProfile(id: string, over: Partial<ModelProfile> = {}): ModelProfile 
     models: [], executionLocation: 'backend', credentialStatus: 'configured', enabled: true,
     capabilities: [], builtIn: true, ...over
   }
+}
+
+/** 事件外壳：BackendEvent 判别字段 + envelope 最小集（race 测试驱动 voiceStore.handleEvent） */
+function ev<T extends { event: string }>(partial: T): BackendEvent {
+  return { eventId: 'e1', sequence: 1, ...partial } as unknown as BackendEvent
 }
 
 beforeEach(() => {
@@ -348,6 +354,186 @@ describe('CyRealtimeBar 实时条——错误展示 + 字幕门控（final-revie
     expect(wrapper.text()).toContain('聆听中')
     expect(wrapper.text()).toContain('已说 0 轮')
     wrapper.unmount()
+  })
+})
+
+describe('CyVoicePane 卸载契约（P0-01 §5.1）', () => {
+  it('卸载：guard 真 + mode recording → discardRecord（替代 reset）+ micError/error/notice 清空', async () => {
+    const voice = useVoiceStore()
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.mode = 'recording'
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    expect(voice.mode).toBe('recording')
+    // 本页 mic 测试残留 + 陈旧瞬时错误
+    voice.micError = { message: '旧 micError' } as PublicError
+    voice.error = { message: '旧 error' } as PublicError
+    voice.notice = '旧 notice'
+    wrapper.unmount()
+    expect(discardSpy).toHaveBeenCalledTimes(1) // 卸载仍清理后端会话（去 reset，走 discardRecord）
+    expect(voice.micError).toBeUndefined()      // 无条件 clearTransientErrors 生效
+    expect(voice.error).toBeUndefined()
+    expect(voice.notice).toBeNull()
+    startSpy.mockRestore()
+    discardSpy.mockRestore()
+  })
+
+  it('卸载：guard 真 + mode record_pending → discardRecord + transient 清空', async () => {
+    const voice = useVoiceStore()
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.mode = 'recording'
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    voice.mode = 'record_pending' // 模拟 finishMicTest 已 stop、转写待定
+    voice.micError = { message: '旧 micError' } as PublicError
+    wrapper.unmount()
+    expect(discardSpy).toHaveBeenCalledTimes(1)
+    expect(voice.micError).toBeUndefined() // clearTransientErrors 只清错误字段，不触录音态
+    expect(voice.mode).toBe('record_pending') // discard 为 void spy，未动 mode（仅清 transient）
+    startSpy.mockRestore()
+    discardSpy.mockRestore()
+  })
+
+  it('卸载：mode-idle 测试麦克风失败残差（micTesting false + mode idle + micError 置位）→ 无 discard + clearTransientErrors 清空', async () => {
+    const voice = useVoiceStore()
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.micError = { message: '麦克风权限被拒绝' } as PublicError
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    await wrapper.vm.$nextTick()
+    // onTestMic 失败路径终态：micTesting=false、mode 保持 idle、micError 置位
+    expect(wrapper.text()).toContain('麦克风权限被拒绝')
+    expect(discardSpy).not.toHaveBeenCalled()
+    wrapper.unmount()
+    expect(discardSpy).not.toHaveBeenCalled() // guard 假（无 mic 测试痕迹）→ 不 discard
+    expect(voice.micError).toBeUndefined()    // 无条件 clearTransientErrors 清 mode-idle 失败残差（聊天页 composer banner 不残留）
+    startSpy.mockRestore()
+    discardSpy.mockRestore()
+  })
+
+  it('卸载：consentPending → dismissConsent（不误发 discard）', async () => {
+    const voice = useVoiceStore()
+    const dismissSpy = vi.spyOn(voice, 'dismissConsent')
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.consentPending = true
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    expect(voice.consentPending).toBe(true)
+    wrapper.unmount()
+    expect(dismissSpy).toHaveBeenCalledTimes(1) // 仍走 consent 取消分支
+    expect(discardSpy).not.toHaveBeenCalled()
+    startSpy.mockRestore()
+    discardSpy.mockRestore()
+    dismissSpy.mockRestore()
+  })
+
+  it('卸载：无 mic 测试痕迹（guard 假）→ 不 discard（聊天页进行中的录音不受影响）', async () => {
+    const voice = useVoiceStore()
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockResolvedValue(undefined)
+    voice.mode = 'recording' // 非本页发起的录音（如聊天页残留），guard 假 → 不动
+    const wrapper = mount(CyVoicePane)
+    wrapper.unmount()
+    expect(discardSpy).not.toHaveBeenCalled()
+    discardSpy.mockRestore()
+  })
+})
+
+describe('CyVoicePane mic-test 收尾 stop → replay → discard（P0-01 §3.4）', () => {
+  it('mic-test：stop → STT 非空 → 字幕 + 试听 + discard（测试录音不入聊天流程，无残留）', async () => {
+    vi.useFakeTimers()
+    const voice = useVoiceStore()
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.mode = 'recording'
+    })
+    let transcriptAtDiscard: string | undefined
+    const stopSpy = vi.spyOn(voice, 'stopRecord').mockImplementation(async () => {
+      voice.mode = 'record_pending'
+      voice.record.transcript = '测试录音字幕' // STT 非空
+      voice.record.awaitingTranscript = false
+    })
+    const replaySpy = vi.spyOn(voice, 'replayRecord')
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockImplementation(async () => {
+      transcriptAtDiscard = voice.record.transcript // 丢弃前字幕仍可读（STT 非空）
+      voice.record.transcript = undefined
+      voice.mode = 'idle'
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    await vi.advanceTimersByTimeAsync(3000) // 3s 自停 → finishMicTest
+    expect(stopSpy).toHaveBeenCalledTimes(1)
+    expect(transcriptAtDiscard).toBe('测试录音字幕') // STT 非空：丢弃前字幕已就位
+    expect(replaySpy).toHaveBeenCalledTimes(1)        // 试听
+    expect(discardSpy).toHaveBeenCalledTimes(1)       // 丢弃
+    expect(voice.mode).toBe('idle')                   // 清态回 idle
+    expect(voice.record.transcript).toBeUndefined()   // 不残留聊天待发送条
+    wrapper.unmount()
+    startSpy.mockRestore()
+    stopSpy.mockRestore()
+    replaySpy.mockRestore()
+    discardSpy.mockRestore()
+  })
+
+  it('mic-test：stop → STT 空结果（不发 transcript → 等待中）→ 等待中仍可丢弃', async () => {
+    vi.useFakeTimers()
+    const voice = useVoiceStore()
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.mode = 'recording'
+    })
+    const stopSpy = vi.spyOn(voice, 'stopRecord').mockImplementation(async () => {
+      voice.mode = 'record_pending'
+      voice.record.awaitingTranscript = true // STT 空 → 不派发 transcript，等待中
+    })
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockImplementation(async () => {
+      voice.mode = 'idle'
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(stopSpy).toHaveBeenCalledTimes(1)
+    expect(discardSpy).toHaveBeenCalledTimes(1) // R-S4-07 等待期删除可用（测试录音照常丢弃）
+    expect(voice.mode).toBe('idle')
+    wrapper.unmount()
+    startSpy.mockRestore()
+    stopSpy.mockRestore()
+    discardSpy.mockRestore()
+  })
+
+  it('mic-test：discard 与 STT 完成竞态——迟到 transcript 被 recordingId gate 忽略、无残留、无错误', async () => {
+    vi.useFakeTimers()
+    const voice = useVoiceStore()
+    const startSpy = vi.spyOn(voice, 'startRecord').mockImplementation(async () => {
+      voice.mode = 'recording'
+    })
+    const stopSpy = vi.spyOn(voice, 'stopRecord').mockImplementation(async () => {
+      voice.mode = 'record_pending'
+      voice.record.awaitingTranscript = true
+    })
+    const discardSpy = vi.spyOn(voice, 'discardRecord').mockImplementation(async () => {
+      voice.mode = 'idle'
+    })
+    const wrapper = mount(CyVoicePane)
+    await wrapper.find('button').trigger('click')
+    await vi.advanceTimersByTimeAsync(3000) // finishMicTest：stop → 未派发 transcript → 直接 discard
+    expect(voice.mode).toBe('idle')
+    expect(voice.record.transcript).toBeUndefined()
+    // 迟到 transcript（discard 已清 activeRecordingId）→ recordingId gate 忽略 → 无残留、无错误
+    voice.handleEvent(ev({ event: 'voice.transcript', recordingId: 'rec_old', text: '迟到字幕' }))
+    expect(voice.record.transcript).toBeUndefined()
+    expect(voice.caption).toBe('')
+    expect(voice.mode).toBe('idle')
+    expect(voice.error).toBeUndefined()
+    wrapper.unmount()
+    startSpy.mockRestore()
+    stopSpy.mockRestore()
+    discardSpy.mockRestore()
   })
 })
 

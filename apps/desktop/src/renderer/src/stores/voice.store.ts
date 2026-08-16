@@ -281,13 +281,12 @@ export const useVoiceStore = defineStore('voice', () => {
         deviceId: useSettingsStore().voice.micDeviceId
       })
     } catch (e) {
-      // Important-3：getUserMedia/AudioContext 拒绝 → micError + 模式回 idle + 取消后端会话（discard 无 transcript）
+      // Important-3 / P0-01：getUserMedia/AudioContext 拒绝 → micError + 停采集 + await discardRecord()
+      // 取消后端会话（不提前清 activeRecordingId/mode——recordingId 由 helper 保留至取消帧发送完成）
       micError.value = parsePublicError(messageOf(e))
       capture = null
       captureReady.value = false
-      activeRecordingId = undefined
-      mode.value = 'idle'
-      try { await api.voiceDiscard({ recordingId }) } catch { /* 后端取消失败不阻塞 */ }
+      await discardRecord()
       return
     }
     captureReady.value = true
@@ -336,10 +335,27 @@ export const useVoiceStore = defineStore('voice', () => {
     void src.start()
   }
 
+  /** 录音取消收敛 helper（R-S4-01 / P0-01）：唯一取消原语——停采集 → await discard 发送 → 清态。
+   *  幂等、可重复调用；recordingId 保留至发送 resolve/reject（本地态只在取消帧发送完成后清理，不丢唯一关联 ID）。 */
   async function discardRecord(): Promise<void> {
     if (!activeRecordingId) return
-    await api.voiceDiscard({ recordingId: activeRecordingId })
-    clearRecordState()
+    await capture?.stop() // 防御：recording 态卸载/收尾时停止采集（idempotent）
+    capture = null
+    captureReady.value = false
+    try {
+      await api.voiceDiscard({ recordingId: activeRecordingId }) // id 保留至发送 resolve/reject
+    } catch (e) {
+      // R-S4-01：发送失败（断线）→ 后端会话随连接关闭清理；本地清态收敛于连接 reset；不静默——留痕
+      console.warn('[voice] discard 发送失败，本地录音态已清理（连接 reset 收口）', e)
+    }
+    clearRecordState() // 清 record/caption/mode/timers/activeRecordingId（awaitingTranscript 由 Task 1 复位）
+  }
+
+  /** 瞬时错误清理（卸载契约消费）：清 micError/error/notice 三错误字段，不触采集/录音态 */
+  function clearTransientErrors(): void {
+    micError.value = undefined
+    error.value = undefined
+    notice.value = null
   }
 
   /** 确认发送：transcript 非空才发；sendVoiceCommit 成功 → 清态 */
@@ -520,7 +536,7 @@ export const useVoiceStore = defineStore('voice', () => {
     startRealtime, stopRealtime, cancelRealtime,
     startDictation, stopDictation, cancelDictation, clearDictationFinal,
     onTtsPlaybackEnded, onTtsPlaybackError, stopTtsPlayback,
-    setNotice, clearNotice,
+    setNotice, clearNotice, clearTransientErrors,
     reset
   }
 })
