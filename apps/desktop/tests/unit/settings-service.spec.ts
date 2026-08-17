@@ -74,6 +74,47 @@ describe('SettingsService', () => {
     expect(existsSync(`${settingsPath(dir)}.corrupt`)).toBe(true)
   })
 
+  // —— 阶段 5 批次 A（A6，D5A-10）：live2d 段向后兼容 + 部分 patch merge ——
+  it('无 live2d 段旧 file 正常加载（默认 enabled:true/modelId:null，不动 version 与既有子树）', async () => {
+    const { dir, safeRoot } = makeDir()
+    // 阶段 4 批次 B 时代的老 settings.json：只有 version/voice/dictation，无 live2d 段
+    const oldFile = {
+      version: 1,
+      voice: { enabled: false, realtimeEnabled: true, autoReadReply: false, showCaptions: true, consentBackendStt: true },
+      dictation: { sttProfileId: 'stt/p1', insertMode: 'replace_selection' }
+    }
+    writeFileSync(settingsPath(dir), JSON.stringify(oldFile), { mode: 0o600 })
+    const svc = new SettingsService({ dir, safeRoot, logger })
+    const state = await svc.load()
+    expect(state.version).toBe(1)                                  // 不动 version
+    expect(state.voice.enabled).toBe(false)                        // 既有子树保留（不走 corrupt 全量重置）
+    expect(state.dictation.sttProfileId).toBe('stt/p1')
+    expect(state.live2d).toEqual({ enabled: true, modelId: null }) // .default(DEFAULT_LIVE2D) 补齐
+    expect(existsSync(`${settingsPath(dir)}.corrupt`)).toBe(false) // 非 corrupt 路径
+  })
+
+  it('部分 patch {enabled:false} 保留 modelId（第三 merge 行）', async () => {
+    const { dir, safeRoot } = makeDir()
+    const svc = new SettingsService({ dir, safeRoot, logger })
+    await svc.load()
+    const s1 = await svc.save({ live2d: { modelId: 'haru' } })
+    expect(s1.live2d).toEqual({ enabled: true, modelId: 'haru' })
+    const s2 = await svc.save({ live2d: { enabled: false } })
+    expect(s2.live2d.enabled).toBe(false)   // 本次 patch 生效
+    expect(s2.live2d.modelId).toBe('haru')  // 未提交字段保持现值（不重设 null）
+    // 无 live2d 段的 patch（如仅 voice）也保留 live2d 子树
+    const s3 = await svc.save({ voice: { enabled: true } })
+    expect(s3.live2d).toEqual({ enabled: false, modelId: 'haru' })
+  })
+
+  it('live2d patch 非法（modelId 非 string|null / enabled 非 boolean）→ 拒绝', async () => {
+    const { dir, safeRoot } = makeDir()
+    const svc = new SettingsService({ dir, safeRoot, logger })
+    await svc.load()
+    await expect(svc.save({ live2d: { enabled: 'yes' as unknown as boolean } })).rejects.toThrow()
+    await expect(svc.save({ live2d: { modelId: 42 as unknown as string | null } })).rejects.toThrow()
+  })
+
   it('zod 拒绝非法 patch（save 落盘前 SettingsStateSchema.parse 兜底）', async () => {
     const { dir, safeRoot } = makeDir()
     const svc = new SettingsService({ dir, safeRoot, logger })

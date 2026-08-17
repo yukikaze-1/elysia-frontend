@@ -24,6 +24,7 @@ import type {
   DictationStartInput,
   DictationStopInput,
   FileValidationResult,
+  Live2DModelSummary,
   Message,
   MessageContextQuery,
   MessagePage,
@@ -120,4 +121,6 @@ export interface DesktopApiLike {
   // —— 阶段 4 批次 B 设置面 ——
   settingsLoad(): Promise<SettingsState>
   settingsSave(patch: SettingsPatch): Promise<SettingsState>
+  // —— 阶段 5 批次 A Live2D 面 ——
+  listLive2dModels(): Promise<Live2DModelSummary[]>
 }

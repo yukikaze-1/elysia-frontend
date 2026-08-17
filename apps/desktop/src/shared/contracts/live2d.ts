@@ -1,6 +1,16 @@
 // src/shared/contracts/live2d.ts
-// 阶段 5 批次 A（spec D5A-07）：Live2D 模型摘要共享契约。
-// 注：Live2DSettings（enabled/modelId）归 Task 6（A6）在本文件扩展；本任务只定义 Live2DModelSummary。
+// 阶段 5 批次 A（spec D5A-07/D5A-10）：Live2D 模型摘要 + 本地设置契约。
+// Live2DModelSummary 随 Task 2（A3）落地；Live2DSettings（enabled/modelId）由 Task 6（A6）扩展，
+// 供 SettingsState/SettingsPatch 持久化（docs/11 §7.1 子集，完整设置 UI 归批次 B/B5）。
+// 注：Live2DSettings 经 contracts/voice.ts SettingsState 接入 schema 栈（shared/schemas/ipc-response.ts
+// SettingsStateSchema.live2d 带 .default(DEFAULT_LIVE2D)，旧 settings.json 无该段不破坏既有 voice/dictation）。
+
+/** 本地设置（D5A-10）。enabled 语义：缺省 true；与 G1 布局折叠标志 live2dShown（布局级隐藏）正交；
+ *  modelId 为已加载模型 id（null = 未选择/默认首个可用）。 */
+export interface Live2DSettings {
+  enabled: boolean
+  modelId: string | null
+}
 
 /**
  * Main 模型注册表摘要（registry.listInstalledModels 产出；经 IPC live2d:list-models 供 Renderer）。

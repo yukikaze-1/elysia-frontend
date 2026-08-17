@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, Live2DModelSummary, ModelProfile, ModelProfileTestResult, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -200,20 +200,34 @@ export const VoiceSettingsSchema = z.object({
 export const DictationSettingsSchema = z.object({
   sttProfileId: z.string().optional(), insertMode: z.enum(['append', 'replace_selection'])
 })
+/** 阶段 5 批次 A（D5A-10，A6）：Live2D 本地设置子 schema——镜像 contracts/live2d.ts `Live2DSettings`。
+ * 不注 z.ZodType（保留 .partial()）；SettingsStateSchema 该字段带 .default(DEFAULT_LIVE2D)——
+ * 老 settings.json 无 live2d 段也能通过 parse（input 可缺省），不得做成必填（否则老文件走 corrupt+全量重置，
+ * 清掉 voice/dictation）。 */
+export const Live2DSettingsSchema = z.object({
+  enabled: z.boolean(),
+  modelId: z.string().nullable()
+})
+/** 默认 Live2D 设置（D5A-10）：缺省启用 + 未选择模型（null → 默认首个可用模型） */
+export const DEFAULT_LIVE2D: Live2DSettings = { enabled: true, modelId: null }
 export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
-  version: z.literal(1), voice: VoiceSettingsSchema, dictation: DictationSettingsSchema
+  version: z.literal(1), voice: VoiceSettingsSchema, dictation: DictationSettingsSchema,
+  live2d: Live2DSettingsSchema.default(DEFAULT_LIVE2D)
 })
 /** 局部更新（settings:save 入参；patch 后 merge 才落盘，未提交字段保持现值） */
 export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
   voice: VoiceSettingsSchema.partial().optional(),
-  dictation: DictationSettingsSchema.partial().optional()
+  dictation: DictationSettingsSchema.partial().optional(),
+  live2d: Live2DSettingsSchema.partial().optional()
 })
 
-/** 默认设置（M-7 修复）：enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/insertMode；micDeviceId/sttProfileId 缺省 undefined */
+/** 默认设置（M-7 修复）：enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/insertMode；micDeviceId/sttProfileId 缺省 undefined；
+ *  阶段 5 批次 A：live2d 引用 DEFAULT_LIVE2D（enabled:true/modelId:null） */
 export const DEFAULT_SETTINGS: SettingsState = {
   version: 1,
   voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
-  dictation: { insertMode: 'append' }
+  dictation: { insertMode: 'append' },
+  live2d: DEFAULT_LIVE2D
 }
 
 // —— 阶段 5 批次 A：Live2D 模型摘要出参 schema（严格镜像 contracts/live2d.ts，D5A-07；preload 与 Main handler 共用）——

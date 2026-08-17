@@ -67,7 +67,8 @@ export class SettingsService {
       ...this.state,
       ...patch,
       voice: { ...this.state.voice, ...patch.voice },
-      dictation: { ...this.state.dictation, ...patch.dictation }
+      dictation: { ...this.state.dictation, ...patch.dictation },
+      live2d: { ...this.state.live2d, ...patch.live2d } // 阶段 5 批次 A（D5A-10）：部分 patch（如 {enabled:false}）不丢 modelId
     }
     const newState = SettingsStateSchema.parse(next)
     await atomicWriteFile(this.file, JSON.stringify(newState), { safeRoot: this.deps.safeRoot })

@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, DictationSettingsSchema, SettingsPatchSchema, Setting
 import { VOICE_ERROR_CODES } from '@shared/contracts'
 
 describe('语音/设置领域契约 schema（阶段4批次B）', () => {
-  it('SettingsStateSchema.parse(DEFAULT_SETTINGS) 通过（默认值镜像 spec 5.1/M-7）', () => {
+  it('SettingsStateSchema.parse(DEFAULT_SETTINGS) 通过（默认值镜像 spec 5.1/M-7/D5A-10）', () => {
     const parsed = SettingsStateSchema.parse(DEFAULT_SETTINGS)
     expect(parsed).toEqual({
       version: 1,
@@ -11,7 +11,8 @@ describe('语音/设置领域契约 schema（阶段4批次B）', () => {
         enabled: true, realtimeEnabled: false, autoReadReply: true,
         showCaptions: true, consentBackendStt: false
       },
-      dictation: { insertMode: 'append' }
+      dictation: { insertMode: 'append' },
+      live2d: { enabled: true, modelId: null } // 阶段 5 批次 A（D5A-10）
     })
   })
 

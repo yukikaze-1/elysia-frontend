@@ -26,7 +26,9 @@ const mockApi = {
   voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
   voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
   voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn()
+  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
+  // 阶段 5 批次 A（A6）
+  listLive2dModels: vi.fn()
 }
 
 function state(over: Partial<SettingsState> = {}): SettingsState {
@@ -34,13 +36,22 @@ function state(over: Partial<SettingsState> = {}): SettingsState {
     version: 1,
     voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
     dictation: { insertMode: 'append' },
+    live2d: { enabled: true, modelId: null },
     ...over
   }
 }
 
 /** 模拟 Main SettingsService.save 的 patch-merge 语义：返回合并后 state（未提交字段保持现值） */
-function applyPatch(base: SettingsState, patch: { voice?: Partial<SettingsState['voice']>; dictation?: Partial<SettingsState['dictation']> }): SettingsState {
-  return { ...base, voice: { ...base.voice, ...patch.voice }, dictation: { ...base.dictation, ...patch.dictation } }
+function applyPatch(
+  base: SettingsState,
+  patch: { voice?: Partial<SettingsState['voice']>; dictation?: Partial<SettingsState['dictation']>; live2d?: Partial<SettingsState['live2d']> }
+): SettingsState {
+  return {
+    ...base,
+    voice: { ...base.voice, ...patch.voice },
+    dictation: { ...base.dictation, ...patch.dictation },
+    live2d: { ...base.live2d, ...patch.live2d }
+  }
 }
 
 describe('settingsStore', () => {
@@ -133,6 +144,54 @@ describe('settingsStore', () => {
     expect(s.saveError).toContain('写盘失败')
     expect(s.saved).toBe(false)
     expect(s.voice.showCaptions).toBe(false) // 本地改不回滚
+  })
+
+  // —— 阶段 5 批次 A（A6，D5A-10）：live2d 子树三处接线 ——
+  it('hydrate 读回 live2d 段（enabled/modelId）', async () => {
+    mockApi.settingsLoad.mockResolvedValue(state({ live2d: { enabled: false, modelId: 'haru' } }))
+    const s = useSettingsStore()
+    await s.hydrate()
+    expect(s.live2d.enabled).toBe(false)
+    expect(s.live2d.modelId).toBe('haru')
+  })
+
+  it('setLive2d 本地改 + 500ms 防抖持久化 live2d 子树', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setLive2d({ modelId: 'haru' })
+    expect(s.live2d.modelId).toBe('haru') // 本地立即生效
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)
+    expect(mockApi.settingsSave).toHaveBeenCalledWith({ live2d: { modelId: 'haru' } })
+    expect(s.live2d.enabled).toBe(true) // 回写 merge 保留未提交字段
+    expect(s.live2d.modelId).toBe('haru')
+  })
+
+  it('跨子树累积：setVoice + setLive2d 同窗口 → 单次 save 含两棵子树（I1 防混改丢子树）', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setVoice({ autoReadReply: false })
+    s.setLive2d({ enabled: false })
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)
+    expect(mockApi.settingsSave).toHaveBeenCalledWith({
+      voice: { autoReadReply: false },
+      live2d: { enabled: false }
+    })
+    expect(s.voice.autoReadReply).toBe(false)
+    expect(s.live2d.enabled).toBe(false)
+  })
+
+  it('仅 live2d patch 时 persist 不早退（第三键早退条件）', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setLive2d({ modelId: 'lil' })
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1) // 未被 if(!pending.live2d) 早退跳过
+    expect(s.live2d.modelId).toBe('lil')
   })
 })
 

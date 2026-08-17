@@ -10,6 +10,10 @@ import {
   ScrollAnchorSchema, PersistSessionInputSchema,
   CacheMessagesInputSchema, OpenExternalInputSchema, SessionPersistenceStateSchema
 } from '@shared/schemas'
+import {
+  DEFAULT_LIVE2D, DEFAULT_SETTINGS, SettingsStateSchema, SettingsPatchSchema,
+  Live2DModelSummarySchema, Live2DListResponseSchema
+} from '@shared/schemas'
 
 const assistantMsg = {
   messageId: 'm1',
@@ -143,5 +147,53 @@ describe('阶段 3 G2 持久化 Schema（镜像 shared/contracts/persistence.ts�
       messageSnapshots: { c1: [{ messageId: 'm1', conversationId: 'c1', role: 'assistant', status: 'completed', createdAt: 't', assistantSegments: [] }] }
     }
     expect(SessionPersistenceStateSchema.safeParse(state).success).toBe(true)
+  })
+})
+
+describe('阶段 5 批次 A live2d 设置 schema（D5A-10，A6）', () => {
+  it('DEFAULT_LIVE2D 形状 + DEFAULT_SETTINGS 引用同一对象', () => {
+    expect(DEFAULT_LIVE2D).toEqual({ enabled: true, modelId: null })
+    expect(DEFAULT_SETTINGS.live2d).toBe(DEFAULT_LIVE2D)
+  })
+
+  it('SettingsStateSchema：缺 live2d 段 → .default(DEFAULT_LIVE2D) 补齐（旧 file 兼容，不 corrupt）', () => {
+    const r = SettingsStateSchema.safeParse({
+      version: 1,
+      voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
+      dictation: { insertMode: 'append' }
+    })
+    expect(r.success).toBe(true)
+    if (r.success) expect(r.data.live2d).toEqual({ enabled: true, modelId: null })
+  })
+
+  it('SettingsStateSchema：live2d 合法值通过 / 非法（modelId 非 string|null）拒绝', () => {
+    const base = {
+      version: 1,
+      voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
+      dictation: { insertMode: 'append' }
+    }
+    expect(SettingsStateSchema.safeParse({ ...base, live2d: { enabled: false, modelId: 'haru' } }).success).toBe(true)
+    expect(SettingsStateSchema.safeParse({ ...base, live2d: { enabled: false, modelId: null } }).success).toBe(true)
+    expect(SettingsStateSchema.safeParse({ ...base, live2d: { enabled: true, modelId: 42 } }).success).toBe(false)
+    expect(SettingsStateSchema.safeParse({ ...base, live2d: { enabled: 'x' } }).success).toBe(false)
+  })
+
+  it('SettingsPatchSchema：live2d 嵌套 partial 放行 / 缺省放行 / 非法形状拒绝', () => {
+    expect(SettingsPatchSchema.safeParse({ live2d: { enabled: false } }).success).toBe(true)
+    expect(SettingsPatchSchema.safeParse({ live2d: { modelId: 'haru' } }).success).toBe(true)
+    expect(SettingsPatchSchema.safeParse({}).success).toBe(true)               // 无 live2d patch 正常
+    expect(SettingsPatchSchema.safeParse({ live2d: 'x' }).success).toBe(false)  // 非对象拒绝
+    expect(SettingsPatchSchema.safeParse({ live2d: { modelId: 42 } }).success).toBe(false)
+  })
+
+  it('Live2DModelSummarySchema / Live2DListResponseSchema：合法摘要通过，缺字段拒绝', () => {
+    const ok = {
+      id: 'haru', displayName: 'Haru', preview: 'preview.png', version: '1.0',
+      available: true, licenseRef: 'LICENSE.txt', integrityState: 'verified'
+    }
+    expect(Live2DModelSummarySchema.safeParse(ok).success).toBe(true)
+    expect(Live2DListResponseSchema.safeParse([ok, { ...ok, id: 'lil', preview: null, reason: 'missing_file', integrityState: 'unverified', available: false }]).success).toBe(true)
+    expect(Live2DModelSummarySchema.safeParse({ ...ok, integrityState: 'bogus' }).success).toBe(false)
+    expect(Live2DModelSummarySchema.safeParse({ ...ok, id: undefined }).success).toBe(false)
   })
 })
