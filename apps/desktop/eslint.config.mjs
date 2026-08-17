@@ -4,7 +4,17 @@ import vueParser from 'vue-eslint-parser'
 
 export default tseslint.config(
   {
-    ignores: ['out/**', 'dist/**', 'node_modules/**', '*.d.ts', '**/*.d.ts']
+    // 阶段 5 批次 A（Task 1）：vendored Live2D（Framework 源码 59 ts + public Core min.js/13 shaders）三方产物不参与 lint
+    // （*.d.ts 已被下方忽略覆盖；public/live2d 的 min.js 为压缩产物，lint 必爆单行表达式错误）
+    ignores: [
+      'out/**',
+      'dist/**',
+      'node_modules/**',
+      '*.d.ts',
+      '**/*.d.ts',
+      'src/renderer/src/live2d/framework/**',
+      'src/renderer/public/live2d/**'
+    ]
   },
   ...tseslint.configs.recommended,
   // 用 essential 而非 recommended:只保留正确性规则,不做格式化噪音(格式化交给后续引入的 Prettier)

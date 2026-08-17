@@ -21,6 +21,12 @@ describe('buildRendererCsp', () => {
     expect(csp).toContain("connect-src 'self'")
     expect(csp).not.toContain('ws:')
   })
+  it('prod 不含 cyrene:/wasm-unsafe-eval（阶段 5 批次 A：cyrene: 仅加入 dev connect-src；Core 为 asm.js 非 wasm 亦不加 eval）', () => {
+    const connect = csp.split('; ').find((d) => d.startsWith('connect-src'))!
+    expect(connect).not.toContain('cyrene:')
+    expect(csp).not.toContain('wasm-unsafe-eval')
+    expect(csp).not.toContain("'unsafe-eval'")
+  })
   it('font-src 含 data:（Vite 内联字体放行）', () => {
     expect(csp).toContain("font-src 'self' data:")
   })

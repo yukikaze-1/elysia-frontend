@@ -33,7 +33,15 @@ export default defineConfig(({ mode }) => ({
   },
   renderer: {
     plugins: [vue(), devCspPlugin()],
-    resolve: { alias: { '@renderer': resolve('src/renderer/src'), '@shared': resolve('src/shared') } },
+    resolve: {
+      alias: {
+        '@renderer': resolve('src/renderer/src'),
+        '@shared': resolve('src/shared'),
+        // 阶段 5 批次 A（Task 1）：vendored Cubism Web Framework 源码经 alias 打包交付真实源码；
+        // 不在 tsconfig 加 `paths` 映射——renderer 内类型走 live2d/framework.d.ts ambient 桩（Task 1 Important B）。
+        '@framework': resolve('src/renderer/src/live2d/framework')
+      }
+    },
     build: {
       // P4-B Task 10：pcm-worklet.js 必须以同源文件 asset 输出（cyrene://renderer），
       // 不能被 Vite 默认 4KB assetsInlineLimit 内联为 data: URL——CSP script-src 'self' 会拦 data:，

@@ -27,18 +27,26 @@ describe('buildDevCsp', () => {
     const connect = buildDevCsp(t).split('; ').find((d) => d.startsWith('connect-src'))!
     expect(connect).toContain('ws://192.168.1.5:*')
   })
-  it('dev 三处加 cyrene:（media-src + img-src；connect-src 不动）', () => {
+  it('dev 三处加 cyrene:（media-src + img-src + connect-src；connect-src 阶段 5 批次 A 加）', () => {
     const csp = buildDevCsp(resolveTrustedDevOrigins({}))
     expect(csp).toContain("media-src 'self' cyrene:")
     expect(csp).toContain("img-src 'self' data: blob: cyrene:")
     const connect = csp.split('; ').find((d) => d.startsWith('connect-src'))!
-    expect(connect).not.toContain('cyrene:')
+    expect(connect).toContain('cyrene:') // 阶段 5 批次 A：Framework 经 fetch(cyrene://…) 取 shader 文本
+  })
+  it('connect-src 含 self 与 cyrene:；绝不含 wasm-unsafe-eval / unsafe-eval（Core 为 asm.js 非 wasm）', () => {
+    const csp = buildDevCsp(resolveTrustedDevOrigins({}))
+    const connect = csp.split('; ').find((d) => d.startsWith('connect-src'))!
+    expect(connect).toContain("connect-src 'self'")
+    expect(connect).toContain('cyrene:')
+    expect(csp).not.toContain('wasm-unsafe-eval')
+    expect(csp).not.toContain("'unsafe-eval'")
   })
 })
 
-it('dev img-src 追加 cyrene:（贴图经 cyrene:// 媒体代理；prod 同源不改，D9）', () => {
+it('dev img-src 追加 cyrene:（贴图经 cyrene:// 媒体代理；connect-src 亦含 cyrene:，阶段 5 批次 A）', () => {
   const csp = buildDevCsp(resolveTrustedDevOrigins({}))
   expect(csp).toContain("img-src 'self' data: blob: cyrene:")
   const connect = csp.split('; ').find((d) => d.startsWith('connect-src'))!
-  expect(connect).not.toContain('cyrene:')
+  expect(connect).toContain('cyrene:')
 })

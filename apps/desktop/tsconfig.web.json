@@ -13,5 +13,12 @@
       "@renderer/*": ["./src/renderer/src/*"],
       "@shared/*": ["./src/shared/*"]
     }
-  }
+  },
+  "exclude": [
+    // 阶段 5 批次 A（Task 1）Important B：vendored Cubism Web Framework 源码（59 ts，第三方）
+    // 不参与 strict vue-tsc 程序（include 已含 src/renderer/src/**，否则必挂）；类型经
+    // live2d/framework.d.ts ambient 桩提供。live2d/core/live2dcubismcore.d.ts 不在排除目录，
+    // 仍经 include 自动纳入以提供全局 Live2DCubismCore namespace（C2）。
+    "src/renderer/src/live2d/framework"
+  ]
 }

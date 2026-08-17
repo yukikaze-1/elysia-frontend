@@ -16,7 +16,7 @@ export function buildDevCsp(trusted: ReadonlySet<string>): string {
     "img-src 'self' data: blob: cyrene:",   // 阶段 3 G3（spec D1）：dev 页面在 http://localhost，媒体经 cyrene://renderer/__cyrene-media 放行
     "media-src 'self' cyrene:",             // 阶段 3 G3：视频/音频同源 cyrene: 放行（connect-src 不动）
     "font-src 'self' data:",
-    `connect-src 'self' ${wsSources.join(' ')}`,
+    `connect-src 'self' cyrene: ${wsSources.join(' ')}`, // 阶段 5 批次 A（Task 1）：dev 下 Framework 经 fetch(cyrene://…) 取 shader 文本；wsSources 插在后面。Core 是 asm.js 非 wasm，故不加 'wasm-unsafe-eval'
     "object-src 'none'",
     "base-uri 'self'",
     "frame-src 'none'",

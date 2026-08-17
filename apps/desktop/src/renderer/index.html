@@ -6,8 +6,12 @@
     <!-- dev 宽松 CSP（保留；prod/preview 由 cyrene:// 响应头严格 CSP AND 收紧——阶段 1 块 A D-6/G-9） -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cyrene:; media-src 'self' cyrene:; font-src 'self' data:; connect-src 'self' ws://localhost:* ws://127.0.0.1:*; frame-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: cyrene:; media-src 'self' cyrene:; font-src 'self' data:; connect-src 'self' ws://localhost:* ws://127.0.0.1:* cyrene:; frame-src 'none'; form-action 'none'; object-src 'none'; base-uri 'self'"
     />
+    <!-- 阶段 5 批次 A（Task 1）：Live2D Cubism Core（asm.js，非 wasm）全局脚本必须置于 module 入口之前——
+         Framework 模块求值即读取全局 Live2DCubismCore（如 cubismmodel 枚举初始值），defer 保证解析后按文档序先于 module 执行。
+         Vite 会把 module 入口脚本提升进 <head>，故 Core 脚本也置于 <head> 且在该位置之前，确保构建产物中顺序不变。 -->
+    <script src="/live2d/live2dcubismcore.min.js" defer></script>
     <title>Cyrene</title>
   </head>
   <body>
