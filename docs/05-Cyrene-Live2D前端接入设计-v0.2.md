@@ -88,6 +88,12 @@ type MotionPriority = 0 | 1 | 2 | 3;
 type PerformanceMode = "auto" | "quality" | "balanced" | "low_power";
 ```
 
+> **注（批次 B 落地，2026-08-18）：** 上表接口按批次 B 真实实现修订——`switchModel(modelId)` 签名由 `Promise<void>` 改为 **`Promise<string>`**（返回**实际生效 id**，D5B-10/T6 竞态硬化：切换中串行守卫/同模型幂等丢弃时返回旧 id，store 仅持久化生效 id）；新增 `setState(s)`（服务状态机命令，状态源已仲裁采纳）、`setAutoMotions/setLipSync/setMouthLevel`（待机/口型独立门与电平原语）、`setViewTransform(scale, offsetX, offsetY)`（Panel 缩放/偏移手柄，安全钳制 scale∈[0.5,3]、offset∈[-2,2]）、`setLookTarget(target|null)`（视线跟随/回正，null=回正）、`playMotion(file, priority)`/`playTapMotion(priority)`（B3 动作白名单调度：低优先不打断 3 级态、同动作去抖、长动作超时、切换清队列）、`setExpression(file)`（I-4 白名单文件路径唯一标识）、`on(event, cb)` 订阅（`state`/`device_lost`/`status`/`error`）。完整签名与语义见 `renderer/src/live2d/controller.ts`。
+>
+> **`Live2DModelSummary` 完整 10 字段（契约 `shared/contracts/live2d.ts`）：** `id`/`displayName`/`preview`（相对模型目录的预览图路径，可 null）/`version`/`available`（两级可用性：manifest 合法 + integrity 覆盖文件存在且尺寸一致）/`reason?`（仅不可用时脱敏枚举码 `missing_file|size_mismatch|hash_mismatch`）/`licenseRef`（模型目录内许可文件相对路径）/`integrityState`（`unverified|verified|failed`）。
+>
+> **`Live2DSettings` 全量 10 字段（doc 11 §7.1 设置子页 + doc 05 §14）：** `enabled`（缺省 true；与 G1 布局 `live2dShown` 正交）/`modelId`（null = 默认首个可用）/`scale`（0.5–3）/`offsetX`/`offsetY`（±2）/`mouseTracking`/`autoMotions`/`lipSync`/`performanceMode`（统一四值 `auto|quality|balanced|low_power`，旧三值 `high/low` 读回归一）/`reduceMotion`。契约经 `SettingsStateSchema.live2d` `.default(DEFAULT_LIVE2D)` 兼容旧 settings.json（不崩、不 bump version）。
+
 ## 4. 模型资源包
 
 推荐资源目录：
@@ -386,9 +392,9 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 - [ ] 模型及 SDK 许可已记录。
 - [ ] 对外发布前已确认 AI/Chatbot、可扩展应用分类及适用出版许可；无法确认时不发布含该 SDK/模型的产物。
 
-## 18. 实现状态（阶段 5 批次 A 落地，2026-08-17）
+## 18. 实现状态（阶段 5 批次 A/B 落地，2026-08-18）
 
-**三态：** 已开发、未联调（Mock/本地驱动；真实 Windows Electron 联调归批次 C/D）。门禁：**1400 单测（106 files）+ 83 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿。详细决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
+**三态：** 已开发、未联调（Mock/本地驱动；真实 Windows Electron 联调归批次 C/D）。门禁：**1508 单测（114 files）+ 90 集成（16 files）** + typecheck/lint/build（+ check:contract WS 28/28 + REST 15/15，本任务批次 B 未改 wire 契约）全绿。详细决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`（主会话落文）、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
 
 **批次 A 已落地（本文档对应子项）：**
 
@@ -402,5 +408,18 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | §14 设置与持久化 | 部分（批次 A 子集） | `settings` 契约增 `live2d: {enabled, modelId}`（`.default(DEFAULT_LIVE2D)` 兼容旧设置）；scale/offset/mouseTracking 等归批次 B |
 | §15 资源与许可 | 已记录 | 见 §15.1；发布前按官方 AI/Chatbot/Expandable 复核 |
 
-**批次 B（表现）待落地：** 状态映射（idle/listening/thinking/speaking/waiting_permission）、待机/眨眼/呼吸/动作/表情优先级、无动作参数回退、完整设置子页（缩放/偏移/帧率/性能模式）、Panel 缩放偏移、Layout 消费、T6 切换竞态硬化。
-**批次 C（收口）待落地：** TTS 口型、性能降级（折叠降帧/GPU 上下文重建）、后端 Live2DDirective、防御加固（M-1/M-2/M-4/M-5/F2-F5 等）、文档/许可发行复核、真实 Windows Electron（REAL）联调。
+**批次 B（表现）已落地（2026-08-18，本文档对应子项）：**
+
+| 本文档子项 | 状态 | 落点 |
+|---|---|---|
+| §3 核心接口 | 已实现（真实化） | `switchModel` 返回生效 id（D5B-10）；`setState/setAutoMotions/setLipSync/setMouthLevel/setViewTransform/setLookTarget/playMotion/playTapMotion/setExpression/on` 落地；接口注见 §3 |
+| §6 状态来源与优先级 / §7 状态映射 | 已实现 | `live2dStateSource` 薄编排层（D5B-04）：connection 断→offline、error 优先(3)、生成∧无正文→thinking、正文/TTS→speaking、最后完成消息 emotion 命中本地映射→happy/sad/surprised（未知码忽略）、否则 idle；`listening/working/waiting_permission` 槽位定义完备但驱动源 null（归阶段 6） |
+| §9 动作调度 / §3.3 表情 | 已实现 | B3 白名单调度（低优先不打断 3 级态、同动作去抖、长动作上限、切换清队列、点击不打断 speaking/thinking）；情绪态→表情本地映射（happy/f01、sad/f02、surprised/f06，不命中落 B4）；无动作模型 B4 参数级回退（thinking 摆头/speaking 口型+轻头/happy 笑眼/surprised 瞪眼/error 歪头，存在性判定） |
+| §11 鼠标和点击互动 | 已实现 | Panel mouseleave→`setLookTarget(null)` 平滑回正；点击画布→playTapMotion(priority=1)（reduceMotion 禁用）；点击不打断 speaking/thinking/error/waiting_permission |
+| §12 性能策略 / §12.1 性能模式 | 已实现（四值统一） | `performanceMode` 四值 `auto/quality/balanced/low_power`（旧三值 `high/low` 读回归一，schema 归一）；实际降帧消费归批 C |
+| §13 尺寸和定位 | 已实现 | Panel 缩放/偏移手柄（即时预览 + 500ms 防抖持久化）；Layout 消费（有 Layout 走 `setupFromLayout`、无 Layout 沿用 scale-only，单测夹具覆盖） |
+| §14 设置与持久化 | 已实现（全量 10 字段） | `Live2DSettings` 10 字段经「角色与外观」子页（CyLive2DPane）可调并持久化；老 settings.json 兼容（不崩、不 bump version） |
+| §5.1 切换 / T6 竞态 | 已实现 | 快速连续切换 → store 仅持久化 `switchModel` 返回的**生效 id**（守卫丢弃时持久化旧 id），渲染模型与持久化 id 一致 |
+
+**集成新增（批次 B，Electron `tests/integration/electron-live2d.spec.ts` 增 7 用例）：** 状态驱动徽标「思考中→说话中→空闲」、动作播放（Haru B3 画布非空 / lil B4 优雅降级）、情绪态→表情（mock emotion=happy → 徽标「开心」+ 画布非空）、设置子页（scale/performanceMode 即时生效 + 重启持久化恢复）、性能模式（四值存在 + 旧值 high/low 读回归一 + 不 corrupt）、布局（无 Layout 模型画幅正常）、切换竞态（生效 id 与渲染/持久化三方一致）。
+**批次 C（收口）待落地：** TTS 口型数据源（`setMouthLevel` 粒度为口型电平原语，数据源/音频驱动归 C）、性能降级与重建（折叠降帧/GPU 上下文重建、四值降帧真实消费）、后端 Live2DDirective、防御加固（M-1/M-2/M-4/M-5/F2-F5 等）、文档/许可发行复核、真实 Windows Electron（REAL）联调。

@@ -195,7 +195,7 @@
 - [ ] 隐藏后停止高频渲染；
 - [ ] GPU/资源异常不影响聊天和权限操作。
 
-> **状态注记（2026-08-17，阶段 5 批次 A 已落地，已开发、未联调）：** 批次 A（Live2D 地基）已落地并全量验证（1400 单测（106 files）+ 83 集成（16 files）+ typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿）——SDK vendoring（Cubism Web SDK 5-r.5）+ 模型注册表/integrity + cyrene:// 供给 + 装配 CLI + Adapter/CubismGL + Controller/store + settings `live2d` 契约 + Panel 最小面 + Electron 集成；「两个已安装模型可加载切换」「切换失败保留原模型」「隐藏停止渲染」「GPU/资源异常不影响聊天」四项批次 A 已覆盖（含静态头像回退），动作/表情/状态映射、缩放偏移、TTS 口型与完整验收归批次 B/C；真实 Windows Electron（REAL）联调归批次 C/D。详见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
+> **状态注记（2026-08-18，阶段 5 批次 A/B 已落地，已开发、未联调）：** 批次 A（Live2D 地基）已落地并全量验证（1400 单测（106 files）+ 83 集成（16 files）+ typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿）——SDK vendoring（Cubism Web SDK 5-r.5）+ 模型注册表/integrity + cyrene:// 供给 + 装配 CLI + Adapter/CubismGL + Controller/store + settings `live2d` 契约 + Panel 最小面 + Electron 集成。**批次 B（表现）已落地并全量验证（2026-08-18）**——状态机收敛表（thinking/speaking/emotional/error 优先级 + 结束回正确回退态）+ 待机眨眼/呼吸（B2 参数纯函数）+ 动作/表情白名单调度（B3）+ 无动作参数级回退（B4）+ `live2dStateSource` 状态编排（connection/message/voice 读值组合）+ 情绪态→表情本地映射 + 设置子页（CyLive2DPane，`Live2DSettings` 全量 10 字段 + `performanceMode` 四值归一）+ Panel 状态徽标/缩放偏移/鼠标跟随点击/回正 + `switchModel` 生效 id 竞态硬化 + Electron 集成新增 7 用例；门禁 **1508 单测（114 files）+ 90 集成（16 files）** + typecheck/lint/build 全绿。动作/表情/状态映射、缩放偏移、Layout 消费与设置持久化已覆盖；TTS 口型数据源、性能降级与完整验收归批次 C；真实 Windows Electron（REAL）联调归批次 C/D。详见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`（主会话落文）与 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
 
 ## 9. 阶段 6：统一工具、权限与 Desktop P0 能力
 
