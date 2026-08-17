@@ -86,19 +86,21 @@ function modelFileUrl(modelId: string, baseDir: string, fileRef: string): string
   return `${LIVE2D_BASE}${modelId}/${encodePath(rel)}`
 }
 
-/** 将模型画布（原点居中，宽高为模型单位）等比/居中映射到视口 (viewW x viewH) 像素的 MVP 列主矩阵 */
+/** 将模型画布（原点居中，宽高为模型单位）等比映射到视口 (viewW x viewH) 像素的 MVP 列主矩阵。
+ * 模型顶点以画布中心为原点（Haru.moc3 实测顶点对称于原点：X∈[-0.410,+0.409]、Y∈[-0.825,+0.849]），
+ * 等比缩放即自然居中，无需平移——与官方 Demo 对无 Layout 模型用 scale-only（modelMatrix.setHeight +
+ * 投影 aspect scale）一致；故 m[12]=m[13]=0（P1 审查修复：此前的 -(sx*W)/2 平移基于角原点假定，
+ * 会把居中空间模型推出视口）。 */
 function buildFitMvp(modelW: number, modelH: number, viewW: number, viewH: number): Float32Array {
   const scale = Math.min(viewW / modelW, viewH / modelH)
   const sx = (2 * scale) / viewW
   const sy = (2 * scale) / viewH
-  const tx = -(sx * modelW) / 2
-  const ty = -(sy * modelH) / 2
   const m = new Float32Array(16)
-  m[0] = sx // a11
-  m[5] = sy // a22
+  m[0] = sx // a11：等比正向缩放
+  m[5] = sy // a22：等比正向缩放（视口非方形时 sy≠sx，保持模型宽高比不变）
   m[10] = 1 // a33
-  m[12] = tx // a41
-  m[13] = ty // a42
+  m[12] = 0 // a41：原点居中空间免平移
+  m[13] = 0 // a42：原点居中空间免平移
   m[15] = 1 // a44
   return m
 }

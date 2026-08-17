@@ -441,6 +441,29 @@ describe('Live2DAdapter.update（渲染 tick + GPU-lost 事件）', () => {
     engine.setContextLost(true)
     expect(() => adapter.update()).toThrow(Live2DGpuLostError)
   })
+
+  it('draw 的 MVP 矩阵不变式：原点居中免平移（m12/m13=0）+ 等比正向缩放（P1 审查修复）', async () => {
+    const { canvas, adapter } = makeHarness()
+    adapter.initialize(canvas)
+    const handle = await adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })
+    handle.draw()
+
+    const renderer = shared.rendererInstances[0]
+    // handle.draw() 内 renderer.getMvpMatrix().setMatrix(matrix) —— 取 getMvpMatrix 首次调用的返回值里
+    // setMatrix 的首个入参（即 buildFitMvp 产出的列主矩阵）
+    const mvpResult = renderer.getMvpMatrix.mock.results[0]?.value as {
+      setMatrix: { mock: { calls: Array<[Float32Array]> } }
+    }
+    const m = mvpResult.setMatrix.mock.calls[0]?.[0]
+
+    // 模型画布 mock 固定 2x3，视口 340x680：scale = min(340/2, 680/3) = 170
+    expect(m?.[0]).toBe(1) // sx = 2*170/340
+    expect(m?.[5]).toBe(0.5) // sy = 2*170/680（等比，仅视口不同缩放）
+    expect(m?.[12]).toBe(0) // 原点居中空间无平移（P1：此前 tx=-(sx*W)/2 会把模型推出视口）
+    expect(m?.[13]).toBe(0)
+    expect(m?.[10]).toBe(1)
+    expect(m?.[15]).toBe(1)
+  })
 })
 
 describe('Live2DAdapter.destroy / handle.destroy（资源释放 + 幂等）', () => {
