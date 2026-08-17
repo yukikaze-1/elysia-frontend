@@ -87,6 +87,12 @@ export interface Live2DModelHandle {
   // —— 批次 B（Task 2，B3 adapter 面）新增窄参数通道 + motion/expression 原语 ——
   /** 模型参数 Id 字符串列表（Controller 据此做参数存在性判定，B2/B4 路由） */
   getParameterIdList(): string[]
+  // —— 批次 B（Task 3，Controller 白名单核查）handle 暴露摊平白名单读法（I-4：动作/表情唯一标识 = 文件相对路径；
+  //    与 adapter 内部自据 model3 FileReferences 摊平的白名单同源，Controller 据此「先查白名单再发」）——
+  /** 本模型 motion 摊平文件路径白名单（相对 model3.json 目录；无动作系统 → 空数组） */
+  getMotionFileWhitelist(): ReadonlyArray<string>
+  /** 本模型 expression 摊平文件路径白名单（相对 model3.json 目录；无表情系统 → 空数组） */
+  getExpressionFileWhitelist(): ReadonlyArray<string>
   /** 写单个模型参数（未经 getLayoutMap 等查询；未知 Id 静默忽略，见 @framework/model/cubismmodel 注记） */
   setParam(id: string, value: number): void
   /** 加载并播放一个 motion 文件（file 为相对 model3.json 目录的路径，∈ 白名单；priority 入队） */
@@ -256,6 +262,14 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
       list.push(this.model.getParameterId(i).getString())
     }
     return list
+  }
+
+  getMotionFileWhitelist(): ReadonlyArray<string> {
+    return [...this.motionWhitelist]
+  }
+
+  getExpressionFileWhitelist(): ReadonlyArray<string> {
+    return [...this.expressionWhitelist]
   }
 
   setParam(id: string, value: number): void {

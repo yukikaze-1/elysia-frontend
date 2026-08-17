@@ -53,6 +53,12 @@ interface FakeHandleLike {
   update: ReturnType<typeof vi.fn>
   draw: ReturnType<typeof vi.fn>
   destroy: ReturnType<typeof vi.fn>
+  getParameterIdList: ReturnType<typeof vi.fn>
+  getMotionFileWhitelist: ReturnType<typeof vi.fn>
+  getExpressionFileWhitelist: ReturnType<typeof vi.fn>
+  setParam: ReturnType<typeof vi.fn>
+  startMotion: ReturnType<typeof vi.fn>
+  startExpression: ReturnType<typeof vi.fn>
 }
 interface FakeAdapterLike {
   handles: FakeHandleLike[]
@@ -68,7 +74,17 @@ function makeFakeAdapter(): FakeAdapterLike {
     handles,
     initialize: vi.fn(() => true),
     createModel: vi.fn(async () => {
-      const h: FakeHandleLike = { update: vi.fn(), draw: vi.fn(), destroy: vi.fn() }
+      const h: FakeHandleLike = {
+        update: vi.fn(),
+        draw: vi.fn(),
+        destroy: vi.fn(),
+        getParameterIdList: vi.fn(() => []),
+        getMotionFileWhitelist: vi.fn(() => []),
+        getExpressionFileWhitelist: vi.fn(() => []),
+        setParam: vi.fn(),
+        startMotion: vi.fn(async () => {}),
+        startExpression: vi.fn(async () => {})
+      }
       handles.push(h)
       return h
     }),
@@ -254,7 +270,7 @@ describe('Live2DController（fake adapter / fake list / fake GL）', () => {
       ctrl.setExpression('angry')
       ctrl.playMotion('tap_body', 0)
       ctrl.setMouthLevel(1.0)
-      ctrl.setLookTarget(0, 1)
+      ctrl.setLookTarget(null) // 批次 B（spec I-2）：签名由 (x,y) 改为 NormalizedPoint|null（null=回正）
       ctrl.setPerformanceMode('auto')
     }).not.toThrow()
     expect(ctrl.status).toBe('unloaded')

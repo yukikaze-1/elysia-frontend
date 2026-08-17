@@ -12,8 +12,43 @@
 // 'status'（每次状态迁移广播）、'error'（switchModel 失败，载荷为 Error）。
 import { Live2DGpuLostError, type Live2DAdapter, type Live2DModelHandle } from './adapter'
 import type { Live2DModelSummary, PerformanceMode } from '@shared/contracts'
+import {
+  CharacterStateMachine,
+  type CharacterState
+} from './state-machine'
+import {
+  blinkTarget,
+  breathTarget,
+  mouthLevelTarget,
+  PARAM_ANGLE_X,
+  PARAM_ANGLE_Z,
+  PARAM_EYE_L_OPEN,
+  PARAM_EYE_L_SMILE,
+  PARAM_EYE_R_OPEN,
+  PARAM_EYE_R_SMILE,
+  PARAM_EYE_BALL_X,
+  PARAM_EYE_BALL_Y,
+  type AnimClock
+} from './param-anim'
 
 export type Live2DControllerStatus = 'unloaded' | 'loading' | 'ready' | 'failed' | 'fallback'
+
+/** 归一化视线目标（doc 05 §11 / spec I-2）：画布相对坐标 ∈ [-1,1]（原点居中）；null = 回正 */
+export interface NormalizedPoint {
+  x: number
+  y: number
+}
+
+// —— B4 无动作参数级回退（spec §3.4）值域常量（存在性判定由 controller 在 paramIds 上做，此处定义目标值）——
+const B4_THINK_SWAY_AMP = 0.08 // thinking：ParamAngleX 轻微摇摆幅度（±0.08，轻微点头/摇摆）
+const B4_SPEAK_TILT = 0.05 // speaking：ParamAngleZ 轻微头动作幅度（±0.05）
+const B4_SMILE = 0.8 // happy：ParamEye{LR}Smile 笑眼（0.8，明显但不夸张）
+const B4_SURPRISE_OPEN = 1 // surprised：ParamEye{LR}Open 瞪大（拉到 1）
+const B4_ERROR_TILT = -0.15 // error：ParamAngleZ 轻微歪头（-0.15）
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v))
+}
 
 export interface Live2DControllerDeps {
   /** 渲染适配器（真实 webglEngine 或单测 fake） */
@@ -37,6 +72,22 @@ export class Live2DController {
   private perfMode: PerformanceMode = 'auto'
   private switching = false // switchModel 重入串行守卫（独立于 status：init 内部也置 loading 后调 switchModel）
   private listeners = new Map<Live2DControllerEvent, Set<EventListener>>()
+
+  // —— 批次 B（Task 3，B1/B2/B4 controller 内核）——
+  private readonly stateMachine = new CharacterStateMachine() // 服务状态机（收敛表）
+  private paramIds = new Set<string>() // 当前模型参数 Id 集（getParameterIdList，存在性判定/路由）
+  private motionWhitelist = new Set<string>() // 当前模型 motion 摊平白名单（I-4 唯一标识）
+  private expressionWhitelist = new Set<string>() // 当前模型 expression 摊平白名单
+  private mouthLevel = 0 // setMouthLevel 口型电平 [0,1]（数据源归批次 C，本批只落写入原语）
+  private lookTarget: NormalizedPoint | null = null // setLookTarget 视线目标（null=回正）
+  private autoMotions = true // 待机动画开关（Task 5 由 settingsStore.autoMotions 驱动）
+  // 待机动画时钟：每实例采样一次确定性随机源（Math.random 在字段初始化时求值一次、此后稳定返回同一值），
+  // → 同会话眨眼/呼吸序列逐帧稳定回放（避免每帧新 seed 造成眨眼闪烁）；单测可注入固定 AnimClock。 */
+  private readonly animSeed: number = (Math.random() * 0xffffffff) >>> 0
+  private readonly animClock: AnimClock = {
+    random: (): number => this.animSeed / 0xffffffff
+  }
+  private animT0 = 0 // 待机动画时间基（秒）；tick 内以 performance.now() 折算
 
   constructor(deps: Live2DControllerDeps) {
     this.adapter = deps.adapter
@@ -80,10 +131,13 @@ export class Live2DController {
   }
 
   /** 切换模型：停当前（成功后原子替换）→ adapter.createModel → 成功替换 handle/id；失败保留原 modelId
-   *  与旧 handle（继续渲染），置 status=failed 并 rethrow（store 捕获置 error）。model3Path 恒 'model3.json'。 */
-  async switchModel(id: string): Promise<void> {
-    if (this.currentId === id && this.currentStatus === 'ready') return // 同模型幂等
-    if (this.switching) return // 切换中串行守卫（store 串行化，防重入；init 置 loading 后仍可进入）
+   *  与旧 handle（继续渲染），置 status=failed 并 rethrow（store 捕获置 error）。model3Path 恒 'model3.json'。
+   *  @returns 实际生效 id（D5B-10/T6 竞态硬化）：成功=目标 id；守卫丢弃（同模型幂等/切换中）= 旧 id（currentId）；
+   *           失败 = 抛错（调用方照旧保留旧 id）。签名由批次 A `Promise<void>` 改为 `Promise<string>`——
+   *           忽略返回值的既有调用（live2dStore 旧版）仍编译（Promise<string> 兼容 Promise<void> 消费位）。 */
+  async switchModel(id: string): Promise<string> {
+    if (this.currentId === id && this.currentStatus === 'ready') return id // 同模型幂等
+    if (this.switching) return this.currentId ?? id // 切换中串行守卫（store 串行化，防重入；旧 id 丢弃）
     this.switching = true
     this.setStatus('loading')
     try {
@@ -91,9 +145,11 @@ export class Live2DController {
       this.handle?.destroy()
       this.handle = next
       this.currentId = id
+      this.cacheModelFacts() // 参数 Id 集 + motion/expression 白名单（B2/B4 路由与白名单核查的来源）
       this.setStatus('ready')
+      return id
     } catch (e) {
-      // 失败保留原模型：handle/currentId 不动；有旧 handle（切换前已 ready）回 ready，否则 failed
+      // 失败保留原模型：handle/currentId 不动（facts 缓存亦不动）；有旧 handle（切换前已 ready）回 ready，否则 failed
       this.setStatus(this.handle ? 'ready' : 'failed')
       this.emit('error', e)
       throw e
@@ -108,15 +164,23 @@ export class Live2DController {
     this.adapter.destroy()
     this.handle = null
     this.currentId = null
+    this.paramIds = new Set()
+    this.motionWhitelist = new Set()
+    this.expressionWhitelist = new Set()
+    this.lookTarget = null
+    this.mouthLevel = 0
     this.setStatus('unloaded')
   }
 
-  /** 渲染 tick（Panel rAF 循环驱动）：ready 态调用 adapter.update（model.update + physics + draw）；
+  /** 渲染 tick（Panel rAF 循环驱动）：ready 态先驱动待机动画参数（blink/breath + B4 参数级回退，经
+   *  `handle.setParam` 写入——批次 A Panel rAF 循环经 store.tick()→controller.tick() 每帧调用，本批沿用该
+   *  既有入口做动画驱动，无需新增独立 rAF），再 adapter.update（update 内喂 motion/expr → physics → model.update）。
    *  GPU-lost（adapter 抛 Live2DGpuLostError）→ failed → emit device_lost → fallback（静态头像，重建归批 C）；
    *  其他异常静默吞掉（不崩溃渲染循环）。隐藏/非 ready 时 no-op。 */
   tick(): void {
     if (this.currentStatus !== 'ready' || !this.visible) return
     try {
+      this.updateAnimation(performance.now())
       this.adapter.update()
     } catch (e) {
       if (e instanceof Live2DGpuLostError) {
@@ -171,12 +235,59 @@ export class Live2DController {
     return this.perfMode
   }
 
-  // —— 批次 A no-op 占位（批次 B 落地；YAGNI，避免过度实现）——
-  setState(_s: unknown): void { /* no-op */ }
-  setExpression(_e: unknown): void { /* no-op */ }
-  playMotion(_g: unknown, _i: unknown): void { /* no-op */ }
-  setMouthLevel(_l: number): void { /* no-op */ }
-  setLookTarget(_x: number, _y: number): void { /* no-op */ }
+  // —— 批次 B（Task 3，B1/B2/B4 真实实现；Task 4 接调度与 state source）——
+
+  /** 服务状态机命令：喂 CharacterStateMachine（source/外部已仲裁的最终态，机器直接采纳，见 state-machine 注）。
+   *  驱动 B4 参数级回退路由与状态徽标。无 handle（unloaded/loading）时仅更新机器状态，不写参数。 */
+  setState(s: CharacterState): void {
+    this.stateMachine.setState(s)
+  }
+
+  get characterState(): CharacterState {
+    return this.stateMachine.state
+  }
+
+  /** 待机动画开关（Task 5 由 settingsStore.live2d.autoMotions 驱动；默认 true——P0 待机眨眼/呼吸成立）。 */
+  setAutoMotions(v: boolean): void {
+    this.autoMotions = v
+  }
+
+  get autoMotionsEnabled(): boolean {
+    return this.autoMotions
+  }
+
+  /** 口型电平：[0,1] → 存口型电平（口型数据源归批次 C1，本批只落 `ParamMouthOpenY` 写入原语）。
+   *  B4 说话态每帧经 mouthLevelTarget 把电平写进口部参数。 */
+  setMouthLevel(level: number): void {
+    this.mouthLevel = Math.min(1, Math.max(0, level))
+  }
+
+  /** 视线目标（spec I-2）：null = 回正（视线参数回 0）；非 null 经 ParamEyeBallX/Y 存在性判定写入。
+   *  只存目标，逐帧驱动由 updateAnimation 完成（Task 5 Panel mouseleave → setLookTarget(null) 平滑回正）。 */
+  setLookTarget(target: NormalizedPoint | null): void {
+    this.lookTarget = target
+  }
+
+  /** 表情：文件路径 ∈ 当前模型 expression 白名单（I-4 唯一标识 = 摊平文件路径）→ `handle.startExpression`；
+   *  白名单外/无 handle → 忽略（不抛错，spec §3.3）。完整情绪→表情映射（I-1）归 Task 4；本 task 落白名单核查分派。 */
+  setExpression(file: string): void {
+    const handle = this.handle
+    if (!handle || !this.expressionWhitelist.has(file)) return
+    const modelId = this.currentId
+    if (!modelId) return
+    void handle.startExpression(modelId, file)
+  }
+
+  /** 动作播放（spec §3.3 / I-4）：文件路径 ∈ 当前模型 motion 白名单 → `handle.startMotion`
+   *  （优先级 entrypoint）。白名单外/无 handle → 忽略。仲裁细化（去抖合并/最大时长/清队列/低不打断 3 级）归
+   *  Task 4 调度；本 task 落白名单核查 + 优先级入队原语。 */
+  playMotion(file: string, priority: number): void {
+    const handle = this.handle
+    if (!handle || !this.motionWhitelist.has(file)) return
+    const modelId = this.currentId
+    if (!modelId) return
+    void handle.startMotion(modelId, file, priority)
+  }
 
   /** 订阅事件；返回退订函数 */
   on(event: Live2DControllerEvent, cb: EventListener): () => void {
@@ -189,6 +300,98 @@ export class Live2DController {
     return () => {
       set?.delete(cb)
     }
+  }
+
+  // —— 批次 B（B2/B4）内部：模型事实缓存 + 待机动画逐帧驱动 ——
+
+  /** switchModel 成功后缓存当前模型的参数 Id 集 + motion/expression 摊平白名单（B2/B4 路由与白名单核查来源）。
+   *  handle 暴露的白名单与本 adapter 内自据 model3 FileReferences 摊平的白名单同源（Task 2），Controller 据此
+   *  先查后发（spec I-4）。 */
+  private cacheModelFacts(): void {
+    if (!this.handle) return
+    this.paramIds = new Set(this.handle.getParameterIdList())
+    this.motionWhitelist = new Set(this.handle.getMotionFileWhitelist())
+    this.expressionWhitelist = new Set(this.handle.getExpressionFileWhitelist())
+  }
+
+  /** 待机动画逐帧驱动（每 tick 一次，ready 且 autoMotions 时）：把待机/参数级动画结果写成「要写的参数→值」，
+   *  Controller 逐对 `handle.setParam`。存在性判定已由 param-anim 纯函数/B4 映射在内部完成（该模型不含的参数
+   *  不写）。分层：
+   *   - 待机基（B2，autoMotions 时）：blink（眨眼）+ breath（呼吸正弦）——与模型是否有动作系统无关（待机常态）。
+   *   - B4 参数级回退（当前模型无动作系统 motionWhitelist 空时才写）：按当前 CharacterState 映射参数近似
+   *     （spec §3.4 表：thinking→AngleX 摇摆；speaking→口型+轻微头；happy→眼笑+呼吸；surprise→眼瞪大；
+   *     error→AngleZ 歪头）；有动作系统 → 走 B3 动作系统（Task 4 调度），不写参数级。
+   *   - 视线（setLookTarget，spec I-2）：null→回正 0；非 null→ParamEyeBallX/Y。
+   *  本批动画时间以 `performance.now()` 折算（tick 每帧推进，Panel rAF 循环驱动），无独立 rAF。 */
+  private updateAnimation(nowMs: number): void {
+    const handle = this.handle
+    if (!handle) return
+    if (this.animT0 === 0) this.animT0 = nowMs / 1000
+    const tSec = (nowMs / 1000) - this.animT0
+
+    const out: Record<string, number> = {}
+    if (this.autoMotions) {
+      // 待机基：眨眼 + 呼吸（存在性判定在纯函数内）
+      Object.assign(out, blinkTarget(tSec, this.paramIds, this.animClock))
+      Object.assign(out, breathTarget(tSec, this.paramIds))
+      // B4 参数级回退（仅无动作系统模型）
+      if (this.motionWhitelist.size === 0) {
+        Object.assign(out, this.b4Params(this.stateMachine.state))
+      }
+    }
+    // 视线（独立于 autoMotions：鼠标跟随/回正不受待机开关约束）
+    if (this.lookTarget) {
+      if (this.paramIds.has(PARAM_EYE_BALL_X)) out[PARAM_EYE_BALL_X] = clamp(this.lookTarget.x, -1, 1)
+      if (this.paramIds.has(PARAM_EYE_BALL_Y)) out[PARAM_EYE_BALL_Y] = clamp(this.lookTarget.y, -1, 1)
+    } else {
+      if (this.paramIds.has(PARAM_EYE_BALL_X)) out[PARAM_EYE_BALL_X] = 0 // 回正
+      if (this.paramIds.has(PARAM_EYE_BALL_Y)) out[PARAM_EYE_BALL_Y] = 0
+    }
+
+    for (const [id, value] of Object.entries(out)) {
+      handle.setParam(id, value)
+    }
+  }
+
+  /** B4 无动作参数级回退（spec §3.4 表）：状态→参数近似。全部存在性判定（不在 paramIds 就不写），不记错误。
+   *  口型电平（setMouthLevel 的存值）在 speaking 态经 mouthLevelTarget 写出。 */
+  private b4Params(state: CharacterState): Record<string, number> {
+    const out: Record<string, number> = {}
+    switch (state) {
+      case 'thinking':
+        // 轻微 AngleX 摇摆 + 眨眼加快（眨眼加快由 B2 待机眨眼承担，此处额外给头轻微左右摆）
+        if (this.paramIds.has(PARAM_ANGLE_X)) out[PARAM_ANGLE_X] = B4_THINK_SWAY_AMP * Math.sin(this.wobbleT())
+        break
+      case 'speaking':
+        // 口型（mouthLevel 电平）+ 轻微头动作
+        Object.assign(out, mouthLevelTarget(this.mouthLevel, this.paramIds))
+        if (this.paramIds.has(PARAM_ANGLE_Z)) out[PARAM_ANGLE_Z] = B4_SPEAK_TILT * Math.sin(this.wobbleT())
+        break
+      case 'happy':
+        // 眼睛笑 + 呼吸（呼吸由 B2 承担，这里给笑眼）
+        if (this.paramIds.has(PARAM_EYE_R_SMILE)) out[PARAM_EYE_R_SMILE] = B4_SMILE
+        if (this.paramIds.has(PARAM_EYE_L_SMILE)) out[PARAM_EYE_L_SMILE] = B4_SMILE
+        break
+      case 'surprised':
+        // 眼睛睁大（拉大）
+        if (this.paramIds.has(PARAM_EYE_R_OPEN)) out[PARAM_EYE_R_OPEN] = B4_SURPRISE_OPEN
+        if (this.paramIds.has(PARAM_EYE_L_OPEN)) out[PARAM_EYE_L_OPEN] = B4_SURPRISE_OPEN
+        break
+      case 'error':
+        // AngleZ 轻微歪头
+        if (this.paramIds.has(PARAM_ANGLE_Z)) out[PARAM_ANGLE_Z] = B4_ERROR_TILT
+        break
+      default:
+        // idle/offline/listening/working/waiting_permission/happy/sad 等无需额外参数级近似
+        break
+    }
+    return out
+  }
+
+  /** B4 轻微摆头的慢摆时间基（复用待机动画时间，周期 ~4s） */
+  private wobbleT(): number {
+    const tSec = Math.max(0, (this.animT0 === 0 ? 0 : performance.now() / 1000 - this.animT0))
+    return tSec * Math.PI * 0.5 // 周期 ~4s
   }
 
   private emit(event: Live2DControllerEvent, payload?: unknown): void {
