@@ -15,6 +15,7 @@ import { Live2DController, type Live2DControllerStatus } from '../../src/rendere
 import { Live2DGpuLostError, type Live2DAdapter } from '../../src/renderer/src/live2d/adapter'
 import { setLive2dControllerFactory, useLive2dStore } from '../../src/renderer/src/stores/live2d.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
+import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Live2DModelSummary } from '@shared/contracts'
 
@@ -59,6 +60,8 @@ interface FakeHandleLike {
   setParam: ReturnType<typeof vi.fn>
   startMotion: ReturnType<typeof vi.fn>
   startExpression: ReturnType<typeof vi.fn>
+  stopMotion: ReturnType<typeof vi.fn>
+  stopAll: ReturnType<typeof vi.fn>
 }
 interface FakeAdapterLike {
   handles: FakeHandleLike[]
@@ -83,7 +86,9 @@ function makeFakeAdapter(): FakeAdapterLike {
         getExpressionFileWhitelist: vi.fn(() => []),
         setParam: vi.fn(),
         startMotion: vi.fn(async () => {}),
-        startExpression: vi.fn(async () => {})
+        startExpression: vi.fn(async () => {}),
+        stopMotion: vi.fn(),
+        stopAll: vi.fn()
       }
       handles.push(h)
       return h
@@ -383,5 +388,81 @@ describe('live2dStore：settings 契约面（enabled/modelId 接入 settingsStor
     expect(mockApi.settingsSave).toHaveBeenCalledWith({ live2d: { modelId: 'lil' } })
     expect(settings.live2d.enabled).toBe(true) // 回写 merge 保留 enabled
     expect(settings.live2d.modelId).toBe('lil')
+  })
+})
+
+describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 串行化 + stateSource 接线', () => {
+  // 注入可配置生效 id 的 fake controller（store 消费 controller.switchModel 返回值）
+  function installEffectiveController(effectiveFor: Record<string, string>) {
+    const state = { id: 'haru' }
+    const ctrl = {
+      get status(): Live2DControllerStatus { return 'ready' },
+      get modelId(): string | null { return state.id },
+      on: vi.fn(() => () => {}),
+      init: vi.fn(async () => {}),
+      switchModel: vi.fn(async (next: string) => {
+        const eff = effectiveFor[next] ?? next
+        state.id = eff
+        return eff
+      }),
+      setState: vi.fn(),
+      unload: vi.fn(() => { state.id = 'haru' })
+    }
+    setLive2dControllerFactory(() => ctrl as unknown as Live2DController)
+    return ctrl
+  }
+
+  beforeEach(() => { setLive2dControllerFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('switchModel 用生效 id 持久化（成功 = 目标）', async () => {
+    installEffectiveController({})
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas)
+    await store.switchModel('lil')
+    expect(store.modelId).toBe('lil')
+    expect(settings.live2d.modelId).toBe('lil') // 持久化生效 id
+  })
+
+  it('switchModel 用生效 id 持久化（守卫丢弃 = 持久化旧 id，非请求目标）', async () => {
+    installEffectiveController({ lil: 'haru' }) // 请求 lil，controller 判定生效为旧 id haru（守卫丢弃）
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas) // 初始 modelId=haru
+    await store.switchModel('lil')
+    expect(store.modelId).toBe('haru')
+    expect(settings.live2d.modelId).toBe('haru') // 持久化生效 id 而非请求目标 lil
+  })
+
+  it('M1：init 完成前 switchModel 被串行化（不执行切换、置 error）', async () => {
+    installFakes({ models: [MODEL_HARU, MODEL_LIL] })
+    const { store, settings } = freshStore()
+    await store.switchModel('lil') // 未 await init → ready 门 false
+    expect(store.modelId).toBeNull()
+    expect(store.error).toContain('尚未就绪')
+    expect(settings.live2d.modelId).toBeNull()
+  })
+
+  it('M1：init 完成后 switchModel 恢复执行', async () => {
+    installFakes({ models: [MODEL_HARU, MODEL_LIL] })
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas) // ready=true
+    await store.switchModel('lil')
+    expect(store.modelId).toBe('lil')
+    expect(settings.live2d.modelId).toBe('lil')
+  })
+
+  it('dispose：退订 stateSource——源变化不再 push controller.setState（含 N1 timers 清理路径）', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas) // stateSource 接线（初始 push idle）
+    // 连接源变化 → stateSource → controller.setState('offline')
+    useConnectionStore().setState({ status: 'disconnected' })
+    expect(ctrl.setState).toHaveBeenCalledWith('offline')
+
+    store.dispose() // 退订 stateSource + 清 timers
+    ctrl.setState.mockClear()
+    useConnectionStore().setState({ status: 'connected' })
+    useConnectionStore().setState({ status: 'disconnected' })
+    expect(ctrl.setState).not.toHaveBeenCalled() // 已退订不再 push
   })
 })

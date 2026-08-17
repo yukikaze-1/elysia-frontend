@@ -43,6 +43,8 @@ interface FakeHandle {
   setParam: MockFn
   startMotion: MockFn
   startExpression: MockFn
+  stopMotion: MockFn
+  stopAll: MockFn
 }
 
 function makeHandle(opts: { params?: string[]; motions?: string[]; expressions?: string[] }): FakeHandle {
@@ -55,7 +57,9 @@ function makeHandle(opts: { params?: string[]; motions?: string[]; expressions?:
     getExpressionFileWhitelist: vi.fn(() => opts.expressions ?? []),
     setParam: vi.fn(),
     startMotion: vi.fn(async () => {}),
-    startExpression: vi.fn(async () => {})
+    startExpression: vi.fn(async () => {}),
+    stopMotion: vi.fn(),
+    stopAll: vi.fn()
   }
 }
 
@@ -286,5 +290,133 @@ describe('Live2DController 批次 B 内核', () => {
     h.ctrl.tick()
     expect(writtenIds(handle)).not.toContain('ParamAngleX')
     expect(h.ctrl.autoMotionsEnabled).toBe(false)
+  })
+})
+
+describe('Live2DController Task 4：动作调度仲裁（B3）+ 情绪→表情（I-1）', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('playMotion：同动作短时重复合并（去抖 ~500ms）', async () => {
+    vi.useFakeTimers()
+    const h = makeHarness()
+    stubHandle(h.adapter, { motions: ['motions/idle.motion3.json'] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+
+    h.ctrl.playMotion('motions/idle.motion3.json', 2)
+    expect(handle.startMotion).toHaveBeenCalledTimes(1)
+
+    h.ctrl.playMotion('motions/idle.motion3.json', 2) // 500ms 内重复 → 合并忽略
+    expect(handle.startMotion).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(500)
+    h.ctrl.playMotion('motions/idle.motion3.json', 2) // 去抖窗口过 → 播放
+    expect(handle.startMotion).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('playMotion：长动作 ~15s 超时 → stopMotion(priority)', async () => {
+    vi.useFakeTimers()
+    const h = makeHarness()
+    stubHandle(h.adapter, { motions: ['motions/idle.motion3.json'] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+
+    h.ctrl.playMotion('motions/idle.motion3.json', 2)
+    expect(handle.stopMotion).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(15000)
+    expect(handle.stopMotion).toHaveBeenCalledWith(2) // 超时停对应优先级
+    vi.useRealTimers()
+  })
+
+  it('playMotion 优先级仲裁：3 级态（error）不被低优先打断；speaking/thinking 激活时不发点击（priority=1）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { motions: ['motions/click.motion3.json', 'motions/wave.motion3.json'] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    handle.startMotion.mockClear()
+
+    // error（3 级）：priority 1/2 均被丢弃
+    h.ctrl.setState('error')
+    h.ctrl.playMotion('motions/click.motion3.json', 1)
+    h.ctrl.playMotion('motions/wave.motion3.json', 2)
+    expect(handle.startMotion).not.toHaveBeenCalled()
+
+    // speaking（2 级）：priority=1 点击被丢弃；priority=2 同等级可发
+    h.ctrl.setState('speaking')
+    h.ctrl.playMotion('motions/click.motion3.json', 1)
+    expect(handle.startMotion).not.toHaveBeenCalled()
+    h.ctrl.playMotion('motions/wave.motion3.json', 2)
+    expect(handle.startMotion).toHaveBeenCalledTimes(1)
+
+    // thinking（2 级）：priority=1 点击同样不打断
+    h.ctrl.setState('thinking')
+    handle.startMotion.mockClear()
+    h.ctrl.playMotion('motions/click.motion3.json', 1)
+    expect(handle.startMotion).not.toHaveBeenCalled()
+
+    // 回 idle（0 级）：priority=1 点击可发
+    h.ctrl.setState('idle')
+    h.ctrl.playMotion('motions/click.motion3.json', 1)
+    expect(handle.startMotion).toHaveBeenCalledTimes(1)
+  })
+
+  it('playMotion：模型未就绪（unloaded）只记最新不播放（不抛错、无 handle 不外发）', () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { motions: ['motions/idle.motion3.json'] })
+    expect(() => h.ctrl.playMotion('motions/idle.motion3.json', 2)).not.toThrow()
+    expect(h.adapter.handles.length).toBe(0) // 未 init → 无 handle，无外发目标
+  })
+
+  it('switchModel：清队列（stopAll）+ 清调度状态（切换后同路径动作不被上个模型去抖合并）', async () => {
+    vi.useFakeTimers()
+    const h = makeHarness()
+    stubHandle(h.adapter, { motions: ['motions/tap.motion3.json'] })
+    await h.ctrl.init(fakeCanvas) // handle1 on 'a'
+    const h1 = h.getHandle()
+    h1.startMotion.mockClear()
+    h.ctrl.playMotion('motions/tap.motion3.json', 1)
+    expect(h1.startMotion).toHaveBeenCalledTimes(1)
+
+    // 切换模型：新 handle 被 stopAll（清队列）
+    await h.ctrl.switchModel('b')
+    const h2 = h.getHandle()
+    expect(h2.stopAll).toHaveBeenCalledTimes(1)
+
+    // 新模型同路径动作立即播放（去抖状态已被清，不被上个模型时间戳合并）
+    h2.startMotion.mockClear()
+    h.ctrl.playMotion('motions/tap.motion3.json', 1)
+    expect(h2.startMotion).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('情绪→表情（I-1）：happy/sad/surprised 白名单命中 → setExpression；不命中 → 落 B4（不调 setExpression）', async () => {
+    // 命中：whitelist 含 happy/f02/f06 对应路径
+    const h = makeHarness()
+    stubHandle(h.adapter, {
+      expressions: ['expressions/happy.exp3.json', 'expressions/f02_sad.exp3.json', 'expressions/f06_surprised.exp3.json']
+    })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+
+    h.ctrl.setState('happy')
+    expect(handle.startExpression).toHaveBeenCalledWith('a', 'expressions/happy.exp3.json')
+
+    h.ctrl.setState('sad')
+    expect(handle.startExpression).toHaveBeenCalledWith('a', 'expressions/f02_sad.exp3.json')
+
+    h.ctrl.setState('surprised')
+    expect(handle.startExpression).toHaveBeenCalledWith('a', 'expressions/f06_surprised.exp3.json')
+  })
+
+  it('情绪→表情（I-1）：白名单无命中 → 不调 setExpression（落 B4 参数级，不空转）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { expressions: ['expressions/f07_angry.exp3.json'] }) // 无 happy/sad/surprised/f01/f02/f06
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+
+    h.ctrl.setState('happy')
+    expect(handle.startExpression).not.toHaveBeenCalled()
   })
 })

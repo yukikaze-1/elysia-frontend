@@ -13,9 +13,13 @@ import { defineStore } from 'pinia'
 import { Live2DAdapter } from '../live2d/adapter'
 import { webglEngine } from '../live2d/gl/webgl'
 import { Live2DController, type Live2DControllerStatus } from '../live2d/controller'
+import { createLive2dStateSource } from '../live2d/state-source'
 import { api } from './desktop-api'
 import { useSettingsStore } from './settings.store'
-import type { Live2DModelSummary } from '@shared/contracts'
+import { useConnectionStore } from './connection.store'
+import { useMessageStore } from './message.store'
+import { useVoiceStore } from './voice.store'
+import type { Live2DModelSummary, Message } from '@shared/contracts'
 
 /** 控制器工厂注入点（默认为真实装配；单测注入 fake controller 以在 node 环境驱动状态机） */
 type ControllerFactory = () => Live2DController
@@ -40,6 +44,52 @@ export const useLive2dStore = defineStore('live2d', () => {
 
   let controller: Live2DController | null = null
   let unsubDevice: (() => void) | null = null
+  let unsubStateSource: (() => void) | null = null
+  // M1：init 完成（含已选模型覆盖 switch）前为 false，串行化用户 switch——init resolve 前不允许触发切换，
+  // 避免 currentId null 时 controller 切换中守卫返回被丢弃目标的语义暧昧。
+  let ready = false
+
+  /** 最后完成 assistant message 的 `.emotion`（I-4：wire 字段是 emotion 不是 mood；未知码由 source 忽略） */
+  function lastCompletedEmotion(): string | undefined {
+    const msg = useMessageStore()
+    for (let i = msg.order.length - 1; i >= 0; i--) {
+      const m: Message | undefined = msg.byId[msg.order[i]]
+      if (!m || m.role !== 'assistant') continue
+      if (m.emotion) return m.emotion
+    }
+    return undefined
+  }
+
+  /** 当前生成是否已产出正文（speaking 判定第二路：voiceStore.tts.playing 或 active gen 已有 public 文本段） */
+  function currentGenHasContent(): boolean {
+    const msg = useMessageStore()
+    if (!msg.activeGenerationId) return false
+    for (let i = msg.order.length - 1; i >= 0; i--) {
+      const m: Message | undefined = msg.byId[msg.order[i]]
+      if (!m || m.role !== 'assistant') continue
+      if (m.status === 'completed') continue
+      return (m.assistantSegments ?? []).some(
+        (seg) => seg.channel === 'public_reply' && seg.kind === 'text' && !!seg.text
+      )
+    }
+    return false
+  }
+
+  /** 装配 live2dStateSource：组合 connection/message/voice 读值 → controller.setState。（D5B-04 薄编排层，
+   *  Controller 无 Pinia；conversationStore 无「conversation→角色态」映射，本批不订阅，归阶段 6/后续。） */
+  function setupStateSource(ctrl: Live2DController): void {
+    if (unsubStateSource) return
+    unsubStateSource = createLive2dStateSource(
+      {
+        connection: () => useConnectionStore().state,
+        isGenerating: () => useMessageStore().activeGenerationId !== undefined,
+        isSpeaking: () =>
+          useVoiceStore().tts.playing || currentGenHasContent(),
+        emotion: () => lastCompletedEmotion()
+      },
+      (s) => ctrl.setState(s)
+    )
+  }
 
   function ensureController(): Live2DController {
     if (controller) return controller
@@ -88,15 +138,25 @@ export const useLive2dStore = defineStore('live2d', () => {
         error.value = e instanceof Error ? e.message : String(e)
       }
     }
+    // M1：init 完成（含已选覆盖 switch）后才放行用户 switch；此时装配状态编排（controller 已 ready）
+    ready = true
+    setupStateSource(ctrl)
   }
 
   async function switchModel(next: string): Promise<void> {
+    // M1 串行化：init 完成前不允许用户触发 switch（避免 currentId null 时守卫返回被丢弃目标的语义暧昧）
+    if (!ready) {
+      error.value = 'Live2D 尚未就绪，无法切换模型'
+      return
+    }
     error.value = ''
     const ctrl = ensureController()
     try {
-      await ctrl.switchModel(next)
+      const effective = await ctrl.switchModel(next)
       syncFromController()
-      useSettingsStore().setLive2d({ modelId: next }) // 持久化：切换即落模型选择
+      // D5B-10/T6：持久化「实际生效 id」而非无条件 next——守卫丢弃（切换中/同模型幂等）时持久化旧 id，消除
+      // 「已加载 a 却持久化 b」窄竞态
+      useSettingsStore().setLive2d({ modelId: effective })
     } catch (e) {
       // 失败保留原 modelId（controller 内部不动 currentId/handle）+ 置 error
       syncFromController()
@@ -105,12 +165,15 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   function dispose(): void {
+    unsubStateSource?.() // 退订 stateSource（停 watch + 清 N1 mood/error 回退 timers）
+    unsubStateSource = null
     unsubDevice?.()
     unsubDevice = null
     if (controller) {
       controller.unload() // 全量释放（含 adapter.destroy：unregister contextlost + 清 GL 引用）
       controller = null
     }
+    ready = false
     models.value = []
     status.value = 'unloaded'
     modelId.value = null
