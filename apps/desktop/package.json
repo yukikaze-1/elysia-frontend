@@ -27,6 +27,7 @@
     "package": "electron-vite build && electron-builder --dir",
     "verify:artifact": "node scripts/verify-artifact.cjs",
     "check:contract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/check-backend-contract.mjs",
+    "live2d:install": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/live2d-install.mjs",
     "check:node": "node scripts/check-node-version.mjs"
   },
   "dependencies": {
