@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, Live2DModelSummary, ModelProfile, ModelProfileTestResult, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -215,3 +215,16 @@ export const DEFAULT_SETTINGS: SettingsState = {
   voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
   dictation: { insertMode: 'append' }
 }
+
+// —— 阶段 5 批次 A：Live2D 模型摘要出参 schema（严格镜像 contracts/live2d.ts，D5A-07；preload 与 Main handler 共用）——
+export const Live2DModelSummarySchema: z.ZodType<Live2DModelSummary> = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  preview: z.string().nullable(),
+  version: z.string(),
+  available: z.boolean(),
+  reason: z.string().optional(),
+  licenseRef: z.string(),
+  integrityState: z.enum(['unverified', 'verified', 'failed'])
+})
+export const Live2DListResponseSchema = z.array(Live2DModelSummarySchema)

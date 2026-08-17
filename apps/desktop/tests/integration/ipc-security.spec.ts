@@ -22,13 +22,13 @@ describe('IPC 安全', () => {
         hasProcess: typeof w.process
       }
     })
-    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键;阶段3 G2 加持久化面 4 键(cacheMessages/hydratePersistence/openExternal/persistSession) → 26 键;阶段3 G3 加 attachments 面 4 键(attachmentsCancel/attachmentsCheck/attachmentsUpload/attachmentsValidate) → 30 键;阶段3 G4 加历史/表情面 3 键(getMessageContext/listStickers/queryChatHistory) → 33 键;阶段4 批次A 加模型服务/TTS 面 9 键(activateModelProfile/deleteModelProfile/getActiveModelSelection/listModelProfiles/listTtsVoices/previewTts/saveModelProfile/setTtsVoice/testModelProfile) → 42 键;阶段4 批次B 加语音面 12 键(audioCancel/voiceCancelDictation/voiceCancelRealtime/voiceCommit/voiceDiscard/voiceSendAudio/voiceStartDictation/voiceStartRealtime/voiceStartRecord/voiceStopDictation/voiceStopRealtime/voiceStopRecord) + 设置面 2 键(settingsLoad/settingsSave) → 56 键
+    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键;阶段3 G2 加持久化面 4 键(cacheMessages/hydratePersistence/openExternal/persistSession) → 26 键;阶段3 G3 加 attachments 面 4 键(attachmentsCancel/attachmentsCheck/attachmentsUpload/attachmentsValidate) → 30 键;阶段3 G4 加历史/表情面 3 键(getMessageContext/listStickers/queryChatHistory) → 33 键;阶段4 批次A 加模型服务/TTS 面 9 键(activateModelProfile/deleteModelProfile/getActiveModelSelection/listModelProfiles/listTtsVoices/previewTts/saveModelProfile/setTtsVoice/testModelProfile) → 42 键;阶段4 批次B 加语音面 12 键(audioCancel/voiceCancelDictation/voiceCancelRealtime/voiceCommit/voiceDiscard/voiceSendAudio/voiceStartDictation/voiceStartRealtime/voiceStartRecord/voiceStopDictation/voiceStopRealtime/voiceStopRecord) + 设置面 2 键(settingsLoad/settingsSave) → 56 键;阶段5 批次A 加 Live2D 面 1 键(listLive2dModels) → 57 键
     expect(surface.keys).toEqual([
       'activate', 'activateModelProfile', 'attachmentsCancel', 'attachmentsCheck', 'attachmentsUpload', 'attachmentsValidate',
       'audioCancel',
       'cacheMessages', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation', 'deleteModelProfile',
       'disconnect', 'getActiveModelSelection', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getMessageContext', 'getMessages',
-      'getRuntimeInfo', 'hydratePersistence', 'listConversations', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState',
+      'getRuntimeInfo', 'hydratePersistence', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState',
       'openExternal', 'persistSession', 'previewTts', 'queryChatHistory', 'renameConversation', 'saveModelProfile',
       'send', 'setBackendToken', 'setEndpoint', 'setTtsVoice', 'settingsLoad', 'settingsSave', 'testModelProfile',
       'voiceCancelDictation', 'voiceCancelRealtime', 'voiceCommit', 'voiceDiscard', 'voiceSendAudio',

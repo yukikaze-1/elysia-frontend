@@ -23,6 +23,7 @@ import type {
   DictationStartInput,
   DictationStopInput,
   FileValidationResult,
+  Live2DModelSummary,
   Message,
   MessageContextQuery,
   MessagePage,
@@ -66,6 +67,7 @@ import {
   ConversationSchema,
   EndpointResponseSchema,
   FileValidationResultSchema,
+  Live2DModelSummarySchema,
   MessagePageSchema,
   MessageSchema,
   ModelProfileSchema,
@@ -367,6 +369,11 @@ async function settingsSave(patch: SettingsPatch): Promise<SettingsState> {
   return unwrap(await invokeWithArgs<SettingsState>(IpcChannels.settingsSave, patch), SettingsStateSchema)
 }
 
+// —— 阶段 5 批次 A Live2D 面（spec D5A-07）：live2d:list-models 摘要清单（arity-0 invoke）——
+async function listLive2dModels(): Promise<Live2DModelSummary[]> {
+  return unwrap(await invoke<Live2DModelSummary[]>(IpcChannels.live2dListModels), z.array(Live2DModelSummarySchema))
+}
+
 /**
  * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
  * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
@@ -503,7 +510,9 @@ export const desktopApi = {
   voiceSendAudio,
   // —— 阶段 4 批次 B 设置面 ——
   settingsLoad,
-  settingsSave
+  settingsSave,
+  // —— 阶段 5 批次 A Live2D 面 ——
+  listLive2dModels
 }
 
 export type DesktopApi = typeof desktopApi

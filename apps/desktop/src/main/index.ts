@@ -31,6 +31,7 @@ import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
 import { UploadService } from './attachments/upload-service'
 import { MediaService } from './attachments/media-service'
 import { defaultSafeOpenPlatform } from './persistence/safe-open'
+import { Live2DModelRegistry } from './live2d/model-registry'
 
 let diagnostics: Diagnostics | undefined
 
@@ -223,7 +224,10 @@ async function main(): Promise<void> {
       baseUrl: () => connConfig.getEndpoint()?.baseUrl
     })
     mediaBridge.media = mediaSvc // audio_end 触发 getTtsMedia 回调前必须先就位（装配期完成，远早于用户 connect）
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, audit })
+    // 阶段 5 批次 A Live2D 模型注册表（spec D5A-07）：扫 dirs.models，manifest+integrity 两级可用性 + fail-closed verify。
+    // 纯磁盘只读，无生命周期（懒加载 integrity），registerHandlers 前装配即可。
+    const live2dRegistry = new Live2DModelRegistry({ modelsDir: dirs.models })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },

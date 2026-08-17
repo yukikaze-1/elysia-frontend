@@ -166,3 +166,6 @@ export const voiceCancelDictationSchema = z.object({ clientRequestId: z.string()
 /** 音频二进制上行（单向 send 通道）：bytes 必须为真实 Uint8Array；1MiB 运行期上限在 voice-handlers 处校验（schema 只查类型） */
 export const voiceAudioChunkSchema = z.object({ bytes: z.instanceof(Uint8Array) })
 export const audioCancelSchema = z.object({ streamId: z.number().int() })
+
+// —— 阶段 5 批次 A Live2D 命令 request schema（spec D5A-07；响应 schema 在 shared/schemas/ipc-response Live2DListResponseSchema）——
+export const live2dListModelsSchema = z.undefined()

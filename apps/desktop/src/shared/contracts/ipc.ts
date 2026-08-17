@@ -51,7 +51,8 @@ export const IpcChannels = {
   voiceAudioChunk: 'voice:audio-chunk',                  // 阶段 4 批次 B：音频二进制上行（单向 send，ipcMain.on 不 invoke，D-P18）
   audioCancel: 'audio:cancel',                           // 阶段 4 批次 B：TTS 播放取消（invoke）
   settingsLoad: 'settings:load',                         // 阶段 4 批次 B：设置装载（invoke）
-  settingsSave: 'settings:save'                          // 阶段 4 批次 B：设置保存（invoke，patch merge）
+  settingsSave: 'settings:save',                         // 阶段 4 批次 B：设置保存（invoke，patch merge）
+  live2dListModels: 'live2d:list-models'                 // 阶段 5 批次 A：Live2D 模型摘要清单（invoke）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
