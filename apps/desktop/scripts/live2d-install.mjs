@@ -116,6 +116,13 @@ export async function installModel({ modelDir, id, displayName, licenseNote, for
     preview = 'preview.png'
   }
 
+  // 规范入口（跨 Task 契约，集成 A7 捕获）：controller/adapter 恒以 model3Path 'model3.json' 装载
+  // （controller 注释「Task 4 装配强制该文件存在且 manifest.modelFile 指向之」）。源目录模型入口是
+  // 任意命名的 *.model3.json（如 Haru.model3.json）——装配须把它规范化为 model3.json，并删去源命名副本，
+  // 否则适配器 fetch cyrene://…/{id}/model3.json 落到 integrity 白名单外 → resolveModelFile 403。
+  await writeFile(join(dst, 'model3.json'), JSON.stringify(parsed, null, 2) + '\n', { encoding: 'utf8' })
+  await rm(join(dst, m3Name))
+
   // 注入 LICENSE.txt（先于 manifest/integrity，licenseRef/LICENSE.txt 须已落地）
   const note = licenseNote ? await readFile(licenseNote, 'utf8') : defaultLicenseNote(modelDir)
   await writeFile(join(dst, 'LICENSE.txt'), note, { encoding: 'utf8' })
@@ -124,7 +131,7 @@ export async function installModel({ modelDir, id, displayName, licenseNote, for
   const manifest = {
     id,
     displayName,
-    modelFile: m3Name,
+    modelFile: 'model3.json', // 规范入口（源 *.model3.json 已复制为 model3.json，删去源命名副本）
     licenseRef: 'LICENSE.txt',
     integrityManifest: 'integrity.json'
   }
@@ -153,8 +160,8 @@ export async function installModel({ modelDir, id, displayName, licenseNote, for
 
   const files = entries.length
   const bytes = entries.reduce((acc, e) => acc + e.size, 0)
-  const m3Sha = (await hashFile(join(dst, m3Name))).sha256
-  return { id, dst, files, bytes, hashes: files, modelFile: m3Name, modelFileSha256: m3Sha, preview }
+  const m3Sha = (await hashFile(join(dst, 'model3.json'))).sha256
+  return { id, dst, files, bytes, hashes: files, modelFile: 'model3.json', modelFileSha256: m3Sha, preview }
 }
 
 function printUsage() {

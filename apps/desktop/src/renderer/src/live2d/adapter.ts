@@ -223,8 +223,9 @@ export class Live2DAdapter {
 
   constructor(deps: Live2DAdapterDeps) {
     this.engine = deps.engine
-    // fetch 可注入（单测记录器）；未注入时用全局 fetch（renderer/Chromium 内置）
-    this.fetch = deps.fetchImpl ?? fetch
+    // fetch 可注入（单测记录器）；未注入时用全局 fetch 且绑定全局（this.fetch 方法调用会以 adapter 实例为
+    // receiver → Chromium「Illegal invocation」——集成首帧捕获，Task7 修复）
+    this.fetch = deps.fetchImpl ?? fetch.bind(globalThis)
   }
 
   /**

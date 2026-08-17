@@ -3,7 +3,7 @@
 // index.ts 同名时声明文件被静默丢弃——使 tsconfig.node.json（含 tests/**/*）永远加载不到它。
 // 本文件以非冲突基名落于 tests 树，让 launchApp 返回的 page.evaluate 内 `window.desktopApi` 在
 // node 编译程序中可见（渲染进程类型来自 src/preload/index.d.ts，两者共享 @shared/contracts 类型）。
-import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, ChatHistoryPage, ChatHistoryQuery, CredentialStatus, FileValidationResult, MessageContextQuery, MessagePage, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
+import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, ChatHistoryPage, ChatHistoryQuery, CredentialStatus, FileValidationResult, Live2DModelSummary, MessageContextQuery, MessagePage, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
 import type { StickerManifest } from '@shared/contracts/sticker'
 
 declare global {
@@ -35,6 +35,8 @@ declare global {
       attachmentsUpload(input: { uploadId: string; files: Array<{ localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }> }): Promise<AttachmentsUploadResponse>
       attachmentsCancel(uploadId: string): Promise<void>
       attachmentsCheck(attachmentId: string): Promise<AttachmentCheckResult>
+      // —— 阶段 5 批次 A Live2D 面（与 src/preload/index.d.ts 同源；electron-live2d.spec 要调） ——
+      listLive2dModels(): Promise<Live2DModelSummary[]>
     }
   }
 }

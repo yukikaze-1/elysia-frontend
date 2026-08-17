@@ -176,7 +176,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     expect(manifest).toMatchObject({
       id: 'haru',
       displayName: 'Haru',
-      modelFile: 'Haru.model3.json',
+      modelFile: 'model3.json', // 规范入口：源 *.model3.json 已规范化为 model3.json（集成 A7 契约收口）
       licenseRef: 'LICENSE.txt',
       integrityManifest: 'integrity.json', // brief Step 4 显式断言
       preview: 'preview.png',
@@ -198,7 +198,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     const integrity = JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8'))
     const paths = integrity.files.map((f) => f.path)
     expect(integrity.files).toHaveLength(9) // 6 源文件 + icon.png + LICENSE.txt + preview.png
-    expect(paths).toContain('Haru.model3.json')
+    expect(paths).toContain('model3.json') // 规范化入口（源 Haru.model3.json 已替换为 model3.json）
     expect(paths).toContain('Haru.moc3')
     expect(paths).toContain('textures/texture_00.png')
     expect(paths).toContain('textures/texture_01.png')
