@@ -221,6 +221,28 @@ export const Live2DSettingsSchema = z.object({
   reduceMotion: z.boolean().default(false)
 })
 
+/** SettingsPatch.live2d 专用子 schema（IP-1，批次 B 审查）：全字段 .optional() 且**不带 .default()**。
+ *  zod .partial() 只把字段变 optional，不会去掉字段上的 .default()——若用 Live2DSettingsSchema.partial()，
+ *  单字段 patch（如 {enabled:false}）会为其余已默认字段注入默认值（scale:1、lipSync:true 等），经
+ *  settings-service save() 的 { ...state.live2d, ...patch.live2d } merge 会静默重置用户已设的
+ *  scale/lipSync/offsetX 等（违背「未提交字段保持现值」语义，Task 5 单字段 patch 会触发）。
+ *  performanceMode 仍包 z.preprocess 归一：.optional() 缺省时短路为 undefined（不注入 'auto'），
+ *  仅当 patch 显式带 'high'/'low' 时归一四值（patch 保存路径仍归一）。 */
+export const Live2DSettingsPatchSchema = z.object({
+  enabled: z.boolean().optional(),
+  modelId: z.string().nullable().optional(),
+  scale: z.number().min(0.5).max(3).optional(),
+  offsetX: z.number().min(-2).max(2).optional(),
+  offsetY: z.number().min(-2).max(2).optional(),
+  mouseTracking: z.boolean().optional(),
+  autoMotions: z.boolean().optional(),
+  lipSync: z.boolean().optional(),
+  performanceMode: z
+    .preprocess((v) => normalizePerformanceMode(String(v)), z.enum(['auto', 'quality', 'balanced', 'low_power']))
+    .optional(),
+  reduceMotion: z.boolean().optional()
+})
+
 /** 性能模式归一（D5B-06，I-3）：批次 A 三值 'high'/'low' → 四值 'quality'/'low_power'；四值原样；未知 → 兜底 'auto'。
  *  在 schema 解析期经 z.preprocess 调用，load/save 两路统一四值。 */
 export function normalizePerformanceMode(v: string): PerformanceMode {
@@ -243,7 +265,7 @@ export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
 export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
   voice: VoiceSettingsSchema.partial().optional(),
   dictation: DictationSettingsSchema.partial().optional(),
-  live2d: Live2DSettingsSchema.partial().optional()
+  live2d: Live2DSettingsPatchSchema.optional() // IP-1：patch 路径用无默认子 schema，防单字段 patch clobber 已持久化非默认字段
 })
 
 /** 默认设置（M-7 修复）：enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/insertMode；micDeviceId/sttProfileId 缺省 undefined；

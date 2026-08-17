@@ -190,6 +190,19 @@ describe('阶段 5 批次 A live2d 设置 schema（D5A-10，A6）', () => {
     expect(SettingsPatchSchema.safeParse({ live2d: { modelId: 42 } }).success).toBe(false)
   })
 
+  it('IP-1：patch 路径不注入已默认字段默认值（防单字段 patch clobber 已持久化非默认字段）', () => {
+    // 单字段 patch 只带回该字段，其余字段必须为 undefined（不带 .default() 默认注入）
+    const r = SettingsPatchSchema.safeParse({ live2d: { enabled: false } })
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.data.live2d).toEqual({ enabled: false }) // scale/lipSync/offsetX/performanceMode 等不得被填默认
+    }
+    // performanceMode 显式旧值 'high' 在 patch 保存路径仍归一四值（IP-1 保留归一语义）
+    const r2 = SettingsPatchSchema.safeParse({ live2d: { performanceMode: 'high' } })
+    expect(r2.success).toBe(true)
+    if (r2.success) expect(r2.data.live2d?.performanceMode).toBe('quality')
+  })
+
   it('Live2DModelSummarySchema / Live2DListResponseSchema：合法摘要通过，缺字段拒绝', () => {
     const ok = {
       id: 'haru', displayName: 'Haru', preview: 'preview.png', version: '1.0',

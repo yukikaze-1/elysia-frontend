@@ -107,6 +107,24 @@ describe('SettingsService', () => {
     expect(s3.live2d).toEqual({ ...DEFAULT_LIVE2D, enabled: false, modelId: 'haru' })
   })
 
+  it('IP-1：单字段 patch 不 clobber 已持久化的非默认字段（patch 路径无默认注入）', async () => {
+    const { dir, safeRoot } = makeDir()
+    const svc = new SettingsService({ dir, safeRoot, logger })
+    await svc.load()
+    // 先设定非默认值：scale 2.5、lipSync false、offsetX 0.4（全部非默认）
+    const seeded = await svc.save({ live2d: { scale: 2.5, lipSync: false, offsetX: 0.4 } })
+    expect(seeded.live2d.scale).toBe(2.5)
+    expect(seeded.live2d.lipSync).toBe(false)
+    expect(seeded.live2d.offsetX).toBe(0.4)
+    // 单字段 patch：只动 mouseTracking，其余未提交字段必须保持现值（不被 repatch 默认值覆盖）
+    const patched = await svc.save({ live2d: { mouseTracking: false } })
+    expect(patched.live2d.mouseTracking).toBe(false) // 本字段生效
+    expect(patched.live2d.scale).toBe(2.5)           // 未提交非默认字段不被重置为 1
+    expect(patched.live2d.lipSync).toBe(false)       // 未被重置回 true
+    expect(patched.live2d.offsetX).toBe(0.4)         // 未被重置回 0
+    expect(patched.live2d.performanceMode).toBe('auto')
+  })
+
   it('live2d patch 非法（modelId 非 string|null / enabled 非 boolean）→ 拒绝', async () => {
     const { dir, safeRoot } = makeDir()
     const svc = new SettingsService({ dir, safeRoot, logger })
