@@ -12,14 +12,15 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { Live2DAdapter } from '../live2d/adapter'
 import { webglEngine } from '../live2d/gl/webgl'
-import { Live2DController, type Live2DControllerStatus } from '../live2d/controller'
+import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } from '../live2d/controller'
+import type { CharacterState } from '../live2d/state-machine'
 import { createLive2dStateSource } from '../live2d/state-source'
 import { api } from './desktop-api'
 import { useSettingsStore } from './settings.store'
 import { useConnectionStore } from './connection.store'
 import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
-import type { Live2DModelSummary, Message } from '@shared/contracts'
+import type { Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
 
 /** 控制器工厂注入点（默认为真实装配；单测注入 fake controller 以在 node 环境驱动状态机） */
 type ControllerFactory = () => Live2DController
@@ -41,9 +42,12 @@ export const useLive2dStore = defineStore('live2d', () => {
   const modelId = ref<string | null>(null)
   const error = ref<string>('')
   const live2dSettings = computed(() => useSettingsStore().live2d)
+  /** 当前 CharacterState（Task 5 Panel 状态徽标）：经 controller 'state' 事件镜像；未接线前 'offline' */
+  const characterState = ref<CharacterState>('offline')
 
   let controller: Live2DController | null = null
   let unsubDevice: (() => void) | null = null
+  let unsubState: (() => void) | null = null
   let unsubStateSource: (() => void) | null = null
   // M1：init 完成（含已选模型覆盖 switch）前为 false，串行化用户 switch——init resolve 前不允许触发切换，
   // 避免 currentId null 时 controller 切换中守卫返回被丢弃目标的语义暧昧。
@@ -103,6 +107,10 @@ export const useLive2dStore = defineStore('live2d', () => {
     unsubDevice = ctrl.on('device_lost', () => {
       status.value = 'fallback'
     })
+    // state（Task 5）：controller.setXxx 期间引出的状态变更经 'state' 事件镜像 characterState（Panel 状态徽标）
+    unsubState = ctrl.on('state', (s) => {
+      if (s) characterState.value = s as CharacterState
+    })
     return ctrl
   }
 
@@ -143,6 +151,12 @@ export const useLive2dStore = defineStore('live2d', () => {
       }
     }
     // M1：init 完成（含已选覆盖 switch）后才放行用户 switch；此时装配状态编排（controller 已 ready）
+    // Task 5：把当前 settings 表现字段一次性推给 controller（handle 已就绪；此后 Panel 对每次 setLive2d
+    // 变更单独推送同款）。autoMotions/lipSync/performanceMode/scale/offset 的「设置→controller」接线落点。
+    ctrl.setAutoMotions(l2d.autoMotions)
+    ctrl.setLipSync(l2d.lipSync)
+    ctrl.setPerformanceMode(l2d.performanceMode)
+    ctrl.setViewTransform(l2d.scale, l2d.offsetX, l2d.offsetY)
     ready = true
     setupStateSource(ctrl)
   }
@@ -173,6 +187,8 @@ export const useLive2dStore = defineStore('live2d', () => {
     unsubStateSource = null
     unsubDevice?.()
     unsubDevice = null
+    unsubState?.() // 退订 'state' 事件镜像
+    unsubState = null
     if (controller) {
       controller.unload() // 全量释放（含 adapter.destroy：unregister contextlost + 清 GL 引用）
       controller = null
@@ -182,6 +198,39 @@ export const useLive2dStore = defineStore('live2d', () => {
     status.value = 'unloaded'
     modelId.value = null
     error.value = ''
+    characterState.value = 'offline'
+  }
+
+  // —— Task 5（B5 UI + B6 Panel）：设置→controller 的窄转发（Panel/Pane 消费；无 controller 时 no-op）——
+
+  /** 待机动画开关转发（settings.live2d.autoMotions） */
+  function setAutoMotions(v: boolean): void {
+    controller?.setAutoMotions(v)
+  }
+
+  /** 口型独立门转发（settings.live2d.lipSync，M5） */
+  function setLipSync(v: boolean): void {
+    controller?.setLipSync(v)
+  }
+
+  /** 性能模式转发（settings.live2d.performanceMode） */
+  function setPerformanceMode(m: PerformanceMode): void {
+    controller?.setPerformanceMode(m)
+  }
+
+  /** 视图变换转发（settings.live2d.scale/offsetX/offsetY，Panel 缩放/偏移手柄即时预览） */
+  function setViewTransform(scale: number, offsetX: number, offsetY: number): void {
+    controller?.setViewTransform(scale, offsetX, offsetY)
+  }
+
+  /** 视线目标转发（Panel 鼠标跟随/回正，D5B-09）：null = 回正 */
+  function setLookTarget(target: NormalizedPoint | null): void {
+    controller?.setLookTarget(target)
+  }
+
+  /** 点击预设动作转发（Panel 点击画布；priority=1 低优先，仲裁在 controller） */
+  function playTapMotion(priority: number): void {
+    controller?.playTapMotion(priority)
   }
 
   /** 渲染 tick（Panel rAF 循环驱动 → controller.tick → adapter.update+draw；GPU-lost 由 controller 捕获并
@@ -191,7 +240,8 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   return {
-    models, status, modelId, error, live2dSettings,
-    init, switchModel, dispose, tick
+    models, status, modelId, error, live2dSettings, characterState,
+    init, switchModel, dispose, tick,
+    setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }
 })

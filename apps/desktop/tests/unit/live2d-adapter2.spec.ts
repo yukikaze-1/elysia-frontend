@@ -577,4 +577,43 @@ describe('Layout 装配 + draw() MVP 拟合路径', () => {
     expect(m?.[12]).toBe(0)
     expect(m?.[13]).toBe(0)
   })
+
+  it('setViewTransform（Task 5 缩放/偏移）：默认 1/0/0 与批次 A 等价；scale 倍增、offset 平移、越界钳制', async () => {
+    const { handle } = await readyHandle(MODEL3_NOLAYOUT)
+    const mvpMatrix = () => {
+      const renderer = shared.rendererInstances[0]
+      const results = renderer.getMvpMatrix.mock.results
+      const last = results[results.length - 1]?.value as {
+        setMatrix: { mock: { calls: Array<[Float32Array]> } }
+      }
+      return last.setMatrix.mock.calls[last.setMatrix.mock.calls.length - 1]?.[0]
+    }
+
+    // 默认视图变换（1/0/0）：与批次 A scale-only 完全一致
+    handle.draw()
+    const base = mvpMatrix()
+    expect(base?.[0]).toBe(1)
+    expect(base?.[12]).toBe(0)
+    expect(base?.[13]).toBe(0)
+
+    // scale=2、offset(1,-1)
+    handle.setViewTransform(2, 1, -1)
+    handle.draw()
+    const m = mvpMatrix()
+    expect(m?.[0]).toBeCloseTo(2) // sx * 2
+    expect(m?.[5]).toBeCloseTo(1) // sy * 2 = 0.5*2
+    expect(m?.[12]).toBeCloseTo(0.25) // offsetX=1 → +0.25 clip
+    expect(m?.[13]).toBeCloseTo(-0.25) // offsetY=-1 → -0.25 clip
+    for (const v of Array.from(m as Float32Array)) {
+      expect(Number.isFinite(v)).toBe(true) // 非退化（无 NaN/Infinity）
+    }
+
+    // 越界钳制：scale 100→3；offset -99/99 → ±2 → ±0.5 clip
+    handle.setViewTransform(100, -99, 99)
+    handle.draw()
+    const m2 = mvpMatrix()
+    expect(m2?.[0]).toBeCloseTo(3)
+    expect(m2?.[12]).toBeCloseTo(-0.5)
+    expect(m2?.[13]).toBeCloseTo(0.5)
+  })
 })

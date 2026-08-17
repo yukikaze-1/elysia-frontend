@@ -95,6 +95,9 @@ export interface Live2DModelHandle {
   getExpressionFileWhitelist(): ReadonlyArray<string>
   /** 写单个模型参数（未经 getLayoutMap 等查询；未知 Id 静默忽略，见 @framework/model/cubismmodel 注记） */
   setParam(id: string, value: number): void
+  /** 视图变换（Task 5 Panel 缩放/偏移手柄，D5B-10/doc 05 §13）：scale∈[0.5,3]、offsetX/Y∈[-2,2]（钳制在
+   *  computeMvp 内 applyViewTransform 统一做）；即时预览 = 设置后下一帧 draw 的 MVP 带新变换 */
+  setViewTransform(scale: number, offsetX: number, offsetY: number): void
   /** 加载并播放一个 motion 文件（file 为相对 model3.json 目录的路径，∈ 白名单；priority 入队） */
   startMotion(modelId: string, file: string, priority: number): Promise<void>
   /** 加载并播放一个 expression 文件（file 相对路径 ∈ 白名单） */
@@ -149,6 +152,24 @@ function buildFitMvp(modelW: number, modelH: number, viewW: number, viewH: numbe
   m[12] = 0 // a41：原点居中空间免平移
   m[13] = 0 // a42：原点居中空间免平移
   m[15] = 1 // a44
+  return m
+}
+
+/** 视图变换（Task 5 Panel 缩放/偏移手柄，doc 05 §13 / D5B-10）：在基 MVP 上叠加用户 scale/offset。
+ *  安全钳制：scale∈[0.5,3]、offsetX/Y∈[-2,2]（防模型完全移出画布）。缩放按列乘（scale 各基向量 s 倍，
+ *  同 layout combine 的对角前置），平移 offset*0.25 clip 单位（offset=±2 → 平移 ±0.5 clip = 半个视口宽，
+ *  配合 scale≥0.5 仍保留可见部分）。返回列主矩阵（不改入参）。 */
+export function applyViewTransform(base: Float32Array, scale: number, offsetX: number, offsetY: number): Float32Array {
+  const s = Math.min(3, Math.max(0.5, scale))
+  const ox = Math.min(2, Math.max(-2, offsetX))
+  const oy = Math.min(2, Math.max(-2, offsetY))
+  const m = new Float32Array(base)
+  for (let c = 0; c < 4; c++) {
+    m[c * 4] *= s
+    m[c * 4 + 1] *= s
+  }
+  m[12] += ox * 0.25
+  m[13] += oy * 0.25
   return m
 }
 
@@ -221,6 +242,10 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
   private readonly fetch: typeof fetch
   private readonly motionWhitelist: ReadonlySet<string>
   private readonly expressionWhitelist: ReadonlySet<string>
+  // Task 5（Panel 缩放/偏移手柄）：视图变换目标（computeMvp 内经 applyViewTransform 钳制，默认无变换）
+  private viewScale = 1
+  private viewOffsetX = 0
+  private viewOffsetY = 0
   private destroyed = false
 
   constructor(p: {
@@ -281,6 +306,15 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
     const idx = this.model.getParameterIndex(paramId)
     if (idx < 0 || idx >= this.model.getParameterCount()) return // 未知参数 Id 静默忽略
     this.model.setParameterValueById(paramId, value)
+  }
+
+  /** 视图变换目标（Panel 缩放/偏移手柄）：钳制在 computeMvp 内 applyViewTransform 统一做（本 setter 只存值，
+   *  跨帧一致；destroy 后 no-op）。 */
+  setViewTransform(scale: number, offsetX: number, offsetY: number): void {
+    if (this.destroyed) return
+    this.viewScale = scale
+    this.viewOffsetX = offsetX
+    this.viewOffsetY = offsetY
   }
 
   async startMotion(_modelId: string, file: string, priority: number): Promise<void> {
@@ -384,18 +418,21 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
   private computeMvp(viewW: number, viewH: number): Float32Array {
     const modelW = this.model.getCanvasWidth()
     const modelH = this.model.getCanvasHeight()
-    if (this.layoutMvp) {
-      const scale = Math.min(viewW / modelW, viewH / modelH)
-      const sx = (2 * scale) / viewW
-      const sy = (2 * scale) / viewH
-      const m = new Float32Array(this.layoutMvp.getArray())
-      for (let c = 0; c < 4; c++) {
-        m[c * 4] *= sx
-        m[c * 4 + 1] *= sy
-      }
-      return m
-    }
-    return buildFitMvp(modelW, modelH, viewW, viewH)
+    const base = this.layoutMvp
+      ? (() => {
+          const scale = Math.min(viewW / modelW, viewH / modelH)
+          const sx = (2 * scale) / viewW
+          const sy = (2 * scale) / viewH
+          const m = new Float32Array(this.layoutMvp.getArray())
+          for (let c = 0; c < 4; c++) {
+            m[c * 4] *= sx
+            m[c * 4 + 1] *= sy
+          }
+          return m
+        })()
+      : buildFitMvp(modelW, modelH, viewW, viewH)
+    // Task 5 视图变换（Panel scale/offset；钳制在 applyViewTransform 内）
+    return applyViewTransform(base, this.viewScale, this.viewOffsetX, this.viewOffsetY)
   }
 }
 

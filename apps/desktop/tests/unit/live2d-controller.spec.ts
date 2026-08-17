@@ -41,6 +41,7 @@ interface FakeHandle {
   getMotionFileWhitelist: MockFn
   getExpressionFileWhitelist: MockFn
   setParam: MockFn
+  setViewTransform: MockFn
   startMotion: MockFn
   startExpression: MockFn
   stopMotion: MockFn
@@ -56,6 +57,7 @@ function makeHandle(opts: { params?: string[]; motions?: string[]; expressions?:
     getMotionFileWhitelist: vi.fn(() => opts.motions ?? []),
     getExpressionFileWhitelist: vi.fn(() => opts.expressions ?? []),
     setParam: vi.fn(),
+    setViewTransform: vi.fn(),
     startMotion: vi.fn(async () => {}),
     startExpression: vi.fn(async () => {}),
     stopMotion: vi.fn(),
@@ -290,6 +292,79 @@ describe('Live2DController 批次 B 内核', () => {
     h.ctrl.tick()
     expect(writtenIds(handle)).not.toContain('ParamAngleX')
     expect(h.ctrl.autoMotionsEnabled).toBe(false)
+  })
+
+  it('setLipSync(false)（M5 口型独立门）：speaking 无动作模型不再写口型电平，门关时写 0 清态；眨眼仍在（autoMotions 管）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: [...FULL_PARAMS], motions: [], expressions: [] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    const mouthValue = () => {
+      const c = handle.setParam.mock.calls.find((call: unknown[]) => call[0] === 'ParamMouthOpenY')
+      return c ? (c[1] as number) : undefined
+    }
+
+    // 门开（默认）：speaking 写 0.8
+    h.ctrl.setMouthLevel(0.8)
+    h.ctrl.setState('speaking')
+    h.ctrl.tick()
+    expect(mouthValue()).toBeCloseTo(0.8)
+
+    // 门关：口部写 0 清态（不残留 0.8）；眨眼/呼吸仍驱动
+    handle.setParam.mockClear()
+    h.ctrl.setLipSync(false)
+    h.ctrl.tick()
+    expect(mouthValue()).toBe(0)
+    expect(writtenIds(handle)).toContain('ParamEyeLOpen') // autoMotions 管理的眨眼不受 lipSync 门影响
+    expect(h.ctrl.lipSyncEnabled).toBe(false)
+  })
+
+  it('playTapMotion（Task 5 点击预设动作）：白名单语义最接近 tap/greeting 命中 → 经 playMotion 仲裁；不打断高优先；无命中静默', async () => {
+    // 命中：tap 语义优先
+    const h = makeHarness()
+    stubHandle(h.adapter, { motions: ['motions/greeting.motion3.json', 'motions/tap_body.motion3.json'] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+
+    h.ctrl.playTapMotion(1)
+    expect(handle.startMotion).toHaveBeenCalledWith('a', 'motions/tap_body.motion3.json', 1)
+
+    // 不打断 3 级（error）：priority=1 被丢弃
+    handle.startMotion.mockClear()
+    h.ctrl.setState('error')
+    h.ctrl.playTapMotion(1)
+    expect(handle.startMotion).not.toHaveBeenCalled()
+
+    // 无命中（白名单不含 tap/greeting/touch/knock 语义）→ 静默忽略不抛错
+    const h2 = makeHarness()
+    stubHandle(h2.adapter, { motions: ['motions/idle.motion3.json'] })
+    await h2.ctrl.init(fakeCanvas)
+    h2.ctrl.setState('idle')
+    expect(() => h2.ctrl.playTapMotion(1)).not.toThrow()
+    expect(h2.getHandle().startMotion).not.toHaveBeenCalled()
+  })
+
+  it('setViewTransform 转发 handle（钳制在 adapter 层，controller 原样转发）', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    h.ctrl.setViewTransform(2, 1, -1)
+    expect(handle.setViewTransform).toHaveBeenCalledWith(2, 1, -1)
+    h.ctrl.setViewTransform(100, -99, 99)
+    expect(handle.setViewTransform).toHaveBeenLastCalledWith(100, -99, 99)
+  })
+
+  it('setState 状态变更 emit state 事件（Task 5 状态徽标订阅源）；同态幂等不重发', async () => {
+    const { ctrl } = makeHarness()
+    await ctrl.init(fakeCanvas)
+    const onState = vi.fn()
+    ctrl.on('state', onState)
+    ctrl.setState('thinking')
+    expect(onState).toHaveBeenCalledWith('thinking')
+    ctrl.setState('speaking')
+    expect(onState).toHaveBeenLastCalledWith('speaking')
+    ctrl.setState('speaking')
+    expect(onState).toHaveBeenCalledTimes(2) // 同态幂等
   })
 })
 

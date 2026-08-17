@@ -58,6 +58,7 @@ interface FakeHandleLike {
   getMotionFileWhitelist: ReturnType<typeof vi.fn>
   getExpressionFileWhitelist: ReturnType<typeof vi.fn>
   setParam: ReturnType<typeof vi.fn>
+  setViewTransform: ReturnType<typeof vi.fn>
   startMotion: ReturnType<typeof vi.fn>
   startExpression: ReturnType<typeof vi.fn>
   stopMotion: ReturnType<typeof vi.fn>
@@ -85,6 +86,7 @@ function makeFakeAdapter(): FakeAdapterLike {
         getMotionFileWhitelist: vi.fn(() => []),
         getExpressionFileWhitelist: vi.fn(() => []),
         setParam: vi.fn(),
+        setViewTransform: vi.fn(),
         startMotion: vi.fn(async () => {}),
         startExpression: vi.fn(async () => {}),
         stopMotion: vi.fn(),
@@ -391,27 +393,35 @@ describe('live2dStore：settings 契约面（enabled/modelId 接入 settingsStor
   })
 })
 
-describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 串行化 + stateSource 接线', () => {
-  // 注入可配置生效 id 的 fake controller（store 消费 controller.switchModel 返回值）
-  function installEffectiveController(effectiveFor: Record<string, string>) {
-    const state = { id: 'haru' }
-    const ctrl = {
-      get status(): Live2DControllerStatus { return 'ready' },
-      get modelId(): string | null { return state.id },
-      on: vi.fn(() => () => {}),
-      init: vi.fn(async () => {}),
-      switchModel: vi.fn(async (next: string) => {
-        const eff = effectiveFor[next] ?? next
-        state.id = eff
-        return eff
-      }),
-      setState: vi.fn(),
-      unload: vi.fn(() => { state.id = 'haru' })
-    }
-    setLive2dControllerFactory(() => ctrl as unknown as Live2DController)
-    return ctrl
+/** 注入可配置生效 id 的 fake controller（store 消费 controller.switchModel 返回值；Task 4/5 共用） */
+function installEffectiveController(effectiveFor: Record<string, string>) {
+  const state = { id: 'haru' }
+  const ctrl = {
+    get status(): Live2DControllerStatus { return 'ready' },
+    get modelId(): string | null { return state.id },
+    on: vi.fn<(ev: string, cb: (s: unknown) => void) => () => void>(() => () => {}),
+    init: vi.fn(async () => {}),
+    switchModel: vi.fn(async (next: string) => {
+      const eff = effectiveFor[next] ?? next
+      state.id = eff
+      return eff
+    }),
+    setState: vi.fn(),
+    unload: vi.fn(() => { state.id = 'haru' }),
+    // Task 5（B5/B6）：store 把设置/交互转发到 controller 的窄方法（store.init 也会重放当前设置）
+    tick: vi.fn(),
+    setAutoMotions: vi.fn(),
+    setLipSync: vi.fn(),
+    setPerformanceMode: vi.fn(),
+    setViewTransform: vi.fn(),
+    setLookTarget: vi.fn(),
+    playTapMotion: vi.fn()
   }
+  setLive2dControllerFactory(() => ctrl as unknown as Live2DController)
+  return ctrl
+}
 
+describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 串行化 + stateSource 接线', () => {
   beforeEach(() => { setLive2dControllerFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
@@ -464,5 +474,69 @@ describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 �
     useConnectionStore().setState({ status: 'connected' })
     useConnectionStore().setState({ status: 'disconnected' })
     expect(ctrl.setState).not.toHaveBeenCalled() // 已退订不再 push
+  })
+})
+
+describe('live2dStore Task 5（B5/B6）：设置→controller 窄转发 + characterState 事件镜像', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('store.init 把当前 settings 表现字段一次性推到 controller（autoMotions/lipSync/performanceMode/scale/offset）', async () => {
+    const ctrl = installEffectiveController({})
+    const { store, settings } = freshStore()
+    settings.$patch({
+      live2d: { autoMotions: false, lipSync: false, performanceMode: 'quality', scale: 2, offsetX: 1, offsetY: -1 }
+    })
+    await store.init(fakeCanvas)
+    expect(ctrl.setAutoMotions).toHaveBeenCalledWith(false)
+    expect(ctrl.setLipSync).toHaveBeenCalledWith(false)
+    expect(ctrl.setPerformanceMode).toHaveBeenCalledWith('quality')
+    expect(ctrl.setViewTransform).toHaveBeenCalledWith(2, 1, -1)
+  })
+
+  it('store 窄转发：setAutoMotions/setLipSync/setPerformanceMode/setViewTransform/setLookTarget/playTapMotion → controller', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    store.setAutoMotions(true)
+    store.setLipSync(false)
+    store.setPerformanceMode('low_power')
+    store.setViewTransform(0.5, -2, 2)
+    store.setLookTarget({ x: 0.4, y: -0.2 })
+    store.setLookTarget(null)
+    store.playTapMotion(1)
+    expect(ctrl.setAutoMotions).toHaveBeenCalledWith(true)
+    expect(ctrl.setLipSync).toHaveBeenCalledWith(false)
+    expect(ctrl.setPerformanceMode).toHaveBeenCalledWith('low_power')
+    expect(ctrl.setViewTransform).toHaveBeenCalledWith(0.5, -2, 2)
+    expect(ctrl.setLookTarget).toHaveBeenCalledWith({ x: 0.4, y: -0.2 })
+    expect(ctrl.setLookTarget).toHaveBeenCalledWith(null)
+    expect(ctrl.playTapMotion).toHaveBeenCalledWith(1)
+  })
+
+  it('store.characterState 经 controller state 事件镜像（Panel 状态徽标数据源）；dispose 复位 + 退订', async () => {
+    const stateCallbacks: Array<(s: unknown) => void> = []
+    const unsubs: Array<ReturnType<typeof vi.fn>> = []
+    const ctrl = installEffectiveController({})
+    ctrl.on.mockImplementation((ev: string, cb: (s: unknown) => void) => {
+      if (ev === 'state') stateCallbacks.push(cb)
+      const unsub = vi.fn()
+      unsubs.push(unsub)
+      return unsub
+    })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    expect(store.characterState).toBe('offline') // 初始（无事件发出）
+
+    stateCallbacks.forEach((cb) => cb('thinking'))
+    expect(store.characterState).toBe('thinking')
+    stateCallbacks.forEach((cb) => cb('speaking'))
+    expect(store.characterState).toBe('speaking')
+
+    store.dispose()
+    expect(store.characterState).toBe('offline') // dispose 复位
+    // 订阅已退订（store 逐一调用 on 返回的退订函数——真实 controller 此后不再推送 state 事件）
+    expect(unsubs.length).toBeGreaterThan(0)
+    for (const u of unsubs) expect(u).toHaveBeenCalled()
   })
 })
