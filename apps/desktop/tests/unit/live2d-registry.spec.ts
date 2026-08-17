@@ -234,14 +234,24 @@ describe('verifyIntegrity（fail-closed pending + 熔断）', () => {
     expect(list[0].integrityState).toBe('verified')
   })
 
-  it('完成后 pending 清理：第三次 verify 重新复核（累计 2 次）', async () => {
+  it('已验证态短路（F1）：成功一次后再调 → 不重哈希直接 true（verifyIntegrityAgainst 仅 1 次）', async () => {
     const root = tmpModelsRoot()
     await installModel(root, { id: 'ok', licenseRef: 'LICENSE.txt' })
     const registry = new Live2DModelRegistry({ modelsDir: root })
-    await registry.verifyIntegrity('ok')
-    await new Promise((r) => setTimeout(r, 0)) // 让 finally 清理微任务落地
-    await registry.verifyIntegrity('ok')
-    expect(verifySpy).toHaveBeenCalledTimes(2)
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
+    expect(verifySpy).toHaveBeenCalledTimes(1) // 会话内缓存 verified 态，不逐请求重哈希
+  })
+
+  it('failed 熔断态短路（F1）：再次调用 → 不重哈希直接 false', async () => {
+    const root = tmpModelsRoot()
+    const dir = await installModel(root, { id: 'ok', licenseRef: 'LICENSE.txt' })
+    const registry = new Live2DModelRegistry({ modelsDir: root })
+    writeFileSync(join(dir, 'model3.json'), Buffer.from('model-datZ')) // 篡改 → hash 不匹配 → failed
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(false)
+    expect(verifySpy).toHaveBeenCalledTimes(1)
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(false)
+    expect(verifySpy).toHaveBeenCalledTimes(1) // failed 态缓存，不重哈希
   })
 
   it('篡改（同尺寸不同字节）→ false + 熔断（resolveModelFile 恒拒 / 列表 available=false reason hash_mismatch）', async () => {
@@ -295,10 +305,7 @@ describe('integrity 条目路径安全过滤（I-2，纵深）', () => {
     const list = await registry.listInstalledModels()
     expect(list).toHaveLength(1)
     expect(list[0]).toMatchObject({ id: 'ok', available: true })
-    // verify 只 hash 安全条目 → true（outside.bin 的 hash 不参与）
-    await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
-    // 无 OOB 副作用：篡改 outside.bin 不影响验证结果
-    writeFileSync(outside, 'outside-tampered-data')
+    // verify 只 hash 安全条目 → true（outside.bin 条目哈希错误但仍通过 → 逃逸条目确未参与复核，无 OOB 读取）
     await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
   })
 

@@ -176,8 +176,14 @@ export class Live2DModelRegistry {
     return candReal
   }
 
-  /** fail-closed pending：同模型并发共享同一 Promise；hash 不匹配/复核抛错（hashFile 流读途中失败等）→ failed 熔断（resolveModelFile 恒拒） */
+  /**
+   * fail-closed pending + 会话内缓存：同模型并发共享同一 Promise；hash 不匹配/复核抛错 → failed 熔断。
+   * verified/failed 短路（D5A-07「会话内每模型一次，缓存 verified 态」/ D5A-08「路由不做逐请求 hash」）：
+   * 协议闭包每请求调本方法，成功/失败态缓存后不再重哈希全目录。
+   */
   verifyIntegrity(modelId: string): Promise<boolean> {
+    if (this.verified.has(modelId)) return Promise.resolve(true)
+    if (this.failed.has(modelId)) return Promise.resolve(false)
     const existing = this.pending.get(modelId)
     if (existing) return existing
     const p = (async () => {
