@@ -418,6 +418,8 @@ cyrene-integration-input/
 - [ ] GPU/资源异常后聊天保持可用；
 - [ ] thinking、speaking 等状态与真实业务事件一致。
 
+> **状态注记（2026-08-17，阶段 5 批次 A 已落地，已开发、未联调）：** 批次 A（Live2D 地基）已落地并全量验证（1400 单测（106 files）+ 83 集成（16 files）+ typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿）——SDK vendoring（Cubism Web SDK 5-r.5，CSP 不放宽）+ 模型注册表/完整性 + cyrene:// 供给 + 装配 CLI + Adapter/CubismGL + Controller/store + settings `live2d` 契约 + Panel 最小面 + Electron 集成；「模型可加载/切换（两个已装配模型）」「切换失败保留原模型」「隐藏暂停渲染」「GPU/资源异常聊天可用（静态头像回退）」批次 A 已覆盖，「非白名单动作/资源路径被拒（协议白名单拒绝）」与「状态与真实业务一致」的完整实现归批次 B/C；真实 Windows Electron（REAL）联调归批次 C/D。详见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
+
 ### 9.7 阶段 6：统一工具、权限与 Desktop P0 能力
 
 **进入条件：** 阶段 1 和阶段 2 通过；F-01～F-10 已确认。

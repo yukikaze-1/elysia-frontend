@@ -1,10 +1,10 @@
 # Cyrene Live2D 前端接入设计
 
 **文档版本：** v0.2  
-**文档状态：** 首轮 Review 已修订 / 待模型资源、SDK 与许可验证  
+**文档状态：** 首轮 Review 已修订 / SDK 与资源已验证到位（Cubism Web SDK 5-r.5 已入仓库 `third_party/CubismSdkForWeb-5-r.5/`，commit `22993e5`；用户模型免费版个人开发验证，`tmp/live2d/`）；**阶段 5 批次 A（Live2D 地基）已落地并全量验证（已开发、未联调）**，实现状态见 §18  
 **适用范围：** Electron Renderer、Live2D 模型资源、TTS 播放联动  
 **文档日期：** 2026-08-03
-**最后复核日期：** 2026-08-04
+**最后复核日期：** 2026-08-04（批次 A 落地 2026-08-17 复核）
 
 ---
 
@@ -66,7 +66,11 @@ interface Live2DModelSummary {
   version: string;
   available: boolean;
 }
+```
 
+> **注（批次 A 落地，2026-08-17）：** Main 注册表摘要为上文 `Live2DModelSummary` 的**扩展超集**，多出 `licenseRef`（指向装配注入的 `LICENSE.txt`）与 `integrityState`（`unverified|verified|failed`），并引入**两级可用性**——`available=false` 附脱敏 `reason?`（如 `missing_file`/`size_mismatch`/`hash_mismatch`）；`preview` 条目不参与可用性判定（缺失用 UI 占位）。完整契约见 `shared/contracts/live2d.ts`。
+
+```typescript
 type CharacterState =
   | "offline"
   | "idle"
@@ -337,6 +341,16 @@ interface Live2DSettings {
 
 Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现及未来能力扩展，发布形态可能触及 Live2D 的 AI/Chatbot 或“Expandable Applications”分类。开发验证可先进行，但对外发布前必须按 Live2D 官方流程确认适用许可；不能仅凭“个人/小规模通常豁免”推断本项目一定豁免，因为 Expandable Application 可能需要单独审核和出版许可。模型作者授权与 Cubism SDK/Core 许可分别核对并留档。
 
+### 15.1 资源与许可记录（批次 A 落地，2026-08-17）
+
+| 资源 | 来源 / 版本 | 许可 | 状态 |
+|---|---|---|---|
+| Cubism Web SDK（Framework 源码 + Core + 13 shaders） | `third_party/CubismSdkForWeb-5-r.5/`（commit `22993e5`），vendored 进 `renderer/src/live2d/` + `public/live2d/`（Core 为 **asm.js** 构建，CSP 无需放宽，D5A-03） | Core：Live2D Proprietary；Framework：Open Software License；SDK 官方许可链接见 `renderer/src/live2d/THIRD_PARTY_NOTICES.md` | 已入库、已验证 |
+| 官方示例模型 8 个 | SDK `Samples/Resources/`（Haru 等） | Free Material License（官方示例资源） | 已入库；Haru 已装配（CI 可装配） |
+| 用户模型 3 个（含修女莉尔免费版） | `tmp/live2d/`（**不入 git**），免费版「个人开发验证」用途 | 免费版个人开发验证；装配工具注入 `LICENSE.txt`（免费版+来源+个人开发验证注记），manifest `licenseRef` 指向之 | 已装配到 `userData/models/`（haru/lil/wanko），未入 git |
+
+发布前（批次 C 之后进入发布流程时）必须：① 按 Live2D 官方 **AI/Chatbot / Expandable Applications** 分类复核适用许可并确认出版许可；② 复核 8 个官方示例模型的 Free Material License 使用边界；③ 用户模型分发权与作者授权分别核对留档；④ 无法确认时不发布含该 SDK/模型的产物。开发验证（当前批次）可先行。
+
 ## 16. 测试场景
 
 - 模型首次加载成功；
@@ -371,3 +385,22 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 - [ ] 角色栏始终作为聊天右侧布局列展开，不覆盖聊天内容；
 - [ ] 模型及 SDK 许可已记录。
 - [ ] 对外发布前已确认 AI/Chatbot、可扩展应用分类及适用出版许可；无法确认时不发布含该 SDK/模型的产物。
+
+## 18. 实现状态（阶段 5 批次 A 落地，2026-08-17）
+
+**三态：** 已开发、未联调（Mock/本地驱动；真实 Windows Electron 联调归批次 C/D）。门禁：**1400 单测（106 files）+ 83 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿。详细决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
+
+**批次 A 已落地（本文档对应子项）：**
+
+| 本文档子项 | 状态 | 落点 |
+|---|---|---|
+| §2 分层（Panel → Controller → Adapter → SDK） | 已实现 | `renderer/src/live2d/controller.ts` / `adapter.ts` / `gl/`（CubismGL 抽象）+ vendored SDK |
+| §3 核心接口 | 部分（批次 A 子集） | Controller 首批 `listInstalledModels/load/switchModel/unload/setVisibility/setPerformanceMode/reset`；`setState/setExpression/playMotion/setMouthLevel/setLookTarget` 为 no-op 占位（批次 B 落地）；`Live2DModelSummary` 扩展超集见 §3 注 |
+| §4 模型资源包 / manifest | 已实现（装配工具产出） | `scripts/live2d-install.mjs` → `userData/models/<id>/`（manifest + integrity + LICENSE.txt + 拷贝非 symlink） |
+| §5 加载生命周期 / §5.1 切换 | 已实现（批次 A 子集） | 状态机 `unloaded→loading→ready\|failed→fallback`；切换失败保留原模型 + 静态头像回退 |
+| §12.2 折叠暂停 / GPU 重建 | 部分 | 右栏不可见即不创建/暂停渲染循环 + `device_lost`→failed→fallback；重建/降帧/低功耗归批 C |
+| §14 设置与持久化 | 部分（批次 A 子集） | `settings` 契约增 `live2d: {enabled, modelId}`（`.default(DEFAULT_LIVE2D)` 兼容旧设置）；scale/offset/mouseTracking 等归批次 B |
+| §15 资源与许可 | 已记录 | 见 §15.1；发布前按官方 AI/Chatbot/Expandable 复核 |
+
+**批次 B（表现）待落地：** 状态映射（idle/listening/thinking/speaking/waiting_permission）、待机/眨眼/呼吸/动作/表情优先级、无动作参数回退、完整设置子页（缩放/偏移/帧率/性能模式）、Panel 缩放偏移、Layout 消费、T6 切换竞态硬化。
+**批次 C（收口）待落地：** TTS 口型、性能降级（折叠降帧/GPU 上下文重建）、后端 Live2DDirective、防御加固（M-1/M-2/M-4/M-5/F2-F5 等）、文档/许可发行复核、真实 Windows Electron（REAL）联调。
