@@ -16,6 +16,7 @@ import { evaluateDevRendererUrl } from './config/trusted-renderer-origin'
 import { resolveBackendMode } from './config/backend-mode'
 import { ConnectionConfig } from './connection/connection-config'
 import { registerCyreneScheme, registerCyreneProtocolHandler } from './protocol'
+import { createLive2dResolver } from './protocol/handler'
 import { createDiagnostics, type Diagnostics } from './diagnostics'
 import type { AuditEvent } from './diagnostics/audit'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
@@ -246,7 +247,10 @@ async function main(): Promise<void> {
     // P1-5：dev（shouldUseViteDevServer）省略 rendererRoot——媒体分支不依赖它，避免 out/renderer 未构建时 realpath 抛错。
     await registerCyreneProtocolHandler({
       ...(!shouldUseViteDevServer(app.isPackaged, process.env) ? { rendererRoot: join(__dirname, '../renderer') } : {}),
-      resolveMedia: (mediaType, id, request) => mediaSvc.stream(mediaType, id, request)
+      resolveMedia: (mediaType, id, request) => mediaSvc.stream(mediaType, id, request),
+      // 阶段 5 批次 A（A4）：live2d 供给分派——registered/available 门禁 + fail-closed verify（首命中 await 全量 hash）
+      // + containment/白名单 + mime/no-store + dev CORS（受信 dev Origin 成功与错误响应均回补 ACAO）。
+      resolveLive2d: createLive2dResolver(live2dRegistry)
     })
     diagnostics.logger.info('protocol:registered')
     diagnostics.logger.info('app:started', { mode: config.mode, packaged: app.isPackaged })

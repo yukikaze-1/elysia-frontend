@@ -8,6 +8,8 @@ import { resolveRendererPath } from './path'
 import { buildRendererCsp } from './csp'
 import { mimeOf } from './mime'
 import { isDocumentRequest, MEDIA_PATH_PREFIX, parseMediaPath, type MediaRouteType } from '../attachments/media-service'
+import { LIVE2D_PATH_PREFIX, parseLive2dPath } from './live2d-path'
+import { getTrustedDevOrigins, isTrustedDevUrl } from '../config/trusted-renderer-origin'
 
 const RENDERER_CSP = buildRendererCsp()
 
@@ -18,10 +20,78 @@ export interface CyreneProtocolOptions {
   rendererRoot?: string
   /** 媒体分支分派器（Main 注入 MediaService.stream；缺省时媒体路径 404） */
   resolveMedia?: MediaResolver
+  /** live2d 分支分派器（Main 注入 createLive2dResolver 组合闭包；缺省时 live2d 路径 404） */
+  resolveLive2d?: (modelId: string, relPath: string, request: Request) => Promise<Response>
+}
+
+/**
+ * resolveLive2d 组合闭包所需的最小 registry 面（Task 2 的 Live2DModelRegistry 满足结构；测试注入 Fake registry）。
+ * 结构判定（M-3 协调注记）：resolveModelFile 只做 failed 熔断，不进 registered/available 门禁——闭包在调它之前
+ * 先 verifyIntegrity（fail-closed，首个命中 await 全量 hash）+ listInstalledModels 的 registered/available 判定。
+ */
+export interface Live2dResolverRegistry {
+  /** fail-closed 全量 SHA-256 复核（同模型 pending 共享；失败 → false 并熔断） */
+  verifyIntegrity(modelId: string): Promise<boolean>
+  /** 装配摘要（registered 判定：manifest 合法列出 + available 门禁） */
+  listInstalledModels(): Promise<ReadonlyArray<{ id: string; available: boolean }>>
+  /** containment + integrity 白名单 + 尺寸一致 → 绝对路径；未命中返回 null */
+  resolveModelFile(modelId: string, relPath: string): Promise<string | null>
+}
+
+/**
+ * 阶段 5 批次 A（A4）：live2d 供给分派闭包——registered+available 门禁 + fail-closed verify（首命中 await）+
+ * resolveModelFile 白名单 + mime/no-store + dev CORS（受信 Origin 成功**与错误**响应均回补 ACAO + Vary）。
+ * 组合逻辑放 handler.ts 以便协议单测注入 Fake registry（main/index.ts 只接线真实 registry）。
+ */
+export function createLive2dResolver(registry: Live2dResolverRegistry): NonNullable<CyreneProtocolOptions['resolveLive2d']> {
+  return async (modelId, relPath, request) => {
+    const origin = request.headers.get('origin')
+    let trustedOrigin: string | null = null
+    if (origin) {
+      try {
+        // spec §3.4：回环 hostname 恒放任意端口 + allowlist 精确 origin 两条路径（getTrustedDevOrigins 记忆化）
+        if (isTrustedDevUrl(new URL(origin), getTrustedDevOrigins())) trustedOrigin = origin
+      } catch {
+        trustedOrigin = null // 畸形 Origin（如 'null'/非 URL）→ 不视受信（fail-closed），不向上抛
+      }
+    }
+    const withCors = (res: Response): Response => {
+      if (!trustedOrigin) return res
+      const headers = new Headers(res.headers)
+      headers.set('Access-Control-Allow-Origin', trustedOrigin)
+      headers.set('Vary', 'Origin')
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
+    }
+    try {
+      // fail-closed 时序：首个命中请求 await 全量 hash，完成前不响应该模型任何文件
+      const ok = await registry.verifyIntegrity(modelId)
+      if (!ok) return withCors(new Response('Not Found', { status: 404 }))
+      // M-3：resolveModelFile 不做 registered/available 门禁——这里先判定（未注册模型/available=false → 404，防 403 遍历）
+      const summaries = await registry.listInstalledModels()
+      const active = summaries.find((s) => s.id === modelId)
+      if (!active || !active.available) return withCors(new Response('Not Found', { status: 404 }))
+      const abs = await registry.resolveModelFile(modelId, relPath)
+      if (!abs) return withCors(new Response('Forbidden', { status: 403 }))
+      try {
+        // 同 renderer-root 手法：local file 经 pathToFileURL + net.fetch 流式回传
+        const res = await net.fetch(pathToFileURL(abs).toString())
+        const headers = new Headers(res.headers)
+        const mime = mimeOf(abs)
+        if (mime) headers.set('Content-Type', mime)
+        headers.set('Cache-Control', 'no-store') // Live2D 模型文件会话内一次性供给，禁用缓存（D5A-08）
+        return withCors(new Response(res.body, { status: res.status, headers }))
+      } catch {
+        return withCors(new Response('Not Found', { status: 404 }))
+      }
+    } catch {
+      // 注册表实现异常（verifyIntegrity/list/resolve 理论上不抛，仍封口）→ 502 transient，且不逃逸到 handler 兜底丢失 CORS
+      return withCors(new Response('Bad Gateway', { status: 502 }))
+    }
+  }
 }
 
 export async function registerCyreneProtocolHandler(opts: CyreneProtocolOptions): Promise<void> {
-  const { rendererRoot, resolveMedia } = opts
+  const { rendererRoot, resolveMedia, resolveLive2d } = opts
   let realRoot: string | undefined
   let rootLower = ''
   let rootPrefix = ''
@@ -53,6 +123,19 @@ export async function registerCyreneProtocolHandler(opts: CyreneProtocolOptions)
       // P2-5：MediaService 抛错（如签名端点失败）不得成为 rejected promise——映射 502 transient 干净状态
       try {
         return await resolveMedia(parsed.mediaType, parsed.id, request)
+      } catch {
+        return new Response('Bad Gateway', { status: 502 })
+      }
+    }
+    // 阶段 5 批次 A live2d 分支（spec §3.4/D5A-08）：/__cyrene-live2d/{modelId}/{relPath}——media 分支之后、renderer-root 之前。
+    // 注册表 registered/available 门禁 + fail-closed verify + containment/白名单 + dev CORS 全部由 resolveLive2d 组合闭包执行。
+    if (url.pathname.startsWith(LIVE2D_PATH_PREFIX)) {
+      const parsed = parseLive2dPath(url.pathname)
+      if (!parsed) return new Response('Forbidden', { status: 403 })
+      if (!resolveLive2d) return new Response('Not Found', { status: 404 })
+      if (isDocumentRequest(request)) return new Response('Forbidden', { status: 403 })
+      try {
+        return await resolveLive2d(parsed.modelId, parsed.relPath, request)
       } catch {
         return new Response('Bad Gateway', { status: 502 })
       }
