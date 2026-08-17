@@ -44,6 +44,17 @@ function isPreviewEntry(entryPath: string, preview: string | undefined): boolean
   return parts[parts.length - 1] === 'preview.png'
 }
 
+/**
+ * 条目路径安全过滤（I-2，纵深）：integrity 条目侧与 resolveModelFile 请求侧同纪律——
+ * 拒绝绝对路径（POSIX `/` 起始、Windows 盘符/反斜杠分隔走私）、含 `..`/`.`/空段。
+ * 装配器 computeIntegrity 产出恒为 `/` 分隔的安全相对路径，任何逃逸条目即手工构造/被篡改信号。
+ */
+function isSafeEntryPath(p: string): boolean {
+  if (p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p) || p.includes('\\')) return false
+  const parts = p.split('/')
+  return parts.length > 0 && parts.every((seg) => seg !== '' && seg !== '.' && seg !== '..')
+}
+
 /** realpath 后的 containment 判定：child 必须位于 parent 内（win 大小写归一，relative 基于归一化路径） */
 function isContained(parent: string, child: string): boolean {
   const norm = process.platform === 'win32' ? (s: string) => s.toLowerCase() : (s: string) => s
@@ -165,33 +176,38 @@ export class Live2DModelRegistry {
     return candReal
   }
 
-  /** fail-closed pending：同模型并发共享同一 Promise；hash 不匹配 → failed 熔断（resolveModelFile 恒拒） */
+  /** fail-closed pending：同模型并发共享同一 Promise；hash 不匹配/复核抛错（hashFile 流读途中失败等）→ failed 熔断（resolveModelFile 恒拒） */
   verifyIntegrity(modelId: string): Promise<boolean> {
     const existing = this.pending.get(modelId)
     if (existing) return existing
     const p = (async () => {
-      const dir = join(this.modelsDir, modelId)
-      const entries = await this.loadIntegrity(modelId)
-      if (!entries) {
-        this.failed.add(modelId)
+      try {
+        const dir = join(this.modelsDir, modelId)
+        const entries = await this.loadIntegrity(modelId)
+        if (!entries) {
+          this.failed.add(modelId)
+          return false
+        }
+        const ok = await verifyIntegrityAgainst(dir, entries)
+        if (ok) {
+          this.verified.add(modelId)
+          this.failed.delete(modelId)
+        } else {
+          this.failed.add(modelId)
+          this.verified.delete(modelId)
+        }
+        return ok
+      } catch {
+        this.failed.add(modelId) // throw（TOCTOU/流读失败等）→ 同样熔断（fail-closed），且 p 恒 resolve 不再有 unhandledRejection
         return false
       }
-      const ok = await verifyIntegrityAgainst(dir, entries)
-      if (ok) {
-        this.verified.add(modelId)
-        this.failed.delete(modelId)
-      } else {
-        this.failed.add(modelId)
-        this.verified.delete(modelId)
-      }
-      return ok
     })()
     this.pending.set(modelId, p)
     void p.finally(() => { this.pending.delete(modelId) })
     return p
   }
 
-  /** 读取并缓存模型 integrity.json：缺失/JSON 非法/schema 非法 → null（fail-closed） */
+  /** 读取并缓存模型 integrity.json：缺失/JSON 非法/schema 非法 → null（fail-closed）；条目路径逐条安全过滤（I-2，拒 OOB 读取） */
   private async loadIntegrity(modelId: string): Promise<IntegrityEntry[] | null> {
     const cached = this.integrityCache.get(modelId)
     if (cached !== undefined) return cached
@@ -208,7 +224,7 @@ export class Live2DModelRegistry {
       return null
     }
     const r = integritySchema.safeParse(parsed)
-    const result = r.success ? r.data.files : null
+    const result = r.success ? r.data.files.filter((f) => isSafeEntryPath(f.path)) : null
     this.integrityCache.set(modelId, result)
     return result
   }

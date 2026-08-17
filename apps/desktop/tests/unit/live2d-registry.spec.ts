@@ -260,4 +260,57 @@ describe('verifyIntegrity（fail-closed pending + 熔断）', () => {
     const registry = new Live2DModelRegistry({ modelsDir: root })
     await expect(registry.verifyIntegrity('ghost')).resolves.toBe(false)
   })
+
+  it('verifyIntegrityAgainst 抛错（hashFile 流读途中失败）→ false + 熔断（I-1）', async () => {
+    const root = tmpModelsRoot()
+    await installModel(root, { id: 'ok', licenseRef: 'LICENSE.txt' })
+    const registry = new Live2DModelRegistry({ modelsDir: root })
+    // 模拟 hashFile/createReadStream 途中抛错：verifyIntegrityAgainst 拒绝 → p 不 reject、fail-closed 熔断
+    verifySpy.mockImplementationOnce(() => { throw new Error('read-failed') })
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(false)
+    await expect(registry.resolveModelFile('ok', 'model3.json')).resolves.toBeNull()
+    const list = await registry.listInstalledModels()
+    expect(list[0]).toMatchObject({ available: false, reason: 'hash_mismatch', integrityState: 'failed' })
+  })
+})
+
+describe('integrity 条目路径安全过滤（I-2，纵深）', () => {
+  it('手工构造含 ../ 逃逸 / 绝对路径 / 空段条目 → 过滤拒（不读取模型目录外文件，安全条目照常复核）', async () => {
+    const root = tmpModelsRoot()
+    const dir = await installModel(root, { id: 'ok', licenseRef: 'LICENSE.txt' })
+    const outside = join(root, 'outside.bin')
+    writeFileSync(outside, 'outside-secret-data')
+    const real = await computeIntegrity(dir) // 安全条目（model3.json）
+    // 注入三类非法条目：../ 逃逸、POSIX 绝对路径、空段；合法条目保留
+    writeFileSync(join(dir, 'integrity.json'), JSON.stringify({
+      files: [
+        { path: '../outside.bin', size: Buffer.byteLength('outside-secret-data'), sha256: 'deadbeef' },
+        { path: '/etc/passwd', size: 1, sha256: 'deadbeef' },
+        { path: 'sub//model3.json', size: 1, sha256: 'deadbeef' },
+        ...real
+      ]
+    }))
+    const registry = new Live2DModelRegistry({ modelsDir: root })
+    // list 只查安全条目（model3.json 存在 + 尺寸一致）→ available=true；逃逸条目不被 lstat
+    const list = await registry.listInstalledModels()
+    expect(list).toHaveLength(1)
+    expect(list[0]).toMatchObject({ id: 'ok', available: true })
+    // verify 只 hash 安全条目 → true（outside.bin 的 hash 不参与）
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
+    // 无 OOB 副作用：篡改 outside.bin 不影响验证结果
+    writeFileSync(outside, 'outside-tampered-data')
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
+  })
+
+  it('全部条目非法 → 过滤为空数组 → 空清单可用（无 OOB 读取）', async () => {
+    const root = tmpModelsRoot()
+    const dir = await installModel(root, { id: 'ok', licenseRef: 'LICENSE.txt' })
+    writeFileSync(join(dir, 'integrity.json'), JSON.stringify({
+      files: [{ path: '../outside.bin', size: 1, sha256: 'deadbeef' }]
+    }))
+    const registry = new Live2DModelRegistry({ modelsDir: root })
+    const list = await registry.listInstalledModels()
+    expect(list[0]).toMatchObject({ id: 'ok', available: true })
+    await expect(registry.verifyIntegrity('ok')).resolves.toBe(true)
+  })
 })
