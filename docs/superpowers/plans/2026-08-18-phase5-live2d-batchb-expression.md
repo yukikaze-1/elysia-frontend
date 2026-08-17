@@ -56,7 +56,7 @@
 ```ts
 import { describe, expect, it } from 'vitest'
 import { PerformanceMode, Live2DSettings } from '../../../src/shared/contracts/live2d'
-import { DEFAULT_LIVE2D, normalizePerformanceMode, SettingsStateSchema } from '../../../src/shared/schemas/ipc-response'
+import { DEFAULT_LIVE2D, normalizePerformanceMode, Live2DSettingsSchema } from '../../../src/shared/schemas/ipc-response'
 describe('settings 契约（批次B B5）', () => {
   it('DEFAULT_LIVE2D 含全量 10 字段', () => {
     expect(DEFAULT_LIVE2D).toEqual({
@@ -72,13 +72,14 @@ describe('settings 契约（批次B B5）', () => {
     expect(normalizePerformanceMode('balanced')).toBe('balanced')
     expect(normalizePerformanceMode('unknown')).toBe('auto') // 未知→兜底 auto
   })
-  it('加载路径：settings.json 含 performanceMode high/low → safeParse 不 corrupt 且归一（I-3）', () => {
-    const r1 = SettingsStateSchema.safeParse({ live2d: { performanceMode: 'high' } })
+  it('加载路径：live2d 含 performanceMode high/low → Live2DSettingsSchema.safeParse 不 corrupt 且归一（I-3）', () => {
+    // 直接测子 schema（SettingsStateSchema 还需 version/voice/dictation，见 R2-1）
+    const r1 = Live2DSettingsSchema.safeParse({ enabled: true, modelId: null, performanceMode: 'high' })
     expect(r1.success).toBe(true)
-    if (r1.success) expect(r1.data.live2d.performanceMode).toBe('quality')
-    const r2 = SettingsStateSchema.safeParse({ live2d: { enabled: true, modelId: null, performanceMode: 'low' } })
+    if (r1.success) expect(r1.data.performanceMode).toBe('quality')
+    const r2 = Live2DSettingsSchema.safeParse({ enabled: true, modelId: null, performanceMode: 'low' })
     expect(r2.success).toBe(true)
-    if (r2.success) expect(r2.data.live2d.performanceMode).toBe('low_power')
+    if (r2.success) expect(r2.data.performanceMode).toBe('low_power')
   })
 })
 ```
@@ -97,11 +98,11 @@ describe('settings 契约（批次B B5）', () => {
 - Test: `apps/desktop/tests/unit/live2d-adapter2.spec.ts`
 
 **Interfaces:**
-- Consumes: `@framework/*`：`CubismMotion`（`motion/cubismmotion.ts`，`static create(buffer,size,onFinished?)`）、`CubismMotionManager`（`motion/cubismmotionmanager.ts`，`startMotionPriority(motion,autoDelete,priority)`/`updateMotion(model,dt)`）、`CubismExpressionMotion`（`motion/cubismexpressionmotion.ts`，`static create(buffer,size)`）、`CubismExpressionMotionManager`（`motion/cubismexpressionmotionmanager.ts`，继承 `CubismMotionQueueManager.startMotion(motion,autoDelete)`/`updateMotion(model,dt)`）、`CubismModel`（`setParameterValueById(id,value)`/`getParameterIndex(id)` 返回 `-1` 表示未知）、`CubismModelSettingJson`（`getLayoutMap(map)`）、`CubismModelMatrix`（`math/cubismmodelmatrix.ts`，`setupFromLayout(map)`）。cyrene:// 供给（批次 A）。
+- Consumes: `@framework/*`：`CubismMotion`（`motion/cubismmotion.ts`，`static create(buffer,size,onFinished?)`）、`CubismMotionManager`（`motion/cubismmotionmanager.ts`，`startMotionPriority(motion,autoDelete,priority)`/`updateMotion(model,dt)`）、`CubismExpressionMotion`（`motion/cubismexpressionmotion.ts`，`static create(buffer,size)`）、`CubismExpressionMotionManager`（`motion/cubismexpressionmotionmanager.ts`，继承 `CubismMotionQueueManager.startMotion(motion,autoDelete)`/`updateMotion(model,dt)`）、`CubismModel`（`setParameterValueById(id,value)`/`getParameterIndex(id)`——**未知 Id 返回合成 not-exist 索引 `≥getParameterCount()`，不是 -1，见 I-1**）、`CubismModelSettingJson`（`getLayoutMap(map)`）、`CubismModelMatrix`（`math/cubismmodelmatrix.ts`，`setupFromLayout(map)`）。cyrene:// 供给（批次 A）。
 - Produces: `Live2DModelHandle` 增 `getParameterIdList(): string[]`、`setParam(id: string, value: number): void`（基于 `getParameterIndex` 真域判定：`idx < 0 || idx >= getParameterCount()` 时静默忽略——**非 `===-1`，见 I-1**）、`startMotion(modelId: string, file: string, priority: number): Promise<void>`、`startExpression(modelId: string, file: string): Promise<void>`、`stopMotion(priority?: number): void`、`stopAll(): void`；`update(dt)` 内推进 motion/expression manager（先喂 motion 参数、再 physics、再 model.update、后 draw）。装配 `Layout`：`setting.getLayoutMap(map)` 非空 → `this.layoutMvp = new CubismModelMatrix(this.model.getCanvasWidth(), this.model.getCanvasHeight())`（**传真实维度，避免无参构造 2.0/0=Infinity，I-2**）+ `setupFromLayout(map)` 拟合；空 → 沿用批量 A `buildFitMvp` scale-only MVP。`stopMotion(priority)` 定义为 **Controller 层仲裁动作**（底层 SDK 只有 `CubismMotionQueueManager.stopAllMotions()`，无按 priority 停——Task 3 按其语义调度）；`stopAll()` → `motionManager/expressionManager.stopAllMotions()`。后续 Task 3/4 消费。
 
 - [ ] **Step 1: 写失败单测 `live2d-adapter2.spec.ts`**（fake engine + fake fetch 记录，复用批次 A `live2d-adapter.spec.ts` 的 fake GL 纪律）：断言 handle 暴露新方法、`setParam` 未知 Id 静默忽略（**断言不写 not-exist 槽**——fake model 的 `setParameterValueById` spy 对未知参数 Id 不被调用，避免「传任何 Id 都不抛错」假绿）、`startMotion/startExpression` 调 cyrene:// fetch 正确文件、`Layout` 有/无时 MVP 拟合路径。**fixture 扩展（M-4）**：现有 `live2d-adapter.spec` 的 FakeModel 需补 mock `getParameterCount/getParameterId(i).getString()/getParameterIndex/setParameterValueById`、`CubismModelSettingJson.getLayoutMap`，并 `vi.mock` `CubismMotionManager/CubismExpressionMotionManager`（它们吃真实 CubismModel），断言 `update(dt)` 会调 `motionManager.updateMotion`。运行确认 FAIL（方法不存在）。
-- [ ] **Step 2: handle 增字段与方法**：`Live2DModelHandleImpl` 增 `motionManager: CubismMotionManager`、`expressionManager: CubismExpressionMotionManager`（构造时 new），注意保留既有 `update/draw/destroy` 契约。`getParameterIdList` 返回模型参数 Id 字符串数组：`for (let i=0;i<this.model.getParameterCount();i++){ list.push(this.model.getParameterId(i).getString()) }`——**`CubismId` 的方法是 `.getString()`，没有 `.getId()`（C-1，API 已核对 `id/cubismid.ts:32`）**。`setParam(id, value)`：**存在性判定不能用 `getParameterIndex(id)===-1`**——vendored `cubismmodel.ts:610` 对未知 Id 会向 `_notExistParameterId` 合成新索引并返回 `parameters.count + notExist.size`（永不为 -1，I-1）；改用真域判定 `const idx = this.model.getParameterIndex(id); if (idx < 0 || idx >= this.model.getParameterCount()) return;`（not-exist 域在 `[getParameterCount(), …)`，此判断真正拦截未知 Id），再 `this.model.setParameterValueById(CubismFramework.getIdManager().getId(id), value)`。`update(dt)` 改为：`motionManager.updateMotion(this.model, dt)` → `expressionManager.updateMotion(this.model, dt)` →（physics evaluate）→ `model.update()` → 按 MVP 画。
+- [ ] **Step 2: handle 增字段与方法**：`Live2DModelHandleImpl` 增 `motionManager: CubismMotionManager`、`expressionManager: CubismExpressionMotionManager`（构造时 new），注意保留既有 `update/draw/destroy` 契约。`getParameterIdList` 返回模型参数 Id 字符串数组：`for (let i=0;i<this.model.getParameterCount();i++){ list.push(this.model.getParameterId(i).getString()) }`——**`CubismId` 的方法是 `.getString()`，没有 `.getId()`（审结 C-1，API 已核对 `id/cubismid.ts:32`）**。`setParam(id, value)`：**存在性判定不能用 `getParameterIndex(id)===-1`**——vendored `cubismmodel.ts:610` 对未知 Id 会向 `_notExistParameterId` 合成新索引并返回 `parameters.count + notExist.size`（永不为 -1，I-1）；改用真域判定 `const idx = this.model.getParameterIndex(id); if (idx < 0 || idx >= this.model.getParameterCount()) return;`（not-exist 域在 `[getParameterCount(), …)`，此判断真正拦截未知 Id），再 `this.model.setParameterValueById(CubismFramework.getIdManager().getId(id), value)`。`update(dt)` 改为：`motionManager.updateMotion(this.model, dt)` → `expressionManager.updateMotion(this.model, dt)` →（physics evaluate）→ `model.update()` → 按 MVP 画。
 - [ ] **Step 3: motion/expression 加载原语**（`startMotion`/`startExpression`）：`fetch(cyrene://.../{modelId}/{encodePath(file)})` → `arrayBuffer` → `CubismMotion.create(ab, ab.byteLength)` → `motionManager.startMotionPriority(motion, true, priority)`（autoDelete=true）；expression 同构 `CubismExpressionMotion.create(ab, ab.byteLength)` → `expressionManager.startMotion(expr, true)`。文件路径白名单由调用方（Controller）先行校验（本 task 只管加载，不重复校验——但**加一道深度防御**：file 不匹配该模型 manifest paths 时抛错）。`stopAll()` → `motionManager.stopAllMotions()` + `expressionManager.stopAllMotions()`；`stopMotion(priority)` 仅作 Controller 仲裁的占位（不被 handle 层使用，见 Interfaces 注）。销毁时 handle.destroy 已释放 model/moc。
 - [ ] **Step 4: Layout 装配**：`createModel` 内 `const layoutMap = new Map<string, number>(); const hasLayout = setting.getLayoutMap(layoutMap)`；`hasLayout` 且非空 → `this.layoutMvp = new CubismModelMatrix(this.model.getCanvasWidth(), this.model.getCanvasHeight()); this.layoutMvp.setupFromLayout(layoutMap)`（**传真实维度防除零 Infinity；setupFromLayout 用小写 key，装配时对 layoutMap 键按需要归一大小写——官方 model3 `Layout` 大写 `Width/CenterX/...`，读取后要么归一、要么 fixture 与实现同 key，I-2**）；无 → `this.layoutMvp = null`（用批次 A `buildFitMvp`）。`draw()` 分支：有 layoutMvp 用其矩阵 × 投影（`CubismMatrix44.multiply` 或 `renderer.getMvpMatrix().setMatrix(...)`），无则 scale-only。**单测断言「有 Layout 时 MVP 矩阵非退化（无 NaN/Infinity）」**。
 - [ ] **Step 5: 运行单测**：`pnpm -F @cyrene/desktop test live2d-adapter2` → PASS；`typecheck` + `lint` 绿；回归既有 `live2d-adapter.spec`（批次 A）不破。
