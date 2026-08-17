@@ -45,12 +45,13 @@ function assertValidId(id) {
   }
 }
 
-/** 校验原始目录：恰含一个 *.model3.json、model3.json 可解析、FileReferences.Moc 存在、≥1 纹理存在（lstat 非普通文件拒） */
+/** 校验原始目录：恰含一个 *.model3.json（或标准名 model3.json）、model3.json 可解析、FileReferences.Moc 存在、≥1 纹理存在（lstat 非普通文件拒） */
 async function validateModelDir(src) {
   const st = await lstat(src).catch(() => null)
   if (!st || !st.isDirectory()) throw new Error(`模型目录不存在或非目录: ${src}`)
   const top = await readdir(src)
-  const model3s = top.filter((n) => n.toLowerCase().endsWith('.model3.json'))
+  // 入口判定：标准名 `model3.json` 不以 `.model3.json` 结尾（`endsWith` 会漏判），须单独纳入。
+  const model3s = top.filter((n) => n.toLowerCase() === 'model3.json' || n.toLowerCase().endsWith('.model3.json'))
   if (model3s.length !== 1) throw new Error(`模型目录须恰含一个 *.model3.json（实际 ${model3s.length} 个）: ${src}`)
   const m3Name = model3s[0]
   let parsed
@@ -121,7 +122,9 @@ export async function installModel({ modelDir, id, displayName, licenseNote, for
   // 任意命名的 *.model3.json（如 Haru.model3.json）——装配须把它规范化为 model3.json，并删去源命名副本，
   // 否则适配器 fetch cyrene://…/{id}/model3.json 落到 integrity 白名单外 → resolveModelFile 403。
   await writeFile(join(dst, 'model3.json'), JSON.stringify(parsed, null, 2) + '\n', { encoding: 'utf8' })
-  await rm(join(dst, m3Name))
+  // 仅在源入口非标准名（如 Haru.model3.json）时删源命名副本；若源本就命名 model3.json，
+  // 上一行已同路径覆盖，不得 rm 自删（Task 7 审查捕获）。
+  if (m3Name !== 'model3.json') await rm(join(dst, m3Name))
 
   // 注入 LICENSE.txt（先于 manifest/integrity，licenseRef/LICENSE.txt 须已落地）
   const note = licenseNote ? await readFile(licenseNote, 'utf8') : defaultLicenseNote(modelDir)

@@ -61,6 +61,7 @@ let haruNoIconSrc // 无 icon.png 的合法模型（preview 省略路径）
 let badTextureSrc // 引用不存在的纹理
 let missingMocSrc // model3.json 缺 Moc
 let notADir // 普通文件冒充模型目录
+let standardNameSrc // 源入口即命名 model3.json（规范化免自删除）
 
 async function writeTree(base: string, files: Record<string, string>) {
   for (const [rel, content] of Object.entries(files)) {
@@ -120,6 +121,17 @@ beforeAll(async () => {
 
   notADir = join(root, 'not-a-dir')
   await writeFile(notADir, 'plain file')
+
+  // 源入口即命名 model3.json（Task 7 审查：规范化不得自删除入口）
+  standardNameSrc = join(root, 'src-standardname')
+  await writeTree(standardNameSrc, {
+    'model3.json': JSON.stringify({
+      Version: 3,
+      FileReferences: { Moc: 'model.moc3', Textures: ['textures/texture_00.png'] }
+    }),
+    'model.moc3': 'moc-bytes',
+    'textures/texture_00.png': 'png-00'
+  })
 })
 
 afterAll(async () => {
@@ -321,5 +333,19 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     const top = await readdir(dst)
     expect(top).toContain('manifest.json')
     expect(top).toContain('integrity.json')
+  })
+
+  it('源入口即命名 model3.json：规范化不删入口（Task 7 审查守卫）', async () => {
+    const { code } = await runCli(
+      ['--model-dir', standardNameSrc, '--id', 'standard-name', '--display-name', 'Std'],
+      userDataEnv(userDataRoot)
+    )
+    expect(code).toBe(0)
+    const dst = join(modelsDirFor(userDataRoot), 'standard-name')
+    // 入口 model3.json 必须存在（此前 bug：rm 自删除）
+    expect((await lstat(join(dst, 'model3.json'))).isFile()).toBe(true)
+    // integrity 应含 model3.json（可被 registry/resolve 供给）
+    const integrity = JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8'))
+    expect(integrity.files.map((f) => f.path)).toContain('model3.json')
   })
 })
