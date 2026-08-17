@@ -7,7 +7,10 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
-    "tests/**/*"
+    "tests/**/*",
+    // 阶段 5 批次 A（Task 5）：tests/** 直 import renderer adapter → 其 `@framework/*` import 需本 ambient
+    // 桩解析（仅声明外壳，不含 vendored Framework 源码；Framework 本体 typecheck 仍在 web 程序排除）
+    "src/renderer/src/live2d/framework.d.ts"
   ],
   "compilerOptions": {
     "composite": true,
