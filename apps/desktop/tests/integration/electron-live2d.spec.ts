@@ -14,7 +14,7 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cpSync, existsSync, rmSync, mkdtempSync, readFileSync, writeFileSync, chmodSync, readdirSync, lstatSync } from 'fs'
+import { cpSync, existsSync, rmSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, readdirSync, lstatSync } from 'fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -95,9 +95,10 @@ function freshUserData(): string {
 }
 
 /** 装配了模型 → 启动即 Live2D WebGL 初始化；强制 SwiftShader 软渲染（headless 下 radv/Vulkan 非 conformant
- *  会拖挂/超时）。extraArgs 对齐 electron-voice 先例（Chromium 开关附于 args 末尾）。 */
-function launchL2d(ud: string): Promise<LaunchedApp> {
-  return launchApp(undefined, { userData: ud, extraArgs: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] })
+ *  会拖挂/超时）。extraArgs 对齐 electron-voice 先例（Chromium 开关附于 args 末尾）。env 为附加环境变量
+ *  （批次 B：CYRENE_MOCK_EMIT_DELAY_MS 放宽 replay 间隔 / CYRENE_MOCK_GENERATION_EMOTION 情绪注入）。 */
+function launchL2d(ud: string, env: Record<string, string> = {}): Promise<LaunchedApp> {
+  return launchApp(undefined, { userData: ud, env, extraArgs: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] })
 }
 
 // —— 渲染进程观测 ——
@@ -383,3 +384,236 @@ function lilModelFile(ud: string): string {
   const m = JSON.parse(readFileSync(join(ud, 'Cyrene', 'models', 'lil', 'manifest.json'), 'utf8')) as { modelFile: string }
   return m.modelFile
 }
+
+// —— 阶段 5 批次 B（B7）：表现集成 harness（状态驱动/动作播放/设置子页/性能模式/布局/切换竞态 ——
+
+/** 状态徽标文案（.cy-live-badge，形如「状态：思考中」） */
+async function badgeText(page: Page): Promise<string> {
+  return page.evaluate(() => document.querySelector('.cy-live-badge')?.textContent ?? '')
+}
+
+/** 连接 + 激活会话后经 UI 发送一条文本消息（mock 随即回放 generation 夹具 → 状态驱动/动作播放数据源） */
+async function sendChat(page: Page, text: string): Promise<void> {
+  await page.locator('textarea[aria-label="消息输入框"]').fill(text)
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+}
+
+/** 打开设置中心 → 「角色与外观」子页（CyLive2DPane） */
+async function openCharacterPane(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await expect.poll(() => page.locator('.cy-settings').count(), POLL).toBe(1)
+  await page.getByRole('button', { name: /角色与外观/ }).click()
+  await expect.poll(() => page.locator('.cy-l2d-pane').count(), POLL).toBe(1)
+}
+
+/** 读 settings.json 的 live2d 子树（文件缺失/暂未落盘 → null，供 expect.poll 等待持久化） */
+function readSettingsL2d(ud: string): { modelId: string | null; scale?: number; offsetX?: number; performanceMode?: string } | null {
+  try {
+    const s = JSON.parse(readFileSync(join(ud, 'Cyrene', 'config', 'settings.json'), 'utf8')) as {
+      live2d?: { modelId?: string | null; scale?: number; offsetX?: number; performanceMode?: string }
+    }
+    return {
+      modelId: s.live2d?.modelId ?? null,
+      scale: s.live2d?.scale,
+      offsetX: s.live2d?.offsetX,
+      performanceMode: s.live2d?.performanceMode
+    }
+  } catch { return null }
+}
+
+/** 预置 settings.json（性能模式旧值 'high' 读回归一用例；缺字段时间必须补全，否则 settings-service 判定
+ *  corrupt 全量重置——voice/dictation/live2d 全字段镜像 DEFAULT_SETTINGS） */
+function presetSettings(ud: string, live2dPatch: Record<string, unknown> = {}): void {
+  const dir = join(ud, 'Cyrene', 'config')
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const settings = {
+    version: 1,
+    voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
+    dictation: { insertMode: 'append' },
+    live2d: {
+      enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0,
+      mouseTracking: true, autoMotions: true, lipSync: true,
+      performanceMode: 'auto', reduceMotion: false,
+      ...live2dPatch
+    }
+  }
+  writeFileSync(join(dir, 'settings.json'), JSON.stringify(settings), { mode: 0o600 })
+}
+
+describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设置/性能/布局/竞态）', () => {
+  it('B1.状态驱动：发送消息 → 徽标「思考中」→「说话中」→「空闲」（真实 DOM）', async () => {
+    // 放宽 mock replay 事件间隔：thinking/speaking 窗口在 200ms 轮询下可稳定捕获（缺省 30ms 会被漏掉）
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, { CYRENE_MOCK_EMIT_DELAY_MS: '400' })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await connectAndActivateFirst(page)
+      // 连接后业务态 idle（徽标「空闲」；未连接前为 offline「未连接」）
+      await expect.poll(() => badgeText(page), POLL).toContain('空闲')
+      // generation.started → thinking（「思考中」）；首个公众正文 delta → speaking（「说话中」）
+      await sendChat(page, '你好')
+      await expect.poll(() => badgeText(page), POLL).toContain('思考中')
+      await expect.poll(() => badgeText(page), POLL).toContain('说话中')
+      // generation.completed → 回 idle（默认夹具 emotion='thinking' 非已知 mood → 被状态源忽略，不回情绪态）
+      await expect.poll(() => badgeText(page), POLL).toContain('空闲')
+    } finally { await closeApp(launched) }
+  })
+
+  it('B2.动作播放：Haru（有动作）speaking → 画布非空无错误；lil（无动作）切换优雅不崩、聊天可用', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, { CYRENE_MOCK_EMIT_DELAY_MS: '300' })
+    const errors: string[] = []
+    launched.page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      if (haruInstalled) {
+        // B3 路径：有动作模型，指定切到 Haru 后触发 speaking → 帧推进、画布非空
+        await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption('haru')
+        await expect.poll(() => statusText(page), POLL).toContain('Haru')
+        await connectAndActivateFirst(page)
+        await sendChat(page, 'haru speaking')
+        await expect.poll(() => badgeText(page), POLL).toContain('说话中')
+        await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+      }
+      if (lilInstalled) {
+        // B4 路径：无动作模型。lil 的 8192px 大纹理超 SwiftShader MAX_TEXTURE_SIZE（批次 A 已实测装载即失败）——
+        // 本环境断言「切换不崩 + 优雅保留原模型 + 聊天可用」；参数级回退的正向断言由单测（live2d-controller B4）
+        // 覆盖。若其他环境 lil 可渲染，则补强画布断言。
+        await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption('lil')
+        await expect.poll(() => statusText(page), POLL).toMatch(/就绪|回退|失败/)
+        if ((await statusText(page)).includes('修女莉尔')) {
+          await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+        }
+      }
+      expect(errors).toEqual([])
+    } finally { await closeApp(launched) }
+  })
+
+  it('B3.情绪态→表情：mock emotion=happy → 徽标「开心」+ 画布非空 + 无 console error', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, { CYRENE_MOCK_EMIT_DELAY_MS: '400', CYRENE_MOCK_GENERATION_EMOTION: 'happy' })
+    const errors: string[] = []
+    launched.page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption('haru')
+      await expect.poll(() => statusText(page), POLL).toContain('Haru')
+      await connectAndActivateFirst(page)
+      await sendChat(page, 'happy')
+      // 流式 speaking → completion(emotion=happy) → 情绪态「开心」（~2s 后 mood 超时回空闲）
+      await expect.poll(() => badgeText(page), POLL).toContain('说话中')
+      await expect.poll(() => badgeText(page), POLL).toContain('开心')
+      // 情绪态期间渲染不中断（Haru F01 表情 setExpression 进入——白名单内）
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+      await expect.poll(() => badgeText(page), POLL).toContain('空闲')
+      expect(errors).toEqual([])
+    } finally { await closeApp(launched) }
+  })
+
+  it('B4.设置子页：改 scale/performanceMode → 即时生效 + 重启后持久化恢复', async () => {
+    const ud = freshUserData()
+    // 第一次 launch：设置页调 scale=1.5、performanceMode=balanced（设置即时改 + 500ms 防抖持久化）
+    const launched1 = await launchL2d(ud)
+    try {
+      const { page } = launched1
+      await waitLive2dSettled(page)
+      await openCharacterPane(page)
+      // scale 滑块（表现组首个 range = 大小）→ 设置即时更新（Pane 字段值即刻变化）
+      await page.locator('.cy-l2d-pane input[type="range"]').first().evaluate((el) => {
+        const input = el as HTMLInputElement
+        input.value = '1.5'
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-l2d-pane .cy-l2d-field-value')?.textContent ?? ''), POLL).toContain('1.50')
+      // 帧率模式下拉 → 设置即时更新
+      await page.locator('.cy-l2d-pane select').selectOption('balanced')
+      await expect.poll(() => page.locator('.cy-l2d-pane select').inputValue(), POLL).toBe('balanced')
+      // 关闭设置 → chat 视图重挂载（Panel 重 init 读最新 settings 应用视图变换）→ 面板缩放手柄显示 1.50（即时生效落点）
+      await page.getByRole('button', { name: '关闭设置' }).click()
+      await waitLive2dSettled(page)
+      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-live-view-controls .cy-live-vc-value')?.textContent ?? ''), POLL).toContain('1.50')
+      // 500ms 防抖 + settingsSave → settings.json 落盘
+      await expect.poll(() => readSettingsL2d(ud), POLL).toMatchObject({ scale: 1.5, performanceMode: 'balanced' })
+    } finally { await closeApp(launched1, { keepUserData: true }) }
+    const persisted = readSettingsL2d(ud)
+    expect(persisted?.scale).toBe(1.5)
+    expect(persisted?.performanceMode).toBe('balanced')
+    // 第二次 launch（复用同一 userData）：设置恢复
+    const launched2 = await launchL2d(ud)
+    try {
+      const { page } = launched2
+      await waitLive2dSettled(page)
+      await openCharacterPane(page)
+      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-l2d-pane .cy-l2d-field-value')?.textContent ?? ''), POLL).toContain('1.50')
+      await expect.poll(() => page.locator('.cy-l2d-pane select').inputValue(), POLL).toBe('balanced')
+    } finally { await closeApp(launched2) }
+  })
+
+  it('B5.性能模式：四值下拉存在、选中持久化、旧值 high 读回归一（不 corrupt）', async () => {
+    const ud = freshUserData()
+    presetSettings(ud, { performanceMode: 'high' }) // 批次 A 旧三值 → 读回归一 quality
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      // 不 corrupt：无 .corrupt 备份 + 原文件仍存在
+      expect(existsSync(join(ud, 'Cyrene', 'config', 'settings.json.corrupt'))).toBe(false)
+      await openCharacterPane(page)
+      const pmSelect = page.locator('.cy-l2d-pane select')
+      // 四值下拉：auto/quality/balanced/low_power
+      const options: string[] = await pmSelect.locator('option').evaluateAll((els) => els.map((el) => (el as HTMLOptionElement).value))
+      expect(options.sort()).toEqual(['auto', 'balanced', 'low_power', 'quality'])
+      // 旧值 'high' 已归一为 'quality'（内存态，setting pane 绑定 settings.live2d.performanceMode）
+      await expect.poll(() => pmSelect.inputValue(), POLL).toBe('quality')
+      // 选中持久化
+      await pmSelect.selectOption('low_power')
+      await page.getByRole('button', { name: '关闭设置' }).click()
+      await expect.poll(() => readSettingsL2d(ud), POLL).toMatchObject({ performanceMode: 'low_power' })
+    } finally { await closeApp(launched) }
+  })
+
+  it('B6.布局：无 Layout 模型画幅均正常（默认 + switch 到 wanko 后 canvas 均非空）', async () => {
+    // 本仓装配模型（haru/wanko/lil）均无 model3 Layout → 走 scale-only 拟合（批次 A 路径）；
+    // 有 Layout fixture 的 setupFromLayout 拟合由单测（live2d-adapter.spec 夹具）覆盖。
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+      await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption(WANKO_ID)
+      await expect.poll(() => statusText(page), POLL).toContain('Wanko')
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+    } finally { await closeApp(launched) }
+  })
+
+  it('B7.切换竞态：快速连续切换 → 最终渲染模型与 select 值、持久化 modelId 三方一致', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      const sel = page.locator('select[aria-label="选择 Live2D 模型"]')
+      // 快速连续切换：wanko → 立即 haru（第二个大概率被 controller switching 串行守卫丢弃——D5B-10 生效 id 硬化路径）
+      await sel.selectOption(WANKO_ID)
+      await sel.selectOption('haru')
+      // 等切换落地：状态含任一目标模型名（最终渲染 = 生效 id）
+      await expect.poll(async () => {
+        const st = await statusText(page)
+        return /(Haru|Wanko)/.test(st)
+      }, POLL).toBe(true)
+      const st = await statusText(page)
+      const target = st.includes('Wanko') ? WANKO_ID : 'haru'
+      // select 值（= store.modelId）与实际渲染模型一致
+      await expect.poll(() => selectValue(page), POLL).toBe(target)
+      // 持久化生效 id 与 select 一致（500ms 防抖 + settingsSave 落盘）
+      await expect.poll(() => readSettingsL2d(ud)?.modelId ?? null, POLL).toBe(target)
+      // 实际渲染模型确实在画
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+    } finally { await closeApp(launched) }
+  })
+})

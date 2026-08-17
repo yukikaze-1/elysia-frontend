@@ -77,7 +77,10 @@ export const useLive2dStore = defineStore('live2d', () => {
       const m: Message | undefined = msg.byId[msg.order[i]]
       if (!m || m.role !== 'assistant' || m.status !== 'streaming') continue
       return (m.assistantSegments ?? []).some(
-        (seg) => seg.channel === 'public_reply' && seg.kind === 'text' && !!seg.text
+        // B7 集成修复（2026-08-18）：wire 上的 public_reply 正文 delta kind 为 `markdown`（默认夹具/真实后端均如此），
+        // 仅认 `text` 会让默认流的「说话中」永不触发（isSpeaking 恒 false → 整段生成卡 thinking）。
+        // 正文语义 = public_reply 且 text/markdown（非空）——两种 kind 都计为「已产出正文」。
+        (seg) => seg.channel === 'public_reply' && (seg.kind === 'text' || seg.kind === 'markdown') && !!seg.text
       )
     }
     return false

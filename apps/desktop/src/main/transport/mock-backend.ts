@@ -116,6 +116,25 @@ export function parseMockVoiceTranscriptDelayEnv(value: string | undefined): num
   return Math.min(30000, Math.max(0, n))
 }
 
+/** CYRENE_MOCK_EMIT_DELAY_MS env → emitDelayMs（Task 6 / 阶段 5 批次 B 集成）：undefined → undefined（不注入，
+ *  缺省 30ms）；否则 Number(value) 钳制 [10, 5000]（NaN/负数 → 10，超上限 → 5000）。
+ *  用途：放宽 replay 事件间隔，让阶段性状态（thinking→speaking）在真实 DOM 上可稳定断言（30ms 窗口过短会被
+ *  200ms 轮询漏掉）。语义与 transcriptDelayMs 一致——空/非法值钳到合法下限而非报错。 */
+export function parseMockEmitDelayEnv(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const n = Number(value)
+  if (Number.isNaN(n)) return 10
+  return Math.min(5000, Math.max(10, n))
+}
+
+/** CYRENE_MOCK_GENERATION_EMOTION env → generationEmotion（Task 6 / 阶段 5 批次 B 集成）：
+ *  undefined → undefined（不注入，Mock 缺省 fixture 的 `emotion:'thinking'` 不变）；设值透传——scheduleReplay
+ *  落 generation.completed 时覆写 `emotion` 字段（集成测情绪态→表情：happy/sad/surprised 命中本地映射）。
+ *  与 parseMockVoiceTranscriptEnv 的「显式空串=合法注入」语义一致——空串也透传（unknown 码 → 状态源忽略）。 */
+export function parseMockEmotionEnv(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : value
+}
+
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number
@@ -138,6 +157,9 @@ export interface MockBackendOptions {
    *  （定时器 tracked、dispose() 清理）；activeVoice 同步清（停被接受即清，不随延迟 emit 顺延）——
    *  集成用 CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS 注入可观察「正在识别…」等待态。缺省 0 不延迟。 */
   transcriptDelayMs?: number
+  /** 情绪注入（Task 6 / 阶段 5 批次 B 集成）：set 时 scheduleReplay 落 generation.completed 覆写 `emotion`
+   *  （集成 CYRENE_MOCK_GENERATION_EMOTION 观察情绪态→表情；缺省 undefined 保持 fixture 原值） */
+  generationEmotion?: string
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -163,6 +185,7 @@ export class MockBackend implements BackendAdapter {
   private connected = false
   private readonly fixture: BackendEvent[]
   private readonly emitDelayMs: number
+  private readonly generationEmotion?: string // Task 6：generation.completed 情绪注入（CYRENE_MOCK_GENERATION_EMOTION）
   private readonly onConnectionStateChange?: (state: ConnectionState) => void
   private readonly idFactory: () => string
   private readonly now: () => Date
@@ -253,6 +276,7 @@ export class MockBackend implements BackendAdapter {
     this.transcriptDelayMs = options.transcriptDelayMs ?? 0
     this.messageRecords = this.seedMessages()
     this.emitDelayMs = options.emitDelayMs ?? 30
+    this.generationEmotion = options.generationEmotion
     this.onConnectionStateChange = options.onConnectionStateChange
     this.now = options.now ?? (() => new Date())
     this.idFactory = options.idFactory ?? (() => `mock-${Date.now()}-${++this.idCounter}`)
@@ -643,6 +667,8 @@ export class MockBackend implements BackendAdapter {
       const timer = setTimeout(() => {
         // 信封在 emit 时刻打（非调度时刻）：replay 挂起期间交错发出的语音/TTS 事件（stamp() 也在 emit 时刻）
         // 与 replay 事件共享同一计数器 → 收到顺序恒等于 stamp 顺序，sequence 全局严格递增（review Important-1）
+        // Task 6（阶段 5 批次 B 集成）：情绪注入——generation.completed 覆写 emotion（情绪态→表情可观测）
+        if (event.event === 'generation.completed' && this.generationEmotion !== undefined) fresh.emotion = this.generationEmotion
         fresh.eventId = this.idFactory()
         fresh.sequence = this.nextSequence++
         this.emit(fresh as unknown as BackendEvent)
