@@ -152,7 +152,11 @@ describe('阶段 3 G2 持久化 Schema（镜像 shared/contracts/persistence.ts�
 
 describe('阶段 5 批次 A live2d 设置 schema（D5A-10，A6）', () => {
   it('DEFAULT_LIVE2D 形状 + DEFAULT_SETTINGS 引用同一对象', () => {
-    expect(DEFAULT_LIVE2D).toEqual({ enabled: true, modelId: null })
+    expect(DEFAULT_LIVE2D).toEqual({
+      enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0,
+      mouseTracking: true, autoMotions: true, lipSync: true,
+      performanceMode: 'auto', reduceMotion: false
+    })
     expect(DEFAULT_SETTINGS.live2d).toBe(DEFAULT_LIVE2D)
   })
 
@@ -163,7 +167,7 @@ describe('阶段 5 批次 A live2d 设置 schema（D5A-10，A6）', () => {
       dictation: { insertMode: 'append' }
     })
     expect(r.success).toBe(true)
-    if (r.success) expect(r.data.live2d).toEqual({ enabled: true, modelId: null })
+    if (r.success) expect(r.data.live2d).toEqual(DEFAULT_LIVE2D)
   })
 
   it('SettingsStateSchema：live2d 合法值通过 / 非法（modelId 非 string|null）拒绝', () => {

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -200,16 +200,41 @@ export const VoiceSettingsSchema = z.object({
 export const DictationSettingsSchema = z.object({
   sttProfileId: z.string().optional(), insertMode: z.enum(['append', 'replace_selection'])
 })
-/** 阶段 5 批次 A（D5A-10，A6）：Live2D 本地设置子 schema——镜像 contracts/live2d.ts `Live2DSettings`。
- * 不注 z.ZodType（保留 .partial()）；SettingsStateSchema 该字段带 .default(DEFAULT_LIVE2D)——
- * 老 settings.json 无 live2d 段也能通过 parse（input 可缺省），不得做成必填（否则老文件走 corrupt+全量重置，
- * 清掉 voice/dictation）。 */
+/** 阶段 5 批次 A（D5A-10，A6）/ 批次 B（B5，D5B-06/D5B-08）：Live2D 本地设置子 schema——镜像
+ * contracts/live2d.ts `Live2DSettings`（10 字段）。子 schema 不注 z.ZodType（保留 .partial()；SettingsStateSchema
+ * 该字段带 .default(DEFAULT_LIVE2D)——老 settings.json 无 live2d 段或新字段都能通过 parse（input 可缺省），
+ * 不得做成必填（否则老文件走 corrupt+全量重置，清掉 voice/dictation）。
+ * performanceMode 用 z.preprocess 归一（I-3）：真实链路 Main settings-service 先 SettingsStateSchema.safeParse，
+ * 裸 z.enum 会让含旧值 'high'/'low' 的文件直接 corrupt+全量重置；preprocess 使 load/save 两路都归一到四值。 */
 export const Live2DSettingsSchema = z.object({
   enabled: z.boolean(),
-  modelId: z.string().nullable()
+  modelId: z.string().nullable(),
+  scale: z.number().min(0.5).max(3).default(1),
+  offsetX: z.number().min(-2).max(2).default(0),
+  offsetY: z.number().min(-2).max(2).default(0),
+  mouseTracking: z.boolean().default(true),
+  autoMotions: z.boolean().default(true),
+  lipSync: z.boolean().default(true),
+  performanceMode: z
+    .preprocess((v) => normalizePerformanceMode(String(v)), z.enum(['auto', 'quality', 'balanced', 'low_power']))
+    .default('auto'),
+  reduceMotion: z.boolean().default(false)
 })
-/** 默认 Live2D 设置（D5A-10）：缺省启用 + 未选择模型（null → 默认首个可用模型） */
-export const DEFAULT_LIVE2D: Live2DSettings = { enabled: true, modelId: null }
+
+/** 性能模式归一（D5B-06，I-3）：批次 A 三值 'high'/'low' → 四值 'quality'/'low_power'；四值原样；未知 → 兜底 'auto'。
+ *  在 schema 解析期经 z.preprocess 调用，load/save 两路统一四值。 */
+export function normalizePerformanceMode(v: string): PerformanceMode {
+  if (v === 'high') return 'quality'
+  if (v === 'low') return 'low_power'
+  return (['auto', 'quality', 'balanced', 'low_power'] as const).includes(v as PerformanceMode) ? (v as PerformanceMode) : 'auto'
+}
+
+/** 默认 Live2D 设置（D5A-10/D5B-08）：缺省启用 + 未选择模型（null → 默认首个可用）+ 全量默认 10 字段 */
+export const DEFAULT_LIVE2D: Live2DSettings = {
+  enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0,
+  mouseTracking: true, autoMotions: true, lipSync: true,
+  performanceMode: 'auto', reduceMotion: false
+}
 export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
   version: z.literal(1), voice: VoiceSettingsSchema, dictation: DictationSettingsSchema,
   live2d: Live2DSettingsSchema.default(DEFAULT_LIVE2D)

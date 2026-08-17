@@ -12,7 +12,11 @@ describe('语音/设置领域契约 schema（阶段4批次B）', () => {
         showCaptions: true, consentBackendStt: false
       },
       dictation: { insertMode: 'append' },
-      live2d: { enabled: true, modelId: null } // 阶段 5 批次 A（D5A-10）
+      live2d: {
+        enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0,
+        mouseTracking: true, autoMotions: true, lipSync: true,
+        performanceMode: 'auto', reduceMotion: false
+      } // 阶段 5 批次 A（D5A-10）/ 批次 B（B5，10 字段全量）
     })
   })
 

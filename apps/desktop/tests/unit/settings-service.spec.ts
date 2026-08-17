@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsService, SETTINGS_FILE_NAME } from '../../src/main/settings/settings-service'
-import { DEFAULT_SETTINGS, SettingsStateSchema } from '../../src/shared/schemas'
+import { DEFAULT_LIVE2D, DEFAULT_SETTINGS, SettingsStateSchema } from '../../src/shared/schemas'
 import type { SettingsPatch } from '../../src/shared/contracts'
 import { createIpcHandler } from '../../src/main/ipc/executor'
 import { settingsLoadSchema, settingsSaveSchema } from '../../src/main/ipc/channels'
@@ -89,7 +89,7 @@ describe('SettingsService', () => {
     expect(state.version).toBe(1)                                  // 不动 version
     expect(state.voice.enabled).toBe(false)                        // 既有子树保留（不走 corrupt 全量重置）
     expect(state.dictation.sttProfileId).toBe('stt/p1')
-    expect(state.live2d).toEqual({ enabled: true, modelId: null }) // .default(DEFAULT_LIVE2D) 补齐
+    expect(state.live2d).toEqual(DEFAULT_LIVE2D) // .default(DEFAULT_LIVE2D) 补齐（批次 B 全量 10 字段默认）
     expect(existsSync(`${settingsPath(dir)}.corrupt`)).toBe(false) // 非 corrupt 路径
   })
 
@@ -98,13 +98,13 @@ describe('SettingsService', () => {
     const svc = new SettingsService({ dir, safeRoot, logger })
     await svc.load()
     const s1 = await svc.save({ live2d: { modelId: 'haru' } })
-    expect(s1.live2d).toEqual({ enabled: true, modelId: 'haru' })
+    expect(s1.live2d).toEqual({ ...DEFAULT_LIVE2D, modelId: 'haru' })
     const s2 = await svc.save({ live2d: { enabled: false } })
     expect(s2.live2d.enabled).toBe(false)   // 本次 patch 生效
     expect(s2.live2d.modelId).toBe('haru')  // 未提交字段保持现值（不重设 null）
     // 无 live2d 段的 patch（如仅 voice）也保留 live2d 子树
     const s3 = await svc.save({ voice: { enabled: true } })
-    expect(s3.live2d).toEqual({ enabled: false, modelId: 'haru' })
+    expect(s3.live2d).toEqual({ ...DEFAULT_LIVE2D, enabled: false, modelId: 'haru' })
   })
 
   it('live2d patch 非法（modelId 非 string|null / enabled 非 boolean）→ 拒绝', async () => {

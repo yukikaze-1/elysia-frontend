@@ -9,6 +9,7 @@ import { useDraftStore } from '../../src/renderer/src/stores/draft.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { SettingsState } from '@shared/contracts'
+import { DEFAULT_LIVE2D } from '../../src/shared/schemas'
 
 const mockApi = {
   connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
@@ -36,7 +37,7 @@ function state(over: Partial<SettingsState> = {}): SettingsState {
     version: 1,
     voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
     dictation: { insertMode: 'append' },
-    live2d: { enabled: true, modelId: null },
+    live2d: { ...DEFAULT_LIVE2D },
     ...over
   }
 }
@@ -148,7 +149,7 @@ describe('settingsStore', () => {
 
   // —— 阶段 5 批次 A（A6，D5A-10）：live2d 子树三处接线 ——
   it('hydrate 读回 live2d 段（enabled/modelId）', async () => {
-    mockApi.settingsLoad.mockResolvedValue(state({ live2d: { enabled: false, modelId: 'haru' } }))
+    mockApi.settingsLoad.mockResolvedValue(state({ live2d: { ...DEFAULT_LIVE2D, enabled: false, modelId: 'haru' } }))
     const s = useSettingsStore()
     await s.hydrate()
     expect(s.live2d.enabled).toBe(false)

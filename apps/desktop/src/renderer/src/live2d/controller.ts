@@ -11,10 +11,9 @@
 // 指向之；Controller 不读 summary.modelFile——Minor G）。事件极简：'device_lost'（GPU-lost → 上层回退）、
 // 'status'（每次状态迁移广播）、'error'（switchModel 失败，载荷为 Error）。
 import { Live2DGpuLostError, type Live2DAdapter, type Live2DModelHandle } from './adapter'
-import type { Live2DModelSummary } from '@shared/contracts'
+import type { Live2DModelSummary, PerformanceMode } from '@shared/contracts'
 
 export type Live2DControllerStatus = 'unloaded' | 'loading' | 'ready' | 'failed' | 'fallback'
-export type Live2DPerformanceMode = 'auto' | 'high' | 'low'
 
 export interface Live2DControllerDeps {
   /** 渲染适配器（真实 webglEngine 或单测 fake） */
@@ -35,7 +34,7 @@ export class Live2DController {
   private currentId: string | null = null
   private currentStatus: Live2DControllerStatus = 'unloaded'
   private visible = true
-  private perfMode: Live2DPerformanceMode = 'auto'
+  private perfMode: PerformanceMode = 'auto'
   private switching = false // switchModel 重入串行守卫（独立于 status：init 内部也置 loading 后调 switchModel）
   private listeners = new Map<Live2DControllerEvent, Set<EventListener>>()
 
@@ -164,11 +163,11 @@ export class Live2DController {
   }
 
   /** 性能模式（批次 A 仅记录；帧率/渲染节流归批次 B 落地，YAGNI） */
-  setPerformanceMode(m: Live2DPerformanceMode): void {
+  setPerformanceMode(m: PerformanceMode): void {
     this.perfMode = m
   }
 
-  get performanceMode(): Live2DPerformanceMode {
+  get performanceMode(): PerformanceMode {
     return this.perfMode
   }
 

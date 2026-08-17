@@ -71,7 +71,7 @@ describe('desktopApi 语音面（P4-B）', () => {
   })
   it('settings:load invoke → SettingsState；settings:save patch → merge 后 state', async () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
-    const state = { version: 1, voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false }, dictation: { insertMode: 'append' }, live2d: { enabled: true, modelId: null } }
+    const state = { version: 1, voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false }, dictation: { insertMode: 'append' }, live2d: { enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0, mouseTracking: true, autoMotions: true, lipSync: true, performanceMode: 'auto', reduceMotion: false } }
     mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: state })
     expect(await desktopApi.settingsLoad()).toEqual(state)
     expect(mockIpc.invoke).toHaveBeenCalledWith(IpcChannels.settingsLoad)
