@@ -5,19 +5,21 @@
 // 只经 `push(controller.setState(...))` 落到 Controller（N2：生产组合走 setState，不用 onEvent——Task 3 评审
 // 确认 onEvent 只在纯状态机单测可达）。
 //
-// 组合顺序（spec §3.1 优先级收敛 + plan Task4 Step3，source 权威，直接采纳）：
+// 组合顺序（spec §3.1 优先级收敛 + plan Task4 Step3，source 权威，直接采纳；I-4 error 优先级最高）：
 //   connection disconnected → offline
+//   connection.status==='error' → error（3 级，紧跟连接判定，高于 thinking/speaking 与 emotion）
 //   isGenerating && !isSpeaking → thinking
 //   isSpeaking（voiceStore.tts.playing 或当前生成已产出正文）→ speaking
 //   emotion（最后完成 assistant message .emotion）命中本地映射（happy/sad/surprised）→ 对应情绪态，未知码忽略
-//   connection.status==='error' → error
 //   否则 → idle
 //
 // 订阅机制：`watch`（flush:'sync'）跟踪注入 getter 内 deref 的 Vue reactive 依赖（renderer 内 Pinia ref），
 // 源变化同步重算并 push；CharacterState 为字符串返回值，watch 仅当结果变化才触发（天然幂等）。
 //
 // N1（时长上限回退，spec §3.1『回原业务态』）：状态机不退 transient 时，本 source 负责超时后 push 回退态——
-//   情绪态（happy/sad/surprised）~2s 后回退到进入前业务态；error ~3s 后回退。用定时器，退订时清理。
+//   情绪态（happy/sad/surprised）~2s 后回退；error ~3s 后回退。I-1 修复：超时回调**重新组合当前业务态**再
+//   push（mood timer 以 emotion 置空重跑 compose、error timer 以 connection 状态业务化重跑），落到「当前真实
+//   业务态」而非记忆的 fallbackTarget（防生成已结束仍卡 thinking 等陈旧态）。退订时清理 timers。
 //
 // conversationStore 作为驱动源：批次 B 无「conversation→角色态」具体映射（无意义），本批不订阅，归阶段 6 / 后续。
 import { watch, type WatchStopHandle } from 'vue'
@@ -43,7 +45,9 @@ function isTransient(s: CharacterState): boolean {
   return s === 'happy' || s === 'sad' || s === 'surprised' || s === 'error'
 }
 
-/** 纯组合（可独立单测）：按优先级收敛表把各源读值归约为最终 CharacterState。 */
+/** 纯组合（可独立单测）：按优先级收敛表把各源读值归约为最终 CharacterState。
+ *  顺序（I-4 拍板：spec §3.1 优先级表 binding）：offline(0) → error(3) → thinking/speaking(2) →
+ *  emotion(1) → idle(0)——error 优先级最高，紧跟连接判定，不被 thinking(2)/emotion(1) 遮蔽。 */
 export function composeCharacterState(inputs: {
   connection: ConnectionState
   isGenerating: boolean
@@ -52,10 +56,11 @@ export function composeCharacterState(inputs: {
 }): CharacterState {
   const { connection, isGenerating, isSpeaking, emotion } = inputs
   if (connection.status === 'disconnected') return 'offline'
+  // error=3（最高）：连接存活错误态优先于 thinking/speaking(2) 与 emotion(1)
+  if (connection.status === 'error') return 'error'
   if (isGenerating && !isSpeaking) return 'thinking'
   if (isSpeaking) return 'speaking'
   if (emotion !== undefined && KNOWN_MOODS.has(emotion)) return emotion as MoodEmotion
-  if (connection.status === 'error') return 'error'
   return 'idle'
 }
 
@@ -73,8 +78,6 @@ export function createLive2dStateSource(
   push: Live2dStateSourcePush
 ): () => void {
   let currentState: CharacterState | null = null // 最近一次真实 push 的态（去重：不重复 push 同态）
-  let lastBusiness: CharacterState = 'idle' // 最近业务态（非 transient），瞬态回退基底
-  let fallbackTarget: CharacterState = 'idle' // 当前 transient 进入前的业务态
   let moodTimer: ReturnType<typeof setTimeout> | undefined
   let errorTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -86,31 +89,47 @@ export function createLive2dStateSource(
     if (errorTimer) clearTimeout(errorTimer)
     errorTimer = undefined
   }
+
+  /** N1 超时回退（I-1 修复）：重组合「当前真实业务态」再 push——不 push 进入瞬态前记忆的 fallbackTarget（时间
+   *  流逝后可能早已不成立）。mood timer 以 emotion 置空重跑（情绪为过去的瞬态，不作为持久源）；error timer 以
+   *  connection 状态业务化重跑（视为已恢复）。若重组合结果仍是瞬态（罕见：mood 路径恰逢 connection error 等），
+   *  重挂对应 timer 保持「瞬态必过期」不变量。 */
+  function pushRecomposed(overrides: { emotion?: string; forceBusinessConnection?: boolean }): void {
+    const conn = sources.connection()
+    const s = composeCharacterState({
+      connection: overrides.forceBusinessConnection ? { ...conn, status: 'connected' } : conn,
+      isGenerating: sources.isGenerating(),
+      isSpeaking: sources.isSpeaking(),
+      emotion: overrides.emotion
+    })
+    currentState = s
+    if (isTransient(s)) {
+      if (s === 'error') startErrorTimer()
+      else startMoodTimer()
+    }
+    push(s)
+  }
+
   function startMoodTimer(): void {
     clearMoodTimer()
     moodTimer = setTimeout(() => {
       moodTimer = undefined
-      currentState = fallbackTarget
-      lastBusiness = fallbackTarget
-      push(fallbackTarget)
+      pushRecomposed({ emotion: undefined })
     }, MOOD_TIMEOUT_MS)
   }
   function startErrorTimer(): void {
     clearErrorTimer()
     errorTimer = setTimeout(() => {
       errorTimer = undefined
-      currentState = fallbackTarget
-      lastBusiness = fallbackTarget
-      push(fallbackTarget)
+      pushRecomposed({ forceBusinessConnection: true })
     }, ERROR_TIMEOUT_MS)
   }
 
-  /** 组合结果落点：transient 态启动 N1 回退 timer（并记录进入前业务态为 fallbackTarget）；业务态清 timer 并更新
-   *  业务基底；同态不重推（幂等）。一律只经 push 落到 controller.setState（N2）。 */
+  /** 组合结果落点：transient 态启动 N1 回退 timer；业务态清 timer；同态不重推（幂等）。一律只经 push
+   *  落到 controller.setState（N2）。 */
   function handleCompose(s: CharacterState): void {
     if (s === currentState) return
     if (isTransient(s)) {
-      fallbackTarget = lastBusiness
       if (s === 'error') {
         clearMoodTimer()
         startErrorTimer()
@@ -121,7 +140,6 @@ export function createLive2dStateSource(
     } else {
       clearMoodTimer()
       clearErrorTimer()
-      lastBusiness = s
     }
     currentState = s
     push(s)

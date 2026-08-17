@@ -59,6 +59,13 @@ describe('composeCharacterState（纯组合，优先级收敛）', () => {
     expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: false, isSpeaking: false, emotion: undefined })).toBe('error')
     expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: undefined })).toBe('idle')
   })
+
+  it('I-4：connection error（3 级）优先于 thinking/speaking(2) 与 emotion(1)（spec §3.1 binding）', () => {
+    expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: false, isSpeaking: false, emotion: 'happy' })).toBe('error')
+    expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: true, isSpeaking: false, emotion: 'happy' })).toBe('error')
+    expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: true, isSpeaking: true, emotion: 'happy' })).toBe('error')
+    expect(composeCharacterState({ connection: { status: 'disconnected' }, isGenerating: false, isSpeaking: false, emotion: 'happy' })).toBe('offline')
+  })
 })
 
 describe('createLive2dStateSource（注入 getter + Vue reactive，flush sync）', () => {
@@ -157,6 +164,27 @@ describe('createLive2dStateSource（注入 getter + Vue reactive，flush sync）
 
     // 3s 后回退到 idle（进入前业务态）
     vi.advanceTimersByTime(3000)
+    expect(push).toHaveBeenLastCalledWith('idle')
+  })
+
+  it('N1 修复（I-1）：inner-voice 完成带 emotion → 超时后落 idle（非 stale thinking，生成已清）', () => {
+    vi.useFakeTimers()
+    const s = makeSources({})
+    const push = vi.fn()
+    createLive2dStateSource(s.input, push)
+    push.mockClear()
+
+    // 生成开始（inner-voice 无 public 文本 → isSpeaking 全程 false）→ thinking
+    s.gen.value = true
+    expect(push).toHaveBeenLastCalledWith('thinking')
+
+    // 生成完成（activeGenerationId 已清 → gen=false）带 emotion → happy（fallbackTarget 记忆的 thinking）
+    s.gen.value = false
+    s.emo.value = 'happy'
+    expect(push).toHaveBeenLastCalledWith('happy')
+
+    // 2s 超时：重组合当前业务态（emotion 置空，生成已清）→ idle，而非卡 stale thinking
+    vi.advanceTimersByTime(2000)
     expect(push).toHaveBeenLastCalledWith('idle')
   })
 

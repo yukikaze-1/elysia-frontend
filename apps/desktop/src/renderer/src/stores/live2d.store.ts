@@ -49,25 +49,29 @@ export const useLive2dStore = defineStore('live2d', () => {
   // 避免 currentId null 时 controller 切换中守卫返回被丢弃目标的语义暧昧。
   let ready = false
 
-  /** 最后完成 assistant message 的 `.emotion`（I-4：wire 字段是 emotion 不是 mood；未知码由 source 忽略） */
+  /** 最后**完成** assistant message 的 `.emotion`（I-3 修复：只读从末尾数第一条 `status==='completed'` 的
+   *  消息；不再「扫到最近带 emotion 的消息」——emotion 只写入不清空，扫最近的带 emotion 会让几条消息前的
+   *  happy/sad 永久残留、任意源变化触发情绪闪烁。其无 emotion → undefined；未知码由 source 忽略）。 */
   function lastCompletedEmotion(): string | undefined {
     const msg = useMessageStore()
     for (let i = msg.order.length - 1; i >= 0; i--) {
       const m: Message | undefined = msg.byId[msg.order[i]]
-      if (!m || m.role !== 'assistant') continue
-      if (m.emotion) return m.emotion
+      if (!m || m.role !== 'assistant' || m.status !== 'completed') continue
+      return m.emotion
     }
     return undefined
   }
 
-  /** 当前生成是否已产出正文（speaking 判定第二路：voiceStore.tts.playing 或 active gen 已有 public 文本段） */
+  /** 当前生成是否已产出正文（speaking 判定第二路：voiceStore.tts.playing 或 active gen 已有 public 文本段）。
+   *  M-3 修复：锚定当前生成的消息（唯一 streaming 态 assistant——activeGenerationId 为 generationId 非
+   *  messageId，无 gen→msg 直查表，以 streaming 态锚定即可），不从 order 末尾找「第一个未 completed」——
+   *  避免旧取消/失败消息（status!=completed）被误判为当前生成。 */
   function currentGenHasContent(): boolean {
     const msg = useMessageStore()
     if (!msg.activeGenerationId) return false
     for (let i = msg.order.length - 1; i >= 0; i--) {
       const m: Message | undefined = msg.byId[msg.order[i]]
-      if (!m || m.role !== 'assistant') continue
-      if (m.status === 'completed') continue
+      if (!m || m.role !== 'assistant' || m.status !== 'streaming') continue
       return (m.assistantSegments ?? []).some(
         (seg) => seg.channel === 'public_reply' && seg.kind === 'text' && !!seg.text
       )

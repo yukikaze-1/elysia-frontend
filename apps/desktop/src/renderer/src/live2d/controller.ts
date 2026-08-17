@@ -53,6 +53,8 @@ const MOTION_MAX_MS = 15000 // 长动作最大时长上限（~15s 超时停，st
 
 // —— I-1 情绪→表情本地映射表——具体文件名以该模型 manifest 实际含有的（如 Haru F01-F08）为准：
 //    优先按语义关键词命中（happy/sad/surprised），缺省退化到语义最接近的 F 编号；全部不命中 → 落 B4 参数级。
+//    M-2 注：f01/f02/f06 为 Haru F 系列语义猜测（F01 待机/中性、F02 悲伤、F06 惊讶），批次 C/D 真实
+//    联调时按目标模型 manifest 的 F 编号含义验证并按需调整映射。 */
 /** 情绪态（本地映射命中 → setExpression；未知码/不命中落 B4） */
 export type MoodEmotion = 'happy' | 'sad' | 'surprised'
 const MOOD_EXPRESSION_KEYWORDS: Record<MoodEmotion, readonly string[]> = {
@@ -322,7 +324,7 @@ export class Live2DController {
     // speaking/thinking（2 级）激活时不发点击（priority≤1）动作。
     const curP = this.stateMachine.priority
     if (priority < curP) return
-    // 模型未就绪：只记最新状态（不播放）
+    // 模型未就绪：return 直接丢弃本次 playMotion（业务态由 stateSource/setState 跟踪，动作不缓存）
     if (this.currentStatus !== 'ready') return
     // 同动作短时重复合并去抖
     const now = Date.now()

@@ -502,17 +502,24 @@ describe('startMotion/startExpression/stopAll（白名单深度防御 + cyrene:/
     await expect(handle.startExpression('haru', 'expressions/evil.exp3.json')).rejects.toThrow('not in whitelist')
   })
 
-  it('stopAll 停止 motion + expression 队列；stopMotion 为占位 no-op', async () => {
+  it('stopAll 停止 motion + expression 队列', async () => {
     const { handle } = await readyHandle()
     const mm = shared.motionManagers[0]
     const em = shared.exprManagers[0]
 
-    handle.stopMotion(2) // 占位，不触底层
-    expect((mm as { stopAllMotions: MockFn }).stopAllMotions).not.toHaveBeenCalled()
-
     handle.stopAll()
     expect((mm as { stopAllMotions: MockFn }).stopAllMotions).toHaveBeenCalledTimes(1)
     expect((em as { stopAllMotions: MockFn }).stopAllMotions).toHaveBeenCalledTimes(1)
+  })
+
+  it('stopMotion 真实实现（I-2）：SDK 无按优先级停原语 → stopAllMotions（长动作 ~15s 上限的落点）', async () => {
+    const { handle } = await readyHandle()
+    const mm = shared.motionManagers[0] as { stopAllMotions: MockFn }
+    const em = shared.exprManagers[0] as { stopAllMotions: MockFn }
+
+    handle.stopMotion(2)
+    expect(mm.stopAllMotions).toHaveBeenCalledTimes(1) // 停全部 motion（保守）
+    expect(em.stopAllMotions).not.toHaveBeenCalled() // expression 队列不受影响
   })
 })
 

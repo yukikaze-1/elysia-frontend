@@ -300,9 +300,12 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
   }
 
   stopMotion(_priority?: number): void {
-    // Controller 层仲裁占位：底层 SDK 只有 `CubismMotionQueueManager.stopAllMotions()`，无按 priority 停
-    // 原语——优先级仲裁语义由 Task 4 的 Controller 调度消费（经 stopAll / 队列清空）。本 task 保持 no-op。
+    // Controller 层仲裁动作（I-2 修复：Task 4 的 ~15s 长动作上限消费此实现）。底层 SDK 只有
+    // `CubismMotionQueueManager.stopAllMotions()`，无按优先级停原语——故退化实现为「停全部动作」
+    // （保守停当前队内全部 motion；expression 队列不受影响）。精确按 priority 停需按 (priority→file)
+    // 跟踪各句柄分别停，属增强（本批未做，注释如实）。
     if (this.destroyed) return
+    this.motionManager.stopAllMotions()
   }
 
   stopAll(): void {
