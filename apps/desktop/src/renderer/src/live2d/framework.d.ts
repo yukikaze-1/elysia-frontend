@@ -41,7 +41,9 @@ declare module '@framework/live2dcubismframework' {
 }
 
 declare module '@framework/cubismmodelsettingjson' {
-  // 对照 cubismmodelsettingjson.ts：class CubismModelSettingJson（L29）——本项目内核用到的方法面
+  // 对照 cubismmodelsettingjson.ts：class CubismModelSettingJson（L29）——本项目内核用到的方法面。
+  // 批次 B（Task 2）补 motion/expression 枚举（L217-305）与 Layout（L383）：createModel 内摊平白名单 +
+  // 读 Layout。
   export class CubismModelSettingJson {
     constructor(buffer: ArrayBuffer, size: number)
     getModelFileName(): string
@@ -50,7 +52,11 @@ declare module '@framework/cubismmodelsettingjson' {
     getPhysicsFileName(): string
     getPoseFileName(): string
     getExpressionCount(): number
+    getExpressionFileName(index: number): string
     getMotionGroupCount(): number
+    getMotionGroupName(index: number): string
+    getMotionCount(groupName: string): number
+    getMotionFileName(groupName: string, index: number): string
     getUserDataFile(): string
     getLayoutMap(outLayoutMap: Map<string, number>): boolean
     release(): void
@@ -58,7 +64,11 @@ declare module '@framework/cubismmodelsettingjson' {
 }
 
 declare module '@framework/model/cubismmodel' {
-  // 对照 model/cubismmodel.ts：class CubismModel（L192）——本项目内核用到的方法面
+  // 对照 model/cubismmodel.ts：class CubismModel（L192）——本项目内核用到的方法面。
+  // 批次 B（Task 2，B3 adapter 面）增参数通道方法：
+  //  getParameterIndex(L610)/getParameterCount(L641)/getParameterId(L690)/setParameterValueById(L773)。
+  // 注：getParameterIndex 对未知 Id 会把 not-exist 索引合成进 `[getParameterCount(), …)` 域（L627-634），
+  // 永不为 -1——setParam 用真域判定拦截。
   export class CubismModel {
     update(): void
     getCanvasWidth(): number
@@ -66,6 +76,12 @@ declare module '@framework/model/cubismmodel' {
     saveParameters(): void
     loadParameters(): void
     release(): void
+    getParameterCount(): number
+    /** parameterIndex 未知时返回合成 not-exist 索引（≥ getParameterCount()），不是 -1 */
+    getParameterIndex(parameterId: unknown): number
+    /** 返回 CubismId（含 .getString()）——CubismId 方法为 .getString()（id/cubismid.ts:32），无 .getId() */
+    getParameterId(parameterIndex: number): { getString(): string }
+    setParameterValueById(parameterId: unknown, value: number, weight?: number): void
   }
 }
 

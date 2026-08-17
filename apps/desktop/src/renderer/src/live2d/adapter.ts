@@ -23,6 +23,14 @@ import { CubismMoc } from '@framework/model/cubismmoc'
 import type { CubismModel } from '@framework/model/cubismmodel'
 import { CubismPhysics } from '@framework/physics/cubismphysics'
 import { CubismRenderer_WebGL } from '@framework/rendering/cubismrenderer_webgl'
+// 批次 B（Task 2，B3 adapter 面）：motion/expression 加载播放 + Layout 装配。
+// 这些模块经 framework.d.ts 的 `@framework/*` 通配 ambient 建模为 any（Framework 本体 excluded
+// 于 strict vue-tsc），运行时时由 electron.vite resolve.alias `@framework` → vendored 源码交付。
+import { CubismMotion } from '@framework/motion/cubismmotion'
+import { CubismMotionManager } from '@framework/motion/cubismmotionmanager'
+import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion'
+import { CubismExpressionMotionManager } from '@framework/motion/cubismexpressionmotionmanager'
+import { CubismModelMatrix } from '@framework/math/cubismmodelmatrix'
 import type { Live2DGLContextAttributes, Live2DGLEngine } from './gl/types'
 
 /** cyrene:// live2d 供给分支前缀（与 Main 侧 protocol/live2d-path.ts 的 LIVE2D_PATH_PREFIX 对应） */
@@ -31,6 +39,26 @@ const LIVE2D_BASE = 'cyrene://renderer/__cyrene-live2d/'
 const SHADER_PATH = '/live2d/shaders/'
 /** 单帧 dt 上限（秒）：防止切后台长时间挂起后物理爆参 */
 const MAX_DELTA_SECONDS = 0.1
+
+/**
+ * model3 `Layout` 键 → `CubismModelMatrix.setupFromLayout` 期望的小写 snake_case 键（math/
+ * cubismmodelmatrix.ts:160）归一表。官方 model3 用大写/驼峰键（`Width/Height/CenterX/CenterY/X/Y/
+ * Top/Bottom/Left/Right`），setupFromLayout 却按小写 `width/height/center_x/center_y/x/y/...` 匹配——
+ * 直接传入会全部不命中。此处对读出键 `toLowerCase()` 后经映射归一（`CenterX`→`centerx`→`center_x`），
+ * 未列出的键保留原形（不影响其他键）。本仓模型 Layout 多为 None，fixture 测试用与实现一致的官方键。
+ */
+const LAYOUT_KEY_NORMALIZE: Record<string, string> = {
+  width: 'width',
+  height: 'height',
+  x: 'x',
+  y: 'y',
+  centerx: 'center_x',
+  centery: 'center_y',
+  top: 'top',
+  bottom: 'bottom',
+  left: 'left',
+  right: 'right'
+}
 
 /** GPU 上下文丢失错误（spec §3.2：上层据此回退静态头像，D5A-11/D5A-12） */
 export class Live2DGpuLostError extends Error {
@@ -56,6 +84,19 @@ export interface Live2DModelHandle {
   draw(): void
   /** 释放本模型全部 Cubism 与 GL 资源（幂等） */
   destroy(): void
+  // —— 批次 B（Task 2，B3 adapter 面）新增窄参数通道 + motion/expression 原语 ——
+  /** 模型参数 Id 字符串列表（Controller 据此做参数存在性判定，B2/B4 路由） */
+  getParameterIdList(): string[]
+  /** 写单个模型参数（未经 getLayoutMap 等查询；未知 Id 静默忽略，见 @framework/model/cubismmodel 注记） */
+  setParam(id: string, value: number): void
+  /** 加载并播放一个 motion 文件（file 为相对 model3.json 目录的路径，∈ 白名单；priority 入队） */
+  startMotion(modelId: string, file: string, priority: number): Promise<void>
+  /** 加载并播放一个 expression 文件（file 相对路径 ∈ 白名单） */
+  startExpression(modelId: string, file: string): Promise<void>
+  /** 停止指定优先级动作（Controller 层仲裁占位：底层 SDK 无按优先级停原语，仲裁在 Task 4 调度） */
+  stopMotion(priority?: number): void
+  /** 停止全部 motion + expression */
+  stopAll(): void
 }
 
 /** Adapter 构造依赖（engine 必传；fetchImpl 可注入，单测传入记录器） */
@@ -150,12 +191,30 @@ function releasePartial(p: {
 
 /** 单个模型的内部实现（公开面仅 Live2DModelHandle） */
 class Live2DModelHandleImpl implements Live2DModelHandle {
+  // Framework motion/expression manager 的最小消费面（vendored 源码在 node/web tsconfig 中 exclude，
+  // 类经 `@framework/*` 通配 ambient 建模为 any —— 此处用结构化接口收紧本 adapter 消费的方法面）
+  private readonly motionManager: {
+    updateMotion(model: CubismModel, dt: number): boolean
+    startMotionPriority(motion: unknown, autoDelete: boolean, priority: number): unknown
+    stopAllMotions(): void
+  }
+  private readonly expressionManager: {
+    updateMotion(model: CubismModel, dt: number): boolean
+    startMotion(motion: unknown, autoDelete: boolean): unknown
+    stopAllMotions(): void
+  }
+  private readonly layoutMvp: { getArray(): Float32Array } | null
   private readonly canvas: HTMLCanvasElement
   private readonly renderer: CubismRenderer_WebGL
   private readonly model: CubismModel
   private readonly moc: CubismMoc
   private readonly physics: CubismPhysics | null
   private readonly setting: CubismModelSettingJson
+  private readonly modelId: string
+  private readonly baseDir: string
+  private readonly fetch: typeof fetch
+  private readonly motionWhitelist: ReadonlySet<string>
+  private readonly expressionWhitelist: ReadonlySet<string>
   private destroyed = false
 
   constructor(p: {
@@ -165,6 +224,12 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
     moc: CubismMoc
     physics: CubismPhysics | null
     setting: CubismModelSettingJson
+    modelId: string
+    baseDir: string
+    fetch: typeof fetch
+    motionWhitelist: string[]
+    expressionWhitelist: string[]
+    layoutMvp: { getArray(): Float32Array } | null
   }) {
     this.canvas = p.canvas
     this.renderer = p.renderer
@@ -172,10 +237,71 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
     this.moc = p.moc
     this.physics = p.physics
     this.setting = p.setting
+    this.modelId = p.modelId
+    this.baseDir = p.baseDir
+    this.fetch = p.fetch
+    this.motionWhitelist = new Set(p.motionWhitelist)
+    this.expressionWhitelist = new Set(p.expressionWhitelist)
+    this.layoutMvp = p.layoutMvp
+    // 播放原语：独立 motion 与 expression 两个队列管理器（Framework 官方区分），构造不触 Core（node 单测安全）
+    this.motionManager = new CubismMotionManager()
+    this.expressionManager = new CubismExpressionMotionManager()
+  }
+
+  getParameterIdList(): string[] {
+    if (this.destroyed) return []
+    const list: string[] = []
+    const count = this.model.getParameterCount()
+    for (let i = 0; i < count; i++) {
+      list.push(this.model.getParameterId(i).getString())
+    }
+    return list
+  }
+
+  setParam(id: string, value: number): void {
+    if (this.destroyed) return
+    // 存在性判定必须用真域：getParameterIndex 对未知 Id 会把 not-exist 索引合成进 [getParameterCount(), …)
+    // （cubismmodel.ts:627-634），永不为 -1——用 `idx < 0 || idx >= count` 才能真正拦截未知 Id。
+    const idManager = CubismFramework.getIdManager() as { getId(id: string): unknown }
+    const paramId = idManager.getId(id)
+    const idx = this.model.getParameterIndex(paramId)
+    if (idx < 0 || idx >= this.model.getParameterCount()) return // 未知参数 Id 静默忽略
+    this.model.setParameterValueById(paramId, value)
+  }
+
+  async startMotion(_modelId: string, file: string, priority: number): Promise<void> {
+    if (this.destroyed) return
+    this.assertMotionAllowed(file) // 深度防御：白名单外抛错（Controller 亦先查，此处 belt-and-suspenders）
+    const buffer = await this.fetchResource(file)
+    const motion = CubismMotion.create(buffer, buffer.byteLength)
+    this.motionManager.startMotionPriority(motion, true, priority)
+  }
+
+  async startExpression(_modelId: string, file: string): Promise<void> {
+    if (this.destroyed) return
+    this.assertExpressionAllowed(file)
+    const buffer = await this.fetchResource(file)
+    const expr = CubismExpressionMotion.create(buffer, buffer.byteLength)
+    this.expressionManager.startMotion(expr, true)
+  }
+
+  stopMotion(_priority?: number): void {
+    // Controller 层仲裁占位：底层 SDK 只有 `CubismMotionQueueManager.stopAllMotions()`，无按 priority 停
+    // 原语——优先级仲裁语义由 Task 4 的 Controller 调度消费（经 stopAll / 队列清空）。本 task 保持 no-op。
+    if (this.destroyed) return
+  }
+
+  stopAll(): void {
+    if (this.destroyed) return
+    this.motionManager.stopAllMotions()
+    this.expressionManager.stopAllMotions()
   }
 
   update(dt: number): void {
     if (this.destroyed) return
+    // 帧推进序（批次 B §3.3）：先喂 motion/expression 参数 → 物理 → model.update（后 draw 由 adapter 编排）
+    this.motionManager.updateMotion(this.model, dt)
+    this.expressionManager.updateMotion(this.model, dt)
     if (this.physics) {
       this.physics.evaluate(this.model, dt)
     }
@@ -190,7 +316,7 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
     this.renderer.setRenderState(null, [0, 0, w, h])
     this.renderer
       .getMvpMatrix()
-      .setMatrix(buildFitMvp(this.model.getCanvasWidth(), this.model.getCanvasHeight(), w, h))
+      .setMatrix(this.computeMvp(w, h))
     this.renderer.drawModel(SHADER_PATH)
   }
 
@@ -199,7 +325,7 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
     this.destroyed = true
     // 释放顺序对齐 CubismUserModel.release()：先 renderer（GL 资源），再 moc.deleteModel(model)
     // （内部调用 model.release()，cubismmodel.ts:1856）+ moc.release()（断言 modelCount==0），
-    // 最后 physics 与 model3 设置。
+    // 最后 physics 与 model3 设置。motion/expression 队列随 model 生命周期一并回收（autoDelete 已开启）。
     this.renderer.release()
     this.moc.deleteModel(this.model)
     this.moc.release()
@@ -207,6 +333,52 @@ class Live2DModelHandleImpl implements Live2DModelHandle {
       CubismPhysics.delete(this.physics)
     }
     this.setting.release()
+  }
+
+  // —— 内部 ——
+
+  private assertMotionAllowed(file: string): void {
+    if (this.motionWhitelist.has(file)) return
+    throw new Error(`motion file not in whitelist for model ${this.modelId}: ${file}`)
+  }
+
+  private assertExpressionAllowed(file: string): void {
+    if (this.expressionWhitelist.has(file)) return
+    throw new Error(`expression file not in whitelist for model ${this.modelId}: ${file}`)
+  }
+
+  /** 组装模型目录内某文件（相对 model3.json 目录）的供给 URL：modelId 不编码、relPath 逐段编码 */
+  private modelFileUrl(relPath: string): string {
+    const rel = this.baseDir.length > 0 ? `${this.baseDir}/${relPath}` : relPath
+    return `${LIVE2D_BASE}${this.modelId}/${encodePath(rel)}`
+  }
+
+  private async fetchResource(relPath: string): Promise<ArrayBuffer> {
+    const url = this.modelFileUrl(relPath)
+    const res = await this.fetch(url)
+    if (!res.ok) throw new Error(`Failed to fetch Live2D resource (HTTP ${res.status}): ${url}`)
+    return res.arrayBuffer()
+  }
+
+  /** 计算 MVP：无 Layout → 沿用批次 A scale-only `buildFitMvp`；有 Layout → 先经 layout 模型矩阵（model
+   *  空间缩放/平移，番「官方 CubismModelMatrix 拟合」）再以 fit 投影（等比、原点居中）映射进 clip 空间。
+   *  layout 矩阵为 column-major，fit 投影为纯对角缩放 diag(sx, sy, 1, 1)，故 combined = diag*M 即对每列
+   *  行0/行1 乘 sx/sy——保证非退化（sx/sy 有限）。 */
+  private computeMvp(viewW: number, viewH: number): Float32Array {
+    const modelW = this.model.getCanvasWidth()
+    const modelH = this.model.getCanvasHeight()
+    if (this.layoutMvp) {
+      const scale = Math.min(viewW / modelW, viewH / modelH)
+      const sx = (2 * scale) / viewW
+      const sy = (2 * scale) / viewH
+      const m = new Float32Array(this.layoutMvp.getArray())
+      for (let c = 0; c < 4; c++) {
+        m[c * 4] *= sx
+        m[c * 4 + 1] *= sy
+      }
+      return m
+    }
+    return buildFitMvp(modelW, modelH, viewW, viewH)
   }
 }
 
@@ -310,6 +482,41 @@ export class Live2DAdapter {
         physics = CubismPhysics.create(physBuffer, physBuffer.byteLength)
       }
 
+      // —— 批次 B（Task 2）：motion/expression 白名单（摊平文件路径数组，I-4）+ Layout 装配 ——
+      // 白名单从 model3.json 的 FileReferences.Motions/Expressions 直接摊平读出（以 model3.json 目录为
+      // base 的相对路径，与纹理/物理一致），作为 startMotion/startExpression 的深度防御（Controller 亦先查）。
+      const motionWhitelist: string[] = []
+      const motionGroupCount = setting.getMotionGroupCount()
+      for (let g = 0; g < motionGroupCount; g++) {
+        const group = setting.getMotionGroupName(g)
+        const cnt = setting.getMotionCount(group)
+        for (let m = 0; m < cnt; m++) {
+          const fn = setting.getMotionFileName(group, m)
+          if (fn) motionWhitelist.push(fn)
+        }
+      }
+      const expressionWhitelist: string[] = []
+      const expressionCount = setting.getExpressionCount()
+      for (let e = 0; e < expressionCount; e++) {
+        const fn = setting.getExpressionFileName(e)
+        if (fn) expressionWhitelist.push(fn)
+      }
+
+      // Layout：model3 `Layout` 非空 → 官方 CubismModelMatrix 装配（传真实画布维度，防无参构造 2/0=Infinity）；
+      // 空 → 沿用批次 A scale-only `buildFitMvp`（本仓模型 Layout 多为 None）。
+      let layoutMvp: { getArray(): Float32Array } | null = null
+      const layoutMap = new Map<string, number>()
+      const hasLayout = setting.getLayoutMap(layoutMap)
+      if (hasLayout && layoutMap.size > 0) {
+        const normalized = new Map<string, number>()
+        for (const [key, value] of layoutMap) {
+          normalized.set(LAYOUT_KEY_NORMALIZE[key.toLowerCase()] ?? key.toLowerCase(), value)
+        }
+        const mvp = new CubismModelMatrix(model.getCanvasWidth(), model.getCanvasHeight())
+        mvp.setupFromLayout(normalized)
+        layoutMvp = mvp
+      }
+
       // 首次 draw 前加载 shader（D5A-02b：内部对 CubismShader_WebGL 实例 setShaderPath，
       // 勿直接调 setShaderPath；cubismrenderer_webgl.ts:767）
       renderer.loadShaders(SHADER_PATH)
@@ -320,7 +527,13 @@ export class Live2DAdapter {
         model,
         moc,
         physics,
-        setting
+        setting,
+        modelId,
+        baseDir,
+        fetch: this.fetch,
+        motionWhitelist,
+        expressionWhitelist,
+        layoutMvp
       })
       this.handle = handle
       this.lastTick = 0
