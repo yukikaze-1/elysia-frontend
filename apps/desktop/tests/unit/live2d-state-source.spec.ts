@@ -8,6 +8,7 @@ import type { ConnectionState } from '@shared/contracts'
 import {
   createLive2dStateSource,
   composeCharacterState,
+  normalizeEmotionCode,
   type Live2dStateSourceInputs
 } from '../../src/renderer/src/live2d/state-source'
 
@@ -55,6 +56,14 @@ describe('composeCharacterState（纯组合，优先级收敛）', () => {
     expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: 'pride' })).toBe('idle')
     expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: 'surprised' })).toBe('surprised')
   })
+  it('F-1：中文 mood 归一——开心→happy / 难过→sad / 惊讶→surprised；平静/未知→idle；ASCII 大小写不敏感', () => {
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: '开心' })).toBe('happy')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: '难过' })).toBe('sad')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: '惊讶' })).toBe('surprised')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: '平静' })).toBe('idle')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: 'pride' })).toBe('idle')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: 'HAPPY' })).toBe('happy')
+  })
   it('connection.status error → error；否则 idle', () => {
     expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: false, isSpeaking: false, emotion: undefined })).toBe('error')
     expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: undefined })).toBe('idle')
@@ -65,6 +74,28 @@ describe('composeCharacterState（纯组合，优先级收敛）', () => {
     expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: true, isSpeaking: false, emotion: 'happy' })).toBe('error')
     expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: true, isSpeaking: true, emotion: 'happy' })).toBe('error')
     expect(composeCharacterState({ connection: { status: 'disconnected' }, isGenerating: false, isSpeaking: false, emotion: 'happy' })).toBe('offline')
+  })
+})
+
+describe('normalizeEmotionCode（F-1：后端 mood 自由文本 → MoodEmotion）', () => {
+  it('英文码原样命中（ASCII 大小写不敏感）', () => {
+    expect(normalizeEmotionCode('happy')).toBe('happy')
+    expect(normalizeEmotionCode('SAD')).toBe('sad')
+    expect(normalizeEmotionCode('Surprised')).toBe('surprised')
+  })
+  it('中文别名命中', () => {
+    expect(normalizeEmotionCode('开心')).toBe('happy')
+    expect(normalizeEmotionCode('高兴')).toBe('happy')
+    expect(normalizeEmotionCode('悲伤')).toBe('sad')
+    expect(normalizeEmotionCode('沮丧')).toBe('sad')
+    expect(normalizeEmotionCode('吃惊')).toBe('surprised')
+    expect(normalizeEmotionCode('诧异')).toBe('surprised')
+  })
+  it('未命中/undefined → undefined', () => {
+    expect(normalizeEmotionCode(undefined)).toBeUndefined()
+    expect(normalizeEmotionCode('平静')).toBeUndefined()
+    expect(normalizeEmotionCode('neutral')).toBeUndefined()
+    expect(normalizeEmotionCode('')).toBeUndefined()
   })
 })
 

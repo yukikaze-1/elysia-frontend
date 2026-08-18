@@ -140,6 +140,24 @@ describe('FrameMapper raw → 领域', () => {
     expect(ev!.conversationUsage).toEqual({ total: 2100, byModel: { 'm1': 2100 }, source: 'server_aggregate' })
   })
 
+  it('F-1：generation.completed 中文 mood（开心）原样透传为 emotion（前端归一在 state-source normalizeEmotionCode）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1' })
+    const raw: RawFrame = {
+      type: 'generation.completed',
+      generationId: 'gen-1',
+      messageId: 'msg-1',
+      channel: 'public_reply',
+      finishReason: 'stop',
+      model: 'm1',
+      mood: '开心',
+      usage: { rounds: [{ model: 'm1', input_tokens: 10, output_tokens: 5, total_tokens: 15, round_num: 1 }], turn_total: 15 },
+      completeness: 'complete'
+    }
+    const ev = mapper.mapFrame(raw) as GenerationCompletedEvent
+    expect(ev!.event).toBe('generation.completed')
+    expect(ev!.emotion).toBe('开心') // 透传不裁剪；归一由 live2d/state-source 消费
+  })
+
   it('Σtotal_tokens !== turn_total 告警但保留服务端 turn_total', () => {
     const { warnings, onWarning } = collectWarnings()
     const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1', onProtocolWarning: onWarning })

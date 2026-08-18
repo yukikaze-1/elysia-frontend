@@ -210,6 +210,8 @@ AI 文本内容不在前端进行复杂情绪分析。后端有明确指令时�
 
 消息 `emotion` 主要用于文本标签展示；只有经过本地映射表识别的情绪代码才能转换为 Live2D 表情。未知代码显示为普通心情文本或“未知”，不能直接当作动作/表达式名称。
 
+后端 `generation.completed.mood` 为 **LLM 自由文本**（真实值如「开心」「平静」「难过」，也可能混英文），前端经 `normalizeEmotionCode`（`live2d/state-source.ts`）本地归一为 `happy/sad/surprised` 枚举码——ASCII 大小写不敏感、中文按字面精确匹配（别名表见 §18）。未命中保持 `undefined` → `idle`（行为不变）；归一只在本地进行，未知码绝不成为动作/表达式名（联调前整改 F-1，2026-08-18）。
+
 ## 8. 后端表现指令
 
 ```typescript
@@ -417,7 +419,7 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | 本文档子项 | 状态 | 落点 |
 |---|---|---|
 | §3 核心接口 | 已实现（真实化） | `switchModel` 返回生效 id（D5B-10）；`setState/setAutoMotions/setLipSync/setMouthLevel/setViewTransform/setLookTarget/playMotion/playTapMotion/setExpression/on` 落地；接口注见 §3 |
-| §6 状态来源与优先级 / §7 状态映射 | 已实现 | `live2dStateSource` 薄编排层（D5B-04）：connection 断→offline、error 优先(3)、生成∧无正文→thinking、正文/TTS→speaking、最后完成消息 emotion 命中本地映射→happy/sad/surprised（未知码忽略）、否则 idle；`listening/working/waiting_permission` 槽位定义完备但驱动源 null（归阶段 6） |
+| §6 状态来源与优先级 / §7 状态映射 | 已实现 | `live2dStateSource` 薄编排层（D5B-04）：connection 断→offline、error 优先(3)、生成∧无正文→thinking、正文/TTS→speaking、最后完成消息 emotion 经 `normalizeEmotionCode` 本地归一（中/英文别名→happy/sad/surprised，未命中忽略）、否则 idle；`listening/working/waiting_permission` 槽位定义完备但驱动源 null（归阶段 6）。**F-1（联调前整改）：** 后端 `mood` 为 LLM 自由文本，归一别名表 = `happy`←`happy/开心/高兴/愉快/喜悦/兴奋`、`sad`←`sad/难过/悲伤/伤心/沮丧/低落`、`surprised`←`surprised/惊讶/惊喜/吃惊/诧异`（ASCII 大小写不敏感，中文按字面精确匹配） |
 | §9 动作调度 / §3.3 表情 | 已实现 | B3 白名单调度（低优先不打断 3 级态、同动作去抖、长动作上限、切换清队列、点击不打断 speaking/thinking）；情绪态→表情本地映射（happy/f01、sad/f02、surprised/f06，不命中落 B4）；无动作模型 B4 参数级回退（thinking 摆头/speaking 口型+轻头/happy 笑眼/surprised 瞪眼/error 歪头，存在性判定） |
 | §11 鼠标和点击互动 | 已实现 | Panel mouseleave→`setLookTarget(null)` 平滑回正；点击画布→playTapMotion(priority=1)（reduceMotion 禁用）；点击不打断 speaking/thinking/error/waiting_permission |
 | §12 性能策略 / §12.1 性能模式 | 已实现（四值统一） | `performanceMode` 四值 `auto/quality/balanced/low_power`（旧三值 `high/low` 读回归一，schema 归一）；实际降帧消费归批 C |

@@ -584,6 +584,28 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
     } finally { await closeApp(launched) }
   })
 
+  it('F-1.中文 mood 归一：mock emotion=开心 → 徽标「开心」+ 画布非空 + 无 console error', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, { CYRENE_MOCK_EMIT_DELAY_MS: '400', CYRENE_MOCK_GENERATION_EMOTION: '开心' })
+    const errors: string[] = []
+    launched.page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption('haru')
+      await expect.poll(() => statusText(page), POLL).toContain('Haru')
+      await connectAndActivateFirst(page)
+      await sendChat(page, '开心')
+      // 流式 speaking → completion(emotion=开心) → normalizeEmotionCode 归一 happy → 情绪态「开心」
+      await expect.poll(() => badgeText(page), POLL).toContain('说话中')
+      await expect.poll(() => badgeText(page), POLL).toContain('开心')
+      // 情绪态期间渲染不中断（Haru F01 表情 setExpression 进入——白名单内）
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+      await expect.poll(() => badgeText(page), POLL).toContain('空闲')
+      expect(errors).toEqual([])
+    } finally { await closeApp(launched) }
+  })
+
   it('B4.设置子页：改 scale/performanceMode → 即时生效 + 重启后持久化恢复', async () => {
     const ud = freshUserData()
     // 第一次 launch：设置页调 scale=1.5、performanceMode=balanced（设置即时改 + 500ms 防抖持久化）

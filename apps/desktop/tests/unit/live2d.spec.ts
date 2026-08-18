@@ -948,3 +948,48 @@ describe('live2dStore 批次 C（C3）：handleDirective 指令消费（live2d.d
     expect(setStateSpy).toHaveBeenCalledWith('happy') // 恢复后 emotion→情绪态→表情自动映射
   })
 })
+
+describe('live2dStore F-1（联调前整改）：真实后端中文 mood 归一 → 情绪态', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('injectCompletedMessage("开心") → 归一 happy → controller.setState(happy)', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    useConnectionStore().setState({ status: 'connected' })
+    ctrl.setState.mockClear()
+    injectCompletedMessage('开心')
+    await nextTick()
+    expect(ctrl.setState).toHaveBeenCalledWith('happy')
+  })
+
+  it('injectCompletedMessage("难过"/"惊讶") → sad / surprised', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    useConnectionStore().setState({ status: 'connected' })
+    ctrl.setState.mockClear()
+    injectCompletedMessage('难过')
+    await nextTick()
+    expect(ctrl.setState).toHaveBeenCalledWith('sad')
+    ctrl.setState.mockClear()
+    injectCompletedMessage('惊讶')
+    await nextTick()
+    expect(ctrl.setState).toHaveBeenCalledWith('surprised')
+  })
+
+  it('injectCompletedMessage("平静") → 未命中 → 从 happy 回业务态 idle（未知码不成为动作/表达式名）', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    useConnectionStore().setState({ status: 'connected' })
+    injectCompletedMessage('开心') // 归一命中 → 情绪态 happy
+    await nextTick()
+    expect(ctrl.setState).toHaveBeenCalledWith('happy')
+    ctrl.setState.mockClear()
+    injectCompletedMessage('平静') // 归一 undefined → 回业务态 idle（而非残留 happy）
+    await nextTick()
+    expect(ctrl.setState).toHaveBeenCalledWith('idle')
+  })
+})

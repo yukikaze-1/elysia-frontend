@@ -10,7 +10,8 @@
 //   connection.status==='error' → error（3 级，紧跟连接判定，高于 thinking/speaking 与 emotion）
 //   isGenerating && !isSpeaking → thinking
 //   isSpeaking（voiceStore.tts.playing 或当前生成已产出正文）→ speaking
-//   emotion（最后完成 assistant message .emotion）命中本地映射（happy/sad/surprised）→ 对应情绪态，未知码忽略
+//   emotion（最后完成 assistant message .emotion）经 normalizeEmotionCode 本地归一（happy/sad/surprised）→ 对应
+//   情绪态，未命中忽略（F-1：后端 mood 为 LLM 自由文本，中英文别名表见下）
 //   否则 → idle
 //
 // 订阅机制：`watch`（flush:'sync'）跟踪注入 getter 内 deref 的 Vue reactive 依赖（renderer 内 Pinia ref），
@@ -56,8 +57,27 @@ export interface Live2dStateSource {
   pushDirective: (state: CharacterState, strength: number, durationMs?: number) => boolean
 }
 
-/** 已知情绪码（I-1 本地映射命中集；未知码忽略 → 保持业务态） */
-const KNOWN_MOODS: ReadonlySet<string> = new Set<MoodEmotion>(['happy', 'sad', 'surprised'])
+/** F-1（联调前整改清单）：后端 `generation.completed.mood` 为 LLM 自由文本（如「开心」「平静」），本地归一为
+ *  `MoodEmotion` 枚举码。ASCII 大小写不敏感（`raw.toLowerCase()`）；中文按字面精确匹配（不 trim、不做标点/
+ *  近义处理——真实联调发现新写法再扩表）。未命中 → `undefined`（落 idle，行为不变）。 */
+const MOOD_EMOTION_ALIASES: Readonly<Record<MoodEmotion, readonly string[]>> = {
+  happy: ['happy', '开心', '高兴', '愉快', '喜悦', '兴奋'],
+  sad: ['sad', '难过', '悲伤', '伤心', '沮丧', '低落'],
+  surprised: ['surprised', '惊讶', '惊喜', '吃惊', '诧异']
+}
+
+const MOOD_CODES: readonly MoodEmotion[] = ['happy', 'sad', 'surprised']
+
+/** 归一后端 mood 自由文本 → `MoodEmotion`；未命中 → `undefined`。只做本地归一（不把未知码当动作/表达式名），
+ *  CyLive2DPanel 中文徽标继续按目标态显示（happy→开心），此处不重复维护标签。 */
+export function normalizeEmotionCode(raw: string | undefined): MoodEmotion | undefined {
+  if (raw === undefined) return undefined
+  const norm = raw.toLowerCase()
+  for (const code of MOOD_CODES) {
+    if (norm === code || MOOD_EMOTION_ALIASES[code].includes(norm)) return code
+  }
+  return undefined
+}
 
 /** transient 态（进入时记录回退基底；结束时由 N1 超时回退到进入前业务态） */
 function isTransient(s: CharacterState): boolean {
@@ -79,7 +99,8 @@ export function composeCharacterState(inputs: {
   if (connection.status === 'error') return 'error'
   if (isGenerating && !isSpeaking) return 'thinking'
   if (isSpeaking) return 'speaking'
-  if (emotion !== undefined && KNOWN_MOODS.has(emotion)) return emotion as MoodEmotion
+  const mood = normalizeEmotionCode(emotion) // F-1：中/英文自由文本归一；未命中 undefined → idle
+  if (mood !== undefined) return mood
   return 'idle'
 }
 
