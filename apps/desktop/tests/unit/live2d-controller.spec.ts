@@ -187,36 +187,46 @@ describe('Live2DController 批次 B 内核', () => {
   })
 
   it('F2：thinking/speaking 眨眼加快（rate=2，闭眼更频繁）——idle（rate=1）保持既有节奏', async () => {
-    const h = makeHarness()
-    stubHandle(h.adapter, { params: ['ParamEyeROpen'], motions: [], expressions: [] })
-    await h.ctrl.init(fakeCanvas)
-    const handle = h.getHandle()
-    // 控制 performance.now 推进动画时间（每 tick +100ms，确定性窗口 4s）——断言 blink 闭眼事件频率
-    let now = 1000
-    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
-    const countClosures = (state: CharacterState): number => {
-      handle.setParam.mockClear()
-      now = 1000 // 与首次 run 同一起点（animT0 已在首 tick 置 1.0，重放同相位）
-      h.ctrl.setState(state)
-      let closures = 0
-      let prev = 1
-      for (let i = 0; i < 40; i++) {
-        now += 100
-        h.ctrl.tick()
-        const calls = handle.setParam.mock.calls.filter((c: unknown[]) => c[0] === 'ParamEyeROpen')
-        const v = calls.length > 0 ? (calls[calls.length - 1][1] as number) : prev
-        if (v < 1 && prev === 1) closures++ // 睁眼 → 闭眼计一次 blink
-        prev = v
+    // I-1 修复（批次 C 审查 round1）：注入确定性 animSeed——controller.animSeed = (Math.random()*0xffffffff)>>>0，
+    // 未 mock 时每次跑随机，4s 窗口存在 seed 区间使 idle=1 且 think=1（flaky ~13-23%）。固定 Math.random=0.8 →
+    // animSeed=0xCCCCCCCC → animClock.random()≡0.8 → blinkTarget seed 固定（与 param-anim 层 fixedClock(0.5) 同款：
+    // 同 seed 同序列）。该 seed 下 mulberry32 首值使 rate=1 首睁眼间隔 >4s（idle 0 次眨眼）而 rate=2 首间隔 <4s
+    // （think 1 次）→ think>idle 确定性成立，任意次复跑同结果。
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.8)
+    try {
+      const h = makeHarness()
+      stubHandle(h.adapter, { params: ['ParamEyeROpen'], motions: [], expressions: [] })
+      await h.ctrl.init(fakeCanvas)
+      const handle = h.getHandle()
+      // 控制 performance.now 推进动画时间（每 tick +100ms，确定性窗口 ~4s）——断言 blink 闭眼事件频率
+      let now = 1000
+      const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
+      const countClosures = (state: CharacterState): number => {
+        handle.setParam.mockClear()
+        now = 1000 // 与首次 run 同一起点（animT0 已在首 tick 置 1.1，重放同相位）
+        h.ctrl.setState(state)
+        let closures = 0
+        let prev = 1
+        for (let i = 0; i < 40; i++) {
+          now += 100
+          h.ctrl.tick()
+          const calls = handle.setParam.mock.calls.filter((c: unknown[]) => c[0] === 'ParamEyeROpen')
+          const v = calls.length > 0 ? (calls[calls.length - 1][1] as number) : prev
+          if (v < 1 && prev === 1) closures++ // 睁眼 → 闭眼计一次 blink
+          prev = v
+        }
+        return closures
       }
-      return closures
+      const idleClosures = countClosures('idle')
+      const thinkClosures = countClosures('thinking')
+      // 固定 seed：idle=0（rate=1 首睁眼间隔 >4s 窗口）且 think≥1（rate=2 首间隔 <4s）→ think>idle 确定性成立
+      expect(idleClosures).toBe(0)
+      expect(thinkClosures).toBeGreaterThan(0)
+      expect(thinkClosures).toBeGreaterThan(idleClosures)
+      nowSpy.mockRestore()
+    } finally {
+      randomSpy.mockRestore()
     }
-    const idleClosures = countClosures('idle')
-    const thinkClosures = countClosures('thinking')
-    // thinking（rate=2 间隔减半）→ 4s 窗口内闭眼次数明显多于 idle（rate=1）
-    expect(idleClosures).toBeGreaterThanOrEqual(0)
-    expect(thinkClosures).toBeGreaterThan(idleClosures)
-    expect(thinkClosures).toBeGreaterThan(0)
-    nowSpy.mockRestore()
   })
 
   it('B4 无动作模型各态参数级回退（存在性判定：不在参数集不写）', async () => {
