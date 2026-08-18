@@ -1,7 +1,7 @@
 # Cyrene Live2D 前端接入设计
 
 **文档版本：** v0.2  
-**文档状态：** 首轮 Review 已修订 / SDK 与资源已验证到位（Cubism Web SDK 5-r.5 已入仓库 `third_party/CubismSdkForWeb-5-r.5/`，commit `22993e5`；用户模型免费版个人开发验证，`tmp/live2d/`）；**阶段 5 批次 A/B/C 已落地并全量验证（已开发、未联调）**，实现状态见 §18  
+**文档状态：** 首轮 Review 已修订 / SDK 与资源已验证到位（Cubism Web SDK 5-r.5 已入仓库 `third_party/CubismSdkForWeb-5-r.5/`，commit `22993e5`；用户模型免费版个人开发验证，`tmp/live2d/`）；**阶段 5 已真实联调通过（2026-08-19）**，实现状态见 §18  
 **适用范围：** Electron Renderer、Live2D 模型资源、TTS 播放联动  
 **文档日期：** 2026-08-03
 **最后复核日期：** 2026-08-04（批次 A 落地 2026-08-17 复核；批次 B/C 落地 2026-08-18 复核）
@@ -400,7 +400,7 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 
 ## 18. 实现状态（阶段 5 批次 A/B/C 落地，2026-08-18）
 
-**三态：** 已开发、未联调（Mock/本地驱动；真实 Windows Electron 联调由开发者事后凭联调清单执行）。门禁：**1599 单测（119 files）+ 97 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿。详细决策见 `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）、批次 B 决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`；联调清单见 `docs/review/2026-08-18-阶段5批次C-联调清单.md`。
+**三态：** 已真实联调（2026-08-19，真实 Windows Electron + Ubuntu 后端验收通过；验收记录见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`）。门禁：**1609 单测（120 files）+ 98 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿。详细决策见 `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）、批次 B 决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`；联调清单见 `docs/review/2026-08-18-阶段5批次C-联调清单.md`。
 
 **批次 A 已落地（本文档对应子项）：**
 
@@ -441,4 +441,4 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | §15 资源与许可 | 已记录 | 见 §15.1；**发布前复核仍 defer**（发布流程事项，本批仅台账记录） |
 
 **批次 C 集成新增（Electron `tests/integration/electron-live2d.spec.ts` 增 7 用例；既有第 6 号「设备丢失」由「静态头像回退」改写为「一次重建」，非新增，计数不含）：** C1 口型链路（`CYRENE_MOCK_MOUTH_LEVEL=step` 全链路 + 停止归 0，真实 RMS 归联调肉眼）、C2.1 性能模式四值切换（low_power 降帧后渲染不崩 + 持久化）、C2.2 GPU 丢失重建一次（`webglcontextlost` → 重建回到就绪+渲染恢复或回退不崩 + 聊天可用）、C3.1 指令消费（happy+F01 → 徽标「开心」+ 画布非空 + 无 console error）、C3.2 指令非白名单 expression（不崩 + 脱敏 warn `directive_miss` 不记 payload 原文）、C3.3 指令 `state:working` 越界（env 解析缺省不发射、不崩、聊天可用）、收口回归（恢复默认设置 → 切回首个可用，画布/select/持久化三方一致）。
-**批次 C 真实 Windows Electron（REAL）联调（未做，代码批次不含）：** 由开发者事后按 `docs/review/2026-08-18-阶段5批次C-联调清单.md` 执行（冻结基线 + 定向复验项 + 自动化门禁复跑 + 遗留说明 + 三态升「已真实联调」口径）。
+**批次 C 真实 Windows Electron（REAL）联调：已通过（2026-08-19）。** 按 `docs/review/2026-08-18-阶段5批次C-联调清单.md` 完成冻结基线 + C1/C2/C3 定向复验 + 自动化门禁复跑 + 真机 deferred 结论 + 遗留说明，三态已升「已真实联调」；详见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`。
