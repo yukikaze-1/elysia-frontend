@@ -13,7 +13,7 @@ import { defineStore } from 'pinia'
 import { Live2DAdapter } from '../live2d/adapter'
 import { webglEngine } from '../live2d/gl/webgl'
 import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } from '../live2d/controller'
-import type { CharacterState } from '../live2d/state-machine'
+import { statePriority, type CharacterState } from '../live2d/state-machine'
 import { createLive2dStateSource, type Live2dStateSource } from '../live2d/state-source'
 import { createSineMouthSource, createStepMouthSource, createTtsMouthSource, type MouthLevelSource } from '../live2d/tts-mouth-source'
 import { api } from './desktop-api'
@@ -22,7 +22,12 @@ import { useConnectionStore } from './connection.store'
 import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
 import { useLayoutStore } from './layout.store'
-import type { Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
+import type { DirectiveState, Live2DDirectiveEvent, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
+
+/** C3：DirectiveState 七值（剔除 error——error=3 必须 client 驱动，D5C-07）；越界（如 'error'/'working'）丢弃 */
+const DIRECTIVE_STATES: ReadonlySet<string> = new Set<DirectiveState>([
+  'idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised'
+])
 
 /** 控制器工厂注入点（默认为真实装配；单测注入 fake controller 以在 node 环境驱动状态机） */
 type ControllerFactory = () => Live2DController
@@ -61,6 +66,9 @@ export const useLive2dStore = defineStore('live2d', () => {
   const characterState = ref<CharacterState>('offline')
   /** C1（批次 C）：当前口型电平 [0,1]（tick 采样源喂 controller 时记录；集成探针 window.__cyreneTest.getMouthLevel 读） */
   const mouthLevel = ref(0)
+  /** C3（指令>emotion）：指令 expression 存活期标记——指令瞬态存活（stateSource pushDirective 超时回调或
+   *  client 2/3 级 watch 覆盖）期间置 true，抑制 emotion→表情自动映射；指令瞬态结束（onDirectiveEnd）清除 */
+  const directiveExpressionActive = ref(false)
 
   let controller: Live2DController | null = null
   let unsubDevice: (() => void) | null = null
@@ -116,7 +124,9 @@ export const useLive2dStore = defineStore('live2d', () => {
 
   /** 装配 live2dStateSource：组合 connection/message/voice 读值 → controller.setState。（D5B-04 薄编排层，
    *  Controller 无 Pinia；conversationStore 无「conversation→角色态」映射，本批不订阅，归阶段 6/后续。）
-   *  持句柄供 C2 GPU 重建后 recompose 恢复 CharacterState。 */
+   *  持句柄供 C2 GPU 重建后 recompose 恢复 CharacterState。
+   *  C3：注入 getCurrentPriority（建议强度仲裁基准 = 真实 controller 优先级）+ onDirectiveEnd（指令瞬态结束
+   *  清 directiveExpressionActive）+ emotion getter 指令抑制（指令 expression 存活期不重发 emotion 表情）。 */
   function setupStateSource(ctrl: Live2DController): void {
     if (stateSourceHandle) return
     stateSourceHandle = createLive2dStateSource(
@@ -125,7 +135,11 @@ export const useLive2dStore = defineStore('live2d', () => {
         isGenerating: () => useMessageStore().activeGenerationId !== undefined,
         isSpeaking: () =>
           useVoiceStore().tts.playing || currentGenHasContent(),
-        emotion: () => lastCompletedEmotion()
+        emotion: () => (directiveExpressionActive.value ? undefined : lastCompletedEmotion()),
+        getCurrentPriority: () => (ctrl.characterState ? statePriority(ctrl.characterState) : 0),
+        onDirectiveEnd: () => {
+          directiveExpressionActive.value = false
+        }
       },
       (s) => ctrl.setState(s)
     )
@@ -334,6 +348,7 @@ export const useLive2dStore = defineStore('live2d', () => {
     modelId.value = null
     error.value = ''
     characterState.value = 'offline'
+    directiveExpressionActive.value = false // C3：指令瞬态复位（stateSource 退订后无 onDirectiveEnd 可清）
   }
 
   // —— Task 5（B5 UI + B6 Panel）：设置→controller 的窄转发（Panel/Pane 消费；无 controller 时 no-op）——
@@ -383,9 +398,53 @@ export const useLive2dStore = defineStore('live2d', () => {
     controller.tick()
   }
 
+  // —— Task 4（C3）：后端 Live2D 表现指令建议消费（live2d.directive，经 messageStore.applyEvent 分发路径）——
+
+  /** 校验/脱敏/指令>emotion：
+   *   ① state ∈ 七值（越界丢弃整条 + 脱敏 warn）；priority clamp ≤1；durationMs ∈ [0,30000]（越界 clamp）；
+   *   ② state → stateSource.pushDirective（建议强度仲裁在 state-source 入口守卫——指令永不覆盖 client 2/3 级现实态）；
+   *   ③ 指令 expression 优先发射（后置于 state push，使指令表达式为最终生效表达式）；白名单未命中 → 脱敏 warn
+   *      （不记 payload 原文）；expression 成功 → 置 directiveExpressionActive 抑制 emotion→表情自动映射
+   *      （仅指令瞬态实际置入时——拒绝路径无瞬态可清，不抑制）；
+   *   ④ 指令 motion → controller.playMotion(file, clampedPriority, durationMs)；
+   *   ⑤ 无有效载荷 → 忽略 + 脱敏 warn。 */
+  function handleDirective(event: Live2DDirectiveEvent): void {
+    const ctrl = controller
+    const state = event.state
+    // ① 校验：state ∈ 七值（越界丢弃整条）
+    if (state !== undefined && !DIRECTIVE_STATES.has(state)) {
+      console.warn('[live2d] directive state 无效', { modelId: ctrl?.modelId ?? null, code: 'directive_invalid' })
+      return
+    }
+    // ⑤ 无有效载荷 → 忽略 + 脱敏 warn
+    if (state === undefined && event.expression === undefined && event.motion === undefined) {
+      console.warn('[live2d] directive 无有效载荷', { modelId: ctrl?.modelId ?? null, code: 'directive_invalid' })
+      return
+    }
+    const clampedPriority = Math.min(1, event.priority ?? 0) // priority clamp ≤1（不覆盖 client 2/3 级现实态）
+    const durationMs = event.durationMs === undefined ? undefined : Math.min(30000, Math.max(0, event.durationMs))
+    // ② 指令态 → pushDirective（返回是否实际置入——决定 ③ 是否抑制 emotion 自动映射）
+    const accepted = state !== undefined
+      ? (stateSourceHandle?.pushDirective(state, clampedPriority, durationMs) ?? false)
+      : false
+    // ③ 指令>emotion：指令 expression 优先发射（后置于 state push——last-writer-wins 使指令表达式为最终生效）
+    if (event.expression !== undefined) {
+      const ok = ctrl?.setExpression(event.expression) ?? false
+      if (ok) {
+        directiveExpressionActive.value = accepted
+      } else {
+        console.warn('[live2d] directive expression 未命中白名单', { modelId: ctrl?.modelId ?? null, code: 'directive_miss' })
+      }
+    }
+    // ④ 指令 motion
+    if (event.motion !== undefined) {
+      ctrl?.playMotion(event.motion, clampedPriority, durationMs)
+    }
+  }
+
   return {
     models, status, modelId, error, live2dSettings, characterState, mouthLevel,
-    init, switchModel, dispose, tick,
+    init, switchModel, dispose, tick, handleDirective,
     setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }
 })

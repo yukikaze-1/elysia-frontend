@@ -339,50 +339,60 @@ export class Live2DController {
   }
 
   /** 表情：文件路径 ∈ 当前模型 expression 白名单（I-4 唯一标识 = 摊平文件路径）→ `handle.startExpression`；
-   *  白名单外/无 handle → 忽略（不抛错，spec §3.3）。完整情绪→表情映射（I-1）归 Task 4；本 task 落白名单核查分派。 */
-  setExpression(file: string): void {
+   *  白名单外/无 handle → false（不抛错，spec §3.3）。完整情绪→表情映射（I-1）归 Task 4；本 task 落白名单核查分派。
+   *  @returns 白名单命中并已执行 → true；未命中/无 handle → false（C3 指令消费读返回判定 directive_miss 脱敏）。 */
+  setExpression(file: string): boolean {
     const handle = this.handle
-    if (!handle || !this.expressionWhitelist.has(file)) return
+    if (!handle || !this.expressionWhitelist.has(file)) return false
     const modelId = this.currentId
-    if (!modelId) return
+    if (!modelId) return false
     void handle.startExpression(modelId, file)
+    return true
   }
 
   /** 动作播放（spec §3.3 / I-3 / I-4）：文件路径 ∈ 当前模型 motion 白名单 →
    *  `handle.startMotion`（优先级入队）。仲裁：
-   *   - 白名单外/无 handle → 忽略（不抛错）；
+   *   - 白名单外/无 handle → false（不抛错）；
    *   - 低优先级不打断 3 级态；speaking/thinking（2 级）激活时不发点击（priority=1）动作（I-3）；
-   *   - 模型未就绪（unloaded/loading）时只记最新状态不播放；
-   *   - 同动作短时重复合并（去抖 ~500ms）；
-   *   - 长动作最大时长上限（~15s 超时 stopMotion 回退）；
-   *   - 会话/模型快速切换经 switchModel/unload 清队列 + 清调度状态。 */
-  playMotion(file: string, priority: number): void {
+   *   - 模型未就绪（unloaded/loading）时只记最新状态不播放 → false；
+   *   - 同动作短时重复合并（去抖 ~500ms，仅缺省时长——显式 durationMs 为上层刻意重触发，不去抖）；
+   *   - 长动作最大时长上限（~15s 超时 stopMotion 回退；durationMs 生效时以 `min(durationMs, MOTION_MAX_MS)` 为超时）；
+   *   - 会话/模型快速切换经 switchModel/unload 清队列 + 清调度状态。
+   *  @param file       摊平白名单唯一标识
+   *  @param priority   动作优先级（低不打断高）
+   *  @param durationMs 显式时长覆盖（C3 指令）：以 `min(durationMs, MOTION_MAX_MS)` 为超时；缺省沿用 MOTION_MAX_MS
+   *  @returns 白名单命中且已排程 → true；未命中/被仲裁丢弃（低优先/未就绪/去抖合并）→ false */
+  playMotion(file: string, priority: number, durationMs?: number): boolean {
     const handle = this.handle
-    if (!handle || !this.motionWhitelist.has(file)) return // 白名单外忽略
+    if (!handle || !this.motionWhitelist.has(file)) return false // 白名单外
     const modelId = this.currentId
-    if (!modelId) return
+    if (!modelId) return false
     // I-3 优先级仲裁：当前 3 级态（error/waiting_permission）不被任何低优先级动作打断；
     // speaking/thinking（2 级）激活时不发点击（priority≤1）动作。
     const curP = this.stateMachine.priority
-    if (priority < curP) return
-    // 模型未就绪：return 直接丢弃本次 playMotion（业务态由 stateSource/setState 跟踪，动作不缓存）
-    if (this.currentStatus !== 'ready') return
-    // 同动作短时重复合并去抖
-    const now = Date.now()
-    const last = this.motionLastTs.get(file)
-    if (last !== undefined && now - last < MOTION_DEBOUNCE_MS) return
-    this.motionLastTs.set(file, now)
-    // 长动作最大时长上限（超时停）
+    if (priority < curP) return false
+    // 模型未就绪：return false 直接丢弃本次 playMotion（业务态由 stateSource/setState 跟踪，动作不缓存）
+    if (this.currentStatus !== 'ready') return false
+    // 同动作短时重复合并去抖（仅缺省时长；显式 durationMs 表示指令/上层刻意重触发，跳过合并）
+    if (durationMs === undefined) {
+      const now = Date.now()
+      const last = this.motionLastTs.get(file)
+      if (last !== undefined && now - last < MOTION_DEBOUNCE_MS) return false
+      this.motionLastTs.set(file, now)
+    }
+    // 长动作最大时长上限（超时停；durationMs 生效时以 min(durationMs, MOTION_MAX_MS) 为超时）
     const prev = this.motionTimeouts.get(file)
     if (prev) clearTimeout(prev)
+    const timeoutMs = durationMs !== undefined ? Math.min(durationMs, MOTION_MAX_MS) : MOTION_MAX_MS
     this.motionTimeouts.set(
       file,
       setTimeout(() => {
         this.motionTimeouts.delete(file)
         handle.stopMotion(priority) // 回退（Controller 层仲裁；底层按 stopAll 语义）
-      }, MOTION_MAX_MS)
+      }, timeoutMs)
     )
     void handle.startMotion(modelId, file, priority)
+    return true
   }
 
   /** 点击预设动作（Task 5 Panel 点击画布触发，spec §3.3 / I-3）：从当前模型 motion 白名单解析语义最接近

@@ -3,7 +3,7 @@
 // 启动代次守卫(epoch)防迟到 snapshot 覆盖已收到的新 push(D1,不改 ConnectionState 契约)。
 // G2(P1-1/P2-2):先 hydratePersistence 水合 draft/cache,再取连接 snapshot——disconnected 分支离线水合,
 // connected 分支缓存不进入 messageStore(只作内存储备,由 initializeConnected+activate 覆盖)。
-import type { ConnectionState, Conversation, SessionPersistenceState } from '@shared/contracts'
+import type { ConnectionState, Conversation, Live2DDirectiveEvent, SessionPersistenceState } from '@shared/contracts'
 import type { PublicError } from './utils/public-error'
 import type { DesktopApiLike } from './stores/desktop-api.types'
 
@@ -21,6 +21,9 @@ export interface BootstrapStores {
   // P4-B：voiceStore 独立订阅（D-P10）/断线 reset（Important-2）；settingsStore 启动水合（fail-open 不阻塞）
   voice: { init(): void; reset(): void }
   settings: { hydrate(): void }
+  // 批次 C（C3）：live2dStore handleDirective——live2d.directive 与消息流同通道（onChatEvent）到达，经
+  // applyEvent 分发路径旁路到 Live2D 消费（不产生消息副作用）。live2d 为可选（未接线/未初始化时 no-op）。
+  live2d?: { handleDirective(e: Live2DDirectiveEvent): void }
 }
 
 export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapStores): { register(): void } {
@@ -40,7 +43,17 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
     }
   }
   const register = (): void => {
-    api.onChatEvent((e) => stores.message.applyEvent(e))
+    api.onChatEvent((e) => {
+      // 批次 C（C3）：live2d.directive 与消息流同通道（preload parseBackendEvent 已收得）——在 applyEvent 分发
+      // 路径旁路到 live2dStore.handleDirective（live2d 未接线时照常落到 messageStore.applyEvent 的默认忽略）。
+      // 刻意不放进 messageStore.applyEvent 内部：消息 store 不依赖 Live2D 框架模块（避免无关单测被
+      // Live2DCubismCore 全局缺失拖挂）。
+      if (stores.live2d && e && typeof e === 'object' && (e as { event?: unknown }).event === 'live2d.directive') {
+        stores.live2d.handleDirective(e as Live2DDirectiveEvent)
+      } else {
+        stores.message.applyEvent(e)
+      }
+    })
     api.onChatState((s) => { stateEpoch++; applyChatState(s) })
     api.onChatReplay(({ conversationId, messages }) => stores.message.loadReplay(conversationId, messages))
     api.onChatError((err) => stores.connection.setError(err))

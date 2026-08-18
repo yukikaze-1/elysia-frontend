@@ -24,7 +24,7 @@
 // conversationStore 作为驱动源：批次 B 无「conversation→角色态」具体映射（无意义），本批不订阅，归阶段 6 / 后续。
 import { watch, type WatchStopHandle } from 'vue'
 import type { ConnectionState } from '@shared/contracts'
-import type { CharacterState } from './state-machine'
+import { statePriority, type CharacterState } from './state-machine'
 import type { MoodEmotion } from './controller'
 
 export interface Live2dStateSourceInputs {
@@ -33,6 +33,12 @@ export interface Live2dStateSourceInputs {
   isSpeaking: () => boolean
   /** 最后完成 assistant message 的 `.emotion`（未知码忽略） */
   emotion: () => string | undefined
+  /** 建议强度仲裁（C3）：当前机器优先级（生产 = live2dStore 注入真实 controller 优先级 getter；
+   *  缺省读自身 currentState 优先级镜像——镜像在所有机器优先级变化时同步，含 client setState/指令 push） */
+  getCurrentPriority?: () => number
+  /** 指令瞬态结束回调（C3）：directiveOverride 超时或 client 2/3 级 watch 重组合覆盖时调用
+   *  （live2dStore 经此清 directiveExpressionActive，恢复 emotion→表情自动映射） */
+  onDirectiveEnd?: () => void
 }
 
 export type Live2dStateSourcePush = (s: CharacterState) => void
@@ -44,6 +50,10 @@ export interface Live2dStateSource {
   /** 重组合（GPU 重建后恢复当前 CharacterState）：按当前业务源重新组合并 push（经 handleCompose——瞬态重启
    *  超时 timer、business 态清 timer、同态不重推） */
   recompose: () => void
+  /** 后端表现指令建议（C3）：按建议强度仲裁置入指令瞬态（directiveOverride）并 push；
+   *  建议强度 < 当前机器优先级 → 丢弃（只记最新，不覆盖 client 2/3 级现实态）。
+   *  @returns 是否实际置入指令瞬态（false = 建议强度不足被丢弃；store 据此决定是否抑制 emotion 自动映射） */
+  pushDirective: (state: CharacterState, strength: number, durationMs?: number) => boolean
 }
 
 /** 已知情绪码（I-1 本地映射命中集；未知码忽略 → 保持业务态） */
@@ -87,9 +97,13 @@ export function createLive2dStateSource(
   push: Live2dStateSourcePush
 ): Live2dStateSource {
   let currentState: CharacterState | null = null // 最近一次真实 push 的态（去重：不重复 push 同态）
+  let currentPriorityMirror = 0 // C3：当前机器优先级镜像（每次 push 同步；缺省 getCurrentPriority 读它）
   let moodTimer: ReturnType<typeof setTimeout> | undefined
   let errorTimer: ReturnType<typeof setTimeout> | undefined
   let stopped = false // 退订后 recompose no-op（防 teardown 后陈旧重组合误 push）
+  // C3（后端表现指令建议）：directiveOverride = 指令瞬态（置入后作为当前组合态，超时/2-3 级覆盖时清除）
+  let directiveOverride: { state: CharacterState; until: number } | undefined
+  let directiveTimer: ReturnType<typeof setTimeout> | undefined
 
   function clearMoodTimer(): void {
     if (moodTimer) clearTimeout(moodTimer)
@@ -98,6 +112,17 @@ export function createLive2dStateSource(
   function clearErrorTimer(): void {
     if (errorTimer) clearTimeout(errorTimer)
     errorTimer = undefined
+  }
+  function clearDirectiveTimer(): void {
+    if (directiveTimer) clearTimeout(directiveTimer)
+    directiveTimer = undefined
+  }
+
+  /** C3：统一落点——记录当前态 + 同步优先级镜像 + push（镜像在所有机器优先级变化时同步） */
+  function applyPush(s: CharacterState): void {
+    currentState = s
+    currentPriorityMirror = statePriority(s)
+    push(s)
   }
 
   /** N1 超时回退（I-1 修复）：重组合「当前真实业务态」再 push——不 push 进入瞬态前记忆的 fallbackTarget（时间
@@ -112,12 +137,11 @@ export function createLive2dStateSource(
       isSpeaking: sources.isSpeaking(),
       emotion: overrides.emotion
     })
-    currentState = s
     if (isTransient(s)) {
       if (s === 'error') startErrorTimer()
       else startMoodTimer()
     }
-    push(s)
+    applyPush(s)
   }
 
   function startMoodTimer(): void {
@@ -136,8 +160,16 @@ export function createLive2dStateSource(
   }
 
   /** 组合结果落点：transient 态启动 N1 回退 timer；业务态清 timer；同态不重推（幂等）。一律只经 push
-   *  落到 controller.setState（N2）。 */
+   *  落到 controller.setState（N2）。
+   *  C3：指令瞬态存活期间，仅 client 2/3 级现实态（priority ≥ 2）经 watch 重组合覆盖（重组合优先取 client
+   *  现实态）；低优先（情绪 1 / idle 0 / offline 0）保持指令瞬态（指令是表现建议，不因情绪/空闲被抹掉）。 */
   function handleCompose(s: CharacterState): void {
+    if (directiveOverride) {
+      if (statePriority(s) < 2) return // 低优先组合不打断指令瞬态
+      clearDirectiveTimer()
+      directiveOverride = undefined
+      sources.onDirectiveEnd?.() // client 2/3 级覆盖 → 通知 store 清 directiveExpressionActive
+    }
     if (s === currentState) return
     if (isTransient(s)) {
       if (s === 'error') {
@@ -151,8 +183,7 @@ export function createLive2dStateSource(
       clearMoodTimer()
       clearErrorTimer()
     }
-    currentState = s
-    push(s)
+    applyPush(s)
   }
 
   const stop: WatchStopHandle = watch(
@@ -167,7 +198,8 @@ export function createLive2dStateSource(
     { immediate: true, flush: 'sync' }
   )
 
-  /** 重组合（C2 D5C-04）：按当前业务源重新组合并 push（handleCompose 全权管理 timer/去重）；退订后 no-op。 */
+  /** 重组合（C2 D5C-04）：按当前业务源重新组合并 push（handleCompose 全权管理 timer/去重）；退订后 no-op。
+   *  C3：指令瞬态存活期间，低优先重组合保持指令（handleCompose 内 guard）；2/3 级覆盖时清指令态。 */
   function recompose(): void {
     if (stopped) return
     handleCompose(
@@ -180,13 +212,46 @@ export function createLive2dStateSource(
     )
   }
 
+  /** C3：后端表现指令建议置入。`strength = clamp01(≤1)`（越界钳 1）；入口守卫 `strength ≥ (getCurrentPriority
+   *  ?.() ?? currentPriorityMirror)` 才置入 directiveOverride（否则丢弃——指令永不覆盖 client 2/3 级现实态，
+   *  状态自然优先级只决定表现）。置入前 clearMoodTimer + clearErrorTimer（防旧 timer 提前 pushRecomposed 打断
+   *  指令瞬态）；到 durationMs（缺省沿用对应态 N1 超时）→ pushRecomposed 回业务态；超时/2-3 级覆盖清指令态
+   *  + onDirectiveEnd。 */
+  function pushDirective(state: CharacterState, strength: number, durationMs?: number): boolean {
+    const clamped = Math.min(1, Math.max(0, strength))
+    const cur = sources.getCurrentPriority?.() ?? currentPriorityMirror
+    if (clamped < cur) return false // 建议强度不足 → 丢弃（只记最新，不置入）
+    clearMoodTimer()
+    clearErrorTimer()
+    clearDirectiveTimer()
+    const timeoutMs =
+      durationMs !== undefined ? Math.min(30000, Math.max(0, durationMs)) : directiveDefaultTimeout(state)
+    directiveOverride = { state, until: Date.now() + timeoutMs }
+    directiveTimer = setTimeout(() => {
+      directiveTimer = undefined
+      directiveOverride = undefined
+      sources.onDirectiveEnd?.() // 指令瞬态超时 → 通知 store 清 directiveExpressionActive
+      pushRecomposed({ emotion: undefined }) // 回业务态（指令瞬态结束，情绪不作为持久源）
+    }, timeoutMs)
+    applyPush(state)
+    return true
+  }
+
   return {
     unsub: () => {
       stopped = true
       stop()
       clearMoodTimer()
       clearErrorTimer()
+      clearDirectiveTimer()
     },
-    recompose
+    recompose,
+    pushDirective
   }
+}
+
+/** C3：指令态缺省超时 = 对应态 N1 超时（happy/sad/surprised → MOOD_TIMEOUT_MS；error → ERROR_TIMEOUT_MS；
+ *  error 已从 DirectiveState 剔除，此处仅为防御；idle/listening/thinking/speaking 非 N1 瞬态，沿用 MOOD 兜底） */
+function directiveDefaultTimeout(state: CharacterState): number {
+  return state === 'error' ? ERROR_TIMEOUT_MS : MOOD_TIMEOUT_MS
 }

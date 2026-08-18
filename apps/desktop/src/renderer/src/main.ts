@@ -32,7 +32,8 @@ if (window.desktopApi) {
     draft: useDraftStore(),
     cache: useCacheStore(),
     voice: useVoiceStore(),
-    settings: useSettingsStore()
+    settings: useSettingsStore(),
+    live2d: useLive2dStore() // 批次 C（C3）：live2d.directive 分发（handleDirective 消费）
   }).register()
 }
 

@@ -54,8 +54,10 @@ import type {
   AudioSessionStartedEvent,
   AudioSessionReadyEvent,
   AudioSessionCancelledEvent,
-  VoiceErrorEvent
+  VoiceErrorEvent,
+  Live2DDirectiveEvent
 } from '@shared/contracts'
+import type { DirectiveState, RawLive2DDirective } from './protocol-v2/raw-types'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseBackendEvent } from '@shared/schemas'
 import { isoToLocalDate } from '@shared/domain'
@@ -147,6 +149,51 @@ export function parseMockMouthLevelEnv(value: string | undefined): 'step' | 'sin
   return undefined
 }
 
+/** CYRENE_MOCK_DIRECTIVE env → directive（批次 C C3 集成注入）：
+ *  undefined/空串 → undefined（不注入）；JSON.parse 失败 → undefined（缺省不发射）；字段校验
+ *  （state 七值 / priority 0-3 / durationMs [0,30000] / expression、motion 非空 string，不符 → undefined）；
+ *  空载荷（无 state/expression/motion）→ undefined。合法 → 复用 Task 1 `RawLive2DDirective` 载荷形状
+ *  （scheduleReplay 落 generation.completed 后发射 live2d.directive 帧，对齐 emotion 注入点）。 */
+export function parseMockDirectiveEnv(value: string | undefined): Omit<RawLive2DDirective, 'type'> | undefined {
+  if (value === undefined || value.trim() === '') return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return undefined
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined
+  const obj = parsed as Record<string, unknown>
+  const out: Omit<RawLive2DDirective, 'type'> = {}
+  if (obj.state !== undefined) {
+    if (typeof obj.state !== 'string' || !MOCK_DIRECTIVE_STATES.has(obj.state)) return undefined
+    out.state = obj.state as DirectiveState
+  }
+  if (obj.priority !== undefined) {
+    if (typeof obj.priority !== 'number' || !Number.isInteger(obj.priority) || obj.priority < 0 || obj.priority > 3) return undefined
+    out.priority = obj.priority as 0 | 1 | 2 | 3
+  }
+  if (obj.durationMs !== undefined) {
+    if (typeof obj.durationMs !== 'number' || !Number.isFinite(obj.durationMs) || obj.durationMs < 0 || obj.durationMs > 30000) return undefined
+    out.durationMs = obj.durationMs
+  }
+  if (obj.expression !== undefined) {
+    if (typeof obj.expression !== 'string' || obj.expression.length === 0) return undefined
+    out.expression = obj.expression
+  }
+  if (obj.motion !== undefined) {
+    if (typeof obj.motion !== 'string' || obj.motion.length === 0) return undefined
+    out.motion = obj.motion
+  }
+  if (out.state === undefined && out.expression === undefined && out.motion === undefined) return undefined
+  return out
+}
+
+/** C3：DirectiveState 七值（与 wire 契约一致；剔除 error——error=3 必须 client 驱动，D5C-07） */
+const MOCK_DIRECTIVE_STATES: ReadonlySet<string> = new Set([
+  'idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised'
+])
+
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number
@@ -180,6 +227,9 @@ export interface MockBackendOptions {
   /** 批次 C（C1）：TTS 音频 sink（Main media 缓存写入口，与 RealBackend getTtsMedia 同款桥）。仅
    *  mockMouthLevel 设时使用；缺省 undefined → mock-silent 保持 404。 */
   ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
+  /** 批次 C（C3）：后端 Live2D 表现指令建议（CYRENE_MOCK_DIRECTIVE env 解析）。非 undefined 时，scheduleReplay
+   *  落 generation.completed 后追加发射一帧 `live2d.directive`（对齐 emotion 注入点）。缺省 undefined 不注入。 */
+  directive?: Omit<RawLive2DDirective, 'type'>
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -208,6 +258,7 @@ export class MockBackend implements BackendAdapter {
   private readonly generationEmotion?: string // Task 6：generation.completed 情绪注入（CYRENE_MOCK_GENERATION_EMOTION）
   private readonly mockMouthLevel?: 'step' | 'sine' // 批次 C（C1）：合成包络源选择 → TTS 模拟改「有效 WAV + 延迟取消」
   private readonly ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
+  private readonly directive?: Omit<RawLive2DDirective, 'type'> // 批次 C（C3）：generation.completed 后发射 live2d.directive
   private ttsCancelTimer: ReturnType<typeof setTimeout> | undefined // C1：TTS 采样窗口结束时发 audio.session.cancelled
   private readonly onConnectionStateChange?: (state: ConnectionState) => void
   private readonly idFactory: () => string
@@ -302,6 +353,7 @@ export class MockBackend implements BackendAdapter {
     this.generationEmotion = options.generationEmotion
     this.mockMouthLevel = options.mockMouthLevel
     this.ttsAudioSink = options.ttsAudioSink
+    this.directive = options.directive
     this.onConnectionStateChange = options.onConnectionStateChange
     this.now = options.now ?? (() => new Date())
     this.idFactory = options.idFactory ?? (() => `mock-${Date.now()}-${++this.idCounter}`)
@@ -697,6 +749,11 @@ export class MockBackend implements BackendAdapter {
         fresh.eventId = this.idFactory()
         fresh.sequence = this.nextSequence++
         this.emit(fresh as unknown as BackendEvent)
+        // 批次 C（C3）：后端 Live2D 表现指令建议——generation.completed 之后追加一帧 live2d.directive
+        // （对齐 emotion 注入点：同一 completed 帧后发射，指令>emotion 消费时序可观测）
+        if (event.event === 'generation.completed' && this.directive) {
+          this.emit({ ...this.stamp(), event: 'live2d.directive', ...this.directive } satisfies Live2DDirectiveEvent)
+        }
         // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件。
         // C1（批次 C，mockMouthLevel 注入时）：写合法静音 WAV 进 media 缓存（mock-silent 不再 404 → <audio> 可解码
         // 不触发 onerror 快速回落），并延迟 audio.session.cancelled 触发停止——给 renderer 口部采样一个确定性窗口

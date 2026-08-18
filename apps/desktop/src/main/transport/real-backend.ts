@@ -257,6 +257,14 @@ export class RealBackend implements BackendAdapter {
       case 'audio': this.handleAudioChunk(frame); return
       case 'audio_end': this.handleAudioEnd(frame); return
       case 'audio_cancelled': this.handleAudioCancelled(frame); return
+      case 'live2d.directive': {
+        // 批次 C（C3）：后端 Live2D 表现指令建议——经 FrameMapper（Task 1）映射为扁平 Live2DDirectiveEvent
+        // 后 emit（store handleDirective 消费）；形状不符已被 raw-schema（Task 1）拒在 parseRawFrame，
+        // 不再需要运行时 canary（漂移 canary 放单测级）。
+        const ev = this.mapper?.mapFrame(frame)
+        if (ev) this.emit(ev)
+        return
+      }
       default: {
         try {
           const ev = this.mapper?.mapFrame(frame)

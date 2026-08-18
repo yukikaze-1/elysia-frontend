@@ -743,3 +743,70 @@ describe('阶段5批次C Live2D Electron 集成（C2：性能降级 + GPU 重建
     } finally { await closeApp(launched) }
   })
 })
+
+// —— 阶段 5 批次 C（C3）：后端 live2d.directive 指令消费（CYRENE_MOCK_DIRECTIVE）——
+
+describe('阶段5批次C Live2D Electron 集成（C3：live2d.directive 指令消费）', () => {
+  it('C3.1.指令 happy+F01：generation.completed 后徽标「开心」+ 表情被消费（画布非空）+ 无 console error', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, {
+      CYRENE_MOCK_EMIT_DELAY_MS: '400',
+      CYRENE_MOCK_DIRECTIVE: '{"state":"happy","expression":"expressions/F01.exp3.json","priority":1}'
+    })
+    const errors: string[] = []
+    launched.page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption('haru')
+      await expect.poll(() => statusText(page), POLL).toContain('Haru')
+      await connectAndActivateFirst(page)
+      await sendChat(page, 'directive happy')
+      // 流式 speaking → completion 后指令(state=happy) → 情绪态「开心」（指令瞬态 ~2s）
+      await expect.poll(() => badgeText(page), POLL).toContain('说话中')
+      await expect.poll(() => badgeText(page), POLL).toContain('开心')
+      // 指令 expression F01 命中白名单 → 表情被消费（startExpression → 渲染不中断）
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+      expect(errors).toEqual([])
+    } finally { await closeApp(launched) }
+  })
+
+  it('C3.2.指令非白名单 expression：不崩 + 脱敏 warn（directive_miss，不记 payload 原文）', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, {
+      CYRENE_MOCK_EMIT_DELAY_MS: '400',
+      CYRENE_MOCK_DIRECTIVE: '{"state":"happy","expression":"expressions/evil.exp3.json","priority":1}'
+    })
+    const warns: string[] = []
+    launched.page.on('console', (m) => { if (m.type() === 'warning') warns.push(m.text()) })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await connectAndActivateFirst(page)
+      await sendChat(page, 'directive miss')
+      // generation.completed 后指令消费 → expression 未命中白名单 → 脱敏 warn（code=directive_miss）
+      await expect.poll(() => warns.some((w) => w.includes('directive_miss')), POLL).toBe(true)
+      // 脱敏：warn 不记 payload 原文（evil 路径不得出现）
+      expect(warns.some((w) => w.includes('expressions/evil.exp3.json'))).toBe(false)
+      // 聊天仍可用（不崩）
+      await expect.poll(() => page.locator('textarea[aria-label="消息输入框"]').count(), POLL).toBe(1)
+    } finally { await closeApp(launched) }
+  })
+
+  it('C3.3.指令 state:working（越界）→ env 解析缺省不发射（无指令、不崩、聊天可用）', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, {
+      CYRENE_MOCK_EMIT_DELAY_MS: '400',
+      CYRENE_MOCK_DIRECTIVE: '{"state":"working","expression":"expressions/F01.exp3.json","priority":1}'
+    })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await connectAndActivateFirst(page)
+      await sendChat(page, 'directive working')
+      // 等 generation.completed 完成（指令应不发射——working 非七值，parseMockDirectiveEnv 拒）
+      await expect.poll(() => badgeText(page), POLL).toContain('空闲')
+      await expect.poll(() => page.locator('textarea[aria-label="消息输入框"]').count(), POLL).toBe(1)
+    } finally { await closeApp(launched) }
+  })
+})

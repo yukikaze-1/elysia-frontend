@@ -498,6 +498,21 @@ describe('Live2DController Task 4：动作调度仲裁（B3）+ 情绪→表情�
     h.ctrl.setState('happy')
     expect(handle.startExpression).not.toHaveBeenCalled()
   })
+
+  it('setExpression/playMotion 返回白名单命中 boolean；playMotion durationMs 以 15s 封顶', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: [], motions: ['motions/idle.motion3.json'], expressions: ['expressions/F01.exp3.json'] })
+    await h.ctrl.init(fakeCanvas) // whitelist 仅在 switchModel 后 cacheModelFacts 填充
+    expect(h.ctrl.playMotion('motions/not-in-whitelist.motion3.json', 1)).toBe(false)
+    const spy = vi.spyOn(globalThis, 'setTimeout')
+    expect(h.ctrl.playMotion('motions/idle.motion3.json', 1, 30000)).toBe(true)
+    expect(spy.mock.calls.some((c) => c[1] === 15000)).toBe(true) // min(30000, 15000) 封顶
+    spy.mockClear()
+    expect(h.ctrl.playMotion('motions/idle.motion3.json', 1, 5000)).toBe(true)
+    expect(spy.mock.calls.some((c) => c[1] === 5000)).toBe(true) // durationMs 透传（<15s 不改写）
+    expect(h.ctrl.setExpression('expressions/not-in-whitelist.exp3.json')).toBe(false)
+    expect(h.ctrl.setExpression('expressions/F01.exp3.json')).toBe(true)
+  })
 })
 
 describe('Live2DController 批次 C（C1）：通用口部写出（D5C-02，替换旧 M5 门块）', () => {

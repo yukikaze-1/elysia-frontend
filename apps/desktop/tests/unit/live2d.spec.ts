@@ -17,10 +17,11 @@ import { Live2DGpuLostError, type Live2DAdapter } from '../../src/renderer/src/l
 import { setLive2dControllerFactory, setMouthSourceFactory, useLive2dStore } from '../../src/renderer/src/stores/live2d.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
+import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { useLayoutStore } from '../../src/renderer/src/stores/layout.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { Live2DModelSummary, RuntimeInfo } from '@shared/contracts'
+import type { Live2DDirectiveEvent, Live2DModelSummary, RuntimeInfo } from '@shared/contracts'
 
 // —— Core 全局桩（node 无 live2dcubismcore.min.js）——
 // 经 live2d.store → adapter → @framework/model/cubismmoc → cubismmodel.ts 的模块作用域枚举初始化
@@ -425,6 +426,9 @@ function installEffectiveController(effectiveFor: Record<string, string>) {
     setLookTarget: vi.fn(),
     setMouthLevel: vi.fn(), // C1：口部采样接线（tick 采样 → setMouthLevel）
     playTapMotion: vi.fn(),
+    // C3：指令消费——setExpression/playMotion 返回白名单命中 boolean（fake 缺省命中 true；未命中由用例覆写）
+    setExpression: vi.fn(() => true),
+    playMotion: vi.fn(() => true),
     // C2：可见性接线（D5C-05）与 GPU 重建 reset（D5C-04）
     setVisibility: vi.fn(),
     reset: vi.fn(async () => { state.id = 'haru' })
@@ -757,5 +761,142 @@ describe('live2dStore 批次 C（C2）：GPU 重建一次（D5C-04，reset(当�
     await nextTick()
     expect(setStateSpy).toHaveBeenCalledWith('offline')
     // recompose 本身（重组合/去重/瞬态 timer）由 live2d-state-source.spec 的 C2 用例覆盖
+  })
+})
+
+// —— 阶段 5 批次 C（C3）：live2dStore.handleDirective（校验/脱敏/指令>emotion/建议强度 clamp）——
+
+/** 带白名单的 fake handle（真实 controller 自动映射可命中不同表达式） */
+function installWhitelistedHandle(adapter: { createModel: ReturnType<typeof vi.fn>; handles: Array<{ startExpression: ReturnType<typeof vi.fn> }> }): { handle: { startExpression: ReturnType<typeof vi.fn> } } {
+  adapter.createModel.mockImplementation(async () => {
+    const h = {
+      update: vi.fn(), draw: vi.fn(), destroy: vi.fn(),
+      getParameterIdList: vi.fn(() => []),
+      getMotionFileWhitelist: vi.fn(() => []),
+      getExpressionFileWhitelist: vi.fn(() => ['expressions/F01.exp3.json', 'expressions/f01_happy.exp3.json']),
+      setParam: vi.fn(), setViewTransform: vi.fn(),
+      startMotion: vi.fn(async () => {}),
+      startExpression: vi.fn(async () => {}),
+      stopMotion: vi.fn(), stopAll: vi.fn()
+    }
+    adapter.handles.push(h)
+    return h
+  })
+  return { handle: adapter.handles[0] }
+}
+
+/** 注入一条已完成带 emotion 的 assistant 消息（live2dStore.lastCompletedEmotion 数据源） */
+function injectCompletedMessage(emotion: string | undefined): void {
+  const msg = useMessageStore()
+  msg.byId['m-1'] = {
+    messageId: 'm-1', conversationId: 'conv-1', role: 'assistant', status: 'completed',
+    emotion, createdAt: '2026-08-18T00:00:00.000Z', assistantSegments: []
+  }
+  msg.order.push('m-1')
+}
+
+describe('live2dStore 批次 C（C3）：handleDirective 指令消费（live2d.directive）', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('happy 指令 → pushDirective（stateSource）被调 → controller.setState(happy)', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    ctrl.setState.mockClear()
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'happy', priority: 1, durationMs: 5000 })
+    expect(ctrl.setState).toHaveBeenCalledWith('happy') // pushDirective → stateSource → controller.setState
+  })
+
+  it('expression 白名单未命中 → 脱敏 warn（含 modelId、不含 payload 原文）', async () => {
+    const ctrl = installEffectiveController({})
+    ctrl.setExpression.mockReturnValue(false) // 白名单未命中 → false → directive_miss
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'happy', expression: 'expressions/evil.exp3.json', priority: 1 })
+    // 脱敏载荷：warn 第二参为 { modelId, code } 对象——断言含 code/modelId、不含 payload 原文
+    const warnObjects = warnSpy.mock.calls.map((c) => c[1] as { modelId?: string; code?: string } | undefined)
+    expect(warnObjects.some((o) => o?.code === 'directive_miss')).toBe(true)
+    expect(warnObjects.some((o) => o?.modelId === 'haru')).toBe(true)
+    expect(warnSpy.mock.calls.some((c) => JSON.stringify(c).includes('expressions/evil.exp3.json'))).toBe(false)
+    warnSpy.mockRestore()
+  })
+
+  it("state='error'（非七值）→ 丢弃整条 + 脱敏 warn（不 push 不 setExpression）", async () => {
+    const ctrl = installEffectiveController({})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    ctrl.setState.mockClear()
+    // 'error' 非七值（wire schema 在 preload 已拒；此处直接调用 handleDirective 测 store 运行时防御）
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'error', priority: 1 } as unknown as Live2DDirectiveEvent)
+    expect(ctrl.setState).not.toHaveBeenCalled()
+    expect(warnSpy.mock.calls.map((c) => c[1] as { code?: string } | undefined).some((o) => o?.code === 'directive_invalid')).toBe(true)
+    warnSpy.mockRestore()
+  })
+
+  it('priority=2 → clamp 1（指令永不覆盖 client 2/3 级现实态 speaking）', async () => {
+    const { ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    ctrl.setState('speaking') // 机器当前 speaking（2 级）
+    const setStateSpy = vi.spyOn(ctrl, 'setState')
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'happy', priority: 2, durationMs: 5000 })
+    // priority 2 被 clamp 到 1 → 1 < speaking(2) → pushDirective 丢弃（不覆盖 client 现实态）
+    expect(setStateSpy).not.toHaveBeenCalled()
+  })
+
+  it('指令 motion → controller.playMotion(file, clampedPriority, durationMs)', async () => {
+    const ctrl = installEffectiveController({})
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'happy', motion: 'motions/wave.motion3.json', priority: 1, durationMs: 3000 })
+    expect(ctrl.playMotion).toHaveBeenCalledWith('motions/wave.motion3.json', 1, 3000)
+  })
+
+  it('指令>emotion：generation.completed emotion + 同帧 directive expression → 最终生效表达式 = 指令的', async () => {
+    const { adapter } = installFakes({ models: [MODEL_HARU] })
+    installWhitelistedHandle(adapter) // 白名单含「指令目标 F01」与「情绪 happy 自动映射目标 f01_happy」（不同文件）
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    // 连接 + 已完成带 emotion=happy 的消息 → 情绪态 happy（自动映射 f01_happy，startExpression 被调）
+    useConnectionStore().setState({ status: 'connected' })
+    injectCompletedMessage('happy')
+    await nextTick()
+    const handle = adapter.handles[0]
+    handle.startExpression.mockClear()
+    // 同帧指令：expression=F01（≠ 情绪自动映射 f01_happy）
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'happy', expression: 'expressions/F01.exp3.json', priority: 1, durationMs: 5000 })
+    // 最终生效表达式 = 指令的（最后一次 startExpression 是 F01；情绪自动映射 f01_happy 不覆盖）
+    expect(handle.startExpression).toHaveBeenLastCalledWith('haru', 'expressions/F01.exp3.json')
+  })
+
+  it('directiveExpressionActive 指令瞬态存活期抑制 emotion 自动映射；超时后恢复（真实组合路径）', async () => {
+    vi.useFakeTimers()
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    installWhitelistedHandle(adapter)
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    useConnectionStore().setState({ status: 'connected' })
+    injectCompletedMessage('happy') // → 情绪态 happy（自动映射 f01_happy）
+    await nextTick()
+    const handle = adapter.handles[0]
+    handle.startExpression.mockClear()
+    // 指令带 expression（F01，命中）→ directiveExpressionActive=true（最终生效 F01）
+    store.handleDirective({ event: 'live2d.directive', eventId: 'd1', sequence: 1, state: 'happy', expression: 'expressions/F01.exp3.json', priority: 1, durationMs: 2000 })
+    expect(handle.startExpression).toHaveBeenLastCalledWith('haru', 'expressions/F01.exp3.json')
+    // 指令瞬态存活期间：emotion 源再变化（surprised）→ 组合被指令瞬态保护（低优先不覆盖）→ controller.setState 无新调
+    const setStateSpy = vi.spyOn(ctrl, 'setState')
+    const msg = useMessageStore()
+    msg.byId['m-1'].emotion = 'surprised'
+    await nextTick()
+    expect(setStateSpy).not.toHaveBeenCalled()
+    // 指令超时 → onDirectiveEnd 清 directiveExpressionActive → emotion 路径恢复（再变化 → 组合 mood → push）
+    vi.advanceTimersByTime(2100)
+    setStateSpy.mockClear()
+    msg.byId['m-1'].emotion = 'happy'
+    await nextTick()
+    expect(setStateSpy).toHaveBeenCalledWith('happy') // 恢复后 emotion→情绪态→表情自动映射
   })
 })

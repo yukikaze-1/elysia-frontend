@@ -227,3 +227,96 @@ describe('createLive2dStateSource（注入 getter + Vue reactive，flush sync）
     vi.useRealTimers()
   })
 })
+
+describe('createLive2dStateSource 批次 C（C3）：pushDirective 指令建议（建议强度仲裁 + 瞬态 + 覆盖）', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('pushDirective 建议强度仲裁：speaking(2) 时 happy(1) 不覆盖；idle(0) 时 happy(1) push', () => {
+    const pushes: string[] = []
+    const priority = ref(0) // 模拟机器当前优先级（getCurrentPriority 注入）
+    const s = makeSources({})
+    const src = createLive2dStateSource({ ...s.input, getCurrentPriority: () => priority.value }, (p) => pushes.push(p))
+    priority.value = 2
+    src.pushDirective('happy', 1, 500)
+    expect(pushes).not.toContain('happy')
+    priority.value = 0
+    src.pushDirective('happy', 1, 500)
+    expect(pushes).toContain('happy')
+  })
+
+  it('client 2/3 级现实态经 watch 重组合覆盖指令瞬态（真实组合路径）', () => {
+    const speaking = ref(false)
+    const pushes: string[] = []
+    const s = makeSources({})
+    const src = createLive2dStateSource(
+      { ...s.input, isSpeaking: () => speaking.value, getCurrentPriority: () => (speaking.value ? 2 : 0) },
+      (p) => pushes.push(p)
+    )
+    src.pushDirective('happy', 1, 2000)
+    expect(pushes).toContain('happy')
+    speaking.value = true // client 进入 speaking → watch 重组合覆盖指令瞬态
+    expect(pushes.at(-1)).toBe('speaking')
+  })
+
+  it('pushDirective 超时回业务态 + 清既有 emotion timer（fake timers）', () => {
+    vi.useFakeTimers()
+    const pushes: string[] = []
+    const s = makeSources({})
+    const src = createLive2dStateSource({ ...s.input, getCurrentPriority: () => 0 }, (p) => pushes.push(p))
+    src.pushDirective('happy', 1, 2000)
+    expect(pushes).toContain('happy')
+    vi.advanceTimersByTime(2100)
+    expect(pushes.at(-1)).toBe('idle') // 超时回组合业务态
+    vi.useRealTimers()
+  })
+
+  it('pushDirective 置入前清既有 mood timer：emotion 先入 happy（mood timer 挂起）→ 指令后旧 timer 不提前打断', () => {
+    vi.useFakeTimers()
+    const pushes: string[] = []
+    const s = makeSources({ emo: 'happy' }) // emotion happy → 初始组合 happy + mood timer(2000) 挂起
+    const src = createLive2dStateSource({ ...s.input, getCurrentPriority: () => 0 }, (p) => pushes.push(p))
+    expect(pushes.at(-1)).toBe('happy')
+    src.pushDirective('sad', 1, 5000) // 指令 sad 5s——置入前清 mood timer
+    expect(pushes.at(-1)).toBe('sad')
+    vi.advanceTimersByTime(2100) // 若旧 mood timer 未清，此处已 pushRecomposed 打断；实际保持 sad
+    expect(pushes.at(-1)).toBe('sad')
+    vi.advanceTimersByTime(2900) // 累计 5000 → 指令超时回业务态
+    expect(pushes.at(-1)).toBe('idle')
+    vi.useRealTimers()
+  })
+
+  it('指令瞬态存活期间低优先组合不覆盖：emotion 变 sad（1 级）不覆盖指令 happy；pushDirective 返回置入 boolean', () => {
+    vi.useFakeTimers()
+    const pushes: string[] = []
+    const s = makeSources({})
+    const src = createLive2dStateSource({ ...s.input, getCurrentPriority: () => 0 }, (p) => pushes.push(p))
+    expect(src.pushDirective('happy', 1, 5000)).toBe(true) // 置入 → true
+    expect(pushes.at(-1)).toBe('happy')
+    s.emo.value = 'sad' // 低优先(1) mood 源变化 → 组合 sad → 指令瞬态存活 → 不覆盖
+    expect(pushes.at(-1)).toBe('happy')
+    expect(src.pushDirective('happy', 0.5, 5000)).toBe(true) // strength 0.5 ≥ cur 0 → 仍置入
+    vi.useRealTimers()
+  })
+
+  it('建议强度不足 pushDirective 返回 false（丢弃）；onDirectiveEnd 在指令超时/2-3 级覆盖时回调', () => {
+    vi.useFakeTimers()
+    const pushes: string[] = []
+    let ended = 0
+    const priority = ref(0)
+    const s = makeSources({})
+    const src = createLive2dStateSource(
+      { ...s.input, getCurrentPriority: () => priority.value, onDirectiveEnd: () => { ended++ } },
+      (p) => pushes.push(p)
+    )
+    priority.value = 2 // client speaking
+    expect(src.pushDirective('happy', 1, 500)).toBe(false) // 强度不足 → false
+    expect(pushes).not.toContain('happy')
+    priority.value = 0
+    expect(src.pushDirective('happy', 1, 2000)).toBe(true) // 置入
+    expect(ended).toBe(0)
+    vi.advanceTimersByTime(2100) // 超时 → onDirectiveEnd 回调 + 回业务态
+    expect(ended).toBe(1)
+    expect(pushes.at(-1)).toBe('idle')
+    vi.useRealTimers()
+  })
+})

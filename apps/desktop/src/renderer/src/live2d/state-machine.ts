@@ -45,6 +45,11 @@ export type CharacterState =
  *  3=error/waiting_permission */
 export type StatePriority = 0 | 1 | 2 | 3
 
+/** 状态→优先级查询（C3：state-source 建议强度仲裁 / live2dStore getCurrentPriority 注入复用） */
+export function statePriority(s: CharacterState): StatePriority {
+  return PRIORITY[s]
+}
+
 export type StateEvent =
   // 连接
   | 'disconnect'
