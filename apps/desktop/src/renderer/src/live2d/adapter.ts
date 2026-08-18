@@ -446,6 +446,11 @@ export class Live2DAdapter {
   private unregisterContextLost: (() => void) | null = null
   private gpuLost = false
   private lastTick = 0
+  // C2-2 真机修复：WEBGL_lose_context 必须在 context 丢失前保存——丢失后 getExtension 返回 null，
+  // 无法再取得 restore 入口。重建（controller.reset → initialize → createModel）时据此 restoreContext。
+  // adapter 实例跨 reset 复用，destroy 不清这两个字段；仅在新 context 能取到扩展时覆盖（否则保留旧引用）。
+  private loseContextExt: WEBGL_lose_context | null = null
+  private loseContextExtCanvas: HTMLCanvasElement | null = null
 
   constructor(deps: Live2DAdapterDeps) {
     this.engine = deps.engine
@@ -469,6 +474,17 @@ export class Live2DAdapter {
     this.canvas = canvas
     this.gpuLost = false
     this.lastTick = 0
+    // 单测 fake gl 是裸对象，无 getExtension；真实 WebGL context 恒有该方法。
+    // 丢失中取扩展返回 null → 保留 destroy 前的旧引用（reset 重建依赖它 restore）。
+    try {
+      const ext = gl.getExtension('WEBGL_lose_context')
+      if (ext) {
+        this.loseContextExt = ext
+        this.loseContextExtCanvas = canvas
+      }
+    } catch {
+      // fake gl 无 getExtension：保持旧值，不做任何覆盖
+    }
     try {
       // 半初始化兜底（批次 A Task5 P3，批次 C D5C-04 随重建核查）：startUp/initialize/监听注册抛错 →
       // 释放已建 context/监听（destroy 清 gl/监听），不留部分状态；调用方（controller init/reset）据此可
@@ -502,6 +518,12 @@ export class Live2DAdapter {
     const gl = this.gl
     const canvas = this.canvas
     if (!gl || !canvas) throw new Error('Live2DAdapter must be initialized before createModel')
+    if (this.gpuLost) throw new Live2DGpuLostError()
+    // C2-2 真机修复：context 处于 lost 态时，先用保存的扩展 restoreContext，等待 isContextLost=false
+    // 再继续创建 GL 资源。恢复失败/超时仍抛 Live2DGpuLostError（上层落 fallback，行为不变）。
+    if (this.engine.isContextLost(gl) && !(await this.restoreLostContext(gl))) {
+      throw new Live2DGpuLostError()
+    }
     if (this.gpuLost || this.engine.isContextLost(gl)) throw new Live2DGpuLostError()
 
     const baseDir = dirOf(model3Path)
@@ -639,6 +661,24 @@ export class Live2DAdapter {
     this.canvas = null
     this.gpuLost = false
     this.lastTick = 0
+    // 注意：loseContextExt / loseContextExtCanvas 故意保留——controller.reset 会在 destroy 后
+    // initialize 同一 canvas，重建需要旧扩展 restoreContext（C2-2 真机修复第二版）。
+  }
+
+  /**
+   * C2-2：恢复已丢失的 WebGL context。只有保存过 WEBGL_lose_context 扩展才可恢复（真实 webglEngine
+   * 在 initialize 保存；fake engine 无该扩展 → 立即失败，保持既有测试的 GPU-lost 抛错语义）。
+   * restoreContext 后 Chromium 异步恢复，轮询至多 ~1.5s。
+   */
+  private async restoreLostContext(gl: WebGLRenderingContext): Promise<boolean> {
+    if (!this.loseContextExt || this.loseContextExtCanvas !== this.canvas) return false
+    this.loseContextExt.restoreContext()
+    const deadline = performance.now() + 1500
+    while (this.engine.isContextLost(gl)) {
+      if (performance.now() >= deadline) return false
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    }
+    return true
   }
 
   /** 可注入 fetch 的字节读取（model3/moc3/physics 二进制资源） */

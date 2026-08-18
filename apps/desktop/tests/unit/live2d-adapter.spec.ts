@@ -412,6 +412,31 @@ describe('Live2DAdapter.createModel（cyrene:// 逐文件供给 + 装配）', ()
       'must be initialized'
     )
   })
+
+  it('C2-2：context lost 后经保存的 WEBGL_lose_context.restoreContext 恢复，再继续创建模型', async () => {
+    const recorded: string[] = []
+    const engine = new FakeLive2DEngine({ maxTextureSize: 2048 })
+    const restoreContext = vi.fn(() => { engine.setContextLost(false) })
+    let extAvailable = true
+    const gl = makeFakeGl()
+    Object.assign(gl, {
+      getExtension: vi.fn((_name: string) => (extAvailable ? { restoreContext } : null))
+    })
+    const canvas = makeFakeCanvas()
+    engine.setContextResult(gl)
+    const adapter = new Live2DAdapter({ engine, fetchImpl: makeFakeFetch(recorded, MODEL3_HARU) })
+    adapter.initialize(canvas)
+    // 真机时序：context 丢失后 getExtension('WEBGL_lose_context') 返回 null；
+    // adapter.reset 的 destroy → initialize 不覆盖旧扩展引用，重建 createModel 时用旧引用 restore。
+    adapter.destroy()
+    extAvailable = false
+    engine.setContextLost(true)
+    adapter.initialize(canvas)
+    const handle = await adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })
+    expect(restoreContext).toHaveBeenCalledTimes(1)
+    expect(recorded[0]).toBe('cyrene://renderer/__cyrene-live2d/haru/model3.json')
+    expect(handle).toBeTruthy()
+  })
 })
 
 describe('Live2DAdapter.update（渲染 tick + GPU-lost 事件）', () => {

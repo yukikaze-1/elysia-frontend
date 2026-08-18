@@ -25,9 +25,16 @@ export const webglEngine: Live2DGLEngine = {
     return gl.getParameter(gl.MAX_TEXTURE_SIZE) as number
   },
   onContextLost(canvas, cb) {
-    canvas.addEventListener('webglcontextlost', cb, false)
+    // C2-2 真机修复：WebGL 规范要求监听器对 webglcontextlost 调用 preventDefault()，context 才标记为
+    // 可恢复；否则 restoreContext() 恒无效（真实 Windows Electron + AMD 实测）。先 preventDefault 再置位
+    // adapter.gpuLost，重建 createModel 保存的 WEBGL_lose_context.restoreContext() 才能恢复。
+    const handler = (event: Event): void => {
+      event.preventDefault()
+      cb()
+    }
+    canvas.addEventListener('webglcontextlost', handler, false)
     return () => {
-      canvas.removeEventListener('webglcontextlost', cb, false)
+      canvas.removeEventListener('webglcontextlost', handler, false)
     }
   }
 }
