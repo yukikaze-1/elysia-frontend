@@ -200,14 +200,14 @@ describe('state/typing 兼容帧（FE-INT-P1-01）', () => {
 })
 
 describe('raw schemas fingerprint(2C)', () => {
-  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),15 → 28(阶段4 批次B 增 13 语音/TTS 帧)', () => {
-    expect(RAW_FRAME_TYPES).toHaveLength(28)
+  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),15 → 28(阶段4 批次B 增 13 语音/TTS 帧) → 29(阶段5 批次C 增 live2d.directive)', () => {
+    expect(RAW_FRAME_TYPES).toHaveLength(29)
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
       'audio', 'audio_cancelled', 'audio_end', 'audio_start',
       'dictation.cancelled', 'dictation.final', 'dictation.partial',
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',
-      'generation.started', 'server_info', 'session', 'set_tts_voice_result', 'state',
+      'generation.started', 'live2d.directive', 'server_info', 'session', 'set_tts_voice_result', 'state',
       'switch_model_result', 'typing', 'user_message.ack',
       'voice.transcript', 'voice_session.ack', 'voice_session.ended',
       'voice_session.partial', 'voice_session.started', 'voice_session.turn'
@@ -331,5 +331,38 @@ describe('阶段4 批次B client 帧 raw schema（不进 RawFrameSchema）', () 
     expect(parseRawClientFrame({ type: 'voice.record.stop' }).success).toBe(false)
     expect(parseRawClientFrame({ type: 'dictation.start' }).success).toBe(false)
     expect(parseRawClientFrame({ type: 'audio.cancel' }).success).toBe(false)
+  })
+})
+
+describe('阶段5 批次C：live2d.directive raw schema（C3 契约冻结）', () => {
+  it('合法扁平帧经 parseRawFrame 通过；非法 state / .strict() 未知字段整帧拒', () => {
+    const ok = parseRawFrame({ type: 'live2d.directive', state: 'happy', expression: 'expressions/F01.exp3.json', priority: 1 })
+    expect(ok.success).toBe(true)
+    if (ok.success) {
+      expect(ok.data.type).toBe('live2d.directive')
+      if (ok.data.type === 'live2d.directive') expect(ok.data.state).toBe('happy')
+    }
+    expect(parseRawFrame({ type: 'live2d.directive', state: 'working' as never }).success).toBe(false)
+    expect(parseRawFrame({ type: 'live2d.directive', state: 'happy', unknown_field: 1 }).success).toBe(false)
+    expect(parseRawFrame({ type: 'live2d.directive', priority: 5 }).success).toBe(false) // priority 越界 0-3
+  })
+  it('state 七值全合法；error 被剔除（D5C-07，error=3 必须 client 驱动）', () => {
+    for (const state of ['idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised']) {
+      expect(parseRawFrame({ type: 'live2d.directive', state }).success).toBe(true)
+    }
+    expect(parseRawFrame({ type: 'live2d.directive', state: 'error' as never }).success).toBe(false)
+    expect(parseRawFrame({ type: 'live2d.directive', state: 'waiting_permission' as never }).success).toBe(false)
+  })
+  it('durationMs/priority 边界：0 合法、越界拒绝（durationMs [0,30000]，priority [0,3]）', () => {
+    expect(parseRawFrame({ type: 'live2d.directive', durationMs: 0, priority: 0 }).success).toBe(true)
+    expect(parseRawFrame({ type: 'live2d.directive', durationMs: 30000, priority: 3 }).success).toBe(true)
+    expect(parseRawFrame({ type: 'live2d.directive', durationMs: 30001 }).success).toBe(false)
+    expect(parseRawFrame({ type: 'live2d.directive', durationMs: -1 }).success).toBe(false)
+    expect(parseRawFrame({ type: 'live2d.directive', durationMs: 1000.5 }).success).toBe(false) // 非 int
+    expect(parseRawFrame({ type: 'live2d.directive', priority: 1.5 }).success).toBe(false) // 非 int
+  })
+  it('空帧合法（全可选，仅 type 必填）；缺 type 拒绝', () => {
+    expect(parseRawFrame({ type: 'live2d.directive' }).success).toBe(true)
+    expect(parseRawFrame({ state: 'happy' }).success).toBe(false) // 非 live2d.directive 帧
   })
 })

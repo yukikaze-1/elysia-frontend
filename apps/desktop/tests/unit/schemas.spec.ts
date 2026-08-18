@@ -230,3 +230,40 @@ describe('语音/设置 BackendEvent schema 镜像（阶段4批次B）', () => {
     expect(parseBackendEvent(emptyCode).success).toBe(false)
   })
 })
+
+describe('阶段5 批次C：live2d.directive 事件 schema 镜像（C3 契约冻结；缺镜像 → preload parseBackendEvent 丢弃）', () => {
+  it('BackendEventSchema 镜像收得该事件（envelope 用 eventId/sequence/timestamp）', () => {
+    const ev = { event: 'live2d.directive' as const, state: 'happy' as const, sequence: 1, eventId: 'e1', timestamp: '2026-08-18T00:00:00Z' }
+    const r = parseBackendEvent(ev)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.data.event).toBe('live2d.directive')
+      if (r.data.event === 'live2d.directive') expect(r.data.state).toBe('happy')
+    }
+  })
+  it('全字段扁平事件通过（expression/motion/state/priority/durationMs 可选）', () => {
+    const ok = {
+      eventId: 'e2', sequence: 2, event: 'live2d.directive',
+      expression: 'expressions/F01.exp3.json', motion: 'motions/idle.motion3.json',
+      state: 'speaking', priority: 1, durationMs: 8000
+    }
+    const r = parseBackendEvent(ok)
+    expect(r.success).toBe(true)
+    if (r.success && r.data.event === 'live2d.directive') {
+      expect(r.data.priority).toBe(1)
+      expect(r.data.durationMs).toBe(8000)
+    }
+  })
+  it('state 七值合法、error/working 拒绝；priority/durationMs 越界拒绝', () => {
+    for (const state of ['idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised']) {
+      expect(parseBackendEvent({ eventId: 'e', sequence: 1, event: 'live2d.directive', state }).success).toBe(true)
+    }
+    expect(parseBackendEvent({ eventId: 'e', sequence: 1, event: 'live2d.directive', state: 'error' as never }).success).toBe(false)
+    expect(parseBackendEvent({ eventId: 'e', sequence: 1, event: 'live2d.directive', priority: 5 }).success).toBe(false)
+    expect(parseBackendEvent({ eventId: 'e', sequence: 1, event: 'live2d.directive', durationMs: 30001 }).success).toBe(false)
+  })
+  it('envelope 必填：缺 eventId / 缺 sequence 拒绝', () => {
+    expect(parseBackendEvent({ event: 'live2d.directive', sequence: 1 }).success).toBe(false)
+    expect(parseBackendEvent({ event: 'live2d.directive', eventId: 'e' }).success).toBe(false)
+  })
+})

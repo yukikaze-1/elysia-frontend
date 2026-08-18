@@ -1,1 +1,1 @@
-{ "backendCommit": "beeba5776413dde9761375c2fd9541d6636f180d", "protocol": "2", "serverProtocolVersion": "2.0", "schemaHash": "85b231ac1d965875b887e64829aae3adf16deaab980947cd010fd74ac9f89afc", "verified": true, "scenario": "chat-failed" }
+{ "backendCommit": "beeba5776413dde9761375c2fd9541d6636f180d", "protocol": "2", "serverProtocolVersion": "2.0", "schemaHash": "5102664f34abf25f7504d87e66c0a3c96bd806ad6f7450d9172e0087ade21b43", "verified": true, "scenario": "chat-failed" }

@@ -296,6 +296,18 @@ const RawAudioCancelledSchema = z.object({
   stream_id: z.number().int()
 }).strict()
 
+/** 后端 Live2D 表现指令建议（live2d.directive；C3 契约冻结，对齐 doc 02 §12 形状）。
+ * state 七值（剔除 error——D5C-07）；priority ∈ [0,3]（字面量联合，输出类型精确 0|1|2|3，匹配 RawLive2DDirective）；
+ * durationMs ∈ [0,30_000]；`.strict()` 未知字段整帧拒（fail-closed）。 */
+const RawLive2DDirectiveSchema = z.object({
+  type: z.literal('live2d.directive'),
+  expression: z.string().optional(),
+  motion: z.string().optional(),
+  state: z.enum(['idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised']).optional(),
+  priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  durationMs: z.number().int().min(0).max(30000).optional()
+}).strict()
+
 export const RawFrameSchema = z.discriminatedUnion('type', [
   RawSessionMessageSchema,
   RawServerInfoSchema,
@@ -324,7 +336,8 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawAudioStartSchema,
   RawAudioChunkSchema,
   RawAudioEndSchema,
-  RawAudioCancelledSchema
+  RawAudioCancelledSchema,
+  RawLive2DDirectiveSchema
 ])
 
 export function parseRawFrame(input: unknown): {

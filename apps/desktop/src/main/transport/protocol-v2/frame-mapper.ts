@@ -1,4 +1,4 @@
-import type { BackendEvent } from '@shared/contracts/events'
+import type { BackendEvent, Live2DDirectiveEvent } from '@shared/contracts/events'
 import type { ConversationTokenUsage, SegmentChannel, SegmentKind, TokenUsage } from '@shared/contracts/message'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
@@ -86,6 +86,9 @@ export class FrameMapper {
       case 'audio':
       case 'audio_end':
         return null // 音频二进制由 transport（real-backend TTS 缓冲）消费，不进 mapper（D-P9）
+      // —— 阶段 5 批次 C（C3）：后端 Live2D 表现指令建议 ——
+      case 'live2d.directive':
+        return this.mapDirective(frame)
       default:
         return null // 握手/工具/音频等帧由连接层分流
     }
@@ -219,6 +222,19 @@ export class FrameMapper {
         ...(frame.retryable !== undefined ? { retryable: frame.retryable } : {}),
         ...(frame.details !== undefined ? { details: frame.details } : {}) // 空 dict 也保留(details 恒上 wire)
       }
+    }
+  }
+
+  /** live2d.directive raw 帧 → 扁平领域事件（this.envelope() 打 eventId/sequence；undefined 不写键） */
+  private mapDirective(frame: Extract<RawFrame, { type: 'live2d.directive' }>): Live2DDirectiveEvent {
+    return {
+      ...this.envelope(),
+      event: 'live2d.directive',
+      ...(frame.expression !== undefined ? { expression: frame.expression } : {}),
+      ...(frame.motion !== undefined ? { motion: frame.motion } : {}),
+      ...(frame.state !== undefined ? { state: frame.state } : {}),
+      ...(frame.priority !== undefined ? { priority: frame.priority } : {}),
+      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {})
     }
   }
 

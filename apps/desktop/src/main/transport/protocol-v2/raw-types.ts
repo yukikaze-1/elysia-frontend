@@ -264,6 +264,19 @@ export interface RawAudioCancelled {
   stream_id: number
 }
 
+/** 后端 Live2D 表现指令建议状态（七值；剔除 error——error=3 必须 client 驱动，D5C-07） */
+export type DirectiveState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'sad' | 'surprised'
+
+/** 后端 Live2D 表现指令建议帧（对齐 doc 02 §12；扁平 wire，C3 契约冻结；后端当前不发，桩化开发） */
+export interface RawLive2DDirective {
+  type: 'live2d.directive'
+  expression?: string
+  motion?: string
+  state?: DirectiveState
+  priority?: 0 | 1 | 2 | 3
+  durationMs?: number
+}
+
 /** 客户端→服务器语音控制帧（对齐 ws_message.py ClientMessage 各成员；不进 RawFrameSchema/RAW_FRAME_TYPES，Task 4 构造发送用） */
 export interface RawVoiceRecordStart {
   type: 'voice.record.start'
@@ -334,3 +347,5 @@ export type RawFrame =
   | RawVoiceSessionAck | RawVoiceSessionEnded
   | RawDictationPartial | RawDictationFinal | RawDictationCancelled
   | RawAudioStart | RawAudioChunk | RawAudioEnd | RawAudioCancelled
+  // 阶段 5 批次 C：后端 Live2D 表现指令建议（C3 契约冻结）
+  | RawLive2DDirective

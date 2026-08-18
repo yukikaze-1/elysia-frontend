@@ -118,6 +118,21 @@ export interface AudioSessionCancelledEvent extends BackendEventEnvelope { event
 /** 语音族错误（voice.error；D-P15：real-backend 对语音族错误码额外 emit，connectionStore 横幅抑制） */
 export interface VoiceErrorEvent extends BackendEventEnvelope { event: 'voice.error'; code: string; message?: string }
 
+// —— 阶段 5 批次 C（C3）：后端 Live2D 表现指令建议（live2d.directive）——
+// 扁平 wire 帧（对齐 doc 02 §4 v2 扁平 + §12 形状）；与 events.ts 全部成员扁平惯例一致，无 payload 包装。
+// state 七值（剔除 error——error=3 必须 client 驱动，D5C-07）；priority ∈ [0,3]（客户端消费时 clamp ≤1 为建议强度）。
+export type DirectiveState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'sad' | 'surprised'
+
+/** 后端 Live2D 表现指令建议（live2d.directive；显式指令 > emotion 自动映射，消费在 live2dStore.handleDirective） */
+export interface Live2DDirectiveEvent extends BackendEventEnvelope {
+  event: 'live2d.directive'
+  expression?: string
+  motion?: string
+  state?: DirectiveState
+  priority?: 0 | 1 | 2 | 3
+  durationMs?: number
+}
+
 /** 后端事件判别联合 */
 export type BackendEvent =
   | GenerationStartedEvent
@@ -141,3 +156,4 @@ export type BackendEvent =
   | AudioSessionReadyEvent
   | AudioSessionCancelledEvent
   | VoiceErrorEvent
+  | Live2DDirectiveEvent

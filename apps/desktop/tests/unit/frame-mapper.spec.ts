@@ -284,3 +284,45 @@ describe('FrameMapper 语音/TTS 帧 → 领域（阶段4 批次B）', () => {
     expect(ready).toEqual({ eventId: 'conn-1:1', sequence: 1, event: 'audio.session.ready', streamId: 1, url: 'u', durationMs: 100, format: 'mp3' })
   })
 })
+
+describe('FrameMapper live2d.directive → 领域（阶段5 批次C）', () => {
+  it('FrameMapper.mapFrame 把 raw 帧映射为 Live2DDirectiveEvent', () => {
+    const m = new FrameMapper()
+    const ev = m.mapFrame({ type: 'live2d.directive', motion: 'motions/idle.motion3.json', durationMs: 8000 })
+    expect(ev).not.toBeNull()
+    if (ev) { expect(ev.event).toBe('live2d.directive'); if (ev.event === 'live2d.directive') expect(ev.motion).toBe('motions/idle.motion3.json') }
+  })
+  it('扁平字段透传：state/expression/priority/durationMs 原样映射,envelope 单调打戳', () => {
+    const m = new FrameMapper({ connectionId: 'conn-1' })
+    const ev = m.mapFrame({ type: 'live2d.directive', state: 'happy', expression: 'expressions/F01.exp3.json', priority: 1, durationMs: 3000 })
+    expect(ev).not.toBeNull()
+    if (ev && ev.event === 'live2d.directive') {
+      expect(ev.state).toBe('happy')
+      expect(ev.expression).toBe('expressions/F01.exp3.json')
+      expect(ev.priority).toBe(1)
+      expect(ev.durationMs).toBe(3000)
+      expect(ev.eventId).toBe('conn-1:1')
+      expect(ev.sequence).toBe(1)
+    }
+  })
+  it('缺省字段不写键（undefined 不落事件）；空帧只带 event 判别', () => {
+    const m = new FrameMapper({ connectionId: 'conn-1' })
+    const ev = m.mapFrame({ type: 'live2d.directive' })
+    expect(ev).not.toBeNull()
+    if (ev && ev.event === 'live2d.directive') {
+      expect(ev.motion).toBeUndefined()
+      expect(ev.state).toBeUndefined()
+      expect(ev.priority).toBeUndefined()
+      expect(ev.durationMs).toBeUndefined()
+    }
+  })
+  it('mapDirective 与既有帧共享单调计数器,sequence 全局递增不碰撞', () => {
+    const m = new FrameMapper({ connectionId: 'conn-1' })
+    const a = m.mapFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: 't' })
+    const b = m.mapFrame({ type: 'live2d.directive', state: 'thinking' })
+    expect(a!.sequence).toBe(1)
+    expect(b!.sequence).toBe(2)
+    expect(a!.eventId).toBe('conn-1:1')
+    expect(b!.eventId).toBe('conn-1:2')
+  })
+})

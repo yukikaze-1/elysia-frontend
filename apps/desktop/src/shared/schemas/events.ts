@@ -170,6 +170,17 @@ export const VoiceErrorEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('voice.error'), code: z.string().min(1), message: z.string().optional()
 })
 
+// —— 阶段 5 批次 C（C3）：后端 Live2D 表现指令建议 schema 镜像（缺镜像 → preload parseBackendEvent 丢弃，P4-B 先例）——
+/** 后端 Live2D 表现指令建议（live2d.directive；state 七值，priority ∈ [0,3] 字面量联合，durationMs ∈ [0,30_000]；`.strict()` fail-closed 拒未知字段） */
+export const Live2DDirectiveEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('live2d.directive'),
+  expression: z.string().optional(),
+  motion: z.string().optional(),
+  state: z.enum(['idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised']).optional(),
+  priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
+  durationMs: z.number().int().min(0).max(30000).optional()
+}).strict()
+
 export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationStartedEventSchema,
   GenerationSegmentStartedEventSchema,
@@ -191,7 +202,8 @@ export const BackendEventSchema = z.discriminatedUnion('event', [
   AudioSessionStartedEventSchema,
   AudioSessionReadyEventSchema,
   AudioSessionCancelledEventSchema,
-  VoiceErrorEventSchema
+  VoiceErrorEventSchema,
+  Live2DDirectiveEventSchema
 ])
 
 export function parseBackendEvent(input: unknown): {
