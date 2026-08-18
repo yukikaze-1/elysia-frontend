@@ -1,10 +1,10 @@
 # Cyrene Live2D 前端接入设计
 
 **文档版本：** v0.2  
-**文档状态：** 首轮 Review 已修订 / SDK 与资源已验证到位（Cubism Web SDK 5-r.5 已入仓库 `third_party/CubismSdkForWeb-5-r.5/`，commit `22993e5`；用户模型免费版个人开发验证，`tmp/live2d/`）；**阶段 5 批次 A（Live2D 地基）已落地并全量验证（已开发、未联调）**，实现状态见 §18  
+**文档状态：** 首轮 Review 已修订 / SDK 与资源已验证到位（Cubism Web SDK 5-r.5 已入仓库 `third_party/CubismSdkForWeb-5-r.5/`，commit `22993e5`；用户模型免费版个人开发验证，`tmp/live2d/`）；**阶段 5 批次 A/B/C 已落地并全量验证（已开发、未联调）**，实现状态见 §18  
 **适用范围：** Electron Renderer、Live2D 模型资源、TTS 播放联动  
 **文档日期：** 2026-08-03
-**最后复核日期：** 2026-08-04（批次 A 落地 2026-08-17 复核）
+**最后复核日期：** 2026-08-04（批次 A 落地 2026-08-17 复核；批次 B/C 落地 2026-08-18 复核）
 
 ---
 
@@ -93,6 +93,8 @@ type PerformanceMode = "auto" | "quality" | "balanced" | "low_power";
 > **`Live2DModelSummary` 完整 8 字段（契约 `shared/contracts/live2d.ts`）：** `id`/`displayName`/`preview`（相对模型目录的预览图路径，可 null）/`version`/`available`（两级可用性：manifest 合法 + integrity 覆盖文件存在且尺寸一致）/`reason?`（仅不可用时脱敏枚举码 `missing_file|size_mismatch|hash_mismatch`）/`licenseRef`（模型目录内许可文件相对路径）/`integrityState`（`unverified|verified|failed`）。
 >
 > **`Live2DSettings` 全量 10 字段（doc 11 §7.1 设置子页 + doc 05 §14）：** `enabled`（缺省 true；与 G1 布局 `live2dShown` 正交）/`modelId`（null = 默认首个可用）/`scale`（0.5–3）/`offsetX`/`offsetY`（±2）/`mouseTracking`/`autoMotions`/`lipSync`/`performanceMode`（统一四值 `auto|quality|balanced|low_power`，旧三值 `high/low` 读回归一）/`reduceMotion`。契约经 `SettingsStateSchema.live2d` `.default(DEFAULT_LIVE2D)` 兼容旧 settings.json（不崩、不 bump version）。
+
+> **注（批次 C 收口落地，2026-08-18，D5C-09）：** 本表接口按批次 C 真实实现再修订——`reset(modelId?)` 签名扩展：缺省当前 modelId 优先、不可用回退首个可用、失败 → fallback（GPU 丢失一次重建路径，D5C-04）；`setExpression(file): boolean` 与 `playMotion(file, priority, durationMs?): boolean` **均返回 boolean**（白名单命中执行 true、未命中/未就绪/仲裁拒绝 false，脱敏日志落点）；`playMotion` 扩**第三参 `durationMs`（数值）**，生效时长取 `min(durationMs, MOTION_MAX_MS=15s)`，显式 durationMs 跳过同动作去抖合并；`live2dStateSource` 返回句柄 **`{ unsub, recompose }`**（`recompose()` 按当前业务源重组合，供 GPU 重建后恢复 CharacterState）；state-source 增 **`pushDirective(state, strength, durationMs?): boolean`**（后端指令瞬态覆盖：建议强度 ≤1 仲裁、永不覆盖 client 2/3 级现实态、超时回业务态）。**lipSync 门定案（批次 B Task5 M3 关闭，D5C-02）**：lipSync 只门控 C1/B4 **参数级电口**（`autoMotions ∧ lipSync` 门写 `ParamMouthOpenY`，门关写 0 清态、不残留上一帧）；**B3 动作口部不受 lipSync 门**（模型作者编排，闭嘴门控记为后续需求）。完整签名与语义见 `renderer/src/live2d/controller.ts` / `state-source.ts` / `stores/live2d.store.ts`。
 
 ## 4. 模型资源包
 
@@ -357,6 +359,8 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 
 发布前（批次 C 之后进入发布流程时）必须：① 按 Live2D 官方 **AI/Chatbot / Expandable Applications** 分类复核适用许可并确认出版许可；② 复核 8 个官方示例模型的 Free Material License 使用边界；③ 用户模型分发权与作者授权分别核对留档；④ 无法确认时不发布含该 SDK/模型的产物。开发验证（当前批次）可先行。
 
+> **批次 C 台账注记（2026-08-18）：** 发布前许可复核**仍 defer**（本批只做代码批次与文档，不进入发布流程），上表资源清单与分类判断不变；批次 C 联调清单已把许可复核登记为「遗留说明节」项，进入发布流程前按上述 ①②③④ 执行。
+
 ## 16. 测试场景
 
 - 模型首次加载成功；
@@ -392,9 +396,9 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 - [ ] 模型及 SDK 许可已记录。
 - [ ] 对外发布前已确认 AI/Chatbot、可扩展应用分类及适用出版许可；无法确认时不发布含该 SDK/模型的产物。
 
-## 18. 实现状态（阶段 5 批次 A/B 落地，2026-08-18）
+## 18. 实现状态（阶段 5 批次 A/B/C 落地，2026-08-18）
 
-**三态：** 已开发、未联调（Mock/本地驱动；真实 Windows Electron 联调归批次 C/D）。门禁：**1508 单测（114 files）+ 90 集成（16 files）** + typecheck/lint/build（+ check:contract WS 28/28 + REST 15/15，本任务批次 B 未改 wire 契约）全绿。详细决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`（主会话落文）、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
+**三态：** 已开发、未联调（Mock/本地驱动；真实 Windows Electron 联调由开发者事后凭联调清单执行）。门禁：**1599 单测（119 files）+ 97 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿。详细决策见 `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）、批次 B 决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`；联调清单见 `docs/review/2026-08-18-阶段5批次C-联调清单.md`。
 
 **批次 A 已落地（本文档对应子项）：**
 
@@ -422,4 +426,17 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | §5.1 切换 / T6 竞态 | 已实现 | 快速连续切换 → store 仅持久化 `switchModel` 返回的**生效 id**（守卫丢弃时持久化旧 id），渲染模型与持久化 id 一致 |
 
 **集成新增（批次 B，Electron `tests/integration/electron-live2d.spec.ts` 增 7 用例）：** 状态驱动徽标「思考中→说话中→空闲」、动作播放（Haru B3 画布非空 / lil B4 优雅降级）、情绪态→表情（mock emotion=happy → 徽标「开心」+ 画布非空）、设置子页（scale/performanceMode 即时生效 + 重启持久化恢复）、性能模式（四值存在 + 旧值 high/low 读回归一 + 不 corrupt）、布局（无 Layout 模型画幅正常）、切换竞态（生效 id 与渲染/持久化三方一致）。
-**批次 C（收口）待落地：** TTS 口型数据源（`setMouthLevel` 粒度为口型电平原语，数据源/音频驱动归 C）、性能降级与重建（折叠降帧/GPU 上下文重建、四值降帧真实消费）、后端 Live2DDirective、防御加固（M-1/M-2/M-4/M-5/F2-F5 等）、文档/许可发行复核、真实 Windows Electron（REAL）联调。
+
+**批次 C（收口）已落地（2026-08-18，本文档对应子项）：**
+
+| 本文档子项 | 状态 | 落点 |
+|---|---|---|
+| §3 核心接口 | 已实现（收口修订） | `reset(modelId?)` 签名扩展（GPU 重建一次）、`setExpression`/`playMotion` 返回 boolean、`playMotion` 第三参 durationMs（≤15s 封顶）、state-source 返回 `{unsub, recompose}` + `pushDirective(state, strength, durationMs?)`、lipSync 门定案（Task5 M3 关闭）；接口注见 §3 |
+| §10 基础口型同步（C1） | 已实现 | `mouth-level.ts` `computeMouthLevel` 纯函数（噪声门/attack~50ms/release~250ms 攻放不对称/最大变化率钳制/归零）+ `tts-mouth-source.ts`（MediaElementSource→Analyser fftSize=256→RMS→包络；每元素 createMediaElementSource 终生一次，F1）+ 口部写出**通用化**（`updateAnimation` 对所有 ready 模型写 `ParamMouthOpenY`，门=`autoMotions ∧ lipSync`，B3 动作后写自然覆盖）+ `voiceStore.ttsAudioEl`/CyTtsPlayer 挂接 + `live2dStore.tick()` 采样 + mock env 桥 `CYRENE_MOCK_MOUTH_LEVEL`（step/sine 合成包络，经 getRuntimeInfo 水合，renderer 不读 env） |
+| §12 性能策略 / §12.2 自动降级（C2） | 已实现 | `perf.ts` `FrameBudget` 四值真实降帧（quality 恒满帧 / low_power 30fps 封顶 / balanced 按 EMA 帧耗时 60↔30 / auto 迟滞升降档；skip 帧不 updateAnimation 不 draw）+ `reset(modelId?)` GPU 丢失**一次重建**（rebuildGuard finally 复位非永久，成功恢复 ready + 重放 settings/CharacterState，失败 → fallback）+ `setVisibility` 接线进 tick 门（消除批次 B Task5 M4 死面）+ 重建路径 `adapter.initialize` 半初始化 try/catch 兜底（批次 A Task5 P3） |
+| §8 后端表现指令（C3） | 已实现（契约冻结 + 桩化） | `live2d.directive` **扁平 wire 帧** `{type, expression?, motion?, state?, priority?(0-3), durationMs?}` 四件套（`raw-types.ts` 类型 + `raw-schemas.ts` `.strict()` 未知字段整帧拒 + `FrameMapper.mapFrame` 分支 + `BackendEventSchema` 镜像）；`state` **七值**（`idle/listening/thinking/speaking/happy/sad/surprised`，**剔除 error**——error 为 client 派生态不可注入，偏离 doc 02 §12 见决策记录）；`pushDirective` 建议强度仲裁（priority clamp ≤1 → 永不覆盖 client 2/3 级现实态）+ `handleDirective` 校验/脱敏日志/指令>emotion + mock `CYRENE_MOCK_DIRECTIVE` env + real-backend 解析桩；无新增 IPC 通道 |
+| 防御加固（M1-M4/F2/F3 等） | 已实现 | resolveModelFile `%` 同口径（`canonicalizeRelPathSegment` 含合法 `%XX` 才解码一次，`%25` 放行 / `%2F`/`%252F`/非法序列拒）/ registry 强制 `manifest.id===dirname` / integrity 空数组视为不完整（列表/请求/verify 三方一致）/ `reason` 闭合枚举 `missing_file|size_mismatch|hash_mismatch` / F2 blink 速率调制（thinking/speaking rate=2）/ F3 expressions 空 → B4 参数级近似 / Task5 M2 restore 分叉（`restoreDefaults()`：面板存活 switchModel 首个可用、已 dispose 显式持久化）/ 批次 A F2/F3/F4 关单（无实害）、N1/N3 批次 B 已完成不重复收口 |
+| §15 资源与许可 | 已记录 | 见 §15.1；**发布前复核仍 defer**（发布流程事项，本批仅台账记录） |
+
+**批次 C 集成新增（Electron `tests/integration/electron-live2d.spec.ts` 增 ~8 用例）：** C1 口型链路（`CYRENE_MOCK_MOUTH_LEVEL=step` 全链路 + 停止归 0，真实 RMS 归联调肉眼）、C2 四值切换+持久化 + `webglcontextlost` 重建一次不崩、C3.1 指令消费（happy+F01 徽标/画布）、C3.2 非白名单脱敏 warn、C3.3 working 越界不发射、收口回归（恢复默认画布/select/持久化三方一致）等。
+**批次 C 真实 Windows Electron（REAL）联调（未做，代码批次不含）：** 由开发者事后按 `docs/review/2026-08-18-阶段5批次C-联调清单.md` 执行（冻结基线 + 定向复验项 + 自动化门禁复跑 + 遗留说明 + 三态升「已真实联调」口径）。

@@ -118,6 +118,8 @@ JSON 示例：
 - 未识别的可选字段应忽略并记录调试日志；
 - 未识别的事件类型不得自动执行任何本地能力。
 
+> **批次 C 张力注记（2026-08-18，doc 05 §18 + doc 02 §12）：** 上表「未识别的可选字段应忽略」与 C3 冻结帧的 `.strict()` 整帧拒是两个**分层**口径，不冲突——**raw wire 层**（`main/transport/protocol-v2/raw-schemas.ts`）对 `live2d.directive` 等冻结帧用 `.strict()` **fail-closed 拒未知字段**（未知字段整帧拒 + 脱敏日志，防向后兼容漂移悄悄漏入）；**前端事件层**（`shared/schemas/events.ts` 镜像 + Renderer 消费）对**已通过**校验的合法帧里的**可选字段缺失**（`undefined` 不写键）按忽略处理。即「未知字段」在 raw 层拒绝、「已知但可选字段缺失」在事件层忽略，两层各司其职。
+
 Main → Renderer 可以把多个已校验事件装入短时间片批次以减少 IPC 开销，但批次只是传输优化：每个事件仍保留自己的 `eventId/sequence`，Renderer 必须按批次内顺序逐项处理；不得把不同 `segmentId` 的文本拼成一个无法去重的伪事件。
 
 **已确认说明（2026-08-08）：** 后端 v2 wire 事件是**扁平 JSON**（`{"type": "generation.delta", ...}`，无 `eventId/sequence/protocolVersion/occurredAt` 外壳）；上文的 `EventEnvelope` 是前端领域标准，由 `BackendAdapter` 在 Main 内解析 wire 后**盖戳补充**（`eventId/sequence` 单调生成、`occurredAt` 取接收时刻），再进 IPC。`protocolVersion` 取自握手 `server_info.protocol_version`（`2.0`），不为每条事件重复。
@@ -640,13 +642,15 @@ interface ChatHistoryPage {
 interface Live2DDirective {
   expression?: string;
   motion?: string;
-  state?: "idle" | "listening" | "thinking" | "speaking" | "happy" | "sad" | "surprised" | "error";
+  state?: "idle" | "listening" | "thinking" | "speaking" | "happy" | "sad" | "surprised";
   priority?: 0 | 1 | 2 | 3;
   durationMs?: number;
 }
 ```
 
 前端只把该结构视为表现建议：必须检查名称白名单、优先级和持续时间，后端不能提供本地资源路径或脚本。
+
+> **批次 C 契约更正注记（2026-08-18，D5C-07）：** `state` 枚举由早前版本的**八值**更正为**七值**——**剔除 `error`**（上表已反映）。理由：`error`（优先级 3）为 **client 派生态**（doc 05 §6 error=3 必须 client 驱动），不可被后端任意注入覆盖 thinking/speaking；raw wire 层 `.strict()` 下携带 `state:'error'` 的帧会**整帧拒**（fail-closed，连合法 expression/motion 一并丢弃），此行为已在批次 C 决策记录明示。其余七值、`priority∈0-3`（客户端钳制 ≤1 作建议强度上限）、`durationMs∈[0,30_000]`（motion 以 15s 封顶）均为批次 C 冻结契约。wire 实发见 §19 映射表 `live2d.directive` 行。
 
 **已确认映射（2026-08-08）：** 后端建连下发 `expression{expression, intensity?}`（当前心情）；流式中心情经 `generation.completed.mood` 落位；v1 `capabilities.live2d_static_image` 提供 Live2D 静态图路径（v2 由 `server_info.services` 取代 capabilities，静态图字段在 v1 保留）。`expression` 字段是心情**代码/标签**（如「开心」），不是 CSS 类或资源路径——前端经本地映射表转 `Live2DDirective`，未知代码以「未知/原始标签」安全展示（§7 约束同款规则）。
 
@@ -954,6 +958,7 @@ idle → connecting → connected
 | 实时语音字幕、断句与轮次提交 | WS `voice_session.start{sessionId(vs_), conversationId?}` → `voice_session.started{sessionId, conversationId?}` → BINARY PCM（VAD 分段）→ `voice_session.partial{sessionId, turnId, segmentIndex, text}`（字幕）→ `voice_session.turn{sessionId, turnId, messageId, conversationId?, text}`（自动提交触发 generation）→ pause/resume/stop/cancel → `voice_session.ended{sessionId, reason(stopped/cancelled/timeout/stt_disabled)}`；`voice_session.ack{sessionId, seq}` 背压 | `voice_session.started/partial/ack/ended` → `voiceStore`（实时状态+字幕）；`voice_session.turn` → `messageStore`（后端预分配 messageId 装配 user 消息） |
 | TTS 整段音频、取消和完成 | WS `audio_start{stream_id, format(wav/mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data(base64), is_final}` ×N → `audio_end{stream_id, format?}`（format 缺省 wav；字节全发≠播完，完成由前端 `onended` 判定）；`audio.cancel{stream_id}`（全局）→ `audio_cancelled{stream_id}` | `audio.session.started/ready/cancelled` → `voiceStore`（TTS 播放门 D-P1；`autoReadReply` 关则丢弃不播放） |
 | 语音族错误路由 | WS `error{code}`（语音族码：`STT_UNAVAILABLE`/`STT_PROFILE_NOT_FOUND`/`VOICE_SESSION_CONFLICT`/`VOICE_SESSION_NOT_FOUND`/`VOICE_RECORDING_TOO_LONG`/`VOICE_RECORDING_NOT_FOUND`/`DICTATION_NOT_FOUND`/`PLAYBACK_NOT_FOUND`）→ real-backend **额外** emit `voice.error{code, message}`（D-P15，`onError` 日志/审计保留）；connectionStore 对语音族码不展示全局连接横幅 | `voice.error` → `voiceStore.error`（语音 UI 展示；`PLAYBACK_NOT_FOUND` 良性忽略） |
+| Live2D 表现指令（批次 C 冻结，**无条件记录**） | **raw 帧类型**：`{"type":"live2d.directive","expression"?,"motion"?,"state"?,"priority"?(0\|1\|2\|3),"durationMs"?}`（**扁平帧，无 payload 子对象**）；后端当前**不发**该帧（桩化开发），若收到按冻结契约解析——raw-schema `.strict()` 未知字段/越界（含 `state:'error'`）**整帧拒** | **前端事件**：`Live2DDirectiveEvent`（`event:'live2d.directive'` + 扁平字段透传，`eventId/sequence` 经 envelope 盖戳）→ `live2dStore.handleDirective`：`state` 七值校验、`priority` 客户端钳制 ≤1（建议强度上限）、`durationMs` ∈[0,30_000]（motion 15s 封顶）、白名单三层（controller/adapter/Main）；state → `stateSource.pushDirective` 建议强度仲裁（永不覆盖 client 2/3 级现实态）、expression → `setExpression(file):boolean`、motion → `playMotion(file,priority,durationMs):boolean`；无效/未命中忽略 + 脱敏日志；**无新增 IPC 通道**（走既有 `chat:event` push + preload `parseBackendEvent` 校验） |
 | 重连/续传方式 | **无断点续传**；重连后 WS `session` 回放历史；生成中断由客户端据回放判断（消息无对应 `generation.completed` → 视为中断 → 用新 `clientRequestId` 重发）；补充 `GET /api/sessions/{id}/pending`（pendingMessages / pendingApprovals）+ `GET /api/sessions/{id}/generations`（GenerationStatus） | `resume` |
 | 错误结构 | WS `error` 帧 / `ErrorMessage{message, code?, requestId?, retryable?, details?}`；REST `ProtocolError{code, message, retryable, requestId, error(=message 别名), details}`；`generation.failed{code, message, retryable, details}`；ACK rejected 带 `error{code, message, retryable}`；40 码目录见 protocol-v2 §9.1 | `PublicError` |
 
@@ -974,7 +979,7 @@ idle → connecting → connected
 | D-9 | `generation.completed.finishReason` 限 stop/tool_calls | 前端消息状态 completed | 取消/错误统一走 `generation.failed`，前端不得从 `state idle` 推断完成 |
 | D-10 | `server_info.features` / `services` | 连接能力快照 | 各 feature 如实声明；前端据 `features` 门控 UI，不超前实现 |
 
-**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧 `556117a` 已为 `dictation.start` 增加 `sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），**D-8 关闭（契约已确认）**；无剩余待后端确认项。E-03 凭据所有权契约已确认（后端 Secret Store `data/secrets/` + `credentialConfigured` 只读；desktop/local 凭据归 Electron），可按「已开发、未联调」推进阶段 1。
+**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧 `556117a` 已为 `dictation.start` 增加 `sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），**D-8 关闭（契约已确认）**；无剩余待后端确认项。**批次 C 注记：** `live2d.directive` 为**前端超集帧**（后端 `frontend_contract` 当前未含该帧类型，`check:contract` WS 28/28 通过不触发报错）；契约为前端冻结（raw 帧类型 + 前端事件字段映射见上表），后端实发时按冻结契约对齐即可。E-03 凭据所有权契约已确认（后端 Secret Store `data/secrets/` + `credentialConfigured` 只读；desktop/local 凭据归 Electron），可按「已开发、未联调」推进阶段 1。
 
 完成这张表并通过真实事件联调后，才可以把本文状态从“待与现有后端核对”改为“已对齐 / 可作为工程契约基线”。
 

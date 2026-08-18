@@ -299,6 +299,8 @@ interface AuthorizedCommandTemplate {
 
 > **实现状态（2026-08-18，阶段 5 批次 B 落地，已开发、未联调）：** 本子页已由 **CyLive2DPane**（设置中心「角色与外观」导航，`components/CyLive2DPane.vue`）实现以下全部条目——“启用或关闭”（`enabled`，关闭态 Panel 显示「Live2D 已关闭」且不创建渲染循环）、“模型切换/预览缩略图/加载状态与错误”（`live2dStore.models` 按 available 过滤 + `cyrene://` 供给预览图 + 切换成功后持久化**实际生效 id**）、“缩放/位置/帧率/鼠标跟随”与“自动动作/口型同步”（安全钳制 scale∈[0.5,3]、offset∈[-2,2]；mouseTracking/autoMotions/lipSync/reduceMotion 开关）、“性能模式”（`performanceMode` 四值下拉，旧三值 `high/low` 读回归一）、“恢复默认角色设置”。改动经 `settingsStore.setLive2d` 500ms 防抖持久化 `settings.json`（`Live2DSettings` 全量 10 字段，`.default(DEFAULT_LIVE2D)` 兼容旧文件不 corrupt）。即时预览落点见 doc 05 §18 批次 B 表。
 
+> **批次 C 注记（2026-08-18）：** 「恢复默认角色设置」改调 `live2d.restoreDefaults()`（Task5 M2 restore 分叉修复）——面板存活时 `switchModel(首个 available)`（画布与持久化一致）；面板已 dispose 时重取清单 + 显式持久化首个可用（重挂载 init 加载），消除「置 modelId:null 但已加载模型仍在」的语义分叉。四值 `performanceMode` 由批次 C `FrameBudget` 真实消费（降帧，见 doc 05 §18 批次 C 表）。
+
 - 启用或关闭；
 - 在已安装、通过校验的模型之间切换；
 - 预览缩略图；
