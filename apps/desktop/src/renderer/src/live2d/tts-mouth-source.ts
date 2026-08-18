@@ -2,9 +2,12 @@
 // 阶段 5 批次 C（C1，D5C-01/D5C-02）：TTS 音量口型数据源——MediaElementSource → AnalyserNode → 短窗 RMS
 // → 包络纯函数（computeMouthLevel）。attach 把现有 <audio>（TTS 播放宿主 CyTtsPlayer 的隐藏元素，同源
 // cyrene:// 页面与资源）挂进 AudioContext graph（createMediaElementSource + Analyser，连 destination 保持
-// 播放可闻、口型旁路采样不断播放）；sample 采样当前 RMS 电平 [0,1]；detach 断开 + 挂起 + 平滑态复位；
-// dispose close（自建 context）。每元素仅一次（重复 attach 幂等）。可注入 analyserFactory：单测/集成可提供
-// { analyser, context } 假源（node/无音频设备环境无真实 AudioContext）。
+// 播放可闻、口型旁路采样不断播放）；sample 采样当前 RMS 电平 [0,1]；detach 断链 + 挂起 + 平滑态复位（**只
+// 断链不清 graph**——复用留存 sourceNode，供下次 attach 重连）；dispose 全量释放（close 自建 context）。
+// F1（审查）：Web Audio 限定每个 HTMLMediaElement 终生只能 createMediaElementSource 一次——二次调用抛
+// InvalidStateError。sourceNode 首次 attach 一次性创建并留存，后续 attach 只重连 + ctx.resume()，detach 只
+// 断链 + ctx.suspend()；换元素才全量重建。可注入 analyserFactory：单测/集成可提供 { analyser, context } 假源
+// （node/无音频设备环境无真实 AudioContext）。
 // 真实 Analyser RMS 准确性归联调肉眼验证（spec §7 风险：cyrene:// MediaElementSource 若实测静音，回退
 // decodeAudioData 全 WebAudio 播放路径在 spec 记录、不阻断交付）。
 import { computeMouthLevel } from './mouth-level'
@@ -27,54 +30,94 @@ const FFT_SIZE = 256 // 短窗（~5.3ms @48k），doc 05 §10
 
 /** 创建 TTS 口部数据源。`analyserFactory` 注入假源（单测/无音频设备环境）；缺省懒建真实 AudioContext。 */
 export function createTtsMouthSource(analyserFactory?: () => AnalyserPair): MouthLevelSource {
-  let el: HTMLAudioElement | null = null
+  let el: HTMLAudioElement | null = null // 当前 attach 目标（未 attach 时为 null）
+  let sourceEl: HTMLAudioElement | null = null // sourceNode 终生绑定的元素（createMediaElementSource 每元素一次）
   let context: AudioContext | null = null
   let ownedContext: AudioContext | null = null // 自建 context（dispose close；工厂提供的归工厂）
   let analyser: AnalyserNode | null = null
   let sourceNode: MediaElementAudioSourceNode | null = null
+  let attached = false
   let prevLevel = 0
   let buf = new Float32Array(FFT_SIZE)
 
-  function teardown(): void {
-    if (sourceNode) { try { sourceNode.disconnect() } catch { /* 尽力 */ } sourceNode = null }
-    if (analyser) { try { analyser.disconnect() } catch { /* 尽力 */ } analyser = null }
-    if (context) { try { void context.suspend() } catch { /* 尽力 */ } context = null }
+  /** 断链（detach/换元素/dispose 共用）：只断开 graph，不释放 context/analyser/sourceNode（可重连）。 */
+  function disconnectGraph(): void {
+    if (sourceNode) { try { sourceNode.disconnect() } catch { /* 尽力 */ } }
+    if (analyser) { try { analyser.disconnect() } catch { /* 尽力 */ } }
+  }
+
+  /** 全量释放（换元素/attach 失败/dispose）：断开 + 挂起 + close 自建 context，引用全清。 */
+  function disposeGraph(): void {
+    disconnectGraph()
+    if (context) { try { void context.suspend() } catch { /* 尽力 */ } }
+    if (ownedContext) { try { void ownedContext.close() } catch { /* 尽力 */ } }
+    ownedContext = null
+    context = null
+    analyser = null
+    sourceNode = null
+    sourceEl = null
     el = null
+    attached = false
     prevLevel = 0
   }
 
   return {
     attach(next: HTMLAudioElement): void {
-      if (el === next && context) return // 同元素重复 attach 幂等
-      teardown()
-      el = next
-      if (analyserFactory) {
-        const pair = analyserFactory()
-        context = pair.context
-        analyser = pair.analyser
-      } else {
-        const Ctx = globalThis.AudioContext
-        if (typeof Ctx !== 'function') return // 无 AudioContext（headless）→ 静默降级（sample 恒 0）
-        context = new Ctx()
-        ownedContext = context
-        analyser = context.createAnalyser()
-        analyser.fftSize = FFT_SIZE
+      if (attached && el === next) return // 同元素已挂幂等
+      if (sourceEl && sourceEl !== next) {
+        // 换元素：旧 sourceNode 终生只绑旧元素（再对其 createMediaElementSource 会抛 InvalidStateError）→
+        // 全量释放后为新元素重建
+        disposeGraph()
       }
+      el = next
+      if (!sourceNode) {
+        // 首次（或换元素后）：建 context + analyser + sourceNode。createMediaElementSource **每元素终生一次**——
+        // 同一元素二次调用抛 InvalidStateError（F1 修复：sourceNode 一次性创建并留存，attach 只重连）
+        if (analyserFactory) {
+          const pair = analyserFactory()
+          context = pair.context
+          analyser = pair.analyser
+        } else {
+          const Ctx = globalThis.AudioContext
+          if (typeof Ctx !== 'function') return // 无 AudioContext（headless）→ 静默降级（sample 恒 0）
+          context = new Ctx()
+          ownedContext = context
+          analyser = context.createAnalyser()
+          analyser.fftSize = FFT_SIZE
+        }
+        try {
+          sourceNode = context.createMediaElementSource(next)
+          sourceEl = next
+        } catch {
+          // 元素已被其它 graph 占用等异常 → 清理；attach 不抛（sample 恒 0 降级）
+          disposeGraph()
+          return
+        }
+      }
+      // 重连 + 恢复（detach 只断链 + suspend，此处重连 + resume，复用同一 sourceNode）
+      const an = analyser
+      const ctx = context
+      if (!sourceNode || !an || !ctx) return
       try {
-        sourceNode = context.createMediaElementSource(next)
-        sourceNode.connect(analyser)
-        analyser.connect(context.destination)
-        void context.resume()
+        sourceNode.connect(an)
+        an.connect(ctx.destination)
+        void ctx.resume()
       } catch {
-        // MediaElementSource 已被其它 graph 占用等异常 → 断开清理；attach 不抛（sample 恒 0 降级）
-        teardown()
+        disposeGraph()
         return
       }
-      buf = new Float32Array(analyser.fftSize)
+      buf = new Float32Array(an.fftSize)
+      attached = true
     },
-    detach(): void { teardown() },
+    detach(): void {
+      disconnectGraph()
+      if (context) { try { void context.suspend() } catch { /* 尽力 */ } }
+      attached = false
+      el = null
+      prevLevel = 0
+    },
     sample(): number {
-      if (!analyser || !el) return 0
+      if (!attached || !analyser || !el) return 0
       analyser.getFloatTimeDomainData(buf)
       let sum = 0
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
@@ -83,9 +126,7 @@ export function createTtsMouthSource(analyserFactory?: () => AnalyserPair): Mout
       return prevLevel
     },
     dispose(): void {
-      teardown()
-      if (ownedContext) { try { void ownedContext.close() } catch { /* 尽力 */ } }
-      ownedContext = null
+      disposeGraph()
     }
   }
 }
