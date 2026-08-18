@@ -73,23 +73,28 @@ function kindFromMimeForMock(mime: string): string {
   return 'file'
 }
 
-/** 最小合法 WAV（44 字节头 + 0.125s 静音 PCM16/单声道/8kHz）：
- *  P4-A final review——旧 4 字节 "RIFF" 不是合法 WAV，<audio> 解码失败；试听预览需可播放的确定性字节。 */
+/** 最小合法 WAV（44 字节头 + 静音 PCM16/单声道/8kHz）。`seconds` 缺省 0.125 → dataSize = byteRate × seconds。
+ *  P4-A final review——旧 4 字节 "RIFF" 不是合法 WAV，<audio> 解码失败；试听预览需可播放的确定性字节。
+ *  **修复（2026-08-19 C1 CI 根因）**：原 `dataSize = sampleRate / 8` 实为 1000 **字节** = 500 samples = 0.0625s
+ *  （注释「0.125s」是错的）——`<audio>` 播放 62ms 即 `ended` → 清播放态 → 口部采样窗口坍缩到百 ms 级，慢采样
+ *  （CI 上页面 timer 被节流 ~1/秒）会漏光。C1 按 `mouthTtsWindowMs + 余量` 生成，保证 `<audio>` 在 cancelled
+ *  （窗口结束）前持续播放、口部台阶序列稳定可采。 */
 /** 批次 C（C1）：mock 合成包络 TTS 播放采样窗口（ms）——audio.session.ready 后延迟发 cancelled 触发「停止 → 归 0」，
  *  给 renderer 口部采样 ~90 帧（@60fps）确定性窗口（headless 音频推进不可靠，ended 不能作为停止依据）。 */
 const MOUTH_TTS_WINDOW_MS = 1500
 
-function makeSilentWav(): Uint8Array {
+function makeSilentWav(seconds = 0.125): Uint8Array {
   const sampleRate = 8000
   const numChannels = 1
   const bitsPerSample = 16
-  const dataSize = sampleRate / 8 // 0.125s 静音 = 1000 samples
+  const bytesPerSec = (sampleRate * numChannels * bitsPerSample) / 8
+  const dataSize = Math.round(bytesPerSec * seconds) // PCM16 mono 字节数（对齐 chunk 大小；零初始化 → 静音）
   const buf = new ArrayBuffer(44 + dataSize)
   const v = new DataView(buf)
   const w = (offset: number, s: string): void => { for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i)) }
   w(0, 'RIFF'); v.setUint32(4, 36 + dataSize, true); w(8, 'WAVE')
   w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, numChannels, true)
-  v.setUint32(24, sampleRate, true); v.setUint32(28, (sampleRate * numChannels * bitsPerSample) / 8, true)
+  v.setUint32(24, sampleRate, true); v.setUint32(28, bytesPerSec, true)
   v.setUint16(32, (numChannels * bitsPerSample) / 8, true); v.setUint16(34, bitsPerSample, true)
   w(36, 'data'); v.setUint32(40, dataSize, true)
   return new Uint8Array(buf) // samples 零初始化 → 静音
@@ -775,7 +780,7 @@ export class MockBackend implements BackendAdapter {
         // （headless 音频推进/ended 不可靠；否则 ~1 帧窗口无法断言 step 序列变化）。
         if (event.event === 'generation.completed' && this.ttsActive) {
           if (this.ttsAudioSink && this.mockMouthLevel !== undefined) {
-            this.ttsAudioSink('mock-silent', makeSilentWav())
+            this.ttsAudioSink('mock-silent', makeSilentWav((this.mouthTtsWindowMs + 1000) / 1000)) // WAV 时长 ≥ 窗口+1s：<audio> 在 cancelled 前持续播放，口部窗口不坍缩
             if (this.ttsCancelTimer) clearTimeout(this.ttsCancelTimer)
             this.ttsCancelTimer = setTimeout(() => {
               this.ttsCancelTimer = undefined

@@ -51,6 +51,10 @@ export const useVoiceStore = defineStore('voice', () => {
   /** C1（批次 C）：TTS <audio> 宿主元素引用（CyTtsPlayer onMounted 赋值 / onUnmounted 清空）；live2dStore
    *  watch 它 + tts.playing → attach/detach 口部数据源（MediaElementSource→Analyser）。非组件消费，仅跨 store 接线。 */
   const ttsAudioEl = ref<HTMLAudioElement | null>(null)
+  /** C1 集成诊断（2026-08-19）：`audio.session.ready` 是否**曾到达** renderer（在 autoReadReply 门**前**置位，
+   *  clearTtsState 不清）。供集成失败转储区分「ready 未到达 / 门控忽略 / 播放后回落」——cancelled 后 tts.url
+   *  已清空，单看现值无法确认 ready 是否发生过。 */
+  const ttsReadySeen = ref(false)
   const micError = ref<PublicError>()
   const error = ref<PublicError>()
   const captureReady = ref(false)
@@ -184,6 +188,8 @@ export const useVoiceStore = defineStore('voice', () => {
         return
       }
       case 'audio.session.ready': {
+        // C1 诊断：ready 曾到达（无论 autoReadReply 是否放行；放行与否都记，供失败转储区分断点）
+        ttsReadySeen.value = true
         // D-P8 播放门：autoReadReply 为真才置 playing（触发 CyTtsPlayer）；为假忽略（不播、不置 playing）
         if (!useSettingsStore().voice.autoReadReply) return
         tts.value.playingStreamId = e.streamId
@@ -532,7 +538,7 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   return {
-    mode, caption, record, realtime, dictation, tts, ttsAudioEl, micError, error, captureReady,
+    mode, caption, record, realtime, dictation, tts, ttsAudioEl, ttsReadySeen, micError, error, captureReady,
     consentPending, confirmDispatching, pendingAction, notice,
     init, handleEvent, guardStart, requireConsent, confirmConsent, dismissConsent,
     startRecord, stopRecord, replayRecord, discardRecord, commitRecord,

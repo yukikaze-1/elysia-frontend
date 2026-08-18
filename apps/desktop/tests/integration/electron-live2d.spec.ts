@@ -425,38 +425,41 @@ describe('阶段5批次C Live2D Electron 集成（C1：TTS 音量口型）', () 
       await edgeCard.getByRole('button', { name: '设为当前', exact: true }).click()
       await expect.poll(() => page.evaluate(() => document.querySelectorAll('.cy-profile-card[data-profile-id="edge/edge-tts"] .cy-profile-current').length), POLL).toBe(1)
       await closeSettings(page)
-      // 页面内高频采样口型电平（setInterval 20Hz——独立于 rAF，慢 CI 渲染饱和不丢采样；mock 窗口由
-      // CYRENE_MOCK_MOUTH_WINDOW_MS=5000 保证，5s 内 step 台阶序列大量非零帧）
-      await page.evaluate(() => {
-        const w = window as unknown as { __cyreneMouthSamples: number[]; __cyreneMouthTimer?: number }
-        w.__cyreneMouthSamples = []
-        const collect = () => {
-          const v = (window as unknown as { __cyreneTest?: { getMouthLevel: () => number } }).__cyreneTest?.getMouthLevel?.() ?? -1
-          w.__cyreneMouthSamples.push(v)
-        }
-        if (w.__cyreneMouthTimer) clearInterval(w.__cyreneMouthTimer)
-        w.__cyreneMouthTimer = window.setInterval(collect, 50)
-      })
+      // 直轮询口型电平（expect.poll 每 POLL 经 CDP 读一次 getMouthLevel，测试侧维护历史）——不依赖页面
+      // timer/rAF：CI 上页面 timer 被节流到 ~1/秒（页面侧 setInterval 采集器会漏采样窗口），CDP evaluate
+      // 不受页面 timer 节流影响。窗口由 CYRENE_MOCK_MOUTH_WINDOW_MS=5000 保证，直轮询 200ms 间隔足量命中。
+      const mouthReadings: number[] = []
       // 发送 → generation.completed → audio.session.ready → tts.playing=true → attach → tick 采样 step 序列
       await sendChat(page, 'mouth')
       // 断言：出现过 ≥2 个不同非零值（step 序列随采样变化）且最终归 0（mock 延迟 audio.session.cancelled → detach 归零；
       // 无 C1 env 时 mock-silent 404 → onerror → 回落，该路径由 electron-voice 的 D-P13 用例覆盖）
       try {
         await expect.poll(async () => {
-          const arr = await page.evaluate(() => (window as unknown as { __cyreneMouthSamples?: number[] }).__cyreneMouthSamples ?? [])
-          const nonzero = new Set(arr.filter((v) => v > 0))
-          const trailingZero = arr.length > 0 && arr[arr.length - 1] === 0
+          const v = await page.evaluate(() =>
+            (window as unknown as { __cyreneTest?: { getMouthLevel: () => number } }).__cyreneTest?.getMouthLevel?.() ?? -1)
+          mouthReadings.push(v)
+          const nonzero = new Set(mouthReadings.filter((x) => x > 0))
+          const trailingZero = mouthReadings.length > 0 && mouthReadings[mouthReadings.length - 1] === 0
           return nonzero.size >= 2 && trailingZero
         }, { ...POLL, timeout: 15000 }).toBe(true)
       } catch (e) {
-        // DEBUG：超时转储采样序列 + voiceStore.tts 态（定位链路断点：ready 未到 / autoReadReply 门控 / 播放态回落）
-        const dump = await page.evaluate(() => (window as unknown as { __cyreneMouthSamples?: number[] }).__cyreneMouthSamples ?? [])
-        const ttsState = await page.evaluate(() => {
+        // DEBUG：超时转储读值 + voiceStore.tts 态 + 口部源种类 + 页面可见性（定位链路断点）
+        const dump = await page.evaluate(() => {
           const el = document.querySelector<HTMLAudioElement>('audio.cy-tts-player')
-          const t = (window as unknown as { __cyreneTest?: { getTtsState?: () => { url: string | null; playing: boolean; playingStreamId: number | null } } }).__cyreneTest?.getTtsState?.()
-          return { audio: { src: el?.getAttribute('src') ?? null, paused: el?.paused ?? null }, voice: t ?? null }
+          const t = (window as unknown as {
+            __cyreneTest?: {
+              getTtsState?: () => { url: string | null; playing: boolean; playingStreamId: number | null; readySeen: boolean }
+              getMouthInfo?: () => { kind: 'step' | 'sine' | 'real' | null }
+            }
+          }).__cyreneTest
+          return {
+            audio: { src: el?.getAttribute('src') ?? null, paused: el?.paused ?? null },
+            voice: t?.getTtsState?.() ?? null,
+            mouth: t?.getMouthInfo?.() ?? null,
+            visibility: document.visibilityState
+          }
         })
-        console.log('C1 DEBUG samples:', JSON.stringify(dump.slice(0, 200)), 'ttsState:', JSON.stringify(ttsState))
+        console.log('C1 DEBUG readings:', JSON.stringify(mouthReadings.slice(0, 200)), 'state:', JSON.stringify(dump))
         throw e
       }
     } finally { await closeApp(launched) }

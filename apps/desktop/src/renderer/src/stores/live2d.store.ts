@@ -85,6 +85,9 @@ export const useLive2dStore = defineStore('live2d', () => {
   let mouthSource: MouthLevelSource | null = null
   let mouthAttached = false
   let mockMouthLevel: 'step' | 'sine' | undefined
+  /** C1 集成诊断（2026-08-19）：口部数据源种类（'step'/'sine' = mockMouthLevel 水合生效 / 'real' = Analyser）。
+   *  集成失败转储用——区分「合成包络源未水合（读静音 → 恒 0）」与「attach/播放断链」。 */
+  const mouthSourceKind = ref<'step' | 'sine' | 'real' | null>(null)
   let unsubMouthWatch: (() => void) | null = null
   // M1：init 完成（含已选模型覆盖 switch）前为 false，串行化用户 switch——init resolve 前不允许触发切换，
   // 避免 currentId null 时 controller 切换中守卫返回被丢弃目标的语义暧昧。
@@ -262,10 +265,10 @@ export const useLive2dStore = defineStore('live2d', () => {
     mouthSource?.dispose() // 防御：重复 init 不泄漏旧源（正常路径 dispose 已清，此处兜底）
     mouthSource =
       mockMouthLevel === 'step'
-        ? createStepMouthSource()
+        ? (mouthSourceKind.value = 'step', createStepMouthSource())
         : mockMouthLevel === 'sine'
-          ? createSineMouthSource()
-          : buildMouthSource()
+          ? (mouthSourceKind.value = 'sine', createSineMouthSource())
+          : (mouthSourceKind.value = 'real', buildMouthSource())
     const ctrl = ensureController()
     setupVisibilityWatch() // C2：可见性接线（「布局可见 ∧ enabled」→ setVisibility；immediate 先推当前值）
     try {
@@ -464,7 +467,7 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   return {
-    models, status, modelId, error, live2dSettings, characterState, mouthLevel,
+    models, status, modelId, error, live2dSettings, characterState, mouthLevel, mouthSourceKind,
     init, switchModel, restoreDefaults, dispose, tick, handleDirective,
     setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }
