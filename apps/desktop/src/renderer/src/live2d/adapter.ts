@@ -469,16 +469,24 @@ export class Live2DAdapter {
     this.canvas = canvas
     this.gpuLost = false
     this.lastTick = 0
-    this.unregisterContextLost = this.engine.onContextLost(canvas, () => {
-      this.gpuLost = true // 事件置位；渲染 tick 抛 Live2DGpuLostError
-    })
-    const option = new Option()
-    option.loggingLevel = LogLevel.LogLevel_Off
-    option.logFunction = () => {
-      /* 无操作日志钩子：抑制 Core 底层日志，保持静默（本应用不向前端暴露 SDK 日志） */
+    try {
+      // 半初始化兜底（批次 A Task5 P3，批次 C D5C-04 随重建核查）：startUp/initialize/监听注册抛错 →
+      // 释放已建 context/监听（destroy 清 gl/监听），不留部分状态；调用方（controller init/reset）据此可
+      // 再次 initialize 重建，不因 this.gl 残留而误判已初始化。
+      this.unregisterContextLost = this.engine.onContextLost(canvas, () => {
+        this.gpuLost = true // 事件置位；渲染 tick 抛 Live2DGpuLostError
+      })
+      const option = new Option()
+      option.loggingLevel = LogLevel.LogLevel_Off
+      option.logFunction = () => {
+        /* 无操作日志钩子：抑制 Core 底层日志，保持静默（本应用不向前端暴露 SDK 日志） */
+      }
+      CubismFramework.startUp(option)
+      CubismFramework.initialize()
+    } catch (e) {
+      this.destroy()
+      throw e
     }
-    CubismFramework.startUp(option)
-    CubismFramework.initialize()
     return true
   }
 

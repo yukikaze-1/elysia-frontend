@@ -74,10 +74,10 @@ describe('createLive2dStateSource（注入 getter + Vue reactive，flush sync）
   it('首次组合即 push 当前态（idle）', () => {
     const s = makeSources({})
     const push = vi.fn()
-    const unsub = createLive2dStateSource(s.input, push)
+    const handle = createLive2dStateSource(s.input, push)
     expect(push).toHaveBeenCalledTimes(1)
     expect(push.mock.calls[0][0]).toBe('idle')
-    unsub()
+    handle.unsub()
   })
 
   it('disconnected → offline；重连 + 空活动 → idle', () => {
@@ -192,13 +192,38 @@ describe('createLive2dStateSource（注入 getter + Vue reactive，flush sync）
     vi.useFakeTimers()
     const s = makeSources({})
     const push = vi.fn()
-    const unsub = createLive2dStateSource(s.input, push)
+    const handle = createLive2dStateSource(s.input, push)
     push.mockClear()
     s.emo.value = 'sad'
     expect(push).toHaveBeenLastCalledWith('sad')
-    unsub()
+    handle.unsub()
     vi.advanceTimersByTime(5000)
     // 只保留进入 sad 的一次 push，回退被清理不触发
     expect(push).toHaveBeenCalledTimes(1)
+  })
+
+  it('C2 recompose：按当前业务源重组合并 push（瞬态重启 timer、同态不重推）；退订后 recompose no-op', () => {
+    vi.useFakeTimers()
+    const s = makeSources({})
+    const push = vi.fn()
+    const handle = createLive2dStateSource(s.input, push)
+    push.mockClear()
+    // 当前业务态 idle；recompose → 重推 idle（同态不重推：push 无新调用）
+    handle.recompose()
+    expect(push).not.toHaveBeenCalled()
+    // 源变化到 happy（瞬态，mood timer 启动）；recompose 保持 happy（不重推，timer 仍在）
+    s.emo.value = 'happy'
+    push.mockClear()
+    handle.recompose()
+    expect(push).not.toHaveBeenCalled() // 同态（currentState=happy）不重推
+    // 2s 后 mood timer 正常回退（recompose 未破坏 timer 管理）
+    vi.advanceTimersByTime(2000)
+    expect(push).toHaveBeenLastCalledWith('idle')
+    // 退订后 recompose no-op（不抛错、不 push）
+    handle.unsub()
+    push.mockClear()
+    handle.recompose()
+    expect(push).not.toHaveBeenCalled()
+    vi.useRealTimers()
   })
 })

@@ -197,7 +197,9 @@ let ro: ResizeObserver | undefined
 function loop(): void {
   if (rafId === 0) return
   store.tick() // controller.tick：adapter.update+draw（GPU-lost → store 镜像 fallback → active 变 false 停环）
-  applyLookTween() // 鼠标跟随回正 lerp（mouseleave → 逐帧逼近 0 → 收敛后 setLookTarget(null)）
+  // C2（D5C-03）：视线跟随回正 lerp 独立于 controller.tick——FrameBudget skip 帧仍执行（廉价、保平滑；
+  // controller 侧 skip 只原子跳过动画+draw，不阻断本 lerp）
+  applyLookTween()
   resizeCanvas()
   rafId = requestAnimationFrame(loop)
 }

@@ -617,3 +617,22 @@ describe('Layout 装配 + draw() MVP 拟合路径', () => {
     expect(m2?.[13]).toBeCloseTo(0.5)
   })
 })
+
+describe('批次 C（C2）：adapter.initialize 半初始化兜底（Task5 P3，重建路径再走 initialize）', () => {
+  it('framework initialize 抛错 → adapter 释放已建 context/监听（destroy 清部分状态），再次 initialize 可重建', async () => {
+    // 让 framework 的 initialize 抛错（模拟半初始化：gl 已建、监听已注册、框架启动序列中断）
+    const framework = await import('@framework/live2dcubismframework')
+    vi.mocked(framework.CubismFramework.initialize).mockImplementationOnce(() => {
+      throw new Error('framework init failed')
+    })
+    const { canvas, engine, adapter } = makeHarness()
+    expect(() => adapter.initialize(canvas)).toThrow('framework init failed')
+    // 已建 context 与监听已释放（destroy 清 gl/监听）——无部分状态残留
+    expect(engine.createContextCalls.length).toBe(1) // 第一次创建已发生
+    expect(engine.unregisterCount).toBe(1) // destroy 已注销 contextlost 监听（无泄漏）
+    // 再次 initialize 可完整重建（this.gl 已清空，不误判已初始化；幂等守卫不再短路）
+    expect(adapter.initialize(canvas)).toBe(true)
+    expect(engine.createContextCalls.length).toBe(2) // 第二次创建（新 context）
+    expect(engine.unregisterCount).toBe(1) // 新监听已注册（未注销）
+  })
+})

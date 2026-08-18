@@ -18,6 +18,7 @@ import { setLive2dControllerFactory, setMouthSourceFactory, useLive2dStore } fro
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
+import { useLayoutStore } from '../../src/renderer/src/stores/layout.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Live2DModelSummary, RuntimeInfo } from '@shared/contracts'
 
@@ -130,19 +131,24 @@ const mockApi = {
   listLive2dModels: vi.fn()
 }
 
-/** 装载 fake 控制器工厂（store 经 setLive2dControllerFactory 注入；adapter/list 均为 fake） */
+/** 装载 fake 控制器工厂（store 经 setLive2dControllerFactory 注入；adapter/list 均为 fake）。
+ *  预创建 ctrl 并返回（device_lost 重建测试可 spy reset/settings 转发）。 */
 function installFakes(opts: { models?: Live2DModelSummary[] } = {}) {
   const models = opts.models ?? [MODEL_HARU, MODEL_LIL, MODEL_BROKEN]
   const adapter = makeFakeAdapter()
   const list = vi.fn(async () => models)
-  setLive2dControllerFactory(() => new Live2DController({ adapter: asAdapter(adapter), list: list as unknown as () => Promise<Live2DModelSummary[]> }))
+  const ctrl = new Live2DController({ adapter: asAdapter(adapter), list: list as unknown as () => Promise<Live2DModelSummary[]> })
+  setLive2dControllerFactory(() => ctrl)
   mockApi.listLive2dModels.mockResolvedValue(models)
-  return { adapter, list, models }
+  return { adapter, list, models, ctrl }
 }
 
 function freshStore() {
   setActivePinia(createPinia())
   setDesktopApi(mockApi)
+  // C2（D5C-05）：布局宽度拉足 → live2dShown=true（store setVisibility 接线默认可见；默认 viewportWidth=0
+  // 在 node 环境会让布局自动折叠 Live2D，setVisibility(false) 会停掉渲染循环破坏既有 tick 断言）
+  useLayoutStore().viewportWidth = 2000
   const store = useLive2dStore()
   const settings = useSettingsStore()
   return { store, settings }
@@ -418,7 +424,10 @@ function installEffectiveController(effectiveFor: Record<string, string>) {
     setViewTransform: vi.fn(),
     setLookTarget: vi.fn(),
     setMouthLevel: vi.fn(), // C1：口部采样接线（tick 采样 → setMouthLevel）
-    playTapMotion: vi.fn()
+    playTapMotion: vi.fn(),
+    // C2：可见性接线（D5C-05）与 GPU 重建 reset（D5C-04）
+    setVisibility: vi.fn(),
+    reset: vi.fn(async () => { state.id = 'haru' })
   }
   setLive2dControllerFactory(() => ctrl as unknown as Live2DController)
   return ctrl
@@ -599,5 +608,154 @@ describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFact
     const { store: s2 } = freshStore()
     await s2.init(fakeCanvas)
     expect(factoryCalled).toBe(true)
+  })
+})
+
+describe('live2dStore 批次 C（C2）：setVisibility 接线（D5C-05，消除 Task5 M4 死面）', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('init 把「布局可见 ∧ enabled」→ controller.setVisibility(true)；布局隐藏 → false（tick 不驱动 adapter）；恢复 → true', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore() // viewportWidth=2000 → live2dShown=true
+    const visSpy = vi.spyOn(ctrl, 'setVisibility')
+    await store.init(fakeCanvas)
+    expect(visSpy).toHaveBeenLastCalledWith(true) // init immediate：布局可见 ∧ enabled
+    // 布局隐藏（toggleLive2d → prefs.live2dVisible=false → live2dShown=false）→ setVisibility(false)
+    useLayoutStore().toggleLive2d()
+    await nextTick()
+    expect(visSpy).toHaveBeenLastCalledWith(false)
+    // controller 级门：隐藏态 tick 不驱动 adapter（不渲染空白帧）
+    adapter.update.mockClear()
+    store.tick()
+    expect(adapter.update).not.toHaveBeenCalled()
+    // 布局恢复 → setVisibility(true) → tick 恢复驱动
+    useLayoutStore().toggleLive2d()
+    await nextTick()
+    expect(visSpy).toHaveBeenLastCalledWith(true)
+    store.tick()
+    expect(adapter.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('enabled=false → setVisibility(false)；enabled 恢复 → true', async () => {
+    const { ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store, settings } = freshStore()
+    const visSpy = vi.spyOn(ctrl, 'setVisibility')
+    await store.init(fakeCanvas)
+    expect(visSpy).toHaveBeenLastCalledWith(true)
+    settings.$patch({ live2d: { enabled: false } })
+    await nextTick()
+    expect(visSpy).toHaveBeenLastCalledWith(false)
+    settings.$patch({ live2d: { enabled: true } })
+    await nextTick()
+    expect(visSpy).toHaveBeenLastCalledWith(true)
+  })
+
+  it('dispose 退订可见性接线（布局变化不再推送 setVisibility）', async () => {
+    const { ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    const visSpy = vi.spyOn(ctrl, 'setVisibility')
+    await store.init(fakeCanvas)
+    store.dispose()
+    visSpy.mockClear()
+    useLayoutStore().toggleLive2d()
+    await nextTick()
+    expect(visSpy).not.toHaveBeenCalled() // 已退订
+  })
+})
+
+describe('live2dStore 批次 C（C2）：GPU 重建一次（D5C-04，reset(当前 modelId) + 重放 + guard finally 复位）', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('device_lost → reset(当前 modelId) 一次 + 重放 settings/lookTarget → 恢复 ready', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU, MODEL_LIL] })
+    const { store, settings } = freshStore()
+    settings.$patch({ live2d: { autoMotions: false, lipSync: false, performanceMode: 'quality', scale: 2, offsetX: 1, offsetY: -1 } })
+    await store.init(fakeCanvas) // ready on haru
+    store.setLookTarget({ x: 0.5, y: -0.2 }) // 记录最近视线目标（重建后重放）
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    const autoSpy = vi.spyOn(ctrl, 'setAutoMotions')
+    const lipSpy = vi.spyOn(ctrl, 'setLipSync')
+    const perfSpy = vi.spyOn(ctrl, 'setPerformanceMode')
+    const viewSpy = vi.spyOn(ctrl, 'setViewTransform')
+    const lookSpy = vi.spyOn(ctrl, 'setLookTarget')
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    store.tick() // device_lost → 同步镜像 fallback + 异步 reset
+    expect(store.status).toBe('fallback') // 重建期间静态头像
+    expect(resetSpy).toHaveBeenCalledWith('haru') // reset 一次（当前 modelId）
+    expect(resetSpy).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(store.status).toBe('ready')) // 重建成功
+    // 重放 settings + lookTarget（复用 init 重放点）+ CharacterState（stateSource recompose）
+    expect(autoSpy).toHaveBeenLastCalledWith(false)
+    expect(lipSpy).toHaveBeenLastCalledWith(false)
+    expect(perfSpy).toHaveBeenLastCalledWith('quality')
+    expect(viewSpy).toHaveBeenLastCalledWith(2, 1, -1)
+    expect(lookSpy).toHaveBeenLastCalledWith({ x: 0.5, y: -0.2 }) // 视线目标重放
+    expect(store.modelId).toBe('haru')
+  })
+
+  it('重建 await 中再 device_lost → 不二次触发（rebuildGuard；direct emit 测试 seam）', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    // 让首次重建悬置：reset 的 createModel 永不 resolve（重建 await 中）
+    adapter.createModel.mockImplementation(async () => new Promise(() => {}))
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    store.tick() // 第一次 device_lost → 重建开始（createModel 悬置，rebuildGuard 已置位）
+    await Promise.resolve() // 让 reset 进入 createModel await
+    // 重建中再 device_lost（controller emit 私有，测试 seam 直调）→ guard 拦截不二次触发
+    ;(ctrl as unknown as { emit: (e: string, p?: unknown) => void }).emit('device_lost')
+    expect(resetSpy).toHaveBeenCalledTimes(1)
+    expect(store.status).toBe('fallback') // 镜像 fallback（重建进行中）
+  })
+
+  it('device_lost 重建失败（createModel 抛）→ fallback；guard finally 复位（再次 device_lost 再重建）', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    adapter.createModel.mockRejectedValueOnce(new Error('reload failed')) // 仅重建这一次 createModel 失败
+    store.tick()
+    await vi.waitFor(() => expect(resetSpy).toHaveBeenCalledTimes(1))
+    await new Promise((r) => setTimeout(r, 0)) // flush 失败链（createModel reject → reset/rebuildAfterLost catch）
+    expect(store.status).toBe('fallback') // 重建失败 → 静态头像
+    // guard finally 复位：再次 device_lost（direct emit——controller 失败态 tick 不再驱动）→ 重建成功
+    ;(ctrl as unknown as { emit: (e: string, p?: unknown) => void }).emit('device_lost')
+    await vi.waitFor(() => expect(store.status).toBe('ready'))
+    expect(resetSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('重建成功后再次 device_lost → 再次重建（guard 非永久，finally 复位）', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    store.tick() // 第一次 device_lost → 重建
+    await vi.waitFor(() => expect(store.status).toBe('ready'))
+    expect(resetSpy).toHaveBeenCalledTimes(1)
+    store.tick() // 第二次 device_lost → 再次重建（adapter.update 仍抛）
+    await vi.waitFor(() => expect(store.status).toBe('ready'))
+    expect(resetSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('重建后 stateSource 接线仍有效：重建成功后续源变化仍 push controller.setState（CharacterState 编排不中断）', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas) // stateSource 接线（connection 缺省 disconnected → 'offline'）
+    useConnectionStore().setState({ status: 'connected' }) // → 'idle'
+    await nextTick()
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    store.tick() // device_lost → 重建（含重放 settings + stateSource recompose 恢复 CharacterState）
+    await vi.waitFor(() => expect(store.status).toBe('ready'))
+    const setStateSpy = vi.spyOn(ctrl, 'setState')
+    // 重建后续源变化 → stateSource watch 仍驱动 controller.setState（重建未断开局编排）
+    useConnectionStore().setState({ status: 'disconnected' })
+    await nextTick()
+    expect(setStateSpy).toHaveBeenCalledWith('offline')
+    // recompose 本身（重组合/去重/瞬态 timer）由 live2d-state-source.spec 的 C2 用例覆盖
   })
 })

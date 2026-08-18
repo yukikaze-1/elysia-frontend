@@ -11,6 +11,7 @@
 // 指向之；Controller 不读 summary.modelFile——Minor G）。事件极简：'device_lost'（GPU-lost → 上层回退）、
 // 'status'（每次状态迁移广播）、'error'（switchModel 失败，载荷为 Error）。
 import { Live2DGpuLostError, type Live2DAdapter, type Live2DModelHandle } from './adapter'
+import { FrameBudget } from './perf'
 import type { Live2DModelSummary, PerformanceMode } from '@shared/contracts'
 import {
   CharacterStateMachine,
@@ -87,6 +88,9 @@ export class Live2DController {
   private currentStatus: Live2DControllerStatus = 'unloaded'
   private visible = true
   private perfMode: PerformanceMode = 'auto'
+  // C2（批次 C，D5C-03）：FrameBudget 降帧门——按 perfMode 决定每帧是否推进整段 tick（动画+draw 原子跳过）。
+  // 字段声明在 perfMode 之后（初始化依赖 perfMode 已赋值）；setPerformanceMode 热切换经 budget.setMode。
+  private budget: FrameBudget = new FrameBudget(this.perfMode)
   private switching = false // switchModel 重入串行守卫（独立于 status：init 内部也置 loading 后调 switchModel）
   private listeners = new Map<Live2DControllerEvent, Set<EventListener>>()
 
@@ -204,9 +208,16 @@ export class Live2DController {
    *  其他异常静默吞掉（不崩溃渲染循环）。隐藏/非 ready 时 no-op。 */
   tick(): void {
     if (this.currentStatus !== 'ready' || !this.visible) return
+    // C2（批次 C，D5C-03）：FrameBudget 降帧门——skip 帧（shouldDraw false）时整段动画+draw 原子跳过
+    // （不 updateAnimation、不 adapter.update、不产生 draw）。视线跟随 lerp 在 Panel 侧（CyLive2DPanel loop
+    // 的 applyLookTween），skip 帧仍执行（廉价、保平滑，D5C-03）。
+    const now = performance.now()
+    if (!this.budget.shouldDraw(now)) return
+    const t0 = performance.now()
     try {
-      this.updateAnimation(performance.now())
+      this.updateAnimation(now)
       this.adapter.update()
+      this.budget.feedCost(performance.now() - t0) // 实际帧耗时喂 EMA（balanced 自适应/auto 迟滞依据；失败帧不计）
     } catch (e) {
       if (e instanceof Live2DGpuLostError) {
         this.handle?.destroy()
@@ -221,8 +232,11 @@ export class Live2DController {
     }
   }
 
-  /** 重建：全量释放后按默认模型（第一个 available）重新加载。canvas 未持有（未 init）时仅复位。 */
-  async reset(): Promise<void> {
+  /** 重建：全量释放后按目标模型重新加载（D5C-04 扩展）。目标 = modelId 有值且仍 available ? modelId : 首个
+   *  available；无 available → fallback（静态头像）。canvas 未持有（未 init）时仅复位。initialize 抛错
+   *  （半初始化，Task5 P3）由 adapter 侧 try/finally 释放部分 context 后向上传播。
+   *  @param modelId 目标模型 id（null/undefined 均视为「未指定」→ 首个 available；store 重建传当前 modelId）。 */
+  async reset(modelId?: string | null): Promise<void> {
     const canvas = this.canvas
     this.unload()
     if (!canvas) return
@@ -233,12 +247,15 @@ export class Live2DController {
     this.setStatus('loading')
     try {
       const models = await this.list()
-      const first = models.find((m) => m.available)
-      if (!first) {
+      const target =
+        modelId != null && models.some((m) => m.id === modelId && m.available)
+          ? modelId
+          : models.find((m) => m.available)?.id
+      if (!target) {
         this.setStatus('fallback')
         return
       }
-      await this.switchModel(first.id)
+      await this.switchModel(target)
     } catch (e) {
       this.setStatus('failed')
       this.emit('error', e)
@@ -251,9 +268,11 @@ export class Live2DController {
     this.visible = v
   }
 
-  /** 性能模式（批次 A 仅记录；帧率/渲染节流归批次 B 落地，YAGNI） */
+  /** 性能模式（批次 A 仅记录；批次 C 消费——FrameBudget 热切换 setMode：重置 autoTarget/streaks/first，
+   *  下次 tick 首帧必画） */
   setPerformanceMode(m: PerformanceMode): void {
     this.perfMode = m
+    this.budget?.setMode(m)
   }
 
   get performanceMode(): PerformanceMode {

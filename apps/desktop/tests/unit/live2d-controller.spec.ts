@@ -90,6 +90,10 @@ function makeHarness(): {
     destroy: vi.fn()
   }
   const ctrl = new Live2DController({ adapter: adapter as unknown as Live2DAdapter, list: async () => [MODEL_A, MODEL_B] })
+  // C2（批次 C）：既有单测按满帧驱动（quality 恒 draw）——FrameBudget 门在低功耗/自适应模式下的 skip 语义
+  // 由 perf.spec.ts 纯逻辑 + 本 spec 专门的 low_power 用例覆盖；此处避免真实时间下连续 tick 被 16.67ms
+  // 间隔误 skip 而破坏既有逐帧断言。
+  ctrl.setPerformanceMode('quality')
   return { adapter, ctrl, getHandle: () => handles[handles.length - 1] }
 }
 
@@ -526,5 +530,102 @@ describe('Live2DController 批次 C（C1）：通用口部写出（D5C-02，替�
     h.ctrl.tick()
     const last = handle.setParam.mock.calls.filter((c) => c[0] === 'ParamMouthOpenY').at(-1)
     expect(last?.[1]).toBe(0.5) // 动作值赢（updateAnimation 口部写 → adapter.update 覆写顺序钉死）
+  })
+})
+
+describe('Live2DController 批次 C（C2）：reset(modelId?) 重建 + FrameBudget 降帧门 + setVisibility', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('reset(modelId)：modelId 有值且 available → 重载之', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas) // 'a'
+    await h.ctrl.switchModel('b')
+    await h.ctrl.reset('b') // b 仍 available → 重载 b
+    expect(h.ctrl.status).toBe('ready')
+    expect(h.ctrl.modelId).toBe('b')
+    expect(h.adapter.initialize).toHaveBeenCalledTimes(2) // init 一次 + reset 重建一次（GL 重创建）
+  })
+
+  it('reset(modelId)：modelId 不可用 → 回退首个可用', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas) // 'a'
+    await h.ctrl.switchModel('b')
+    await h.ctrl.reset('missing-model') // 目标不在 list/不可用 → 首个可用 a
+    expect(h.ctrl.status).toBe('ready')
+    expect(h.ctrl.modelId).toBe('a')
+  })
+
+  it('reset()：无参缺省回退首个可用（既有语义保留）', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas)
+    await h.ctrl.switchModel('b')
+    await h.ctrl.reset() // 缺省 → 首个可用 a
+    expect(h.ctrl.status).toBe('ready')
+    expect(h.ctrl.modelId).toBe('a')
+  })
+
+  it('reset(modelId)：initialize 返回 false → fallback（不 createModel）', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas)
+    h.adapter.initialize.mockReturnValueOnce(false)
+    await h.ctrl.reset('a')
+    expect(h.ctrl.status).toBe('fallback')
+    expect(h.adapter.createModel).toHaveBeenCalledTimes(1) // 仅 init 一次（reset 未走到 createModel）
+  })
+
+  it('reset(modelId)：list 无可用 → fallback（不悬置 loading）', async () => {
+    const handles: FakeHandle[] = []
+    const adapter = {
+      handles,
+      initialize: vi.fn(() => true),
+      createModel: vi.fn(async () => { const h = makeHandle({}); handles.push(h); return h }),
+      update: vi.fn(),
+      destroy: vi.fn()
+    }
+    const broken: Live2DModelSummary = { ...MODEL_A, available: false, reason: 'missing_file' }
+    const ctrl = new Live2DController({ adapter: adapter as unknown as Live2DAdapter, list: async () => [broken] })
+    await ctrl.init(fakeCanvas) // fallback（无可用）
+    await ctrl.reset('a')
+    expect(ctrl.status).toBe('fallback')
+    expect(adapter.createModel).not.toHaveBeenCalled()
+  })
+
+  it('reset 重建成功后帧循环恢复：budget first 复位（setPerformanceMode 重放触发 setMode → 首帧必画）', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas)
+    await h.ctrl.reset('a') // 重建
+    expect(h.ctrl.status).toBe('ready')
+    h.adapter.update.mockClear()
+    h.ctrl.tick() // 重建后第一帧必须画（重放 setPerformanceMode 时 setMode 已重置 first）
+    expect(h.adapter.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('tick 经 FrameBudget 门：low_power 距上次 draw <33ms 的帧被 skip（不 updateAnimation、不 adapter.update）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: [...FULL_PARAMS], motions: [] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    h.ctrl.setPerformanceMode('low_power') // setMode 重置 first → 下一帧必画
+    handle.setParam.mockClear()
+    h.adapter.update.mockClear()
+    h.ctrl.tick() // 首帧（必画）：updateAnimation + adapter.update + feedCost
+    expect(h.adapter.update).toHaveBeenCalledTimes(1)
+    expect(handle.setParam.mock.calls.length).toBeGreaterThan(0)
+    h.adapter.update.mockClear()
+    handle.setParam.mockClear()
+    h.ctrl.tick() // 紧接首帧 <33ms → skip（不写参数、不 update）
+    expect(h.adapter.update).not.toHaveBeenCalled()
+    expect(handle.setParam).not.toHaveBeenCalled()
+  })
+
+  it('setVisibility(false) 停渲染；true 恢复（controller 级门，独立于 FrameBudget）', async () => {
+    const h = makeHarness()
+    await h.ctrl.init(fakeCanvas)
+    h.ctrl.setVisibility(false)
+    h.ctrl.tick()
+    expect(h.adapter.update).not.toHaveBeenCalled() // 隐藏不产生帧
+    h.ctrl.setVisibility(true)
+    h.ctrl.tick()
+    expect(h.adapter.update).toHaveBeenCalledTimes(1) // 可见恢复
   })
 })

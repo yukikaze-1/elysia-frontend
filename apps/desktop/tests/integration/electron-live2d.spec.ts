@@ -261,22 +261,23 @@ describe('阶段5批次A Live2D Electron 集成（A7）', () => {
     } finally { await closeApp(launched) }
   })
 
-  it('6.设备丢失：触发 webglcontextlost → 静态头像 + 聊天可用', async () => {
+  it('6.设备丢失：触发 webglcontextlost → 一次重建（ready/fallback）+ 聊天可用', async () => {
     const ud = freshUserData()
     const launched = await launchL2d(ud)
     try {
       const { page } = launched
       await waitLive2dSettled(page)
       // 规范 GPU-lost 模拟：WEBGL_lose_context.loseContext() 触发真实 webglcontextlost → adapter gpuLost 置位 →
-      // 下一渲染 tick 抛 Live2DGpuLostError → device_lost → 静态头像回退
+      // 下一渲染 tick 抛 Live2DGpuLostError → device_lost → store 重建一次（批次 C D5C-04：ready 或 fallback）
       await page.evaluate(() => {
         const canvas = document.querySelector<HTMLCanvasElement>('.cy-live-canvas')
         const gl = canvas?.getContext('webgl') ?? canvas?.getContext('webgl2')
         const ext = gl?.getExtension('WEBGL_lose_context')
         ext?.loseContext()
       })
-      await expect.poll(() => statusText(page), POLL).toContain('回退')
-      await connectAndActivateFirst(page) // 回退不阻塞聊天
+      // 重建：等待落终态（就绪=重建成功 / 回退=重建失败，SwiftShader 下均合法；不再固定回退）
+      await expect.poll(() => statusText(page), { ...POLL, timeout: 12000 }).toMatch(/就绪|回退|失败/)
+      await connectAndActivateFirst(page) // 重建/回退不阻塞聊天
     } finally { await closeApp(launched) }
   })
 
@@ -684,6 +685,61 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       await expect.poll(() => readSettingsL2d(ud)?.modelId ?? null, POLL).toBe(target)
       // 实际渲染模型确实在画
       await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+    } finally { await closeApp(launched) }
+  })
+})
+
+// —— 阶段 5 批次 C（C2）：性能降级（FrameBudget 四值消费）+ GPU 重建一次 + 可见性收口 ——
+
+describe('阶段5批次C Live2D Electron 集成（C2：性能降级 + GPU 重建 + 可见性）', () => {
+  it('C2.1.性能模式四值切换：low_power 降帧切换后渲染不崩 + 设置持久化', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await openCharacterPane(page)
+      const pmSelect = page.locator('.cy-l2d-pane select')
+      // 四值依次切换 → 渲染不崩（FrameBudget setMode 热切换；集成仅断言无回归，时序语义由 perf.spec 覆盖）
+      for (const mode of ['quality', 'balanced', 'low_power', 'auto']) {
+        await pmSelect.selectOption(mode)
+        await expect.poll(() => pmSelect.inputValue(), POLL).toBe(mode)
+      }
+      // 落 low_power → 关闭设置 → 渲染仍正常（就绪 + 画布非空；或静态回退不崩）
+      await pmSelect.selectOption('low_power')
+      await page.getByRole('button', { name: '关闭设置' }).click()
+      await waitLive2dSettled(page)
+      const s = await statusText(page)
+      if (s.includes('就绪')) {
+        await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+      }
+      // 500ms 防抖 + settingsSave → settings.json 落盘 performanceMode=low_power
+      await expect.poll(() => readSettingsL2d(ud), POLL).toMatchObject({ performanceMode: 'low_power' })
+    } finally { await closeApp(launched) }
+  })
+
+  it('C2.2.GPU 丢失重建一次：webglcontextlost → 重建（回到就绪+渲染恢复，或回退不崩）+ 聊天可用', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      // 触发 webglcontextlost → adapter gpuLost → 渲染 tick 抛 Live2DGpuLostError → device_lost → store 重建
+      await page.evaluate(() => {
+        const canvas = document.querySelector<HTMLCanvasElement>('.cy-live-canvas')
+        const gl = canvas?.getContext('webgl') ?? canvas?.getContext('webgl2')
+        const ext = gl?.getExtension('WEBGL_lose_context')
+        ext?.loseContext()
+      })
+      // 重建一次：等待就绪（重建成功）或回退（SwiftShader 下失败合法）；「一次」由单测 guard 覆盖，集成以
+      // 「不崩 + 状态机合法」为准（brief Step 7）
+      await expect.poll(() => statusText(page), { ...POLL, timeout: 12000 }).toMatch(/就绪|回退|失败/)
+      const s = await statusText(page)
+      if (s.includes('就绪')) {
+        // 重建成功 → 渲染恢复（非透明像素重新出现）
+        await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 8000 }).toBeGreaterThan(0)
+      }
+      await connectAndActivateFirst(page) // 重建不阻塞聊天
     } finally { await closeApp(launched) }
   })
 })

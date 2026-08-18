@@ -14,13 +14,14 @@ import { Live2DAdapter } from '../live2d/adapter'
 import { webglEngine } from '../live2d/gl/webgl'
 import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } from '../live2d/controller'
 import type { CharacterState } from '../live2d/state-machine'
-import { createLive2dStateSource } from '../live2d/state-source'
+import { createLive2dStateSource, type Live2dStateSource } from '../live2d/state-source'
 import { createSineMouthSource, createStepMouthSource, createTtsMouthSource, type MouthLevelSource } from '../live2d/tts-mouth-source'
 import { api } from './desktop-api'
 import { useSettingsStore } from './settings.store'
 import { useConnectionStore } from './connection.store'
 import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
+import { useLayoutStore } from './layout.store'
 import type { Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
 
 /** 控制器工厂注入点（默认为真实装配；单测注入 fake controller 以在 node 环境驱动状态机） */
@@ -64,7 +65,13 @@ export const useLive2dStore = defineStore('live2d', () => {
   let controller: Live2DController | null = null
   let unsubDevice: (() => void) | null = null
   let unsubState: (() => void) | null = null
-  let unsubStateSource: (() => void) | null = null
+  let stateSourceHandle: Live2dStateSource | null = null
+  // C2（D5C-05）：可见性接线 watch（「布局可见 ∧ enabled」→ controller.setVisibility），init 时装、dispose 退订
+  let unsubVisibility: (() => void) | null = null
+  // C2（D5C-04）：GPU 重建一次——rebuildGuard 防重入（「每次 lost 事件一次」，finally 复位非永久）；
+  // lastLookTarget 记录最近视线目标（重建后重放，unload 会清 controller 侧目标）
+  let rebuildGuard = false
+  let lastLookTarget: NormalizedPoint | null = null
   // C1：口部数据源 + 采样接线（TTS 播放时 attach，停止/取消 detach 归零）
   let mouthSource: MouthLevelSource | null = null
   let mouthAttached = false
@@ -108,10 +115,11 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   /** 装配 live2dStateSource：组合 connection/message/voice 读值 → controller.setState。（D5B-04 薄编排层，
-   *  Controller 无 Pinia；conversationStore 无「conversation→角色态」映射，本批不订阅，归阶段 6/后续。） */
+   *  Controller 无 Pinia；conversationStore 无「conversation→角色态」映射，本批不订阅，归阶段 6/后续。）
+   *  持句柄供 C2 GPU 重建后 recompose 恢复 CharacterState。 */
   function setupStateSource(ctrl: Live2DController): void {
-    if (unsubStateSource) return
-    unsubStateSource = createLive2dStateSource(
+    if (stateSourceHandle) return
+    stateSourceHandle = createLive2dStateSource(
       {
         connection: () => useConnectionStore().state,
         isGenerating: () => useMessageStore().activeGenerationId !== undefined,
@@ -150,15 +158,68 @@ export const useLive2dStore = defineStore('live2d', () => {
     if (controller) return controller
     const ctrl = buildController()
     controller = ctrl
-    // device_lost（adapter 渲染 tick 抛 Live2DGpuLostError）→ 静态头像回退（同步镜像控制器 terminal 态）
+    // device_lost（adapter 渲染 tick 抛 Live2DGpuLostError）→ C2 重建一次（rebuildAfterLost；失败镜像 fallback）
     unsubDevice = ctrl.on('device_lost', () => {
-      status.value = 'fallback'
+      void rebuildAfterLost()
     })
     // state（Task 5）：controller.setXxx 期间引出的状态变更经 'state' 事件镜像 characterState（Panel 状态徽标）
     unsubState = ctrl.on('state', (s) => {
       if (s) characterState.value = s as CharacterState
     })
     return ctrl
+  }
+
+  /** C2（D5C-04）：GPU 丢失重建一次——device_lost → `reset(当前 modelId)` 一次（rebuildGuard 防重入，
+   *  finally 复位「每次 lost 事件一次」非永久，与 reset 内部 switchModel 无关）；重建成功恢复 ready +
+   *  重放 settings（autoMotions/lipSync/performanceMode/scale/offset/lookTarget，复用 init 重放点）+
+   *  stateSource 重组合恢复当前 CharacterState；失败 → fallback（静态头像，批次 A 既有路径）。重建期间
+   *  status 非 ready → Panel active watcher 停 rAF；成功后 status→ready 自动重启渲染循环（无需额外通知）。 */
+  async function rebuildAfterLost(): Promise<void> {
+    const ctrl = controller
+    if (!ctrl) {
+      status.value = 'fallback'
+      return
+    }
+    if (rebuildGuard) {
+      status.value = 'fallback' // 重建中再 device_lost → 镜像 fallback，不二次触发
+      return
+    }
+    rebuildGuard = true
+    status.value = 'fallback' // 重建期间静态头像（同步镜像；loading 由 reset 内部置）
+    try {
+      await ctrl.reset(ctrl.modelId)
+      syncFromController()
+      if (ctrl.status === 'ready') {
+        // 重放 settings（与 init 尾部重放点同款）+ 视线目标 + CharacterState
+        const l2d = useSettingsStore().live2d
+        ctrl.setAutoMotions(l2d.autoMotions)
+        ctrl.setLipSync(l2d.lipSync)
+        ctrl.setPerformanceMode(l2d.performanceMode)
+        ctrl.setViewTransform(l2d.scale, l2d.offsetX, l2d.offsetY)
+        ctrl.setLookTarget(lastLookTarget)
+        stateSourceHandle?.recompose() // 恢复当前 CharacterState（含 N1 瞬态 timer 管理）
+      } else {
+        status.value = 'fallback'
+      }
+    } catch {
+      syncFromController()
+      status.value = 'fallback' // 重建失败 → 静态头像（不向上传播，不阻塞聊天）
+    } finally {
+      rebuildGuard = false
+    }
+  }
+
+  /** C2（D5C-05）：可见性接线——「布局可见（live2dShown）∧ enabled」→ controller.setVisibility(v)。
+   *  controller.tick 首行消费（!visible 提前 return），消除 Task5 M4 死面；Panel rAF 启停保持既有（双层门控无害）。 */
+  function setupVisibilityWatch(): void {
+    if (unsubVisibility) return
+    unsubVisibility = watch(
+      [() => useLayoutStore().effective.live2dShown, () => live2dSettings.value.enabled],
+      ([shown, enabled]) => {
+        controller?.setVisibility(shown && enabled)
+      },
+      { immediate: true }
+    )
   }
 
   /** 镜像控制器当前状态/modelId（每次 controller 调用的 await 后同步一次，事件只覆盖异步 device_lost） */
@@ -191,6 +252,7 @@ export const useLive2dStore = defineStore('live2d', () => {
           ? createSineMouthSource()
           : buildMouthSource()
     const ctrl = ensureController()
+    setupVisibilityWatch() // C2：可见性接线（「布局可见 ∧ enabled」→ setVisibility；immediate 先推当前值）
     try {
       await ctrl.init(c)
       syncFromController()
@@ -245,8 +307,8 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   function dispose(): void {
-    unsubStateSource?.() // 退订 stateSource（停 watch + 清 N1 mood/error 回退 timers）
-    unsubStateSource = null
+    stateSourceHandle?.unsub() // 退订 stateSource（停 watch + 清 N1 mood/error 回退 timers）
+    stateSourceHandle = null
     unsubMouthWatch?.() // C1：退订口部接线（停 watch）
     unsubMouthWatch = null
     mouthSource?.dispose() // C1：释放口部数据源（断开 graph + close AudioContext，无残留）
@@ -254,6 +316,8 @@ export const useLive2dStore = defineStore('live2d', () => {
     mouthAttached = false
     mockMouthLevel = undefined
     mouthLevel.value = 0
+    unsubVisibility?.() // C2：退订可见性接线
+    unsubVisibility = null
     unsubDevice?.()
     unsubDevice = null
     unsubState?.() // 退订 'state' 事件镜像
@@ -263,6 +327,8 @@ export const useLive2dStore = defineStore('live2d', () => {
       controller = null
     }
     ready = false
+    rebuildGuard = false // C2：重建守卫复位（dispose 后重建不可能再触发）
+    lastLookTarget = null // C2：视线目标复位
     models.value = []
     status.value = 'unloaded'
     modelId.value = null
@@ -292,8 +358,10 @@ export const useLive2dStore = defineStore('live2d', () => {
     controller?.setViewTransform(scale, offsetX, offsetY)
   }
 
-  /** 视线目标转发（Panel 鼠标跟随/回正，D5B-09）：null = 回正 */
+  /** 视线目标转发（Panel 鼠标跟随/回正，D5B-09）：null = 回正。C2：记录 lastLookTarget——GPU 重建后
+   *  unload 会清 controller 侧目标，重建成功经 setLookTarget 重放（D5C-04）。 */
   function setLookTarget(target: NormalizedPoint | null): void {
+    lastLookTarget = target
     controller?.setLookTarget(target)
   }
 

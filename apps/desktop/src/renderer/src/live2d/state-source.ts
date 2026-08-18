@@ -37,6 +37,15 @@ export interface Live2dStateSourceInputs {
 
 export type Live2dStateSourcePush = (s: CharacterState) => void
 
+/** live2dStateSource 句柄（C2 D5C-04：GPU 重建后恢复 CharacterState 需 recompose 重组合） */
+export interface Live2dStateSource {
+  /** 退订：停 watch + 清 N1 mood/error 回退 timers（幂等） */
+  unsub: () => void
+  /** 重组合（GPU 重建后恢复当前 CharacterState）：按当前业务源重新组合并 push（经 handleCompose——瞬态重启
+   *  超时 timer、business 态清 timer、同态不重推） */
+  recompose: () => void
+}
+
 /** 已知情绪码（I-1 本地映射命中集；未知码忽略 → 保持业务态） */
 const KNOWN_MOODS: ReadonlySet<string> = new Set<MoodEmotion>(['happy', 'sad', 'surprised'])
 
@@ -71,15 +80,16 @@ const ERROR_TIMEOUT_MS = 3000 // error 回退基（~3s）
  * 创建 live2dStateSource。
  * @param sources 各源 getter（读真实 store；测试注入可控读取）
  * @param push    落点（生产 = controller.setState；测试注入记录器）
- * @returns 退订函数：停 watch + 清 N1 定时器（幂等）。
+ * @returns Live2dStateSource 句柄：{ unsub, recompose }。
  */
 export function createLive2dStateSource(
   sources: Live2dStateSourceInputs,
   push: Live2dStateSourcePush
-): () => void {
+): Live2dStateSource {
   let currentState: CharacterState | null = null // 最近一次真实 push 的态（去重：不重复 push 同态）
   let moodTimer: ReturnType<typeof setTimeout> | undefined
   let errorTimer: ReturnType<typeof setTimeout> | undefined
+  let stopped = false // 退订后 recompose no-op（防 teardown 后陈旧重组合误 push）
 
   function clearMoodTimer(): void {
     if (moodTimer) clearTimeout(moodTimer)
@@ -157,9 +167,26 @@ export function createLive2dStateSource(
     { immediate: true, flush: 'sync' }
   )
 
-  return () => {
-    stop()
-    clearMoodTimer()
-    clearErrorTimer()
+  /** 重组合（C2 D5C-04）：按当前业务源重新组合并 push（handleCompose 全权管理 timer/去重）；退订后 no-op。 */
+  function recompose(): void {
+    if (stopped) return
+    handleCompose(
+      composeCharacterState({
+        connection: sources.connection(),
+        isGenerating: sources.isGenerating(),
+        isSpeaking: sources.isSpeaking(),
+        emotion: sources.emotion()
+      })
+    )
+  }
+
+  return {
+    unsub: () => {
+      stopped = true
+      stop()
+      clearMoodTimer()
+      clearErrorTimer()
+    },
+    recompose
   }
 }
