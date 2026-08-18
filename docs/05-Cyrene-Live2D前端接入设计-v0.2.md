@@ -154,6 +154,13 @@ unloaded → loading → ready
 
 切换会话不重复加载同一模型。窗口隐藏或系统休眠时暂停高频更新。
 
+> **注（2026-08-19 CI 修复）：** `BrowserWindow` 已设 `backgroundThrottling: false`——渲染进程 timer/rAF 恒定运行，
+> 不随窗口遮挡/失焦被 Chromium 全局节流。原因：① 无 WM 的 headless CI（xvfb）下窗口被判为遮挡 → 默认节流
+> （timer~1/秒 + rAF 暂停）会让 Live2D 渲染环停摆（口型/画布断言失败）；② 生产上全渲染进程 timer 节流会拖慢
+> 流式回复/语音/TTS 实时链路。**「窗口隐藏暂停高频更新」改由 app 自有机制负责**：`live2dShown ∧ enabled`
+> 门（布局折叠/关闭时 Panel `startStop` 停 rAF，D5C-05 可见性收口）不再依赖 Chromium 全局节流；「窗口最小化时
+> 暂停渲染」为后续可选项（当前最小化仍渲染，成本可控）。
+
 ### 5.1 模型切换
 
 模型切换流程：

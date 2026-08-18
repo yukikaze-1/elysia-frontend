@@ -47,7 +47,13 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      devTools: config.devToolsAllowed // BrowserWindow 层封死 DevTools：打包恒 false（Electron 安全检查清单项）
+      devTools: config.devToolsAllowed, // BrowserWindow 层封死 DevTools：打包恒 false（Electron 安全检查清单项）
+      // backgroundThrottling: false——渲染进程 timer/rAF 恒定运行，不随窗口遮挡/失焦节流。
+      // 理由（2026-08-19 CI 修复）：① CI 无 WM 的 xvfb 下窗口被判为遮挡 → Chromium 默认节流（timer~1/秒 +
+      // rAF 暂停）→ Live2D 渲染环停摆（C1 口型/C2.1 画布 0 像素）；② 生产上全渲染进程 timer 节流会拖慢
+      // 流式回复/语音/TTS 等实时链路（窗口被遮时）。Live2D 的「窗口隐藏暂停」由 app 自有 active 门
+      // （live2dShown ∧ enabled，Panel startStop 停 rAF）负责，不依赖 Chromium 全局节流。
+      backgroundThrottling: false
     }
   })
   setMainWindow(win)
