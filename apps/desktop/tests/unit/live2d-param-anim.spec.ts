@@ -123,4 +123,27 @@ describe('blinkTarget（眨眼序列）', () => {
     expect(maxRun).toBeGreaterThan(0.14) // 确实出现闭眼
     expect(maxRun).toBeLessThan(0.45)
   })
+
+  it('F2 rate=2 → 眨眼间隔减半（同 seed 同窗口 blink 触发次数约 2 倍；rate=1 行为不变）', () => {
+    const set = new Set([PARAM_EYE_R_OPEN])
+    const clock = fixedClock(0.5)
+    // 统计窗口内闭眼事件（从睁眼转入 <1 的次数）
+    const blinkCount = (rate: number): number => {
+      let prev = 1
+      let count = 0
+      for (let t = 0; t < 24; t += 0.01) {
+        const v = blinkTarget(t, set, clock, rate)[PARAM_EYE_R_OPEN]
+        if (v < 1 && prev === 1) count++ // 进入闭眼期计一次 blink
+        prev = v
+      }
+      return count
+    }
+    const c1 = blinkCount(1)
+    const c2 = blinkCount(2)
+    expect(c1).toBeGreaterThan(2) // 24s 内 rate=1 确有多次眨眼
+    // rate=2 间隔等比减半 → 同窗口触发次数约 2 倍（边沿允许 ±1）
+    expect(c2).toBeGreaterThanOrEqual(c1 * 2 - 1)
+    // rate=1 缺省行为与显式 rate=1 一致（既有节奏不变）
+    expect(blinkTarget(1.23, set, clock)).toEqual(blinkTarget(1.23, set, clock, 1))
+  })
 })

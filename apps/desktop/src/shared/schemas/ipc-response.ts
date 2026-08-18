@@ -279,13 +279,14 @@ export const DEFAULT_SETTINGS: SettingsState = {
 }
 
 // —— 阶段 5 批次 A：Live2D 模型摘要出参 schema（严格镜像 contracts/live2d.ts，D5A-07；preload 与 Main handler 共用）——
+// M4（批次 C 收口）：reason 闭合枚举同步（z.enum(...).optional()）——非三码字符串被 schema 拒（fail-closed 防串注入）。
 export const Live2DModelSummarySchema: z.ZodType<Live2DModelSummary> = z.object({
   id: z.string(),
   displayName: z.string(),
   preview: z.string().nullable(),
   version: z.string(),
   available: z.boolean(),
-  reason: z.string().optional(),
+  reason: z.enum(['missing_file', 'size_mismatch', 'hash_mismatch']).optional(),
   licenseRef: z.string(),
   integrityState: z.enum(['unverified', 'verified', 'failed'])
 })

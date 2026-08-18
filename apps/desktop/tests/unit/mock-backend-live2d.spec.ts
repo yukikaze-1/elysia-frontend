@@ -1,13 +1,46 @@
 // tests/unit/mock-backend-live2d.spec.ts
 // 阶段 5 批次 C（C3）：mock 指令消费 env 桥——parseMockDirectiveEnv（CYRENE_MOCK_DIRECTIVE 解析/校验）+
 // scheduleReplay 落 generation.completed 后追加 live2d.directive 帧（对齐 emotion 注入点）。
+// Task6 M2（批次 C 收口）：补齐 CYRENE_MOCK_EMIT_DELAY_MS / CYRENE_MOCK_GENERATION_EMOTION parser 单测
+// （缺省/非法/边界；DIRECTIVE/MOUTH_LEVEL 各归其位——DIRECTIVE 在本文件、MOUTH_LEVEL 在 mock-backend-voice.spec）。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { MockBackend, parseMockDirectiveEnv } from '../../src/main/transport/mock-backend'
+import { MockBackend, parseMockDirectiveEnv, parseMockEmitDelayEnv, parseMockEmotionEnv } from '../../src/main/transport/mock-backend'
 import type { BackendEvent } from '@shared/contracts'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 beforeEach(() => { vi.clearAllMocks() })
+
+describe('parseMockEmitDelayEnv（CYRENE_MOCK_EMIT_DELAY_MS，Task6 M2）', () => {
+  it('缺省 undefined → undefined（不注入，用缺省 30ms）', () => {
+    expect(parseMockEmitDelayEnv(undefined)).toBeUndefined()
+  })
+  it('非法（NaN/负数/低于下限）→ 钳到下限 10', () => {
+    expect(parseMockEmitDelayEnv('abc')).toBe(10)
+    expect(parseMockEmitDelayEnv('-5')).toBe(10)
+    expect(parseMockEmitDelayEnv('0')).toBe(10)
+    expect(parseMockEmitDelayEnv('5')).toBe(10)
+  })
+  it('超上限 → 钳到 5000；合法值透传', () => {
+    expect(parseMockEmitDelayEnv('6000')).toBe(5000)
+    expect(parseMockEmitDelayEnv('400')).toBe(400)
+    expect(parseMockEmitDelayEnv('10')).toBe(10)
+    expect(parseMockEmitDelayEnv('5000')).toBe(5000)
+  })
+})
+
+describe('parseMockEmotionEnv（CYRENE_MOCK_GENERATION_EMOTION，Task6 M2）', () => {
+  it('缺省 undefined → undefined（不注入，保持 fixture 原值）；空串也透传（unknown 码 → 状态源忽略）', () => {
+    expect(parseMockEmotionEnv(undefined)).toBeUndefined()
+    expect(parseMockEmotionEnv('')).toBe('')
+  })
+  it('设值原样透传（happy/sad/surprised 命中本地映射，任意码透传给状态源判定）', () => {
+    expect(parseMockEmotionEnv('happy')).toBe('happy')
+    expect(parseMockEmotionEnv('sad')).toBe('sad')
+    expect(parseMockEmotionEnv('surprised')).toBe('surprised')
+    expect(parseMockEmotionEnv('unknown-code')).toBe('unknown-code')
+  })
+})
 
 describe('parseMockDirectiveEnv（CYRENE_MOCK_DIRECTIVE 解析/校验）', () => {
   it('undefined / 空串 / 非法 JSON / 非对象 → undefined（缺省不发射）', () => {

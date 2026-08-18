@@ -592,7 +592,10 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       const { page } = launched1
       await waitLive2dSettled(page)
       await openCharacterPane(page)
-      // scale 滑块（表现组首个 range = 大小）→ 设置即时更新（Pane 字段值即刻变化）
+      // scale 滑块（表现组首个 range = 大小）→ 设置即时更新（Pane 字段值即刻变化）。
+      // B4 滑块以 evaluate 合成事件（直接置 value + dispatch input/change）驱动——headless SwiftShader 下
+      // Playwright 的 range 真实拖拽（dragTo/键盘箭头）依赖可见指针命中测试且帧时序不可控，合成事件与真实
+      // 滑块在 Vue 的 @input 绑定上等价（同一 setLive2d patch 路径），足够断言「即时预览 + 持久化」链路。
       await page.locator('.cy-l2d-pane input[type="range"]').first().evaluate((el) => {
         const input = el as HTMLInputElement
         input.value = '1.5'
@@ -807,6 +810,35 @@ describe('阶段5批次C Live2D Electron 集成（C3：live2d.directive 指令�
       // 等 generation.completed 完成（指令应不发射——working 非七值，parseMockDirectiveEnv 拒）
       await expect.poll(() => badgeText(page), POLL).toContain('空闲')
       await expect.poll(() => page.locator('textarea[aria-label="消息输入框"]').count(), POLL).toBe(1)
+    } finally { await closeApp(launched) }
+  })
+})
+
+// —— 阶段 5 批次 C（收口回归：Task5 M2 restore 分叉）——
+
+describe('阶段5批次C Live2D Electron 集成（收口回归：恢复默认 → 画布与持久化一致）', () => {
+  it('恢复默认设置：已加载非首个模型 → 切回首个可用（画布/select/持久化三方一致）', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      // 切到非首个模型 wanko（haru = 首个可用）→ 已加载 ≠ 首个可用，持久化 wanko
+      await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption(WANKO_ID)
+      await expect.poll(() => statusText(page), POLL).toContain('Wanko')
+      await expect.poll(() => readSettingsL2d(ud)?.modelId ?? null, POLL).toBe(WANKO_ID)
+      // 打开设置子页 → 恢复默认设置（store.restoreDefaults：置 DEFAULT_LIVE2D + 面板已 dispose → 显式持久化
+      // 首个可用；关闭设置后 panel 重挂载 init 读 modelId 加载首个可用）
+      await openCharacterPane(page)
+      await page.getByRole('button', { name: '恢复默认设置' }).click()
+      await page.getByRole('button', { name: '关闭设置' }).click()
+      // 切回首个可用 Haru：画布状态含 Haru（switchModel 完成）
+      await expect.poll(() => statusText(page), POLL).toContain('Haru')
+      // select 值与持久化 modelId 三方一致（500ms 防抖 + settingsSave 落盘）
+      await expect.poll(() => selectValue(page), POLL).toBe('haru')
+      await expect.poll(() => readSettingsL2d(ud)?.modelId ?? null, POLL).toBe('haru')
+      // 画布非空（切回首个可用渲染正常）
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
     } finally { await closeApp(launched) }
   })
 })

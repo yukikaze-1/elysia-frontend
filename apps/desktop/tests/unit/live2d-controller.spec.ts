@@ -18,6 +18,7 @@ vi.hoisted(() => {
 })
 
 import { Live2DController, type NormalizedPoint } from '../../src/renderer/src/live2d/controller'
+import type { CharacterState } from '../../src/renderer/src/live2d/state-machine'
 import type { Live2DAdapter } from '../../src/renderer/src/live2d/adapter'
 import type { Live2DModelSummary } from '@shared/contracts'
 
@@ -157,7 +158,7 @@ describe('Live2DController 批次 B 内核', () => {
     expect(handle.startExpression).toHaveBeenCalledTimes(1)
   })
 
-  it('B4 路由：无动作模型写参数级(ParamAngleX)；有动作模型不写参数级(走 B3)', async () => {
+  it('B4 路由：无动作模型写参数级(ParamAngleX)；有动作+有表情模型不写参数级(走 B3/I-1)', async () => {
     const h1 = makeHarness()
     stubHandle(h1.adapter, { params: [...FULL_PARAMS], motions: [], expressions: [] })
     await h1.ctrl.init(fakeCanvas)
@@ -166,11 +167,56 @@ describe('Live2DController 批次 B 内核', () => {
     expect(writtenIds(h1.getHandle())).toContain('ParamAngleX')
 
     const h2 = makeHarness()
-    stubHandle(h2.adapter, { params: [...FULL_PARAMS], motions: ['motions/idle.motion3.json'] })
+    stubHandle(h2.adapter, { params: [...FULL_PARAMS], motions: ['motions/idle.motion3.json'], expressions: ['expressions/happy.exp3.json'] })
     await h2.ctrl.init(fakeCanvas)
     h2.ctrl.setState('thinking')
     h2.ctrl.tick()
-    expect(writtenIds(h2.getHandle())).not.toContain('ParamAngleX')
+    expect(writtenIds(h2.getHandle())).not.toContain('ParamAngleX') // 有动作+有表情 → 走 B3/I-1，不写参数级
+  })
+
+  it('F3：有动作但 expressions 空 → 情绪态走 B4 参数级近似（happy → 笑眼，不空转表情）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: ['ParamEyeRSmile', 'ParamEyeLSmile'], motions: ['motions/idle.motion3.json'], expressions: [] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    h.ctrl.setState('happy')
+    h.ctrl.tick()
+    // expressionWhitelist.size===0（有动作但无表情）→ F3 门放行 B4：happy 写笑眼参数
+    expect(writtenIds(handle)).toContain('ParamEyeRSmile')
+    expect(writtenIds(handle)).toContain('ParamEyeLSmile')
+  })
+
+  it('F2：thinking/speaking 眨眼加快（rate=2，闭眼更频繁）——idle（rate=1）保持既有节奏', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: ['ParamEyeROpen'], motions: [], expressions: [] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    // 控制 performance.now 推进动画时间（每 tick +100ms，确定性窗口 4s）——断言 blink 闭眼事件频率
+    let now = 1000
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => now)
+    const countClosures = (state: CharacterState): number => {
+      handle.setParam.mockClear()
+      now = 1000 // 与首次 run 同一起点（animT0 已在首 tick 置 1.0，重放同相位）
+      h.ctrl.setState(state)
+      let closures = 0
+      let prev = 1
+      for (let i = 0; i < 40; i++) {
+        now += 100
+        h.ctrl.tick()
+        const calls = handle.setParam.mock.calls.filter((c: unknown[]) => c[0] === 'ParamEyeROpen')
+        const v = calls.length > 0 ? (calls[calls.length - 1][1] as number) : prev
+        if (v < 1 && prev === 1) closures++ // 睁眼 → 闭眼计一次 blink
+        prev = v
+      }
+      return closures
+    }
+    const idleClosures = countClosures('idle')
+    const thinkClosures = countClosures('thinking')
+    // thinking（rate=2 间隔减半）→ 4s 窗口内闭眼次数明显多于 idle（rate=1）
+    expect(idleClosures).toBeGreaterThanOrEqual(0)
+    expect(thinkClosures).toBeGreaterThan(idleClosures)
+    expect(thinkClosures).toBeGreaterThan(0)
+    nowSpy.mockRestore()
   })
 
   it('B4 无动作模型各态参数级回退（存在性判定：不在参数集不写）', async () => {

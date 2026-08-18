@@ -10,11 +10,10 @@
 //  - mouseTracking/autoMotions/lipSync/reduceMotion 开关（lipSync = M5 口型独立门，与 autoMotions 正交）；
 //  - performanceMode 四值下拉（doc11 §7.1「帧率」由本下拉承载一一 quality=60/balanced=30-60/low_power≤30/auto=动态，
 //    实际降帧消费归批次 C，M-3）；
-//  - 恢复默认 → setLive2d(DEFAULT_LIVE2D)。
+//  - 恢复默认 → live2d.restoreDefaults()（置 DEFAULT_LIVE2D；modelId 非 null 且已加载 ≠ 首个可用 → 切回首个可用，Task5 M2）。
 // 保存失败回退（M-4）：沿用 settingsStore 既有持久化失败语义——保留内存态（即时预览已反映），重启后读回保存态。
 import { computed } from 'vue'
 import type { Live2DModelSummary, PerformanceMode } from '@shared/contracts'
-import { DEFAULT_LIVE2D } from '@shared/schemas'
 import { useSettingsStore } from '../stores/settings.store'
 import { useLive2dStore } from '../stores/live2d.store'
 
@@ -67,7 +66,7 @@ function onPerformanceMode(e: Event): void {
 }
 
 function restoreDefaults(): void {
-  settings.setLive2d({ ...DEFAULT_LIVE2D })
+  void live2d.restoreDefaults() // Task5 M2（批次 C）：restore 置 modelId:null 后若已加载 ≠ 首个可用 → switchModel 首个可用
 }
 
 const statusText = computed(() => {

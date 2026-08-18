@@ -284,7 +284,10 @@ export class Live2DController {
   /** 服务状态机命令：喂 CharacterStateMachine（source/外部已仲裁的最终态，机器直接采纳，见 state-machine 注）。
    *  驱动 B4 参数级回退路由与状态徽标。无 handle（unloaded/loading）时仅更新机器状态，不写参数。
    *  进入情绪态（happy/sad/surprised）时经本地映射表发射表情（I-1：白名单命中 → setExpression；
-   *  不命中落 B4 参数级，由 tick 内 b4Params 承担）。 */
+   *  不命中落 B4 参数级，由 tick 内 b4Params 承担）。
+   *  生产路径钉死（Task3 M2，N2）：**生产只走本 setState**——`state-machine.onEvent`（含 `force('idle')`
+   *  可清 3 级瞬态）仅为纯状态机单测/外部命令面，生产（live2dStateSource/指令）绝不调 onEvent（指令经
+   *  state-source 仲裁后仍落 setState）。 */
   setState(s: CharacterState): void {
     const prev = this.stateMachine.state
     this.stateMachine.setState(s)
@@ -432,9 +435,11 @@ export class Live2DController {
    *  Controller 逐对 `handle.setParam`。存在性判定已由 param-anim 纯函数/B4 映射在内部完成（该模型不含的参数
    *  不写）。分层：
    *   - 待机基（B2，autoMotions 时）：blink（眨眼）+ breath（呼吸正弦）——与模型是否有动作系统无关（待机常态）。
-   *   - B4 参数级回退（当前模型无动作系统 motionWhitelist 空时才写）：按当前 CharacterState 映射参数近似
-   *     （spec §3.4 表：thinking→AngleX 摇摆；speaking→口型+轻微头；happy→眼笑+呼吸；surprise→眼瞪大；
-   *     error→AngleZ 歪头）；有动作系统 → 走 B3 动作系统（Task 4 调度），不写参数级。
+   *     F2（批次 C）：blink 按当前态传 rate（thinking/speaking 加快眨眼，代固定间隔；批次 B F2「thinking 眨眼加快」落地）。
+   *   - B4 参数级回退（无动作系统 `motionWhitelist.size===0` **或** 有动作但无表情 `expressionWhitelist.size===0`，
+   *     F3 批次 C 收口）：按当前 CharacterState 映射参数近似（spec §3.4 表：thinking→AngleX 摇摆；speaking→口型+
+   *     轻微头；happy→眼笑+呼吸；surprise→眼瞪大；error→AngleZ 歪头）；有动作+有表情 → 走 B3 动作系统
+   *     （Task 4 调度）+ I-1 表情（Task 4），不写参数级。
    *   - 视线（setLookTarget，spec I-2）：null→回正 0；非 null→ParamEyeBallX/Y。
    *  本批动画时间以 `performance.now()` 折算（tick 每帧推进，Panel rAF 循环驱动），无独立 rAF。 */
   private updateAnimation(nowMs: number): void {
@@ -445,11 +450,11 @@ export class Live2DController {
 
     const out: Record<string, number> = {}
     if (this.autoMotions) {
-      // 待机基：眨眼 + 呼吸（存在性判定在纯函数内）
-      Object.assign(out, blinkTarget(tSec, this.paramIds, this.animClock))
+      // 待机基：眨眼（F2 rate 调制）+ 呼吸（存在性判定在纯函数内）
+      Object.assign(out, blinkTarget(tSec, this.paramIds, this.animClock, this.blinkRate()))
       Object.assign(out, breathTarget(tSec, this.paramIds))
-      // B4 参数级回退（仅无动作系统模型）
-      if (this.motionWhitelist.size === 0) {
+      // B4 参数级回退（无动作系统 或 有动作但无表情 的模型——F3：情绪态不空转表情，落 B4 参数近似）
+      if (this.motionWhitelist.size === 0 || this.expressionWhitelist.size === 0) {
         Object.assign(out, this.b4Params(this.stateMachine.state))
       }
     }
@@ -472,13 +477,20 @@ export class Live2DController {
     }
   }
 
+  /** F2（批次 C 收口）：眨眼速率调制——thinking/speaking 传 >1（间隔 ~[1.25,3.5)s，代固定 2.5-7s）；
+   *  其余态 rate=1（保持批次 B 待机节奏）。与 B4「thinking 眨眼加快」注释名实相符（F2 落地）。 */
+  private blinkRate(): number {
+    const s = this.stateMachine.state
+    return s === 'thinking' || s === 'speaking' ? 2 : 1
+  }
+
   /** B4 无动作参数级回退（spec §3.4 表）：状态→参数近似。全部存在性判定（不在 paramIds 就不写），不记错误。
    *  口部电平由 updateAnimation 通用口部步骤写出（C1，D5C-02），不在本分支写（避免叠加双写）。 */
   private b4Params(state: CharacterState): Record<string, number> {
     const out: Record<string, number> = {}
     switch (state) {
       case 'thinking':
-        // 轻微 AngleX 摇摆 + 眨眼加快（眨眼加快由 B2 待机眨眼承担，此处额外给头轻微左右摆）
+        // 轻微 AngleX 摇摆；眨眼加快已由 F2 blink rate（thinking/speaking → rate=2）承担，此处仅头摆动
         if (this.paramIds.has(PARAM_ANGLE_X)) out[PARAM_ANGLE_X] = B4_THINK_SWAY_AMP * Math.sin(this.wobbleT())
         break
       case 'speaking':
@@ -507,7 +519,9 @@ export class Live2DController {
     return out
   }
 
-  /** B4 轻微摆头的慢摆时间基（复用待机动画时间，周期 ~4s） */
+  /** B4 轻微摆头的慢摆时间基（复用待机动画时间，周期 ~4s）。
+   *  时钟重读注：每次调用都重读 `performance.now()`（stateless 相位，不缓存 t0 折算值）——与 updateAnimation
+   *  的 animT0 基准解耦，摆头相位独立于待机眨眼/呼吸时间基；animT0 未初始化（未 ready）时钳 0。 */
   private wobbleT(): number {
     const tSec = Math.max(0, (this.animT0 === 0 ? 0 : performance.now() / 1000 - this.animT0))
     return tSec * Math.PI * 0.5 // 周期 ~4s

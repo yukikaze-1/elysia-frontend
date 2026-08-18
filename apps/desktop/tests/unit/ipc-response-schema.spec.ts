@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
 import {
   MessageSchema,
   PageSchema,
@@ -14,6 +14,7 @@ import {
   DEFAULT_LIVE2D, DEFAULT_SETTINGS, SettingsStateSchema, SettingsPatchSchema,
   Live2DModelSummarySchema, Live2DListResponseSchema
 } from '@shared/schemas'
+import type { Live2DModelSummary } from '@shared/contracts'
 
 const assistantMsg = {
   messageId: 'm1',
@@ -212,5 +213,19 @@ describe('阶段 5 批次 A live2d 设置 schema（D5A-10，A6）', () => {
     expect(Live2DListResponseSchema.safeParse([ok, { ...ok, id: 'lil', preview: null, reason: 'missing_file', integrityState: 'unverified', available: false }]).success).toBe(true)
     expect(Live2DModelSummarySchema.safeParse({ ...ok, integrityState: 'bogus' }).success).toBe(false)
     expect(Live2DModelSummarySchema.safeParse({ ...ok, id: undefined }).success).toBe(false)
+  })
+
+  it('M4：reason 闭合枚举——三码放行、非三码字符串拒（防字符串注入 UI）', () => {
+    const base = {
+      id: 'x', displayName: 'X', preview: null, version: '1.0', available: false,
+      licenseRef: 'LICENSE.txt', integrityState: 'failed'
+    }
+    for (const code of ['missing_file', 'size_mismatch', 'hash_mismatch']) {
+      expect(Live2DModelSummarySchema.safeParse({ ...base, reason: code }).success).toBe(true)
+    }
+    expect(Live2DModelSummarySchema.safeParse({ ...base, reason: 'other_error' }).success).toBe(false)
+    expect(Live2DModelSummarySchema.safeParse({ ...base, reason: '' }).success).toBe(false)
+    // 消费端类型收窄：Live2DModelSummary['reason'] 为三码闭合联合（编译期约束，运行期为可赋性守卫）
+    expectTypeOf<Live2DModelSummary['reason']>().toEqualTypeOf<'missing_file' | 'size_mismatch' | 'hash_mismatch' | undefined>()
   })
 })

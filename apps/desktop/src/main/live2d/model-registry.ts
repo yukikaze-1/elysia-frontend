@@ -5,8 +5,8 @@
 // verifyIntegrity：fail-closed pending——同模型并发共享同一 Promise；hash 不匹配熔断（resolveModelFile 拒）。
 import { z } from 'zod'
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
-import { isAbsolute, join, relative, sep } from 'node:path'
-import type { Live2DModelSummary } from '@shared/contracts'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import type { Live2DModelSummary, Live2DUnavailableReason } from '@shared/contracts'
 import { verifyIntegrityAgainst, type IntegrityEntry } from './manifest'
 
 /** 共享契约别名收口：Task 6（controller/store）与 preload 消费同一 Live2DModelSummary，不另定义 */
@@ -34,8 +34,8 @@ export const integritySchema = z.object({
   }))
 })
 
-/** available=false 的脱敏原因枚举码（非原始错误文本，避免泄漏路径/详情） */
-type UnavailableReason = 'missing_file' | 'size_mismatch' | 'hash_mismatch'
+/** available=false 的脱敏原因枚举码（M4 批次 C 收口：复用共享闭合联合，与 contracts/schema 同源三码） */
+type UnavailableReason = Live2DUnavailableReason
 
 /** 预览条目豁免：integrity 中 manifest.preview 指向的文件（或 preview.png 约定名）缺失/尺寸不符不置可用性为假 */
 function isPreviewEntry(entryPath: string, preview: string | undefined): boolean {
@@ -60,6 +60,29 @@ function isContained(parent: string, child: string): boolean {
   const norm = process.platform === 'win32' ? (s: string) => s.toLowerCase() : (s: string) => s
   const rel = relative(norm(parent), norm(child))
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel) && !rel.split(sep).includes('..')
+}
+
+/**
+ * relPath 单段规范化（M1 批次 C 收口，`%` 同口径放宽）：
+ * 仅当段内含**合法 `%XX` 编码**时才视为「原始编码输入」解码一次（`%25` → 字面 `%`）；否则该段内 `%` 均视为
+ * 字面字符（协议层 live2d-path.ts 已逐段 decode 输出，其 `%` 均为字面——如文件 `50%.png` → relPath `50%.png`，
+ * 不再重解，否则 `decodeURIComponent('50%.png')` 会因孤立 `%` 抛错误杀字面 `%` 文件名）。
+ * 返回 null（拒）情形：① 解码抛错（畸形混合）；② 解码后段为空/`.`/`..`；③ 解码后段含 `/`、`\`、NUL
+ * （`%2F` 走私段）；④ **二次解码残留**——解码后段仍含合法 `%XX`（双重编码 `%252F` → 解码 `%2F`），拒。
+ * 判定即「白名单/integrity 匹配用解码后同一字符串比对」：请求侧与装配侧同字符串。
+ */
+function canonicalizeRelPathSegment(seg: string): string | null {
+  if (/%[0-9A-Fa-f]{2}/.test(seg)) {
+    try {
+      seg = decodeURIComponent(seg)
+    } catch {
+      return null // 畸形混合（如合法 %XX 与孤立 % 并存解码抛错）→ 拒
+    }
+  }
+  if (seg === '' || seg === '.' || seg === '..') return null
+  if (seg.includes('/') || seg.includes('\\') || seg.includes('\0')) return null // %2F → '/'、%5C → '\'、%00 走私
+  if (/%(?=[0-9A-Fa-f]{2})/.test(seg)) return null // 二次解码仍含 %XX 残留（双重编码）→ 拒
+  return seg
 }
 
 export class Live2DModelRegistry {
@@ -107,6 +130,22 @@ export class Live2DModelRegistry {
     if (!m.success) return null // 含 licenseRef 缺失 / id 非法 → 整目录跳过
     const { id, displayName, preview, version, licenseRef } = m.data
 
+    // M2（批次 C 收口）：manifest.id 必须与目录名一致（装配契约，防目录/清单错配加载）——不符 → 模型身份不一致，
+    // 列出但不可用（reason 用闭合枚举最贴近码 missing_file——「身份不完整」最接近的脱敏码，不引第 4 个码）
+    if (id !== basename(dir)) {
+      const mismatch: Live2DSummary = {
+        id,
+        displayName,
+        preview: preview ?? null,
+        version: version ?? '0',
+        available: false,
+        licenseRef,
+        integrityState: this.verified.has(id) ? 'verified' : this.failed.has(id) ? 'failed' : 'unverified'
+      }
+      mismatch.reason = 'missing_file'
+      return mismatch
+    }
+
     const entries = await this.loadIntegrity(id)
     let available = true
     let reason: UnavailableReason | undefined
@@ -148,14 +187,21 @@ export class Live2DModelRegistry {
    * realpath containment（../、绝对路径、symlink 逃逸、跨模型目录全拒）+ lstat 仅普通文件（FIFO/设备/symlink 拒，
    * safe-open 纪律，防 net.fetch 挂起）+ relPath 须在 integrity entries（key 匹配）且尺寸一致 → 返回绝对路径；否则 null。
    * fail-closed 熔断：verifyIntegrity 失败（failed.has）→ 恒 null。
+   * M1（批次 C 收口）：`%` 同口径——仅拒非法 hex 残留 + 二次解码残留，字面 `%` 文件名（`%25` 编码）放行；
+   * 白名单/integrity 匹配用 canonicalizeRelPathSegment 解码后同一字符串比对（live2d-path.ts parser 不动）。
    */
   async resolveModelFile(modelId: string, relPath: string): Promise<string | null> {
     if (this.failed.has(modelId)) return null
-    // 解码走私/非法形态防御（协议层已逐段 decodeURIComponent，这里对裸 relPath 再拒一层）：
-    // 绝对路径、残留 % 编码（%2F 走私段）、NUL、`.`/`..`/空段
-    if (isAbsolute(relPath) || relPath.includes('%') || relPath.includes('\0')) return null
-    const parts = relPath.split('/')
-    if (parts.length === 0 || parts.some((p) => p === '' || p === '.' || p === '..')) return null
+    // 绝对路径 / NUL 直接拒；`%` 相关由 canonicalizeRelPathSegment 逐段裁定（见该函数 M1 注）
+    if (isAbsolute(relPath) || relPath.includes('\0')) return null
+    const rawParts = relPath.split('/')
+    if (rawParts.length === 0 || rawParts.some((p) => p === '' || p === '.' || p === '..')) return null
+    const parts: string[] = []
+    for (const seg of rawParts) {
+      const canon = canonicalizeRelPathSegment(seg)
+      if (canon === null) return null
+      parts.push(canon)
+    }
 
     const dir = join(this.modelsDir, modelId)
     const dirReal = await realpath(dir).catch(() => null)
@@ -213,7 +259,9 @@ export class Live2DModelRegistry {
     return p
   }
 
-  /** 读取并缓存模型 integrity.json：缺失/JSON 非法/schema 非法 → null（fail-closed）；条目路径逐条安全过滤（I-2，拒 OOB 读取） */
+  /** 读取并缓存模型 integrity.json：缺失/JSON 非法/schema 非法 → null（fail-closed）；**条目过滤后为空
+   *  （`files:[]` 或全部条目被安全过滤拒）→ null（M3 批次 C 收口：空清单视为不完整，列表 available=false 与
+   *  resolveModelFile 恒 null 一致，消除「列表 available=true 但请求恒 null」分歧）；条目路径逐条安全过滤（I-2，拒 OOB 读取） */
   private async loadIntegrity(modelId: string): Promise<IntegrityEntry[] | null> {
     const cached = this.integrityCache.get(modelId)
     if (cached !== undefined) return cached
@@ -230,7 +278,8 @@ export class Live2DModelRegistry {
       return null
     }
     const r = integritySchema.safeParse(parsed)
-    const result = r.success ? r.data.files.filter((f) => isSafeEntryPath(f.path)) : null
+    const filtered = r.success ? r.data.files.filter((f) => isSafeEntryPath(f.path)) : []
+    const result = r.success && filtered.length > 0 ? filtered : null
     this.integrityCache.set(modelId, result)
     return result
   }

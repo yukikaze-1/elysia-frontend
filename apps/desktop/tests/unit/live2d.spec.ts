@@ -557,6 +557,54 @@ describe('live2dStore Task 5（B5/B6）：设置→controller 窄转发 + charac
   })
 })
 
+describe('live2dStore Task5 M2（批次 C 收口）：restore 默认分叉', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('restore 默认：modelId 非 null → null 且已加载 ≠ 首个可用 → switchModel 首个可用（画布与持久化一致）', async () => {
+    mockApi.listLive2dModels.mockResolvedValue([MODEL_HARU, MODEL_LIL])
+    installEffectiveController({})
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas) // ready on haru
+    await store.switchModel('lil') // 加载非首个 lil
+    expect(store.modelId).toBe('lil')
+    await store.restoreDefaults()
+    // 置回 DEFAULT（modelId:null）+ 已加载 lil ≠ 首个 haru → switchModel(haru)
+    expect(store.modelId).toBe('haru')
+    expect(settings.live2d.modelId).toBe('haru') // 持久化实际生效 id（画布与持久化一致）
+    expect(settings.live2d.performanceMode).toBe('auto') // DEFAULT_LIVE2D 其余字段已复位
+    expect(settings.live2d.scale).toBe(1)
+    expect(settings.live2d.enabled).toBe(true)
+  })
+
+  it('restore 默认：当前已是首个可用（或 modelId 本就 null）→ 不重载（controller.switchModel 不被调）', async () => {
+    mockApi.listLive2dModels.mockResolvedValue([MODEL_HARU, MODEL_LIL])
+    const ctrl = installEffectiveController({})
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas) // ready on haru（首个可用即当前）
+    ctrl.switchModel.mockClear()
+    await store.restoreDefaults()
+    expect(ctrl.switchModel).not.toHaveBeenCalled() // 已加载 == 首个可用 → 不重载
+    expect(settings.live2d.modelId).toBeNull()
+    expect(store.modelId).toBe('haru')
+  })
+
+  it('restore 默认（面板已 dispose，settings overlay 卸载 chat 视图）：controller/models 空 → 显式持久化首个可用', async () => {
+    mockApi.listLive2dModels.mockResolvedValue([MODEL_HARU, MODEL_LIL])
+    installEffectiveController({})
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas)
+    await store.switchModel('lil')
+    expect(settings.live2d.modelId).toBe('lil')
+    store.dispose() // panel onBeforeUnmount → store.dispose：controller 空、models 清空、ready=false
+    expect(store.models).toEqual([])
+    await store.restoreDefaults()
+    // dispose 态无法即时切换 → 显式持久化首个可用（haru）；面板重挂载 init 读 modelId=haru 加载 → 画布与持久化一致
+    expect(settings.live2d.modelId).toBe('haru')
+    expect(settings.live2d.performanceMode).toBe('auto') // DEFAULT_LIVE2D 其余字段仍复位
+  })
+})
+
 describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFactory + mockMouthLevel 选源', () => {
   beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })

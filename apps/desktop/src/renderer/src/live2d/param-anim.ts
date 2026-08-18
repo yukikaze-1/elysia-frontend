@@ -53,16 +53,19 @@ function mulberry32(seed: number): () => number {
  * 眨眼序列（婴儿式）：驱动全部在 `paramIds` 中暴露的 `ParamEye{R,L}Open`。
  * 随机间隔 ~[2.5,7)s + 短闭眼 ~[150,250)ms + 快关慢开（fast close / slow open）。
  * 返回 { ParamEyeROpen?: v, ParamEyeLOpen?: v }（存在者）；双眼同闭同开。`paramIds` 不含任何眼参数 → {}。
+ * F2（批次 C 收口）：扩 `rate`（缺省 1）——thinking/speaking 由 Controller 传 >1（如 2），睁眼间隔等比
+ * 缩短（rate=2 → 间隔 ~[1.25,3.5)s，代批次 B 固定 2.5-7s；批次 B F2「thinking 眨眼加快」落地）。
  * @param tSec 当前时间（秒）
  * @param paramIds 模型参数 Id 集（getParameterIdList）
  * @param clock 随机源（同种子 → 同序列；单测注入固定值）
+ * @param rate 眨眼速率倍数（>1 加快；缺省 1 保持批次 B 既有节奏）
  */
-export function blinkTarget(tSec: number, paramIds: ReadonlySet<string>, clock: AnimClock): Record<string, number> {
+export function blinkTarget(tSec: number, paramIds: ReadonlySet<string>, clock: AnimClock, rate = 1): Record<string, number> {
   const eyeParams: string[] = []
   if (paramIds.has(PARAM_EYE_R_OPEN)) eyeParams.push(PARAM_EYE_R_OPEN)
   if (paramIds.has(PARAM_EYE_L_OPEN)) eyeParams.push(PARAM_EYE_L_OPEN)
   if (eyeParams.length === 0) return {}
-  const open = blinkOpenLevel(tSec, Math.floor(clock.random() * 0xffffffff))
+  const open = blinkOpenLevel(tSec, Math.floor(clock.random() * 0xffffffff), rate)
   const out: Record<string, number> = {}
   for (const p of eyeParams) out[p] = open
   return out
@@ -102,13 +105,14 @@ function closedLevel(progress: number): number {
 /**
  * 由确定种子随时间回放眨眼调度：从 t=0 步进（随机间隔 ~[2.5,7)s、闭眼 ~[150,250)ms），
  * 给定 tSec 落在睁眼期 → 1；落在闭眼窗口 → closedLevel(progress)（快关慢开）。同一 seed 任意 tSec 复现一致。
+ * F2（批次 C）：`rate` 等比缩短睁眼间隔（闭眼时长不变——眨一次的实际闭眼时间不因频率变化）。
  */
-function blinkOpenLevel(tSec: number, seed: number): number {
+function blinkOpenLevel(tSec: number, seed: number, rate: number): number {
   const rng = mulberry32(seed)
   let time = 0
   // 第一步为睁眼期：随机睁眼间隔后进入第一次闭眼
   while (true) {
-    const interval = 2.5 + rng() * 4.5 // ~[2.5, 7)s
+    const interval = (2.5 + rng() * 4.5) / rate // rate=1 保持 ~[2.5, 7)s；rate=2 → ~[1.25, 3.5)s
     time += interval
     if (time > tSec) return 1 // 落在睁眼期
     const closed = 0.15 + rng() * 0.1 // ~[150, 250)ms

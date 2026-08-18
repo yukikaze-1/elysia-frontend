@@ -22,6 +22,7 @@ import { useConnectionStore } from './connection.store'
 import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
 import { useLayoutStore } from './layout.store'
+import { DEFAULT_LIVE2D } from '@shared/schemas'
 import type { DirectiveState, Live2DDirectiveEvent, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
 
 /** C3：DirectiveState 七值（剔除 error——error=3 必须 client 驱动，D5C-07）；越界（如 'error'/'working'）丢弃 */
@@ -320,6 +321,26 @@ export const useLive2dStore = defineStore('live2d', () => {
     }
   }
 
+  /** Task5 M2（批次 C 收口）：「恢复默认」——置回 DEFAULT_LIVE2D（modelId→null）后消除「设置已重置但画布仍显旧模型」分叉：
+   *  面板存活（chat 视图挂载，controller/ready 就绪）且已加载 ≠ 首个可用 → `switchModel(首个 available)`
+   *  （切换画布 + 持久化生效 id）；面板已 dispose（settings 全窗 overlay 卸载 chat 视图，controller 空/models 空——
+   *  真实 UI restore 落在此路径）→ 无法即时切换，改**显式持久化首个可用**（重取模型清单），面板重挂载
+   *  init 读 modelId 加载它 → 画布与持久化一致。当前已是首个可用（或 modelId 本就 null）→ 不重载。 */
+  async function restoreDefaults(): Promise<void> {
+    const prev = live2dSettings.value.modelId
+    useSettingsStore().setLive2d({ ...DEFAULT_LIVE2D })
+    if (prev === null) return // 本就默认（无显式选择）→ 无需处理
+    const list = models.value.length > 0 ? models.value : await api.listLive2dModels().catch(() => [])
+    const first = list.find((m) => m.available)
+    if (!first) return // 无可用模型（恢复默认无可切目标）
+    if (controller && ready) {
+      if (controller.modelId !== first.id) await switchModel(first.id)
+    } else {
+      // 面板已 dispose：显式持久化首个可用（settings.modelId:null 语义 = 首次可用；重挂载 init 即加载它）
+      useSettingsStore().setLive2d({ modelId: first.id })
+    }
+  }
+
   function dispose(): void {
     stateSourceHandle?.unsub() // 退订 stateSource（停 watch + 清 N1 mood/error 回退 timers）
     stateSourceHandle = null
@@ -444,7 +465,7 @@ export const useLive2dStore = defineStore('live2d', () => {
 
   return {
     models, status, modelId, error, live2dSettings, characterState, mouthLevel,
-    init, switchModel, dispose, tick, handleDirective,
+    init, switchModel, restoreDefaults, dispose, tick, handleDirective,
     setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }
 })
