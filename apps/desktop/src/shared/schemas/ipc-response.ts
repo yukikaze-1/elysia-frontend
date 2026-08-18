@@ -35,7 +35,8 @@ export const ActivateConversationResultSchema = z.object({
 
 export const RuntimeInfoSchema = z.object({
   mode: z.enum(['real', 'mock']),
-  packaged: z.boolean()
+  packaged: z.boolean(),
+  mockMouthLevel: z.enum(['step', 'sine']).optional() // 批次 C（C1）：mock 合成包络源选择（仅 mock 模式填充）
 })
 
 export const EndpointResponseSchema = z.object({

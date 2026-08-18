@@ -48,6 +48,9 @@ export const useVoiceStore = defineStore('voice', () => {
   const realtime = ref<{ sessionId?: string; caption: string; turnCount: number; unacked: number; lastAckedSeq: number }>({ caption: '', turnCount: 0, unacked: 0, lastAckedSeq: 0 })
   const dictation = ref<{ caption: string; finalText?: string }>({ caption: '' })
   const tts = ref<{ playingStreamId?: number; url?: string; playing: boolean; durationMs?: number }>({ playing: false })
+  /** C1（批次 C）：TTS <audio> 宿主元素引用（CyTtsPlayer onMounted 赋值 / onUnmounted 清空）；live2dStore
+   *  watch 它 + tts.playing → attach/detach 口部数据源（MediaElementSource→Analyser）。非组件消费，仅跨 store 接线。 */
+  const ttsAudioEl = ref<HTMLAudioElement | null>(null)
   const micError = ref<PublicError>()
   const error = ref<PublicError>()
   const captureReady = ref(false)
@@ -529,7 +532,7 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   return {
-    mode, caption, record, realtime, dictation, tts, micError, error, captureReady,
+    mode, caption, record, realtime, dictation, tts, ttsAudioEl, micError, error, captureReady,
     consentPending, confirmDispatching, pendingAction, notice,
     init, handleEvent, guardStart, requireConsent, confirmConsent, dismissConsent,
     startRecord, stopRecord, replayRecord, discardRecord, commitRecord,

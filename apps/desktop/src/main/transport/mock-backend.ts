@@ -73,6 +73,10 @@ function kindFromMimeForMock(mime: string): string {
 
 /** 最小合法 WAV（44 字节头 + 0.125s 静音 PCM16/单声道/8kHz）：
  *  P4-A final review——旧 4 字节 "RIFF" 不是合法 WAV，<audio> 解码失败；试听预览需可播放的确定性字节。 */
+/** 批次 C（C1）：mock 合成包络 TTS 播放采样窗口（ms）——audio.session.ready 后延迟发 cancelled 触发「停止 → 归 0」，
+ *  给 renderer 口部采样 ~90 帧（@60fps）确定性窗口（headless 音频推进不可靠，ended 不能作为停止依据）。 */
+const MOUTH_TTS_WINDOW_MS = 1500
+
 function makeSilentWav(): Uint8Array {
   const sampleRate = 8000
   const numChannels = 1
@@ -135,6 +139,14 @@ export function parseMockEmotionEnv(value: string | undefined): string | undefin
   return value === undefined ? undefined : value
 }
 
+/** CYRENE_MOCK_MOUTH_LEVEL env → mockMouthLevel（批次 C C1 集成注入）：
+ *  仅 'step'/'sine' 合法（合成包络源选择，经 getRuntimeInfo 水合到 renderer）；undefined/空串/其它 → undefined
+ *  （不注入，用真实 Analyser 源）。与既有 mock env parser 同款——缺省不注入、仅明确设置生效。 */
+export function parseMockMouthLevelEnv(value: string | undefined): 'step' | 'sine' | undefined {
+  if (value === 'step' || value === 'sine') return value
+  return undefined
+}
+
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number
@@ -160,6 +172,14 @@ export interface MockBackendOptions {
   /** 情绪注入（Task 6 / 阶段 5 批次 B 集成）：set 时 scheduleReplay 落 generation.completed 覆写 `emotion`
    *  （集成 CYRENE_MOCK_GENERATION_EMOTION 观察情绪态→表情；缺省 undefined 保持 fixture 原值） */
   generationEmotion?: string
+  /** 批次 C（C1）：合成包络源选择（CYRENE_MOCK_MOUTH_LEVEL env）。非 undefined 时，generation.completed 后
+   *  的 TTS 模拟改为「写合法静音 WAV 进 media 缓存（不 404）+ 延迟 audio.session.cancelled」——给 renderer 口部
+   *  采样一个确定性窗口（headless 音频推进不可靠；否则 mock-silent 404 会让播放态 ~1 帧内回落，无法断言采样变化）。
+   *  缺省 undefined 保持既有 mock-silent 404 行为（electron-voice 的 D-P13 回落断言不变）。 */
+  mockMouthLevel?: 'step' | 'sine'
+  /** 批次 C（C1）：TTS 音频 sink（Main media 缓存写入口，与 RealBackend getTtsMedia 同款桥）。仅
+   *  mockMouthLevel 设时使用；缺省 undefined → mock-silent 保持 404。 */
+  ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -186,6 +206,9 @@ export class MockBackend implements BackendAdapter {
   private readonly fixture: BackendEvent[]
   private readonly emitDelayMs: number
   private readonly generationEmotion?: string // Task 6：generation.completed 情绪注入（CYRENE_MOCK_GENERATION_EMOTION）
+  private readonly mockMouthLevel?: 'step' | 'sine' // 批次 C（C1）：合成包络源选择 → TTS 模拟改「有效 WAV + 延迟取消」
+  private readonly ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
+  private ttsCancelTimer: ReturnType<typeof setTimeout> | undefined // C1：TTS 采样窗口结束时发 audio.session.cancelled
   private readonly onConnectionStateChange?: (state: ConnectionState) => void
   private readonly idFactory: () => string
   private readonly now: () => Date
@@ -277,6 +300,8 @@ export class MockBackend implements BackendAdapter {
     this.messageRecords = this.seedMessages()
     this.emitDelayMs = options.emitDelayMs ?? 30
     this.generationEmotion = options.generationEmotion
+    this.mockMouthLevel = options.mockMouthLevel
+    this.ttsAudioSink = options.ttsAudioSink
     this.onConnectionStateChange = options.onConnectionStateChange
     this.now = options.now ?? (() => new Date())
     this.idFactory = options.idFactory ?? (() => `mock-${Date.now()}-${++this.idCounter}`)
@@ -672,8 +697,19 @@ export class MockBackend implements BackendAdapter {
         fresh.eventId = this.idFactory()
         fresh.sequence = this.nextSequence++
         this.emit(fresh as unknown as BackendEvent)
-        // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件
+        // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件。
+        // C1（批次 C，mockMouthLevel 注入时）：写合法静音 WAV 进 media 缓存（mock-silent 不再 404 → <audio> 可解码
+        // 不触发 onerror 快速回落），并延迟 audio.session.cancelled 触发停止——给 renderer 口部采样一个确定性窗口
+        // （headless 音频推进/ended 不可靠；否则 ~1 帧窗口无法断言 step 序列变化）。
         if (event.event === 'generation.completed' && this.ttsActive) {
+          if (this.ttsAudioSink && this.mockMouthLevel !== undefined) {
+            this.ttsAudioSink('mock-silent', makeSilentWav())
+            if (this.ttsCancelTimer) clearTimeout(this.ttsCancelTimer)
+            this.ttsCancelTimer = setTimeout(() => {
+              this.ttsCancelTimer = undefined
+              this.emit({ ...this.stamp(), event: 'audio.session.cancelled', streamId: 1 } satisfies AudioSessionCancelledEvent)
+            }, MOUTH_TTS_WINDOW_MS)
+          }
           this.emit({ ...this.stamp(), event: 'audio.session.started', streamId: 1, format: 'wav' } satisfies AudioSessionStartedEvent)
           this.emit({ ...this.stamp(), event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/mock-silent', format: 'wav' } satisfies AudioSessionReadyEvent)
         }
@@ -688,6 +724,7 @@ export class MockBackend implements BackendAdapter {
     this.generationTimers.clear()
     this.transcriptTimers.forEach((t) => clearTimeout(t))
     this.transcriptTimers = []
+    if (this.ttsCancelTimer) { clearTimeout(this.ttsCancelTimer); this.ttsCancelTimer = undefined } // C1：清 TTS 采样窗口取消定时器
   }
 
   private emit(event: BackendEvent): void {

@@ -29,6 +29,9 @@ export interface ConnectInput {
 export interface RuntimeInfo {
   mode: 'real' | 'mock'
   packaged: boolean
+  /** 批次 C（C1）：mock 模式下的合成包络源选择（CYRENE_MOCK_MOUTH_LEVEL env 经 Main 水合；真实模式不填充）。
+   *  live2dStore 据此选 step/sine 合成口型源替代真实 Analyser（CI 无音频设备/mock TTS 静音）。 */
+  mockMouthLevel?: 'step' | 'sine'
 }
 
 export interface GetConversationQuery {

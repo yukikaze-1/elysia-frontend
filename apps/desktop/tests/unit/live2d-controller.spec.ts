@@ -495,3 +495,36 @@ describe('Live2DController Task 4：动作调度仲裁（B3）+ 情绪→表情�
     expect(handle.startExpression).not.toHaveBeenCalled()
   })
 })
+
+describe('Live2DController 批次 C（C1）：通用口部写出（D5C-02，替换旧 M5 门块）', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('口部写出对所有 ready 模型生效（有动作 fake 也写）；lipSync 关 → 电口写 0', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: ['ParamMouthOpenY'], motions: ['motions/idle.motion3.json'], expressions: [] })
+    await h.ctrl.init(fakeCanvas) // whitelist/cacheModelFacts 在 switchModel 后填充；fakeCanvas 用现有 spec 夹具
+    const handle = h.getHandle()
+    h.ctrl.setState('speaking'); h.ctrl.setMouthLevel(0.8)
+    h.ctrl.tick()
+    const mouthWrites = handle.setParam.mock.calls.filter((c) => c[0] === 'ParamMouthOpenY')
+    expect(mouthWrites.length).toBeGreaterThan(0) // 有动作模型电口也被写
+    h.ctrl.setLipSync(false); h.ctrl.tick()
+    const last = handle.setParam.mock.calls.filter((c) => c[0] === 'ParamMouthOpenY').at(-1)
+    expect(last?.[1]).toBe(0) // lipSync 关 → 电口写 0 清态
+  })
+
+  it('B3 动作后写覆盖电口：tick 后口部最终值 = 动作值（adapter.update 覆写）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { params: ['ParamMouthOpenY'], motions: ['motions/idle.motion3.json'], expressions: [] })
+    await h.ctrl.init(fakeCanvas)
+    const handle = h.getHandle()
+    // 模拟 motion manager 后写：adapter.update 时把 ParamMouthOpenY 覆写为动作值 0.5
+    // （MockFn 类型不可直接调用，cast 为参数写签名）
+    const setParam = handle.setParam as unknown as (id: string, value: number) => void
+    h.adapter.update.mockImplementation(() => { setParam('ParamMouthOpenY', 0.5) })
+    h.ctrl.setState('speaking'); h.ctrl.setMouthLevel(0.8)
+    h.ctrl.tick()
+    const last = handle.setParam.mock.calls.filter((c) => c[0] === 'ParamMouthOpenY').at(-1)
+    expect(last?.[1]).toBe(0.5) // 动作值赢（updateAnimation 口部写 → adapter.update 覆写顺序钉死）
+  })
+})

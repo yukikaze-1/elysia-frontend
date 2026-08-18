@@ -44,6 +44,7 @@ function makeFakeController() {
   const calls = {
     setAutoMotions: vi.fn(), setLipSync: vi.fn(), setPerformanceMode: vi.fn(),
     setViewTransform: vi.fn(), setLookTarget: vi.fn(), playTapMotion: vi.fn(),
+    setMouthLevel: vi.fn(), // C1：口部接线（watch detach → setMouthLevel(0)）
     setState: vi.fn(), init: vi.fn(async () => {}), switchModel: vi.fn(async (next: string) => next),
     tick: vi.fn(), unload: vi.fn()
   }

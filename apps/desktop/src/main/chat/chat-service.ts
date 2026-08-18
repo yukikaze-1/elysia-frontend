@@ -17,6 +17,7 @@ export interface ChatServiceDeps {
   requireToken?: boolean
   connectionConfig: ConnectionConfig   // endpoint 规范化 + token-origin 绑定（connect 校验/设置都经它）
   packaged?: boolean                   // 装配信息（getRuntimeInfo 展示用）
+  mockMouthLevel?: 'step' | 'sine'     // 批次 C（C1）：mock 模式合成包络源选择（CYRENE_MOCK_MOUTH_LEVEL env；仅 mock 填充）
   sessionStore?: SessionStore          // G2：列表缓存派生 / lastActive / 删除联动 purge（fail-open）
   audit?: (event: Omit<AuditEvent, 'ts'>) => void   // 连接生命周期审计（C2;fail-open,safeAudit 调用）
 }
@@ -73,7 +74,12 @@ export function createChatService(deps: ChatServiceDeps) {
       return { endpoint: e?.baseUrl }
     },
     getRuntimeInfo(): RuntimeInfo {
-      return { mode: deps.requireToken !== false ? 'real' : 'mock', packaged: deps.packaged ?? false }
+      return {
+        mode: deps.requireToken !== false ? 'real' : 'mock',
+        packaged: deps.packaged ?? false,
+        // C1（批次 C）：mock 模式水合合成包络源选择（真实模式不填充；undefined 不注入）
+        ...(deps.requireToken === false && deps.mockMouthLevel !== undefined ? { mockMouthLevel: deps.mockMouthLevel } : {})
+      }
     },
     async disconnect(): Promise<void> {
       await adapter.disconnect()

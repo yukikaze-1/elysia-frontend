@@ -28,7 +28,6 @@ import {
   PARAM_EYE_R_SMILE,
   PARAM_EYE_BALL_X,
   PARAM_EYE_BALL_Y,
-  PARAM_MOUTH_OPEN_Y,
   type AnimClock
 } from './param-anim'
 
@@ -292,7 +291,7 @@ export class Live2DController {
   }
 
   /** 口型独立门（M5，Task 5，spec D5B-08 lipSync）——与 autoMotions 正交：口型电平写入仅受
-   *  autoMotions ∧ lipSync 共同控制（b4Params speaking 口型 + 门关时写 0 清态）。 */
+   *  autoMotions ∧ lipSync 共同控制（updateAnimation 通用口部步骤按门开写 mouthLevel / 门关写 0 清态）。 */
   setLipSync(v: boolean): void {
     this.lipSync = v
   }
@@ -301,8 +300,8 @@ export class Live2DController {
     return this.lipSync
   }
 
-  /** 口型电平：[0,1] → 存口型电平（口型数据源归批次 C1，本批只落 `ParamMouthOpenY` 写入原语）。
-   *  B4 说话态每帧经 mouthLevelTarget 把电平写进口部参数。 */
+  /** 口型电平：[0,1] → 存口型电平（口型数据源 TtsMouthSource 归批次 C1，每帧经 updateAnimation 通用口部步骤
+   *  把电平写进口部参数 ParamMouthOpenY——对所有 ready 模型生效，门 = autoMotions ∧ lipSync）。 */
   setMouthLevel(level: number): void {
     this.mouthLevel = Math.min(1, Math.max(0, level))
   }
@@ -425,11 +424,11 @@ export class Live2DController {
         Object.assign(out, this.b4Params(this.stateMachine.state))
       }
     }
-    // M5 口型门清态：speaking 且口型门关（autoMotions 或 lipSync 关）→ 口部回 0（不残留上一帧口型开合）；
-    // 有动作系统模型 speaking 的口型由 B3 动作/motion 驱动，不受本门约束（此处仅覆盖 B4 无动作路径残留）。
-    if (this.stateMachine.state === 'speaking' && !(this.autoMotions && this.lipSync) && this.paramIds.has(PARAM_MOUTH_OPEN_Y)) {
-      out[PARAM_MOUTH_OPEN_Y] = 0
-    }
+    // C1（批次 C，D5C-02 通用口部步骤）：对所有 ready 模型写 ParamMouthOpenY——不再限于 b4Params no-motion
+    // 分支（主验收模型 Haru 有动作，电口同样必须写）。门 = autoMotions ∧ lipSync（M5）：门开写 mouthLevel
+    // 电平、门关写 0 清态（不残留上一帧开合）。B3 动作后写（adapter.update 内 motion manager 写同参）在本步骤
+    // 之后执行 → 自然覆盖电口（相同口部参数动作值赢）；本步骤替换批次 B 旧 M5 门块（不叠加双写）。
+    Object.assign(out, mouthLevelTarget(this.lipSync && this.autoMotions ? this.mouthLevel : 0, this.paramIds))
     // 视线（独立于 autoMotions：鼠标跟随/回正不受待机开关约束）
     if (this.lookTarget) {
       if (this.paramIds.has(PARAM_EYE_BALL_X)) out[PARAM_EYE_BALL_X] = clamp(this.lookTarget.x, -1, 1)
@@ -445,7 +444,7 @@ export class Live2DController {
   }
 
   /** B4 无动作参数级回退（spec §3.4 表）：状态→参数近似。全部存在性判定（不在 paramIds 就不写），不记错误。
-   *  口型电平（setMouthLevel 的存值）在 speaking 态经 mouthLevelTarget 写出。 */
+   *  口部电平由 updateAnimation 通用口部步骤写出（C1，D5C-02），不在本分支写（避免叠加双写）。 */
   private b4Params(state: CharacterState): Record<string, number> {
     const out: Record<string, number> = {}
     switch (state) {
@@ -454,8 +453,8 @@ export class Live2DController {
         if (this.paramIds.has(PARAM_ANGLE_X)) out[PARAM_ANGLE_X] = B4_THINK_SWAY_AMP * Math.sin(this.wobbleT())
         break
       case 'speaking':
-        // 口型（mouthLevel 电平）+ 轻微头动作。口型受 autoMotions ∧ lipSync 共同控制（M5：lipSync 关时不写）；头轻微动作属待机动画（仅 autoMotions）
-        Object.assign(out, mouthLevelTarget(this.lipSync ? this.mouthLevel : 0, this.paramIds))
+        // 头轻微动作属待机动画（仅 autoMotions）。口部电平由 updateAnimation 通用口部步骤写出（C1，D5C-02），
+        // 不再在本分支写口部（避免与通用步骤叠加双写）。
         if (this.paramIds.has(PARAM_ANGLE_Z)) out[PARAM_ANGLE_Z] = B4_SPEAK_TILT * Math.sin(this.wobbleT())
         break
       case 'happy':

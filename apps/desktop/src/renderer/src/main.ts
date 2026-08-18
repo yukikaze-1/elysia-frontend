@@ -11,6 +11,7 @@ import { useDraftStore } from './stores/draft.store'
 import { useCacheStore } from './stores/cache.store'
 import { useVoiceStore } from './stores/voice.store'
 import { useSettingsStore } from './stores/settings.store'
+import { useLive2dStore } from './stores/live2d.store'
 import { createRendererBootstrap } from './bootstrap'
 
 const app = createApp(App)
@@ -33,6 +34,14 @@ if (window.desktopApi) {
     voice: useVoiceStore(),
     settings: useSettingsStore()
   }).register()
+}
+
+// C1（批次 C）口型集成探针：仅 dev / test 构建暴露（生产不暴露测试面）。Playwright 经
+// window.__cyreneTest.getMouthLevel() 断言口型电平随 CYRENE_MOCK_MOUTH_LEVEL 合成包络变化。
+if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
+  ;(window as unknown as { __cyreneTest?: { getMouthLevel: () => number } }).__cyreneTest = {
+    getMouthLevel: () => useLive2dStore().mouthLevel
+  }
 }
 
 app.mount('#app')

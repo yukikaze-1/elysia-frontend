@@ -11,13 +11,15 @@
 // dispose 无残留（adapter.destroy spy）+ 状态复位。
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { nextTick } from 'vue'
 import { Live2DController, type Live2DControllerStatus } from '../../src/renderer/src/live2d/controller'
 import { Live2DGpuLostError, type Live2DAdapter } from '../../src/renderer/src/live2d/adapter'
-import { setLive2dControllerFactory, useLive2dStore } from '../../src/renderer/src/stores/live2d.store'
+import { setLive2dControllerFactory, setMouthSourceFactory, useLive2dStore } from '../../src/renderer/src/stores/live2d.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
+import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { Live2DModelSummary } from '@shared/contracts'
+import type { Live2DModelSummary, RuntimeInfo } from '@shared/contracts'
 
 // —— Core 全局桩（node 无 live2dcubismcore.min.js）——
 // 经 live2d.store → adapter → @framework/model/cubismmoc → cubismmodel.ts 的模块作用域枚举初始化
@@ -113,7 +115,7 @@ const mockApi = {
   send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
   renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
   getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
+  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(async (): Promise<RuntimeInfo> => ({ mode: 'mock', packaged: false })),
   onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
   hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
   attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
@@ -147,7 +149,7 @@ function freshStore() {
 }
 
 describe('Live2DController（fake adapter / fake list / fake GL）', () => {
-  beforeEach(() => { setLive2dControllerFactory(undefined); vi.clearAllMocks() })
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
   it('init：list 首个 available 为默认模型（跳过 unavailable）；ready + modelId 设置', async () => {
@@ -285,7 +287,7 @@ describe('Live2DController（fake adapter / fake list / fake GL）', () => {
 })
 
 describe('live2dStore（fake controller factory + fake list + fake settings）', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
   it('init：list 填充 models + 默认模型（首个 available）ready；enabled 缺省 true', async () => {
@@ -374,7 +376,7 @@ describe('live2dStore（fake controller factory + fake list + fake settings）',
 })
 
 describe('live2dStore：settings 契约面（enabled/modelId 接入 settingsStore 三处接线）', () => {
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
   it('setLive2d（store.switchModel 触发）经 settingsStore 防抖持久化 live2d 子树', async () => {
@@ -415,6 +417,7 @@ function installEffectiveController(effectiveFor: Record<string, string>) {
     setPerformanceMode: vi.fn(),
     setViewTransform: vi.fn(),
     setLookTarget: vi.fn(),
+    setMouthLevel: vi.fn(), // C1：口部采样接线（tick 采样 → setMouthLevel）
     playTapMotion: vi.fn()
   }
   setLive2dControllerFactory(() => ctrl as unknown as Live2DController)
@@ -422,7 +425,7 @@ function installEffectiveController(effectiveFor: Record<string, string>) {
 }
 
 describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 串行化 + stateSource 接线', () => {
-  beforeEach(() => { setLive2dControllerFactory(undefined); vi.clearAllMocks() })
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
   it('switchModel 用生效 id 持久化（成功 = 目标）', async () => {
@@ -478,7 +481,7 @@ describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 �
 })
 
 describe('live2dStore Task 5（B5/B6）：设置→controller 窄转发 + characterState 事件镜像', () => {
-  beforeEach(() => { setLive2dControllerFactory(undefined); vi.clearAllMocks() })
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
   it('store.init 把当前 settings 表现字段一次性推到 controller（autoMotions/lipSync/performanceMode/scale/offset）', async () => {
@@ -538,5 +541,63 @@ describe('live2dStore Task 5（B5/B6）：设置→controller 窄转发 + charac
     // 订阅已退订（store 逐一调用 on 返回的退订函数——真实 controller 此后不再推送 state 事件）
     expect(unsubs.length).toBeGreaterThan(0)
     for (const u of unsubs) expect(u).toHaveBeenCalled()
+  })
+})
+
+describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFactory + mockMouthLevel 选源', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('tick 采样：attach（tts.playing ∧ ttsAudioEl）→ controller.setMouthLevel 收到源采样值；detach 归 0', async () => {
+    const ctrl = installEffectiveController({})
+    const fakeEl = {} as HTMLAudioElement
+    const seq = [0.2, 0.4, 0.6, 0.8]
+    let i = 0
+    setMouthSourceFactory(() => ({
+      attach: vi.fn(),
+      detach: vi.fn(),
+      sample: vi.fn(() => seq[i++ % seq.length]),
+      dispose: vi.fn()
+    }))
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    const voice = useVoiceStore()
+    voice.tts.playing = true
+    voice.ttsAudioEl = fakeEl
+    await nextTick() // watch 触发 attach
+    store.tick()
+    expect(ctrl.setMouthLevel).toHaveBeenLastCalledWith(0.2)
+    store.tick()
+    expect(ctrl.setMouthLevel).toHaveBeenLastCalledWith(0.4)
+    expect(store.mouthLevel).toBe(0.4) // 探针读值同步（集成 window.__cyreneTest.getMouthLevel 同源）
+    // detach（停止播放）→ 归 0（watch else 分支 setMouthLevel(0)）
+    ctrl.setMouthLevel.mockClear()
+    voice.tts.playing = false
+    await nextTick()
+    expect(ctrl.setMouthLevel).toHaveBeenCalledWith(0)
+    expect(store.mouthLevel).toBe(0)
+    // detach 后 tick 不再采样（setMouthLevel 无新调用）
+    ctrl.setMouthLevel.mockClear()
+    store.tick()
+    expect(ctrl.setMouthLevel).not.toHaveBeenCalled()
+  })
+
+  it('mockMouthLevel=step 时选合成源（不调用注入工厂）；未设时用注入工厂源', async () => {
+    installFakes({ models: [MODEL_HARU] })
+    let factoryCalled = false
+    const fakeSrc = { attach: vi.fn(), detach: vi.fn(), sample: vi.fn(() => 0), dispose: vi.fn() }
+    setMouthSourceFactory(() => { factoryCalled = true; return fakeSrc })
+    // case 1：runtime 水合 step → 合成 step 源胜（工厂不调用）
+    mockApi.getRuntimeInfo.mockResolvedValueOnce({ mode: 'mock', packaged: false, mockMouthLevel: 'step' })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    expect(factoryCalled).toBe(false)
+    store.dispose()
+    // case 2：runtime 无 mockMouthLevel → 注入工厂源
+    factoryCalled = false
+    mockApi.getRuntimeInfo.mockResolvedValueOnce({ mode: 'mock', packaged: false })
+    const { store: s2 } = freshStore()
+    await s2.init(fakeCanvas)
+    expect(factoryCalled).toBe(true)
   })
 })

@@ -387,6 +387,76 @@ function lilModelFile(ud: string): string {
 
 // —— 阶段 5 批次 B（B7）：表现集成 harness（状态驱动/动作播放/设置子页/性能模式/布局/切换竞态 ——
 
+// —— 阶段 5 批次 C（C1）：TTS 音量口型集成（CYRENE_MOCK_MOUTH_LEVEL 合成包络源，确定性断言链路）——
+
+/** 打开设置中心（.cy-settings 覆盖层出现） */
+async function openSettings(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '设置', exact: true }).click()
+  await expect.poll(() => page.locator('.cy-settings').count(), POLL).toBe(1)
+}
+
+/** 关闭设置中心（✕ 关闭按钮，确定性；对齐 electron-voice 先例） */
+async function closeSettings(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '关闭设置', exact: true }).click()
+  await expect.poll(() => page.locator('.cy-settings').count(), POLL).toBe(0)
+}
+
+describe('阶段5批次C Live2D Electron 集成（C1：TTS 音量口型）', () => {
+  it('C1.口型链路：CYRENE_MOCK_MOUTH_LEVEL=step → 激活 TTS → 发送 → 口型电平随合成包络变化 → 停止归 0', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud, { CYRENE_MOCK_MOUTH_LEVEL: 'step', CYRENE_MOCK_EMIT_DELAY_MS: '400' })
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      // 探针必须暴露（dev/test 构建经 window.__cyreneTest.getMouthLevel 读 store.mouthLevel）
+      const probe = await page.evaluate(() =>
+        typeof (window as unknown as { __cyreneTest?: { getMouthLevel?: () => number } }).__cyreneTest?.getMouthLevel)
+      expect(probe).toBe('function')
+      await connectAndActivateFirst(page)
+      // 激活 TTS Profile（mock ttsActive = !!activeSelection.ttsProfileId → generation.completed 才发 audio.session.ready）
+      await openSettings(page)
+      await page.getByRole('tab', { name: 'TTS', exact: true }).click()
+      const edgeCard = page.locator('.cy-profile-card[data-profile-id="edge/edge-tts"]')
+      await expect.poll(() => edgeCard.count(), POLL).toBe(1)
+      await edgeCard.getByRole('button', { name: '设为当前', exact: true }).click()
+      await expect.poll(() => page.evaluate(() => document.querySelectorAll('.cy-profile-card[data-profile-id="edge/edge-tts"] .cy-profile-current').length), POLL).toBe(1)
+      await closeSettings(page)
+      // 页面内高频采样口型电平（避开跨进程轮询延迟——mock TTS 播放窗口由 C1 env 保证 ~1.5s，非零值帧较多）
+      await page.evaluate(() => {
+        const w = window as unknown as { __cyreneMouthSamples: number[] }
+        w.__cyreneMouthSamples = []
+        const collect = () => {
+          const v = (window as unknown as { __cyreneTest?: { getMouthLevel: () => number } }).__cyreneTest?.getMouthLevel?.() ?? -1
+          w.__cyreneMouthSamples.push(v)
+          requestAnimationFrame(collect)
+        }
+        requestAnimationFrame(collect)
+      })
+      // 发送 → generation.completed → audio.session.ready → tts.playing=true → attach → rAF tick 采样 step 序列
+      await sendChat(page, 'mouth')
+      // 断言：出现过 ≥2 个不同非零值（step 序列随采样变化）且最终归 0（mock 延迟 audio.session.cancelled → detach 归零；
+      // 无 C1 env 时 mock-silent 404 → onerror → 回落，该路径由 electron-voice 的 D-P13 用例覆盖）
+      try {
+        await expect.poll(async () => {
+          const arr = await page.evaluate(() => (window as unknown as { __cyreneMouthSamples?: number[] }).__cyreneMouthSamples ?? [])
+          const nonzero = new Set(arr.filter((v) => v > 0))
+          const trailingZero = arr.length > 0 && arr[arr.length - 1] === 0
+          return nonzero.size >= 2 && trailingZero
+        }, { ...POLL, timeout: 10000 }).toBe(true)
+      } catch (e) {
+        // DEBUG：超时转储采样序列（定位链路断点）
+        const dump = await page.evaluate(() => (window as unknown as { __cyreneMouthSamples?: number[] }).__cyreneMouthSamples ?? [])
+        const ttsState = await page.evaluate(() => {
+          const el = document.querySelector<HTMLAudioElement>('audio.cy-tts-player')
+          return { src: el?.getAttribute('src') ?? null, paused: el?.paused ?? null }
+        })
+        console.log('C1 DEBUG samples:', JSON.stringify(dump.slice(0, 200)), 'ttsState:', JSON.stringify(ttsState))
+        throw e
+      }
+    } finally { await closeApp(launched) }
+  })
+})
+
 /** 状态徽标文案（.cy-live-badge，形如「状态：思考中」） */
 async function badgeText(page: Page): Promise<string> {
   return page.evaluate(() => document.querySelector('.cy-live-badge')?.textContent ?? '')

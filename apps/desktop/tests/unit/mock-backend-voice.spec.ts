@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MockBackend, parseMockVoiceTranscriptDelayEnv } from '../../src/main/transport/mock-backend'
+import { MockBackend, parseMockMouthLevelEnv, parseMockVoiceTranscriptDelayEnv } from '../../src/main/transport/mock-backend'
 import { parseBackendEvent } from '@shared/schemas'
 import type { BackendEvent } from '@shared/contracts'
 
@@ -365,5 +365,18 @@ describe('stopRecordVoice transcriptDelayMs 延迟 emit（Task 3，R-S4-05）', 
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('parseMockMouthLevelEnv（批次 C C1，合成包络源选择）', () => {
+  it('未设/空串/非法 → undefined（不注入，用真实 Analyser 源）', () => {
+    expect(parseMockMouthLevelEnv(undefined)).toBeUndefined()
+    expect(parseMockMouthLevelEnv('')).toBeUndefined()
+    expect(parseMockMouthLevelEnv('square')).toBeUndefined()
+    expect(parseMockMouthLevelEnv('  step  ')).toBeUndefined() // 不去空白（与既有 parser 一致，非法即不注入）
+  })
+  it('仅 step/sine 合法透传', () => {
+    expect(parseMockMouthLevelEnv('step')).toBe('step')
+    expect(parseMockMouthLevelEnv('sine')).toBe('sine')
   })
 })

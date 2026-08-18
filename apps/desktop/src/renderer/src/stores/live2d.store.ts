@@ -8,13 +8,14 @@
 // dispose()：controller.unload（全量释放含 adapter.destroy，无残留）→ 状态复位（面板 onBeforeUnmount 调用）。
 // 可测性：buildController 默认建真实 adapter（webglEngine）；单测经 setLive2dControllerFactory 注入 fake
 // controller（fake adapter + fake list），与 live2d-adapter.spec 同款 fake GL 纪律（node 无 WebGL）。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { Live2DAdapter } from '../live2d/adapter'
 import { webglEngine } from '../live2d/gl/webgl'
 import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } from '../live2d/controller'
 import type { CharacterState } from '../live2d/state-machine'
 import { createLive2dStateSource } from '../live2d/state-source'
+import { createSineMouthSource, createStepMouthSource, createTtsMouthSource, type MouthLevelSource } from '../live2d/tts-mouth-source'
 import { api } from './desktop-api'
 import { useSettingsStore } from './settings.store'
 import { useConnectionStore } from './connection.store'
@@ -29,11 +30,24 @@ export function setLive2dControllerFactory(f: ControllerFactory | undefined): vo
   controllerFactory = f
 }
 
+/** 口部数据源工厂注入点（C1，对齐 controllerFactory 先例）：默认真实 TtsMouthSource（MediaElementSource→
+ *  Analyser）；单测/集成注入确定性合成源断言采样接线。 */
+type MouthSourceFactory = () => MouthLevelSource
+let mouthSourceFactory: MouthSourceFactory | undefined
+export function setMouthSourceFactory(f: MouthSourceFactory | undefined): void {
+  mouthSourceFactory = f
+}
+
 function buildController(): Live2DController {
   if (controllerFactory) return controllerFactory()
   const adapter = new Live2DAdapter({ engine: webglEngine })
   // list 走注入的 desktopApi（preload live2d:list-models）；真实 + mock 覆盖
   return new Live2DController({ adapter, list: () => api.listLive2dModels() })
+}
+
+function buildMouthSource(): MouthLevelSource {
+  if (mouthSourceFactory) return mouthSourceFactory()
+  return createTtsMouthSource()
 }
 
 export const useLive2dStore = defineStore('live2d', () => {
@@ -44,11 +58,18 @@ export const useLive2dStore = defineStore('live2d', () => {
   const live2dSettings = computed(() => useSettingsStore().live2d)
   /** 当前 CharacterState（Task 5 Panel 状态徽标）：经 controller 'state' 事件镜像；未接线前 'offline' */
   const characterState = ref<CharacterState>('offline')
+  /** C1（批次 C）：当前口型电平 [0,1]（tick 采样源喂 controller 时记录；集成探针 window.__cyreneTest.getMouthLevel 读） */
+  const mouthLevel = ref(0)
 
   let controller: Live2DController | null = null
   let unsubDevice: (() => void) | null = null
   let unsubState: (() => void) | null = null
   let unsubStateSource: (() => void) | null = null
+  // C1：口部数据源 + 采样接线（TTS 播放时 attach，停止/取消 detach 归零）
+  let mouthSource: MouthLevelSource | null = null
+  let mouthAttached = false
+  let mockMouthLevel: 'step' | 'sine' | undefined
+  let unsubMouthWatch: (() => void) | null = null
   // M1：init 完成（含已选模型覆盖 switch）前为 false，串行化用户 switch——init resolve 前不允许触发切换，
   // 避免 currentId null 时 controller 切换中守卫返回被丢弃目标的语义暧昧。
   let ready = false
@@ -102,6 +123,29 @@ export const useLive2dStore = defineStore('live2d', () => {
     )
   }
 
+  /** C1 口部接线：watch voiceStore（tts.playing ∧ ttsAudioEl）→ attach/detach 口部数据源。
+   *  playing∧有元素 → attach（tick 采样）；否则 detach + 归零（controller.setMouthLevel(0) 清电口，
+   *  口部关闭不残留上一帧开合——doc 05 §10 静音/暂停/取消 → 归零）。 */
+  function setupMouthWatch(): void {
+    if (unsubMouthWatch) return
+    const voice = useVoiceStore()
+    unsubMouthWatch = watch(
+      [() => voice.tts.playing, () => voice.ttsAudioEl],
+      ([playing, el]) => {
+        if (playing && el && mouthSource) {
+          mouthSource.attach(el)
+          mouthAttached = true
+        } else {
+          mouthSource?.detach()
+          mouthAttached = false
+          mouthLevel.value = 0
+          controller?.setMouthLevel(0)
+        }
+      },
+      { immediate: true }
+    )
+  }
+
   function ensureController(): Live2DController {
     if (controller) return controller
     const ctrl = buildController()
@@ -132,6 +176,20 @@ export const useLive2dStore = defineStore('live2d', () => {
       // 关闭态：不创建渲染循环、不 load（面板显示「Live2D 已关闭」）；status 保持 unloaded
       return
     }
+    // C1（批次 C）：mock 合成包络源选择——CYRENE_MOCK_MOUTH_LEVEL 经 Main 水合（getRuntimeInfo）下发，仅 mock
+    // 模式填充；renderer 不读 env（sandbox）。Minor-14 守卫：getRuntimeInfo 未实现（panel 单测 mockApi 无该方法）
+    // /抛错/返回 undefined → 用真实 Analyser 源（TtsMouthSource 无 AudioContext 时静默降级 sample 恒 0，不崩既有用例）。
+    const rt = await Promise.resolve(
+      typeof api.getRuntimeInfo === 'function' ? api.getRuntimeInfo() : undefined
+    ).catch(() => undefined)
+    mockMouthLevel = rt?.mockMouthLevel
+    mouthSource?.dispose() // 防御：重复 init 不泄漏旧源（正常路径 dispose 已清，此处兜底）
+    mouthSource =
+      mockMouthLevel === 'step'
+        ? createStepMouthSource()
+        : mockMouthLevel === 'sine'
+          ? createSineMouthSource()
+          : buildMouthSource()
     const ctrl = ensureController()
     try {
       await ctrl.init(c)
@@ -161,6 +219,7 @@ export const useLive2dStore = defineStore('live2d', () => {
     ctrl.setPerformanceMode(l2d.performanceMode)
     ctrl.setViewTransform(l2d.scale, l2d.offsetX, l2d.offsetY)
     ready = true
+    setupMouthWatch() // C1：口部接线（TTS 播放 → attach → tick 采样）
     setupStateSource(ctrl)
   }
 
@@ -188,6 +247,13 @@ export const useLive2dStore = defineStore('live2d', () => {
   function dispose(): void {
     unsubStateSource?.() // 退订 stateSource（停 watch + 清 N1 mood/error 回退 timers）
     unsubStateSource = null
+    unsubMouthWatch?.() // C1：退订口部接线（停 watch）
+    unsubMouthWatch = null
+    mouthSource?.dispose() // C1：释放口部数据源（断开 graph + close AudioContext，无残留）
+    mouthSource = null
+    mouthAttached = false
+    mockMouthLevel = undefined
+    mouthLevel.value = 0
     unsubDevice?.()
     unsubDevice = null
     unsubState?.() // 退订 'state' 事件镜像
@@ -237,13 +303,20 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   /** 渲染 tick（Panel rAF 循环驱动 → controller.tick → adapter.update+draw；GPU-lost 由 controller 捕获并
-   *  emit device_lost → 本 store 镜像 fallback）。无 controller（未 init / disabled）时 no-op。 */
+   *  emit device_lost → 本 store 镜像 fallback）。无 controller（未 init / disabled）时 no-op。
+   *  C1：attach 态下先把口部源采样电平喂 controller（setMouthLevel）；detach 后不再采样（归 0 由 watch 完成）。 */
   function tick(): void {
-    controller?.tick()
+    if (!controller) return
+    if (mouthAttached && mouthSource) {
+      const lvl = mouthSource.sample()
+      mouthLevel.value = lvl
+      controller.setMouthLevel(lvl)
+    }
+    controller.tick()
   }
 
   return {
-    models, status, modelId, error, live2dSettings, characterState,
+    models, status, modelId, error, live2dSettings, characterState, mouthLevel,
     init, switchModel, dispose, tick,
     setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }
