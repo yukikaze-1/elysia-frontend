@@ -88,6 +88,12 @@ export const useLive2dStore = defineStore('live2d', () => {
   /** C1 集成诊断（2026-08-19）：口部数据源种类（'step'/'sine' = mockMouthLevel 水合生效 / 'real' = Analyser）。
    *  集成失败转储用——区分「合成包络源未水合（读静音 → 恒 0）」与「attach/播放断链」。 */
   const mouthSourceKind = ref<'step' | 'sine' | 'real' | null>(null)
+  /** C1 集成稳健化（2026-08-19）：口部运动持久标志——tick 采到非零置 `mouthMoved`；attach 时重置、detach
+   *  （窗口结束归零）时若 moved 则置 `mouthSettled`。供集成测试轮询**持久状态**而非瞬态采样——CI 上 SwiftShader
+   *  渲染饱和 renderer 主线程时，`page.evaluate`/timer 采样会被饿死（3.75s 一次），瞬态窗口抓不住；持久标志
+   *  由 tick 写入（tick 即饱和源，恒运行），外部慢轮询几次即读到。 */
+  const mouthMoved = ref(false)
+  const mouthSettled = ref(false)
   let unsubMouthWatch: (() => void) | null = null
   // M1：init 完成（含已选模型覆盖 switch）前为 false，串行化用户 switch——init resolve 前不允许触发切换，
   // 避免 currentId null 时 controller 切换中守卫返回被丢弃目标的语义暧昧。
@@ -161,9 +167,12 @@ export const useLive2dStore = defineStore('live2d', () => {
         if (playing && el && mouthSource) {
           mouthSource.attach(el)
           mouthAttached = true
+          mouthMoved.value = false // C1 稳健化：新 TTS 会话重置「曾非零/已归零」标志（集成测据此轮询持久态）
+          mouthSettled.value = false
         } else {
           mouthSource?.detach()
           mouthAttached = false
+          if (mouthMoved.value) mouthSettled.value = true // 窗口结束归零：若本会话曾动过 → 置 settled
           mouthLevel.value = 0
           controller?.setMouthLevel(0)
         }
@@ -417,6 +426,7 @@ export const useLive2dStore = defineStore('live2d', () => {
     if (mouthAttached && mouthSource) {
       const lvl = mouthSource.sample()
       mouthLevel.value = lvl
+      if (lvl > 0) mouthMoved.value = true // C1 稳健化：持久标志（外部慢采样也能读到「口部曾动」）
       controller.setMouthLevel(lvl)
     }
     controller.tick()
@@ -467,7 +477,7 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   return {
-    models, status, modelId, error, live2dSettings, characterState, mouthLevel, mouthSourceKind,
+    models, status, modelId, error, live2dSettings, characterState, mouthLevel, mouthSourceKind, mouthMoved, mouthSettled,
     init, switchModel, restoreDefaults, dispose, tick, handleDirective,
     setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }

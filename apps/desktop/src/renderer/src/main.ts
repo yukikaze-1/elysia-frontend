@@ -46,21 +46,34 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
   ;(window as unknown as {
     __cyreneTest?: {
       getMouthLevel: () => number
-      getTtsState: () => { url: string | null; playing: boolean; playingStreamId: number | null; readySeen: boolean }
-      getMouthInfo: () => { kind: 'step' | 'sine' | 'real' | null }
+      getTtsState: () => {
+        url: string | null
+        playing: boolean
+        playingStreamId: number | null
+        readySeen: boolean
+        autoReadReply: boolean
+        ttsAudioElPresent: boolean
+      }
+      getMouthInfo: () => { kind: 'step' | 'sine' | 'real' | null; moved: boolean; settled: boolean }
     }
   }).__cyreneTest = {
     getMouthLevel: () => useLive2dStore().mouthLevel,
     getTtsState: () => {
-      const t = useVoiceStore().tts
+      const v = useVoiceStore()
+      const t = v.tts
       return {
         url: t.url ?? null,
         playing: t.playing,
         playingStreamId: t.playingStreamId ?? null,
-        readySeen: useVoiceStore().ttsReadySeen
+        readySeen: v.ttsReadySeen,
+        autoReadReply: useSettingsStore().voice.autoReadReply,
+        ttsAudioElPresent: v.ttsAudioEl !== null
       }
     },
-    getMouthInfo: () => ({ kind: useLive2dStore().mouthSourceKind })
+    getMouthInfo: () => {
+      const s = useLive2dStore()
+      return { kind: s.mouthSourceKind, moved: s.mouthMoved, settled: s.mouthSettled }
+    }
   }
 }
 
