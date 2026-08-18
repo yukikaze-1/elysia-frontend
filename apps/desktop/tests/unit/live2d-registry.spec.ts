@@ -2,7 +2,7 @@
 // 阶段 5 批次 A（A3，spec D5A-07）：Main 模型注册表 + manifest 完整性工具单测。
 // 内存临时目录 + 自建 fixture（computeIntegrity 生成 integrity.json 先于 registry 构造写盘）。
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
-import { realpathSync } from 'fs'
+import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -222,7 +222,7 @@ describe('resolveModelFile containment + 白名单', () => {
 
   it('白名单内路径 + size 匹配 → 绝对路径', async () => {
     const p = await registry.resolveModelFile('A', 'model3.json')
-    expect(p).toBe(join(realpathSync(join(root, 'A')), 'model3.json'))
+    expect(p).toBe(join(await realpath(join(root, 'A')), 'model3.json'))
   })
 
   it('`../` 逃逸 → null', async () => {
@@ -242,10 +242,10 @@ describe('resolveModelFile containment + 白名单', () => {
     await addFileToModel(dir, '50%.png', Buffer.from('percent-file'))
     // 原始编码直呼（防御纵深）：`50%25.png` 解码 → `50%.png` 匹配 integrity 字面条目
     const p = await registry.resolveModelFile('A', '50%25.png')
-    expect(p).toBe(join(realpathSync(dir), '50%.png'))
+    expect(p).toBe(join(await realpath(dir), '50%.png'))
     // 协议层已解码输出（parser flow）：`50%.png` 已是字面 → 不再重解，同串匹配
     const p2 = await registry.resolveModelFile('A', '50%.png')
-    expect(p2).toBe(join(realpathSync(dir), '50%.png'))
+    expect(p2).toBe(join(await realpath(dir), '50%.png'))
   })
 
   it('M1 `%252F` 二次编码残留 → null（解码一次后仍含合法 %XX 的残留拒）', async () => {
@@ -263,8 +263,8 @@ describe('resolveModelFile containment + 白名单', () => {
     const dir = join(root, 'A')
     await addFileToModel(dir, 'f%name.json', Buffer.from('fname'))
     // 原始编码 `f%25name.json` 与 parser-flow 字面 `f%name.json` 均命中条目 `f%name.json`
-    expect(await registry.resolveModelFile('A', 'f%25name.json')).toBe(join(realpathSync(dir), 'f%name.json'))
-    expect(await registry.resolveModelFile('A', 'f%name.json')).toBe(join(realpathSync(dir), 'f%name.json'))
+    expect(await registry.resolveModelFile('A', 'f%25name.json')).toBe(join(await realpath(dir), 'f%name.json'))
+    expect(await registry.resolveModelFile('A', 'f%name.json')).toBe(join(await realpath(dir), 'f%name.json'))
   })
 
   it('symlink 逃逸 → null（realpath containment + lstat 非普通文件双拒）', async () => {

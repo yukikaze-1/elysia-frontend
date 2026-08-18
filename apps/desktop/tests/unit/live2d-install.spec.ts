@@ -166,8 +166,12 @@ describe('resolveModelsDir（跨平台 env 矩阵，镜像 expectedUserDataBase�
   })
 
   it('未显式传 platform → 用 process.platform（与默认 CLI 装配同构）', () => {
-    expect(resolveModelsDir({ HOME: '/home/demo', XDG_CONFIG_HOME: '/tmp/xdg' }))
-      .toBe(resolveModelsDir({ platform: process.platform, HOME: '/home/demo', XDG_CONFIG_HOME: '/tmp/xdg' }))
+    // Windows 需 APPDATA（win32 分支读它），posix 用 HOME/XDG——按平台给各自必要 env，两侧同构断言不变
+    const env = process.platform === 'win32'
+      ? { APPDATA: 'C:\\Users\\demo\\AppData\\Roaming' }
+      : { HOME: '/home/demo', XDG_CONFIG_HOME: '/tmp/xdg' }
+    expect(resolveModelsDir(env))
+      .toBe(resolveModelsDir({ platform: process.platform, ...env }))
   })
 })
 

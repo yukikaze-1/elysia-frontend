@@ -4,6 +4,7 @@
 // 结构：vi.mock('electron') 捕获 protocol.handle 注册的真实 handler + mock net.fetch 提供文件字节；
 // createLive2dResolver(Fake registry) 注入闭包逻辑（与 main/index.ts 接线同一工厂）。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { pathToFileURL } from 'url'
 
 const { mockProtocol, mockNet, capturedHandler } = vi.hoisted(() => {
   let captured: ((request: Request) => Promise<Response>) | null = null
@@ -153,7 +154,7 @@ describe('白名单（resolveModelFile）+ 供给', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('Content-Type')).toBe('application/json')
     expect(res.headers.get('Cache-Control')).toBe('no-store')
-    expect(mockNet.fetch).toHaveBeenCalledWith('file:///abs/haru/model3.json') // pathToFileURL 绝对路径直供
+    expect(mockNet.fetch).toHaveBeenCalledWith(pathToFileURL('/abs/haru/model3.json').toString()) // pathToFileURL 绝对路径直供（win 带盘符，同 handler 手法）
     await res.text()
   })
 

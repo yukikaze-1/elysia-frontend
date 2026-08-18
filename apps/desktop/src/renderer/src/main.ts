@@ -39,9 +39,17 @@ if (window.desktopApi) {
 
 // C1（批次 C）口型集成探针：仅 dev / test 构建暴露（生产不暴露测试面）。Playwright 经
 // window.__cyreneTest.getMouthLevel() 断言口型电平随 CYRENE_MOCK_MOUTH_LEVEL 合成包络变化。
+// getTtsState()（CI 稳健化补充）：失败转储 voiceStore.tts 三字段，定位「ready 未到达 / autoReadReply 门控 /
+// 播放态回落」断点（src 在 cancelled 后已清空，单看 <audio> 无法区分）。
 if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
-  ;(window as unknown as { __cyreneTest?: { getMouthLevel: () => number } }).__cyreneTest = {
-    getMouthLevel: () => useLive2dStore().mouthLevel
+  ;(window as unknown as {
+    __cyreneTest?: { getMouthLevel: () => number; getTtsState: () => { url: string | null; playing: boolean; playingStreamId: number | null } }
+  }).__cyreneTest = {
+    getMouthLevel: () => useLive2dStore().mouthLevel,
+    getTtsState: () => {
+      const t = useVoiceStore().tts
+      return { url: t.url ?? null, playing: t.playing, playingStreamId: t.playingStreamId ?? null }
+    }
   }
 }
 

@@ -25,7 +25,7 @@ import { SessionStore } from './persistence/session-store'
 import { SettingsService } from './settings/settings-service'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
-import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthLevelEnv, parseMockDirectiveEnv } from './transport/mock-backend'
+import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthLevelEnv, parseMockMouthWindowEnv, parseMockDirectiveEnv } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
@@ -149,6 +149,9 @@ async function main(): Promise<void> {
     // 批次 C（C1）集成 env 桥：mock 合成包络源选择（CYRENE_MOCK_MOUTH_LEVEL='step'/'sine'；undefined/非法 → 不注入）。
     // renderer 无法读 env（sandbox），经 getRuntimeInfo 水合窄字段 mockMouthLevel 下发（仅 mock 模式填充）。
     const mockMouthLevel = parseMockMouthLevelEnv(process.env.CYRENE_MOCK_MOUTH_LEVEL)
+    // 批次 C（C1）集成稳健化：mock TTS 采样窗口时长（CYRENE_MOCK_MOUTH_WINDOW_MS；undefined → 缺省 1500ms）。
+    // 慢 CI（SwiftShader 渲染饱和）上 1.5s 窗口可能被口部采样错过，集成测设更长窗口保证断言。
+    const mockMouthWindowMs = parseMockMouthWindowEnv(process.env.CYRENE_MOCK_MOUTH_WINDOW_MS)
     // 批次 C（C3）集成 env 桥：mock 表现指令建议（CYRENE_MOCK_DIRECTIVE JSON → 下一 generation.completed 后发射；
     // 非法 JSON/字段不符 → 不注入，缺省不发射）
     const mockDirective = parseMockDirectiveEnv(process.env.CYRENE_MOCK_DIRECTIVE)
@@ -160,7 +163,7 @@ async function main(): Promise<void> {
     const onState = (state: ConnectionState) => chatBridge.svc?.pushState(state)
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}) })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}) })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,

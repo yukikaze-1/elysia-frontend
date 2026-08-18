@@ -4,7 +4,7 @@
 // Task6 M2（批次 C 收口）：补齐 CYRENE_MOCK_EMIT_DELAY_MS / CYRENE_MOCK_GENERATION_EMOTION parser 单测
 // （缺省/非法/边界；DIRECTIVE/MOUTH_LEVEL 各归其位——DIRECTIVE 在本文件、MOUTH_LEVEL 在 mock-backend-voice.spec）。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { MockBackend, parseMockDirectiveEnv, parseMockEmitDelayEnv, parseMockEmotionEnv } from '../../src/main/transport/mock-backend'
+import { MockBackend, parseMockDirectiveEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthWindowEnv } from '../../src/main/transport/mock-backend'
 import type { BackendEvent } from '@shared/contracts'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -39,6 +39,23 @@ describe('parseMockEmotionEnv（CYRENE_MOCK_GENERATION_EMOTION，Task6 M2）', (
     expect(parseMockEmotionEnv('sad')).toBe('sad')
     expect(parseMockEmotionEnv('surprised')).toBe('surprised')
     expect(parseMockEmotionEnv('unknown-code')).toBe('unknown-code')
+  })
+})
+
+describe('parseMockMouthWindowEnv（CYRENE_MOCK_MOUTH_WINDOW_MS，CI 稳健化）', () => {
+  it('缺省 undefined → undefined（不注入，用缺省 MOUTH_TTS_WINDOW_MS=1500）', () => {
+    expect(parseMockMouthWindowEnv(undefined)).toBeUndefined()
+  })
+  it('非法/NaN → 缺省 1500；低于下限 → 钳 500', () => {
+    expect(parseMockMouthWindowEnv('abc')).toBe(1500)
+    expect(parseMockMouthWindowEnv('-5')).toBe(500)
+    expect(parseMockMouthWindowEnv('0')).toBe(500)
+  })
+  it('超上限 → 钳 30000；合法值透传', () => {
+    expect(parseMockMouthWindowEnv('40000')).toBe(30000)
+    expect(parseMockMouthWindowEnv('5000')).toBe(5000)
+    expect(parseMockMouthWindowEnv('1500')).toBe(1500)
+    expect(parseMockMouthWindowEnv('500')).toBe(500)
   })
 })
 

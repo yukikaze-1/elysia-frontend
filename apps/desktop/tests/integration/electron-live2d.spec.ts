@@ -405,7 +405,10 @@ async function closeSettings(page: Page): Promise<void> {
 describe('阶段5批次C Live2D Electron 集成（C1：TTS 音量口型）', () => {
   it('C1.口型链路：CYRENE_MOCK_MOUTH_LEVEL=step → 激活 TTS → 发送 → 口型电平随合成包络变化 → 停止归 0', async () => {
     const ud = freshUserData()
-    const launched = await launchL2d(ud, { CYRENE_MOCK_MOUTH_LEVEL: 'step', CYRENE_MOCK_EMIT_DELAY_MS: '400' })
+    // CI 稳健化（2026-08-19）：CYRENE_MOCK_MOUTH_WINDOW_MS=5000 把 mock 采样窗口从 1.5s 放宽到 5s——
+    // 慢 CI（SwiftShader 渲染饱和）上 1.5s 窗口可能被口部采样错过；setInterval 采集器独立于 rAF，
+    // 不受渲染饱和/页面 rAF 节流影响（rAF 采集器曾只采到 13 帧即停）。
+    const launched = await launchL2d(ud, { CYRENE_MOCK_MOUTH_LEVEL: 'step', CYRENE_MOCK_EMIT_DELAY_MS: '400', CYRENE_MOCK_MOUTH_WINDOW_MS: '5000' })
     try {
       const { page } = launched
       await waitLive2dSettled(page)
@@ -422,18 +425,19 @@ describe('阶段5批次C Live2D Electron 集成（C1：TTS 音量口型）', () 
       await edgeCard.getByRole('button', { name: '设为当前', exact: true }).click()
       await expect.poll(() => page.evaluate(() => document.querySelectorAll('.cy-profile-card[data-profile-id="edge/edge-tts"] .cy-profile-current').length), POLL).toBe(1)
       await closeSettings(page)
-      // 页面内高频采样口型电平（避开跨进程轮询延迟——mock TTS 播放窗口由 C1 env 保证 ~1.5s，非零值帧较多）
+      // 页面内高频采样口型电平（setInterval 20Hz——独立于 rAF，慢 CI 渲染饱和不丢采样；mock 窗口由
+      // CYRENE_MOCK_MOUTH_WINDOW_MS=5000 保证，5s 内 step 台阶序列大量非零帧）
       await page.evaluate(() => {
-        const w = window as unknown as { __cyreneMouthSamples: number[] }
+        const w = window as unknown as { __cyreneMouthSamples: number[]; __cyreneMouthTimer?: number }
         w.__cyreneMouthSamples = []
         const collect = () => {
           const v = (window as unknown as { __cyreneTest?: { getMouthLevel: () => number } }).__cyreneTest?.getMouthLevel?.() ?? -1
           w.__cyreneMouthSamples.push(v)
-          requestAnimationFrame(collect)
         }
-        requestAnimationFrame(collect)
+        if (w.__cyreneMouthTimer) clearInterval(w.__cyreneMouthTimer)
+        w.__cyreneMouthTimer = window.setInterval(collect, 50)
       })
-      // 发送 → generation.completed → audio.session.ready → tts.playing=true → attach → rAF tick 采样 step 序列
+      // 发送 → generation.completed → audio.session.ready → tts.playing=true → attach → tick 采样 step 序列
       await sendChat(page, 'mouth')
       // 断言：出现过 ≥2 个不同非零值（step 序列随采样变化）且最终归 0（mock 延迟 audio.session.cancelled → detach 归零；
       // 无 C1 env 时 mock-silent 404 → onerror → 回落，该路径由 electron-voice 的 D-P13 用例覆盖）
@@ -443,13 +447,14 @@ describe('阶段5批次C Live2D Electron 集成（C1：TTS 音量口型）', () 
           const nonzero = new Set(arr.filter((v) => v > 0))
           const trailingZero = arr.length > 0 && arr[arr.length - 1] === 0
           return nonzero.size >= 2 && trailingZero
-        }, { ...POLL, timeout: 10000 }).toBe(true)
+        }, { ...POLL, timeout: 15000 }).toBe(true)
       } catch (e) {
-        // DEBUG：超时转储采样序列（定位链路断点）
+        // DEBUG：超时转储采样序列 + voiceStore.tts 态（定位链路断点：ready 未到 / autoReadReply 门控 / 播放态回落）
         const dump = await page.evaluate(() => (window as unknown as { __cyreneMouthSamples?: number[] }).__cyreneMouthSamples ?? [])
         const ttsState = await page.evaluate(() => {
           const el = document.querySelector<HTMLAudioElement>('audio.cy-tts-player')
-          return { src: el?.getAttribute('src') ?? null, paused: el?.paused ?? null }
+          const t = (window as unknown as { __cyreneTest?: { getTtsState?: () => { url: string | null; playing: boolean; playingStreamId: number | null } } }).__cyreneTest?.getTtsState?.()
+          return { audio: { src: el?.getAttribute('src') ?? null, paused: el?.paused ?? null }, voice: t ?? null }
         })
         console.log('C1 DEBUG samples:', JSON.stringify(dump.slice(0, 200)), 'ttsState:', JSON.stringify(ttsState))
         throw e

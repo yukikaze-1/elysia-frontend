@@ -149,6 +149,16 @@ export function parseMockMouthLevelEnv(value: string | undefined): 'step' | 'sin
   return undefined
 }
 
+/** CYRENE_MOCK_MOUTH_WINDOW_MS env → mouthTtsWindowMs（C1 集成稳健化）：undefined → 缺省 MOUTH_TTS_WINDOW_MS；
+ *  合法 Number 钳制 [500, 30000]（NaN/负数 → 500，超上限 → 30000）。慢 CI（SwiftShader 渲染饱和）上 1.5s
+ *  窗口可能被口部采样错过，集成测用更长窗口保证「非零序列 + 归 0」断言；生产不设该 env 走缺省。 */
+export function parseMockMouthWindowEnv(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined
+  const n = Number(value)
+  if (Number.isNaN(n)) return MOUTH_TTS_WINDOW_MS
+  return Math.min(30000, Math.max(500, n))
+}
+
 /** CYRENE_MOCK_DIRECTIVE env → directive（批次 C C3 集成注入）：
  *  undefined/空串 → undefined（不注入）；JSON.parse 失败 → undefined（缺省不发射）；字段校验
  *  （state 七值 / priority 0-3 / durationMs [0,30000] / expression、motion 非空 string，不符 → undefined）；
@@ -227,6 +237,9 @@ export interface MockBackendOptions {
   /** 批次 C（C1）：TTS 音频 sink（Main media 缓存写入口，与 RealBackend getTtsMedia 同款桥）。仅
    *  mockMouthLevel 设时使用；缺省 undefined → mock-silent 保持 404。 */
   ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
+  /** 批次 C（C1）：TTS 采样窗口时长（CYRENE_MOCK_MOUTH_WINDOW_MS env）。undefined → 缺省 MOUTH_TTS_WINDOW_MS；
+   *  慢 CI（SwiftShader 渲染饱和）上 1.5s 窗口可能被口部采样错过，集成测用更长窗口保证采样断言。 */
+  mouthTtsWindowMs?: number
   /** 批次 C（C3）：后端 Live2D 表现指令建议（CYRENE_MOCK_DIRECTIVE env 解析）。非 undefined 时，scheduleReplay
    *  落 generation.completed 后追加发射一帧 `live2d.directive`（对齐 emotion 注入点）。缺省 undefined 不注入。 */
   directive?: Omit<RawLive2DDirective, 'type'>
@@ -258,6 +271,7 @@ export class MockBackend implements BackendAdapter {
   private readonly generationEmotion?: string // Task 6：generation.completed 情绪注入（CYRENE_MOCK_GENERATION_EMOTION）
   private readonly mockMouthLevel?: 'step' | 'sine' // 批次 C（C1）：合成包络源选择 → TTS 模拟改「有效 WAV + 延迟取消」
   private readonly ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
+  private readonly mouthTtsWindowMs: number // C1：TTS 采样窗口时长（缺省 MOUTH_TTS_WINDOW_MS）
   private readonly directive?: Omit<RawLive2DDirective, 'type'> // 批次 C（C3）：generation.completed 后发射 live2d.directive
   private ttsCancelTimer: ReturnType<typeof setTimeout> | undefined // C1：TTS 采样窗口结束时发 audio.session.cancelled
   private readonly onConnectionStateChange?: (state: ConnectionState) => void
@@ -353,6 +367,7 @@ export class MockBackend implements BackendAdapter {
     this.generationEmotion = options.generationEmotion
     this.mockMouthLevel = options.mockMouthLevel
     this.ttsAudioSink = options.ttsAudioSink
+    this.mouthTtsWindowMs = options.mouthTtsWindowMs ?? MOUTH_TTS_WINDOW_MS
     this.directive = options.directive
     this.onConnectionStateChange = options.onConnectionStateChange
     this.now = options.now ?? (() => new Date())
@@ -765,7 +780,7 @@ export class MockBackend implements BackendAdapter {
             this.ttsCancelTimer = setTimeout(() => {
               this.ttsCancelTimer = undefined
               this.emit({ ...this.stamp(), event: 'audio.session.cancelled', streamId: 1 } satisfies AudioSessionCancelledEvent)
-            }, MOUTH_TTS_WINDOW_MS)
+            }, this.mouthTtsWindowMs)
           }
           this.emit({ ...this.stamp(), event: 'audio.session.started', streamId: 1, format: 'wav' } satisfies AudioSessionStartedEvent)
           this.emit({ ...this.stamp(), event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/mock-silent', format: 'wav' } satisfies AudioSessionReadyEvent)
