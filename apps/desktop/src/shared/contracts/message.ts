@@ -1,3 +1,5 @@
+import type { ToolCallRecord } from './tool'
+
 /** 双展示通道:Inner Voice 与 Public Reply 属于同一条 AI 回复消息 */
 export type SegmentChannel = 'inner_voice' | 'public_reply'
 
@@ -86,6 +88,8 @@ export interface Message {
   emotion?: string
   /** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */
   tool?: MessageToolInfo
+  /** 阶段 6 批次 A（F-6-20）：归档/回放重建的工具调用记录（配对产物，卡片数据源；实时 toolStore 为批次 B） */
+  toolCalls?: ToolCallRecord[]
   /** 附件内嵌消息（spec 阶段 3 G3，D2）；upload 响应/媒体 ContentPart 映射而来 */
   attachments?: MessageAttachment[]
   /** 阶段 3 G4：用户贴图消息 wire 表示（§7 开放项按可选字段落地，联调对齐后端） */

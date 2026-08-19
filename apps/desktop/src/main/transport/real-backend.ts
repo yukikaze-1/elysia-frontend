@@ -38,7 +38,7 @@ import type {
   RawUserAck
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
-import { RestMapper, compareBySortKey } from './protocol-v2/rest-mapper'
+import { RestMapper, compareBySortKey, pairToolCalls } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
 import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
@@ -286,7 +286,7 @@ export class RealBackend implements BackendAdapter {
       }
       this.setState({ ...this.state, activeConversationId: frame.conversationId })
       this.mapper?.setActiveConversationId(frame.conversationId)
-      const messages = frame.messages.map((m) => this.restMapper.toDomainMessageFromReplay(m, frame.conversationId as string))
+      const messages = pairToolCalls(frame.messages.map((m) => this.restMapper.toDomainMessageFromReplay(m, frame.conversationId as string)))
       this.sessionBuffer = []
       this.options.onSessionReplay?.(frame.conversationId, messages)
     } else {

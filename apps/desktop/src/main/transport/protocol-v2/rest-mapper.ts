@@ -2,6 +2,7 @@ import type { Conversation } from '@shared/contracts/conversation'
 import type { Message, MessageRole, MessageToolInfo } from '@shared/contracts/message'
 import type { ChatHistoryItem, ChatHistoryPage, MessagePage, StickerManifest } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
+import type { ToolCallRecord } from '@shared/contracts/tool'
 import type { RawSessionMessageItem } from './raw-types'
 import type { RestMessage, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestMessageContextResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
 import { extractStickerId, mapContentMedia, mapContentToEntries, toOptionalNonNegativeNumber } from './content-part'
@@ -17,6 +18,7 @@ interface MessageSource {
   content?: unknown
   inner_voice?: string
   mood?: string
+  tool_calls?: unknown[]
   tool_call_id?: string
   name?: string
   tool_name?: string
@@ -35,7 +37,7 @@ export class RestMapper {
   toDomainMessageFromReplay(raw: RawSessionMessageItem, conversationId: string): Message { return this.assemble({ ...raw, session_id: conversationId }, conversationId) }
   toConversation(raw: RestSessionSummary): Conversation { return { id: raw.conversationId, title: raw.title ?? '', updatedAt: raw.updatedAt } }
   toMessagePage(raw: RestMessagesPageResponse, opts: { direction: 'before' | 'after'; conversationId?: string }): MessagePage {
-    const items = raw.messages.map((m) => this.toDomainMessage(m, opts.conversationId))
+    const items = pairToolCalls(raw.messages.map((m) => this.toDomainMessage(m, opts.conversationId)))
     if (opts.direction === 'before') items.sort((a, b) =>
       a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.messageId < b.messageId ? -1 : 1) // (timestamp, messageId) 稳定排序
     let nextCursor: string | undefined
@@ -66,9 +68,9 @@ export class RestMapper {
   }
 
   toMessagePageFromContext(res: RestMessageContextResponse): MessagePage {
-    const items = [res.anchor, ...res.before, ...res.after]
-      .map((m) => this.toDomainMessage(m, res.conversationId))
-      .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.messageId < b.messageId ? -1 : 1)
+    const items = pairToolCalls([res.anchor, ...res.before, ...res.after]
+      .map((m) => this.toDomainMessage(m, res.conversationId)))
+      .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.messageId < b.messageId ? -1 : 1) // review P-15：保留既有 sort
     return { items, hasMore: false }
   }
 
@@ -123,6 +125,8 @@ export class RestMapper {
         }
       }
       if (segments.length) base.assistantSegments = segments
+      const toolCalls = parseToolCallSkeletons(src.tool_calls)
+      if (toolCalls.length) base.toolCalls = toolCalls
     }
     const media = mapContentMedia(src.content)
     if (media.length) base.attachments = media
@@ -180,4 +184,54 @@ function senderLabelOf(role?: 'user' | 'assistant' | 'tool' | 'system'): string 
 /** P1-01：历史项稳定升序比较（sortKey 含 timestamp|messageId 稳定次键；单流/image_video/store 同款） */
 export function compareBySortKey(a: ChatHistoryItem, b: ChatHistoryItem): number {
   return a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0
+}
+
+/** 归档 tool_calls 骨架解析（F-6-19）：`{id, type?, function:{name, arguments}}` 契约形状；arguments 为 JSON 字符串不解析。
+ * 非结构条目静默跳过（归档 wire 有意放宽，防整段拒）；同 id 幂等去重（后见同 id 骨架忽略，review P-17）。 */
+function parseToolCallSkeletons(raw: unknown[] | undefined): ToolCallRecord[] {
+  if (!raw?.length) return []
+  const out: ToolCallRecord[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue
+    const o = item as { id?: unknown; function?: { name?: unknown } }
+    if (typeof o.id !== 'string' || o.id === '' || typeof o.function?.name !== 'string' || o.function.name === '') continue
+    if (seen.has(o.id)) continue
+    seen.add(o.id)
+    out.push({ id: o.id, toolName: o.function.name, runtime: 'backend', status: 'completed' }) // D6A-06：归档无 runtime 源，恒 backend 缺省
+  }
+  return out
+}
+
+/** 归档配对（F-6-19/21）：assistant tool_calls 骨架与 role=tool 结果按 tool.callId 配对修正状态与结果摘要。
+ * 命中后 error 非空 → 以错误为准 failed（spec §3.6，review P-17）；否则按 success（缺省视为 true）→ completed/failed；
+ * 填 outputSummary/error/errorType/durationMs/finishedAt。
+ * 缺配对结果 → 保持 completed + 无 outputSummary（「执行完成但摘要缺失」降级，D6A-06，不伪造）。
+ * 跨页配对不支持（批次 B 查看器按上下文重配对）。 */
+export function pairToolCalls(messages: Message[]): Message[] {
+  const results = new Map<string, Message>()
+  for (const m of messages) {
+    if (m.role === 'tool' && m.tool?.callId && !results.has(m.tool.callId)) results.set(m.tool.callId, m)
+  }
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.toolCalls?.length) continue
+    for (const tc of m.toolCalls) {
+      const r = results.get(tc.id)
+      const info = r?.tool
+      if (!r || !info) continue // 缺配对：保持 completed + 无摘要（降级）
+      const hasError = info.error !== undefined
+      const ok = !hasError && info.success !== false // ToolCallResult 缺省视为 true；error 非空以错误为准
+      tc.status = ok ? 'completed' : 'failed'
+      if (ok) {
+        if (r.content) tc.outputSummary = r.content
+      } else {
+        tc.error = { code: info.errorType ?? 'TOOL_ERROR', message: info.error ?? '工具执行失败' }
+        tc.errorType = info.errorType
+      }
+      if (info.durationMs !== undefined) tc.durationMs = info.durationMs
+      if (info.truncated !== undefined) tc.truncated = info.truncated
+      tc.finishedAt = r.createdAt
+    }
+  }
+  return messages
 }
