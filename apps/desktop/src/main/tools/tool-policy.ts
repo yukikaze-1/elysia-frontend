@@ -22,7 +22,7 @@ export const PATH_BLACKLIST_DEFAULTS: BlacklistEntry[] = [
   // Windows（大小写不敏感由 normalized lower 比较保证；8.3 短名 canonicalize 见 normalizeToolPath）
   { root: 'C:\\Windows' }, { root: 'C:\\Program Files' }, { root: 'C:\\Program Files (x86)' },
   { root: 'C:\\ProgramData' }, { root: 'C:\\System Volume Information' }, { root: 'C:\\$Recycle.Bin' },
-  { root: '~/.ssh' }, { root: '~\\AppData' }, { root: '~\\AppData\\Local\\Temp' },
+  { root: '~\\AppData' }, { root: '~\\AppData\\Local\\Temp' },
 ]
 
 const SEP = path.sep
@@ -79,8 +79,11 @@ export function normalizeToolPath(rawPath: string, opts: NormalizeOpts = {}): { 
   let realPath: string
   try {
     realPath = realPathFn(resolver.resolve(rawPath))
-  } catch {
-    // 目标不存在（新建写）：realpath 父目录 + 拼接 basename
+  } catch (err) {
+    // M2（review 跟进）：仅目标不存在（ENOENT/ENOTDIR——新建写场景）走父目录回退；
+    // 其余失败（EACCES 末级 symlink 目标不可遍历/ELOOP 等）→ PATH_UNSAFE（H-3 逃逸即拒，防未解析路径绕过黑名单）
+    const code = (err as NodeJS.ErrnoException | null)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw new PolicyError('PATH_UNSAFE', 'unresolvable path')
     const dir = resolver.dirname(resolver.resolve(rawPath))
     try { realPath = resolver.join(realPathFn(dir), resolver.basename(resolver.resolve(rawPath))) }
     catch { throw new PolicyError('PATH_UNSAFE', 'unresolvable parent') }

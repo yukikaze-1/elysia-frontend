@@ -32,8 +32,11 @@ describe('PublicToolEventSchema', () => {
   })
 })
 describe('ToolCallRecordSchema + MessageSchema.toolCalls', () => {
-  it('MessageSchema.safeParse 保留 toolCalls（preload 剥字段修复）', () => {
-    expect(MessageSchema.safeParse({ ...assistantMsg, toolCalls: [{ id: 'tc_1', toolName: 'seed.tool.read', runtime: 'backend', status: 'completed' }] }).success).toBe(true)
+  it('MessageSchema.safeParse 保留 toolCalls（preload 剥字段修复，M1 加强：断言 parsed.data 保留而非仅 success）', () => {
+    const input = { ...assistantMsg, toolCalls: [{ id: 'tc_1', toolName: 'seed.tool.read', runtime: 'backend', status: 'completed' }] }
+    const parsed = MessageSchema.safeParse(input)
+    expect(parsed.success).toBe(true)
+    expect(parsed.data!.toolCalls).toEqual(input.toolCalls)   // 剥字段回归守卫：schema 未声明 toolCalls 时此处必失败
   })
   it('attachmentCount 合法/非法', () => {
     expect(ToolCallRecordSchema.safeParse({ id: 'a', toolName: 'x', runtime: 'backend', status: 'completed', attachmentCount: 3 }).success).toBe(true)
