@@ -1,4 +1,4 @@
-// src/main/tools/tool-executors.ts（Task 3：file.select / file.read / file.write 执行器；capture 骨架 Task 4 实装）
+// src/main/tools/tool-executors.ts（Task 3：file.select / file.read / file.write 执行器；Task 4：screen.capture 枚举面，上传由 tool-service 子状态机）
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -6,12 +6,18 @@ import { dialog } from 'electron'
 import { atomicWriteFile } from '../credentials/atomic-write'      // A-13：原子写复用（fsync + 安全写）
 import { computeTextDiff, detectTextFormat, normalizeToFormat } from './text-diff'
 import { normalizeToolPath, isPathBlacklisted } from './tool-policy'
-import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS } from './tool-service'
+import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS, THUMBNAIL_DATA_URL_MAX } from './tool-service'
 import type { ToolRecord, ToolServiceDeps } from './tool-service'
 import type { ToolAttachment } from '@shared/contracts/tool'       // 新发现7：类型 import 补齐
 
-export interface ExecResult { output: Record<string, unknown>; summary: string; attachments?: ToolAttachment[]; attachmentCount?: number }
+export interface ExecResult { output: Record<string, unknown>; summary: string; attachments?: ToolAttachment[]; attachmentCount?: number; captureSession?: boolean }   // captureSession：capture 枚举完成 → 子状态机接管（A-2）
 export class ToolExecError extends Error { constructor(public code: string, message: string) { super(message) } }
+
+/** Wayland 会话判定（与 tool-service 的 isWaylandSession 同语义、独立实现免循环依赖；deps.isWayland 注入优先，A-4/L1） */
+function isWaylandEnv(): boolean {
+  const t = process.env.XDG_SESSION_TYPE?.toLowerCase()
+  return t === 'wayland' || (!!process.env.WAYLAND_DISPLAY && t !== 'x11')
+}
 
 export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecord, realPath?: string): Promise<ExecResult> } {
   async function select(rec: ToolRecord): Promise<ExecResult> {
@@ -83,9 +89,18 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     return { output: { path: p, size: Buffer.byteLength(normalized), hash: outHash, bytesWritten: Buffer.byteLength(normalized) },
       summary: `${exists ? '覆盖' : '新建'} ${path.basename(p)}（Diff：+${diff.added} -${diff.removed}）` }
   }
+  /** capture 枚举面（A-2/完整 H3④）；上传由 tool-service 子状态机完成——枚举完成返回 captureSession，服务层转 awaiting_pick */
   async function capture(_rec: ToolRecord): Promise<ExecResult> {
-    // Task 4 实装；本 task 抛占位
-    throw new ToolExecError('CAPTURE_UNAVAILABLE', 'capture 在 Task 4 落地')
+    if (deps.isWayland === undefined ? isWaylandEnv() : deps.isWayland) throw new ToolExecError('CAPTURE_UNAVAILABLE', '当前桌面环境不支持屏幕捕获')
+    const enumerate = deps.enumerateSources ?? (async () => {
+      const { desktopCapturer } = await import('electron')
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 240 } })
+      return sources.map(s => ({ sourceId: s.id, sourceName: s.name, thumbnailDataUrl: s.thumbnail.toDataURL() }))
+    })
+    const all = await enumerate()                                            // M4：单次调用（dropped 从同组计算）
+    const sources = all.filter(s => s.thumbnailDataUrl.length <= THUMBNAIL_DATA_URL_MAX)  // 缩略图 ≤64KiB 丢弃（L-5/B5）
+    const dropped = all.length - sources.length
+    return { output: { sources: sources.map(s => ({ sourceId: s.sourceId, sourceName: s.sourceName, thumbnailDataUrl: s.thumbnailDataUrl })), dropped }, summary: `已枚举 ${sources.length} 个源，等待选择`, captureSession: true }
   }
   return {
     async execute(rec, realPath) {

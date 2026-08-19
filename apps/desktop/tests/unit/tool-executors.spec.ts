@@ -138,3 +138,21 @@ describe('desktop.file.write', () => {
       .rejects.toMatchObject({ code: 'CONTENT_TOO_LARGE' })
   })
 })
+describe('desktop.screen.capture（枚举面）', () => {
+  it('枚举源保留 thumbnailDataUrl（完整 H3：PublicToolEventSchema 要求）', async () => {
+    const ex = createExecutors(mkDeps({ enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] }))
+    const r = await ex.execute(rec('desktop.screen.capture', {}), undefined)
+    expect(r.output).toMatchObject({ sources: [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
+  })
+  it('缩略图 >64KiB 被丢弃并提示（L-5/B5/A-18）', async () => {
+    const big = 'data:image/png;base64,' + 'A'.repeat(70 * 1024)
+    const ex = createExecutors(mkDeps({ enumerateSources: async () => [{ sourceId: 'big', sourceName: '大', thumbnailDataUrl: big }, { sourceId: 'ok', sourceName: '小', thumbnailDataUrl: 'data:image/png;base64,AA==' }] }))
+    const r = await ex.execute(rec('desktop.screen.capture', {}), undefined)
+    expect((r.output as any).sources.map((s: any) => s.sourceId)).toEqual(['ok'])
+    expect((r.output as any).dropped).toBe(1)
+  })
+  it('Wayland 环境拒（防御性复核，A-4）', async () => {
+    const ex = createExecutors(mkDeps({ isWayland: true }))
+    await expect(ex.execute(rec('desktop.screen.capture', {}), undefined)).rejects.toMatchObject({ code: 'CAPTURE_UNAVAILABLE' })
+  })
+})

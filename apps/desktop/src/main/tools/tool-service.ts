@@ -63,6 +63,8 @@ export const MAX_WRITE_CONTENT_BYTES = 2 * 1024 * 1024
 export const SELECT_EXEMPT_TTL_MS = 10 * 60 * 1000
 export const TEXT_FILE_FILTERS = { name: '文本文件', extensions: ['txt','md','markdown','json','log','csv','tsv','js','ts','jsx','tsx','py','rb','go','rs','c','h','cpp','hpp','java','kt','swift','css','scss','html','htm','yaml','yml','toml','ini','cfg','conf','xml','svg','sh','bash','env'] }
 export const PATH_SUMMARY_MAX = 120
+export const THUMBNAIL_DATA_URL_MAX = 64 * 1024      // 缩略图 data URL 上限（A-18/L-5/B5；超出丢弃并提示 dropped）
+export const PREVIEW_DATA_URL_MAX = 256 * 1024       // 全尺寸预览 data URL 上限（A-18/L-5；超限降级为缩略图）
 
 /** 工具服务结构化错误（IPC 层映射为结构化拒绝） */
 export class ToolServiceError extends Error {
@@ -80,6 +82,9 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   const executors = createExecutors({ ...deps, selectedAdd: (p) => selectedSet.set(p, Date.now()) })   // selected-set 写闭包（A-14）
   const serialLocks = new Map<string, Promise<unknown>>()   // per-path 写串行锁（A-8）
   let shutdownFlag = false
+  // capture 子状态机会话（D6B-16/M-5/A-2）：awaiting_pick → picked → awaiting_confirm 钉死（乱序拒 CAPTURE_STATE_INVALID、sourceId ∈ 枚举快照）
+  interface CaptureSession { sourceId?: string; previewDataUrl?: string; bytes?: Uint8Array; dropped?: number }
+  const captureSessions = new Map<string, CaptureSession>()
 
   /** Wayland 会话判定（D6B-05；deps.isWayland 注入优先，缺省 env 判定，A-4） */
   function isWaylandSession(): boolean {
@@ -162,6 +167,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     emit(rec)
   }
   function terminal(rec: ToolRecord, display: 'failed' | 'timeout' | 'cancelled' | 'rejected', err?: { code?: string; message?: string }, cancelSource: 'user' | 'timeout' | 'backend' = 'user', wireStatus?: ToolWireStatus): void {   // M2：扩 'rejected'（shutdown 用）；wireStatus 显式覆盖（M1：执行超时 wire error{TIMEOUT}）
+    captureSessions.delete(rec.id)   // capture 会话清理（完成/取消/超时，doc 04 §8.4）
     rec.status = display; rec.error = err; rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
     const timer = timers.get(rec.id); if (timer) { clearTimeout(timer); timers.delete(rec.id) }
     const wire = wireStatus ?? (display === 'timeout' ? 'cancelled' : toWire(display) ?? 'error')
@@ -240,9 +246,46 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     serialLocks.set(realPath, next)
     return next
   }
-  /** Task 2 顺序 stub（新发现9）：pickSource/confirmUpload 完整实现在 Task 4——本 task 先抛占位（接口可编译） */
-  async function pickSourceStub(_callId: string, _sourceId: string): Promise<void> { throw new ToolServiceError('CAPTURE_STATE_INVALID', 'capture 在 Task 4 落地') }
-  async function confirmUploadStub(_callId: string): Promise<void> { throw new ToolServiceError('CAPTURE_STATE_INVALID', 'capture 在 Task 4 落地') }
+  /** capture 子状态机 pickSource（D6B-16/M-5/A-2）：awaiting_pick → picked（预览下发 ≤256KiB，超限降级缩略图） */
+  async function pickSource(callId: string, sourceId: string): Promise<void> {
+    const id = idOf(callId); const rec = id ? records.get(id) : undefined
+    if (!rec || rec.status !== 'running') throw new ToolServiceError('CAPTURE_STATE_INVALID', '不在 awaiting_pick 态')
+    const sess = captureSessions.get(rec.id)
+    const known = (rec.captureSources ?? []).some(s => s.sourceId === sourceId)
+    if (!sess || !known) throw new ToolServiceError('CAPTURE_STATE_INVALID', 'sourceId 不在枚举快照')
+    // picked：全尺寸预览（≤256KiB，超限降级为缩略图，A-18/L-5）
+    const render = deps.renderPreview ?? (async (sid) => {
+      const { desktopCapturer } = await import('electron')
+      const srcs = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1920, height: 1080 } })
+      const s = srcs.find(x => x.id === sid)
+      if (!s) throw new ToolServiceError('CAPTURE_STATE_INVALID', 'sourceId 不存在')
+      return { previewDataUrl: s.thumbnail.toDataURL(), bytes: s.thumbnail.toPNG() }
+    })
+    const { previewDataUrl, bytes } = await render(sourceId)
+    sess.sourceId = sourceId; sess.bytes = bytes
+    const thumb = rec.captureSources?.find(s => s.sourceId === sourceId)?.thumbnailDataUrl
+    const finalPreview = previewDataUrl.length > PREVIEW_DATA_URL_MAX ? (thumb ?? previewDataUrl) : previewDataUrl
+    sess.previewDataUrl = finalPreview
+    rec.capturePreview = { sourceId, previewDataUrl: finalPreview }
+    emit(rec)   // picked（preview 下发 → awaiting_confirm）
+  }
+  /** capture 子状态机 confirmUpload（D6B-16/M-5/A-2）：awaiting_confirm → 上传回填 → 终态清理 */
+  async function confirmUpload(callId: string): Promise<void> {
+    const id = idOf(callId); const rec = id ? records.get(id) : undefined
+    const sess = rec ? captureSessions.get(rec.id) : undefined
+    if (!rec || rec.status !== 'running' || !sess?.previewDataUrl) throw new ToolServiceError('CAPTURE_STATE_INVALID', '预览未下发，禁止上传')
+    // awaiting_confirm → 上传 → 终态
+    const upload = deps.finalizeUpload ?? (async (_cid: string, _bytes: Uint8Array) => {})
+    await upload(rec.desktopCallId!, sess.bytes!)
+    const attachment = await deps.uploadAttachment(rec.desktopCallId!, sess.bytes!, 'image/png', `capture-${rec.desktopCallId}.png`)
+    rec.status = 'completed'; rec.resultSummary = `已捕获 ${sess.sourceId}`; rec.attachmentCount = 1
+    rec.attachments = [attachment]   // M2：缓存附件（重连重发复用 URL，D6B-11——与 run() completed 路径同口径）
+    rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
+    await wireSend(rec, 'result', { attachments: [attachment] })
+    audit('tool:terminal', rec)
+    emit(rec)
+    captureSessions.delete(rec.id)   // 终态清理（含取消/超时路径经 terminal() 增删——见下）
+  }
   function realPathOf(rec: ToolRecord): string | undefined {   // L1：读决策链缓存（handleRequest step 5 normalize 产物）
     return rec.realPath
   }
@@ -266,6 +309,13 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       const exec = (): Promise<ExecResult> => deps.executorOverride ? deps.executorOverride(rec, path) : executors.execute(rec, path)
       const result = path ? await withPathLock(path, exec) : await exec()   // per-path 串行锁（A-8，H7 交错断言；锁 key = 缓存 realpath，L1）
       if (rec.status !== 'running') return    // 已终态（取消等）
+      // capture 子状态机入口（A-2/完整 H3④）：枚举完成 → awaiting_pick（captureSources 下发）；不 outputSchema、不 completed
+      if (rec.toolName === 'desktop.screen.capture' && result.captureSession) {
+        rec.captureSources = result.output['sources'] as PublicToolEvent['captureSources']
+        rec.status = 'running'; emit(rec)          // awaiting_pick 态（captureSources 下发）
+        captureSessions.set(rec.id, { dropped: result.output['dropped'] as number | undefined })
+        return                                     // 等待 pickSource——不 outputSchema、不 completed
+      }
       // 12 outputSchema 校验（B1）
       const ok = tool.outputSchema.safeParse(result.output)
       if (!ok.success) { terminal(rec, 'failed', { code: 'INVALID_OUTPUT' }); return }
@@ -367,5 +417,5 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     }
   }
 
-  return { handleRequest, decide, cancel, listRecent, pickSource: pickSourceStub, confirmUpload: confirmUploadStub, reconnect, shutdown, getRecord }
+  return { handleRequest, decide, cancel, listRecent, pickSource, confirmUpload, reconnect, shutdown, getRecord }
 }
