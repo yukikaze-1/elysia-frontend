@@ -364,7 +364,7 @@ Worker 断开时返回失败，不能自动切换到后端执行并上传用户�
 - 后端工具失败不应被误报为客户端故障；
 - 客户端审计只记录收到的公开事件，不伪造后端内部细节。
 
-> **阶段 6 决策注记（2026-08-19，方案 B，待实现）：** Backend Runtime 的展示数据源定为新帧 `tool.started/tool.completed`（v2），不再消费泛型 `action`；前端统一领域键 = `sourceCallId`（LLM `tool_call_id`），Desktop 桥 `call_*` 只用于 `tool.request/tool.status` 执行协议。Desktop 终态由前端本地状态机裁决，后端 `tool.completed` 按 `sourceCallId` 与服务端归档确认合并。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
+> **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** Backend Runtime 的展示数据源定为新帧 `tool.started/tool.completed`（v2，后端已实发），不再消费泛型 `action`；前端统一领域键 = `sourceCallId`（LLM `tool_call_id`），Desktop 桥 `call_*` 只用于 `tool.request/tool.status` 执行协议。Desktop 终态由前端本地状态机裁决，后端 `tool.completed` 按 `sourceCallId` 与服务端归档确认合并。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
 
 ## 12. 取消、超时和并发
 

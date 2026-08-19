@@ -527,7 +527,7 @@ interface ToolResult {
 - 注册表 `GET /api/tools` → `ToolRegistryResponse{tools: ToolMetadata[], desktopAvailable}`，Electron 据此校验「只接受已注册工具和版本」；
 - **后端审批** `tool_approval`（v1 后端工具）仅 v2 连接带 enrich 字段；Desktop 工具不走 `tool_approval`，由 Electron 本地授权（§10.2 语义不变）。
 
-> **阶段 6 决策注记（2026-08-19，方案 B，待实现）：** 后端将新增 Server→Client `tool.started{callId(LLM tool_call_id), toolName, runtime(backend|desktop|local_worker), inputSummary?, generationId?, conversationId?}` 与 `tool.completed{callId, toolName, runtime, success, outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?, conversationId?}`；v2 停发 `action{tool_executing/tool_done}`（v1 不变）。`tool.request` 将新增必填 `sourceCallId`（LLM tool_call_id）。前端统一领域键 = `sourceCallId`，`tool.request.callId`（桥 `call_*`）只作执行协议关联；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
+> **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** 后端已新增 Server→Client `tool.started{callId(LLM tool_call_id), toolName, runtime(backend|desktop|local_worker), inputSummary?, generationId?, conversationId?}` 与 `tool.completed{callId, toolName, runtime, success, outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?, conversationId?}`；v2 已停发 `action{tool_executing/tool_done}`（v1 不变）。`tool.request` 已新增必填 `sourceCallId`（LLM tool_call_id，后端生产路径非空）。前端统一领域键 = `sourceCallId`，`tool.request.callId`（桥 `call_*`）只作执行协议关联；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。完整更新点与后端门禁见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md` §7。
 
 ## 11. 附件
 
@@ -904,9 +904,9 @@ idle → connecting → connected
 | generation.failed | Chat Store | 保留内容并展示错误 |
 | resource.changed | Resource Store | 合并会话媒体、表情、文件和链接索引 |
 | tool.call | Tool Store / Main | 注册调用并路由 Runtime |
-| tool.request | Main Tool Service / Tool Store | Desktop 调用注册、本地风险重算、权限窗；Renderer 只收脱敏公开事件（阶段 6 待实现） |
-| tool.started | Tool Store | 按 `sourceCallId` 创建/推进统一 `ToolCallRecord`；Backend Runtime 只读卡片（阶段 6 待实现） |
-| tool.completed | Tool Store | 服务端完成确认，按 `sourceCallId` 合并；Desktop 终态由本地状态机裁决（阶段 6 待实现） |
+| tool.request | Main Tool Service / Tool Store | Desktop 调用注册、本地风险重算、权限窗；Renderer 只收脱敏公开事件（后端已发帧，前端待接入） |
+| tool.started | Tool Store | 按 `sourceCallId` 创建/推进统一 `ToolCallRecord`；Backend Runtime 只读卡片（后端已发帧，前端待接入） |
+| tool.completed | Tool Store | 服务端完成确认，按 `sourceCallId` 合并；Desktop 终态由本地状态机裁决（后端已发帧，前端待接入） |
 | tool.status | Tool Store | 更新工具卡片 |
 | live2d.directive | Live2D Store | 校验后映射表现 |
 | model.profile.changed | Model Service Store | 更新 LLM/STT/TTS Profile 与当前选择 |
@@ -951,8 +951,8 @@ idle → connecting → connected
 | 句子分段 ID、顺序和父回复完成事件 | `segmentId`(seg_) / `segmentIndex`(全局单调) / `generationId`(gen_；**`responseId` 弃用，别名 generationId**)；`generation.completed` 是唯一终态（`finishReason` 限 stop/tool_calls），取消/错误走 `generation.failed` | `responseId/segmentId/segmentIndex` |
 | 消息/会话 Token、实际模型和心情字段 | `generation.completed{usage:{turn_total, rounds[{model, input_tokens, output_tokens, total_tokens, cached_tokens, reasoning_tokens, round_num, timestamp}]}, conversationUsage?{total, byModel}, model(实际模型快照), mood, completeness}` | `TokenUsage/ModelIdentity/EmotionState` |
 | 停止生成接口 | WS `{"type":"interrupt"}` → `generation.failed{code:GENERATION_CANCELLED}` + `state interrupted` → `idle`；迟到增量被服务端停止 | `cancelGeneration` |
-| 工具调用字段 | Server→Client `tool.request{callId(call_), toolName, toolVersion, runtime(desktop), arguments, reason?, riskLevel(safe/medium/high), permissionRequired, approvalAuthority(client), paramHash(规范化 arguments SHA-256), expiresAt, requestId?}`；注册表 `GET /api/tools` → `ToolRegistryResponse{tools: ToolMetadata[16], desktopAvailable}`；`desktop.command.run` 不注册。**阶段 6 增量（待后端实现）**：新增必填 `sourceCallId`（LLM tool_call_id，前端统一领域键） | `ToolCall` |
-| Backend 工具生命周期（阶段 6 待实现） | Server→Client `tool.started{callId(LLM tool_call_id), toolName, runtime(backend/desktop/local_worker), inputSummary?, generationId?, conversationId?}` / `tool.completed{callId, toolName, runtime, success, outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?, conversationId?}`；v2 停发 `action{tool_executing/tool_done}`（v1 不变） | `tool.started/tool.completed` → `toolStore` |
+| 工具调用字段 | Server→Client `tool.request{callId(call_), toolName, toolVersion, runtime(desktop), arguments, reason?, riskLevel(safe/medium/high), permissionRequired, approvalAuthority(client), paramHash(规范化 arguments SHA-256), expiresAt, requestId?}`；注册表 `GET /api/tools` → `ToolRegistryResponse{tools: ToolMetadata[16], desktopAvailable}`；`desktop.command.run` 不注册。**阶段 6 增量（后端 2026-08-20 已实现）**：新增必填 `sourceCallId`（LLM tool_call_id，前端统一领域键）；`requestId` 由 `ctx.trace_id` 填充 | `ToolCall` |
+| Backend 工具生命周期（后端 2026-08-20 已实现，前端待接入） | Server→Client `tool.started{callId(LLM tool_call_id), toolName, runtime(backend/desktop/local_worker), inputSummary?, generationId?, conversationId?}` / `tool.completed{callId, toolName, runtime, success, outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?, conversationId?}`；v2 停发 `action{tool_executing/tool_done}`（v1 不变） | `tool.started/tool.completed` → `toolStore` |
 | 工具结果接口 | Client→Server `tool.status{callId, status(accepted/rejected/running/result/error/cancelled), toolName, toolVersion, runtime, paramHash, output?, error?, attachments?, executionSummary?}`（toolName/version/runtime/paramHash 不一致即篡改拒绝）；查询 `GET /api/tools/calls/{callId}` → `DesktopCallStatus`；桌面附件 `POST /api/uploads/desktop/{callId}`（`X-Client-Connection` 持有者校验） | `submitToolResult` |
 | 附件上传流程 | `POST /api/uploads`（multipart `files[]` + `kind`?，魔数真值校验，≤10 文件，image 10MB/video 50MB/audio 20MB/file 20MB，聚合 64MB）→ `AttachmentUploadResponse{attachments: AttachmentInfo{attachmentId, kind, mime, size, url, signedUrl?, filename}}`；签名下载 `GET /api/attachments/{id}?sig=&exp=`（免 Bearer，Range/206）；签发 `GET /api/attachments/{id}/sign`（Bearer）；消息关联 `attachments: AttachmentRef[]` / `stickerId` | `AttachmentRef` |
 | LLM/STT/TTS Profile 配置接口 | `GET/POST /api/providers` → `ProvidersResponse{llm, stt, tts, custom, unconfigured}`（条目含 `credentialConfigured` / `runtime` / `capabilities`）；WS `switch_model{service, model}` / `set_service{service, enabled}`；TTS `GET /api/tts/voices` + `POST /api/tts/preview` + WS `set_tts_voice{voice}` | `ModelProfile` |
