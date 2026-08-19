@@ -107,6 +107,22 @@ describe('幂等与状态机', () => {
     await svc.handleRequest(mkReq({ arguments: { path: '/home/u/other.txt' } }))
     expect(events.at(-1)!.error?.code).toBe('PARAM_MISMATCH')
   })
+  it('M-3（批次最终 review）：策略拒同步原记录终态 + 队列晋升 + 无双终态（expiresAt 定时器清除）', async () => {
+    vi.useFakeTimers()
+    const { svc, events, submitStatus } = mkService()
+    await svc.handleRequest(mkReq({ callId: 'call_1', sourceCallId: 'tc_1', expiresAt: Date.now() + 60_000 }))
+    await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2' }))
+    expect(events.filter(e => e.status === 'awaiting_permission').length).toBe(1)   // 队列一次一个（tc_1 是队列头）
+    // tc_1 同 sourceCallId 参数不一致 → 策略拒 → 原记录终态 + 队列晋升 tc_2 可见
+    await svc.handleRequest(mkReq({ callId: 'call_1', sourceCallId: 'tc_1', arguments: { path: '/home/u/other.txt' } }))
+    expect(svc.getRecord('call_1')?.status).toBe('rejected')
+    expect(events.filter(e => e.status === 'awaiting_permission').length).toBe(2)   // tc_2 晋升
+    // expiresAt 定时器已清 → 不会再有 cancelled 双终态（accepted→rejected 是合法协议序列，无 cancelled 即证明）
+    await vi.advanceTimersByTimeAsync(70_000)
+    const call1Wires = submitStatus.mock.calls.filter(c => c[0].callId === 'call_1').map(c => c[0].status)
+    expect(call1Wires).toEqual(['accepted', 'rejected'])   // 仅 accepted→rejected，无 cancelled 双终态
+    vi.useRealTimers()
+  })
   it('已拒绝保持拒绝（不重弹窗）', async () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq())

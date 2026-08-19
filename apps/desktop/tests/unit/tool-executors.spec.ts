@@ -45,6 +45,14 @@ describe('desktop.file.select', () => {
     expect(r.output).toMatchObject({ cancelled: false, path: p, name: 'a.txt', size: 5 })
     expect((r.output as { hash: string }).hash).toMatch(/^[0-9a-f]{64}$/)
   })
+  it('M-1（批次最终 review）：>2MiB 文件不做整读哈希（省略 hash，防 Main 阻塞）', async () => {
+    const p = join(tmp, 'big.txt'); writeFileSync(p, 'x'.repeat(2 * 1024 * 1024 + 1))
+    const ex = createExecutors(mkDeps({ allowRoots: [tmp], pickFile: async () => ({ canceled: false, path: p }) }))
+    const r = await ex.execute(rec('desktop.file.select', {}), undefined)
+    expect((r.output as { cancelled: boolean }).cancelled).toBe(false)
+    expect((r.output as { hash?: string }).hash).toBeUndefined()
+    expect((r.output as { size: number }).size).toBe(2 * 1024 * 1024 + 1)
+  })
   it('黑名单路径命中 → {cancelled:true, reason:PATH_BLOCKLISTED}（M-7/L10）', async () => {
     const ex = createExecutors(mkDeps({ pickFile: async () => ({ canceled: false, path: '/etc/passwd' }) }))
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)

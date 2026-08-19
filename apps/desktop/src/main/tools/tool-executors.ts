@@ -34,9 +34,11 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
       return { output: { cancelled: true, reason: 'PATH_BLOCKLISTED' }, summary: '用户取消选择' }
     }
     const st = fs.statSync(norm.realPath)
-    const hash = createHash('sha256').update(fs.readFileSync(norm.realPath)).digest('hex')
+    // M-1（批次最终 review）：哈希受 FILE_READ_MAX_BYTES 上限——超大文件不做同步整读哈希（防 Main 事件循环阻塞）；
+    // 超限省略 hash 字段（指纹仅辅助，路径/大小已够后端语义；不阻塞选择）
+    const hash = st.size <= FILE_READ_MAX_BYTES ? createHash('sha256').update(fs.readFileSync(norm.realPath)).digest('hex') : undefined
     deps.selectedAdd?.(norm.realPath)   // selected-set 回调（A-14：tool-service 注入写闭包；可选防未接线；写入 normalize 后路径，与豁免检查同口径）
-    return { output: { cancelled: false, path: norm.realPath, name: path.basename(norm.realPath), size: st.size, mtimeMs: st.mtimeMs, hash }, summary: `已选择 ${path.basename(norm.realPath)}` }
+    return { output: { cancelled: false, path: norm.realPath, name: path.basename(norm.realPath), size: st.size, mtimeMs: st.mtimeMs, ...(hash !== undefined ? { hash } : {}) }, summary: `已选择 ${path.basename(norm.realPath)}` }
   }
   async function readFile(rec: ToolRecord, realPath?: string): Promise<ExecResult> {
     const p = realPath ?? String(rec.arguments_['path'])

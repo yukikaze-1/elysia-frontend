@@ -153,8 +153,14 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   function reject(req: DesktopToolRequest, code: string, message: string): void {
     const existing = records.get(req.sourceCallId)
     if (existing) {
-      // M3②：既有记录（awaiting/running 等）不被覆盖——仅补发 rejected 事件 + wire（PARAM_MISMATCH 等策略拒）
-      const ev: ToolRecord = { ...existing, desktopCallId: req.callId, status: 'rejected', error: { code, message }, finishedAt: new Date().toISOString() }
+      // M3②+批次最终 M-3：既有记录（awaiting/running 等）不被覆盖——补发 rejected 事件 + wire；
+      // 同步原记录状态（终态单向：仅非终态推进为 rejected）+ 清 expiresAt 定时器 + 队列晋升（防双终态 wire 与队列头阻塞，M-3 修正）
+      if (!['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(existing.status)) {
+        existing.status = 'rejected'; existing.error = { code, message }; existing.finishedAt = new Date().toISOString()
+        const timer = timers.get(existing.id); if (timer) { clearTimeout(timer); timers.delete(existing.id) }
+        promoteQueue(existing.id)
+      }
+      const ev: ToolRecord = { ...existing, desktopCallId: req.callId }
       void wireSend(ev, 'rejected', { error: { code, message } })
       audit('tool:terminal', ev, { errorCode: code })
       emit(ev)

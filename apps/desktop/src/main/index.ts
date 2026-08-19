@@ -203,10 +203,10 @@ async function main(): Promise<void> {
           })
         })()
     // —— 阶段 6 批次 B（Task 6）：Desktop 工具服务装配（Main 权限/执行边界；adapter 构造之后、registerHandlers 之前）——
-    // env 桥（mock 模式集成测试注入；非法 JSON → undefined 不注入）：CYRENE_MOCK_TOOL_ALLOW_ROOT 黑名单放行根 +
-    // CYRENE_MOCK_CAPTURE_SOURCES 屏幕源枚举（补 1×1 PNG thumbnailDataUrl 占位，R9——mock 不调真实 desktopCapturer，H11）
-    const toolAllowRoot = parseMockToolAllowRootEnv(process.env.CYRENE_MOCK_TOOL_ALLOW_ROOT)
-    const captureSources = parseMockCaptureSourcesEnv(process.env.CYRENE_MOCK_CAPTURE_SOURCES)
+    // env 桥（**mock 模式专用门控 M-2（批次最终 review）**——真实模式误设 CYRENE_MOCK_* 不注入：
+    // 防真实 capture 返回 mock 占位/Wayland 门禁被关/真实模式放行黑名单根；对齐 mockMouthLevel 的 useMock 先例 index.ts:278）
+    const toolAllowRoot = useMock ? parseMockToolAllowRootEnv(process.env.CYRENE_MOCK_TOOL_ALLOW_ROOT) : undefined
+    const captureSources = useMock ? parseMockCaptureSourcesEnv(process.env.CYRENE_MOCK_CAPTURE_SOURCES) : undefined
     const statusSender = createToolStatusSender({ adapter, audit })
     const toolSvc = createToolService({
       registry: createToolRegistry(),
