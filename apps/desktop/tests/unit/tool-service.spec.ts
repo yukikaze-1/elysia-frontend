@@ -234,8 +234,9 @@ describe('幂等与状态机', () => {
     expect(events.at(-1).error?.code).toBe('CAPTURE_UNAVAILABLE')
     expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
   })
-  it('select 自动执行（safe/automatic 不弹窗；stub 经 pickFile+selectedAdd，A-14）', async () => {
-    const { svc, events } = mkService({ pickFile: async () => ({ canceled: false, path: `${FIXTURES}/sel-ok.txt` }) })
+  it('select 自动执行（safe/automatic 不弹窗；经 pickFile+selectedAdd，A-14）', async () => {
+    const p = `${FIXTURES}/sel-ok.txt`; writeFileSync(p, 'x')   // Task 3 实装后 select 需目标存在（stat + hash 元数据）
+    const { svc, events } = mkService({ pickFile: async () => ({ canceled: false, path: p }) })
     await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
     expect(events.at(-1).status).toBe('completed')   // 无 awaiting 直接执行
   })
@@ -245,10 +246,10 @@ describe('幂等与状态机', () => {
     // 先 select 豁免：文件选择器选中 p → selectedAdd(p) → selected-set 入 p
     await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
     expect(events.at(-1).status).toBe('completed')
-    // 豁免生效：同路径 read 不弹窗（直跑——stub read 未实装故 failed，但证明未走 awaiting）
+    // 豁免生效：同路径 read 不弹窗（直跑——Task 3 read 已实装故 completed，证明未走 awaiting）
     await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2', arguments: { path: p } }))
     expect(events.some(e => e.id === 'tc_2' && e.status === 'awaiting_permission')).toBe(false)
-    expect(svc.getRecord('tc_2')?.status).toBe('failed')
+    expect(svc.getRecord('tc_2')?.status).toBe('completed')
     // reconnect → selected-set 清空 → 豁免失效 → 再读需弹窗
     await svc.reconnect()
     await svc.handleRequest(mkReq({ callId: 'call_3', sourceCallId: 'tc_3', arguments: { path: p } }))

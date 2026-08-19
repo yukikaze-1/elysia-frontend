@@ -290,7 +290,8 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     if (st.size > FILE_READ_MAX_BYTES) throw new ToolExecError('FILE_TOO_LARGE', '目标文件超过 2 MiB 上限')
     const buf = fs.readFileSync(realPath)
     let oldText: string
-    try { oldText = new TextDecoder('utf-8', { fatal: true }).decode(buf) }
+    // ignoreBOM:true——TextDecoder 缺省会剥 BOM，detectTextFormat 的 hasBom 探测需见原始 BOM（D6B-19/L-2，Task 3 统一）
+    try { oldText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf) }
     catch { throw new ToolExecError('FILE_IS_BINARY', '目标文件不是 UTF-8 文本') }
     const d = computeTextDiff(oldText, String(rec.arguments_['content']))
     const fmt = detectTextFormat(oldText)
