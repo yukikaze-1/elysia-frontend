@@ -72,9 +72,9 @@ describe('MockBackend 工具场景（Task 6 / F-6-22）', () => {
 
 describe('批次 B 改接（toolRequestSink）', () => {
   it('desktop kind 不再 emit chat:event；经 sink 交付 DesktopToolRequest（id 自增）', async () => {
-    const sink: any[] = []
+    const sink: Array<{ callId?: string; sourceCallId?: string; toolName?: string; runtime?: string; paramHash?: unknown }> = []
     const mb = new MockBackend({ emitDelayMs: 0, toolFlow: { kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: '/tmp/x.txt' } } }, toolRequestSink: (req) => sink.push(req) })
-    const events: any[] = []
+    const events: Array<{ event?: string }> = []
     mb.subscribe((e) => events.push(e))
     await mb.connect({ serverUrl: 'mock://test' })
     await mb.activateConversation('conv-1001')
@@ -92,7 +92,7 @@ describe('批次 B 改接（toolRequestSink）', () => {
   })
   it('backend kind 发射不变（L3：补最小断言——started/completed 仍经订阅面且 sourceCallId 固定）', async () => {
     const mb = new MockBackend({ toolFlow: { kind: 'backend', started: { toolName: 'search_web', inputSummary: 'q=<str:2>' }, completed: { success: true, outputSummary: 'ok' } }, emitDelayMs: 0 })   // emitDelayMs:0——scheduleReplay 缺省 30ms×11 帧尾事件（对齐既有 sink 用例）
-    const events: any[] = []; mb.subscribe((e) => events.push(e))
+    const events: Array<{ event?: string }> = []; mb.subscribe((e) => events.push(e))
     mb.connect({ serverUrl: 'mock://server' }); await mb.activateConversation('conv-1001'); await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'r1' })
     await new Promise(r => setTimeout(r, 50))
     const started = events.find(e => e.event === 'tool.started')

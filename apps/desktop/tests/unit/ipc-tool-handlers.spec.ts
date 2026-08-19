@@ -10,17 +10,17 @@ import { PermissionDecisionSchema, ToolCancelSchema, ToolPickSourceSchema, ToolC
 describe('tool-handlers 五通道（A-5/B-4）', () => {
   it('五通道注册：channel 名 + arity 全 1（M2：arity 断言——toolList 若回归 arity 0 必红）', async () => {
     const tools = { decide: vi.fn(), cancel: vi.fn(), listRecent: vi.fn().mockReturnValue([]), pickSource: vi.fn(), confirmUpload: vi.fn() }
-    const registered: any[] = []
-    const reg = (ch: string, ex: any, arity: number | undefined) => { registered.push({ ch, ex, arity }) }
-    registerToolHandlers({ tools: tools as any, sanitize: (x: string) => x }, reg)
+    const registered: Array<{ ch: string; ex: (input: unknown) => Promise<unknown>; arity: number | undefined }> = []
+    const reg = (ch: string, ex: (input: unknown) => Promise<unknown>, arity: number | undefined) => { registered.push({ ch, ex, arity }) }
+    registerToolHandlers({ tools: tools as never, sanitize: (x: string) => x }, reg)
     expect(registered.map(r => r.ch)).toEqual([IpcChannels.toolDecide, IpcChannels.toolCancel, IpcChannels.toolList, IpcChannels.toolPickSource, IpcChannels.toolConfirmUpload])
     expect(registered.map(r => r.arity)).toEqual([1, 1, 1, 1, 1])   // invokeWithArgs 恒带 1 参（M2）
   })
   it('五通道逐一转发 tool-service（M2：逐通道参数映射断言）', async () => {
     const tools = { decide: vi.fn(), cancel: vi.fn(), listRecent: vi.fn().mockReturnValue([]), pickSource: vi.fn(), confirmUpload: vi.fn() }
-    const registered: any[] = []
-    const reg = (ch: string, ex: any, arity: number | undefined) => { registered.push({ ch, ex, arity }) }
-    registerToolHandlers({ tools: tools as any, sanitize: (x: string) => x }, reg)
+    const registered: Array<{ ch: string; ex: (input: unknown) => Promise<unknown>; arity: number | undefined }> = []
+    const reg = (ch: string, ex: (input: unknown) => Promise<unknown>, arity: number | undefined) => { registered.push({ ch, ex, arity }) }
+    registerToolHandlers({ tools: tools as never, sanitize: (x: string) => x }, reg)
     const byChannel = new Map(registered.map(r => [r.ch, r.ex]))
     await byChannel.get(IpcChannels.toolDecide)!({ callId: 'call_1', decision: 'allow_once' })
     expect(tools.decide).toHaveBeenCalledWith('call_1', 'allow_once')

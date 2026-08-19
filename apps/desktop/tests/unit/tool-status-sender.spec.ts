@@ -3,7 +3,7 @@ import { createToolStatusSender } from '../../src/main/tools/tool-status-sender'
 
 describe('createToolStatusSender', () => {
   it('发送 + 审计 tool:status-sent', async () => {
-    const submit = vi.fn().mockResolvedValue(undefined); const audit: any[] = []
+    const submit = vi.fn().mockResolvedValue(undefined); const audit: Array<{ type?: string }> = []
     const s = createToolStatusSender({ adapter: { submitToolResult: submit, uploadToolAttachment: async () => ({ url: 'u', mimeType: 't' }) }, audit: (e) => audit.push(e) })
     await s.send({ callId: 'c1', status: 'result', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', paramHash: 'x'.repeat(64) })
     expect(submit).toHaveBeenCalled()

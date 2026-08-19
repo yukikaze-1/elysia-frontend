@@ -20,9 +20,16 @@ function mkDeps(over: Partial<ToolServiceDeps> = {}): ToolServiceDeps {
     pushEvent: () => {}, pickFile: async () => ({ canceled: true }), enumerateSources: async () => [], ...over,
   } as ToolServiceDeps
 }
+/** 测试注入用的最小 rec 形状（ToolRecord 子集 + queue 测试字段；status 恒 running） */
+interface FakeRec {
+  id: string; desktopCallId: string; toolName: string; title: string; status: 'running'
+  expiresAt: number; arguments_: Record<string, unknown>; toolVersion: string; statusSent: boolean; queue: boolean
+  oldHash?: string
+  [k: string]: unknown
+}
 function rec(toolName: string, args: Record<string, unknown>) {
   return { id: 'tc_1', desktopCallId: 'call_1', toolName, title: toolName, status: 'running', expiresAt: Date.now() + 30_000,
-    arguments_: args, toolVersion: '1.0', statusSent: false, queue: false } as any
+    arguments_: args, toolVersion: '1.0', statusSent: false, queue: false } as FakeRec
 }
 
 describe('desktop.file.select', () => {
@@ -36,7 +43,7 @@ describe('desktop.file.select', () => {
     const ex = createExecutors(mkDeps({ allowRoots: [tmp], pickFile: async () => ({ canceled: false, path: p }) }))   // H9：mkdtemp 在 /tmp → allowRoots 注入（select 复核与服务层同口径）
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(r.output).toMatchObject({ cancelled: false, path: p, name: 'a.txt', size: 5 })
-    expect((r.output as any).hash).toMatch(/^[0-9a-f]{64}$/)
+    expect((r.output as { hash: string }).hash).toMatch(/^[0-9a-f]{64}$/)
   })
   it('黑名单路径命中 → {cancelled:true, reason:PATH_BLOCKLISTED}（M-7/L10）', async () => {
     const ex = createExecutors(mkDeps({ pickFile: async () => ({ canceled: false, path: '/etc/passwd' }) }))
@@ -61,7 +68,7 @@ describe('desktop.file.read', () => {
     const ex = createExecutors(mkDeps())
     const r = await ex.execute(rec('desktop.file.read', { path: p }), p)
     expect(r.output).toMatchObject({ path: p, size: Buffer.byteLength('你好 world'), charset: 'utf-8' })
-    expect((r.output as any).content).toBe('你好 world')
+    expect((r.output as { content: string }).content).toBe('你好 world')
   })
   it('>2MiB → FILE_TOO_LARGE', async () => {
     const p = join(tmp, 'big.txt'); writeFileSync(p, 'x'.repeat(2 * 1024 * 1024 + 1))
@@ -89,7 +96,7 @@ describe('desktop.file.write', () => {
     const ex = createExecutors(mkDeps())
     const r = await ex.execute(rec('desktop.file.write', { path: p, content: 'abc\n' }), p)
     expect(readFileSync(p, 'utf8')).toBe('abc\n')
-    expect((r.output as any).bytesWritten).toBe(4)
+    expect((r.output as { bytesWritten: number }).bytesWritten).toBe(4)
     expect(readdirSync(tmp).some(f => f.endsWith('.tmp'))).toBe(false)   // L4：无 .tmp 残留（原子写产物断言）
   })
   it('覆盖保留原格式（CRLF + BOM + 末尾换行，D6B-19/L-2）', async () => {
@@ -109,7 +116,7 @@ describe('desktop.file.write', () => {
     const p = join(tmp, 'bom-diff.txt'); writeFileSync(p, '﻿a\n')
     const ex = createExecutors(mkDeps())
     const r = await ex.execute(rec('desktop.file.write', { path: p, content: 'b\n' }), p)
-    expect((r.output as any).bytesWritten).toBeGreaterThan(0)
+    expect((r.output as { bytesWritten: number }).bytesWritten).toBeGreaterThan(0)
     expect(r.summary).toContain('覆盖')   // 覆盖路径正常（BOM 不造成 diff 计数异常即可——首行 removed/added 仅影响计数非失败）
   })
   it('写前哈希冲突 → FILE_CONFLICT（原文件不变；基于授权前预读 hash，A-1）', async () => {
@@ -148,8 +155,8 @@ describe('desktop.screen.capture（枚举面）', () => {
     const big = 'data:image/png;base64,' + 'A'.repeat(70 * 1024)
     const ex = createExecutors(mkDeps({ enumerateSources: async () => [{ sourceId: 'big', sourceName: '大', thumbnailDataUrl: big }, { sourceId: 'ok', sourceName: '小', thumbnailDataUrl: 'data:image/png;base64,AA==' }] }))
     const r = await ex.execute(rec('desktop.screen.capture', {}), undefined)
-    expect((r.output as any).sources.map((s: any) => s.sourceId)).toEqual(['ok'])
-    expect((r.output as any).dropped).toBe(1)
+    expect((r.output as { sources: Array<{ sourceId: string }> }).sources.map((s) => s.sourceId)).toEqual(['ok'])
+    expect((r.output as { dropped: number }).dropped).toBe(1)
   })
   it('Wayland 环境拒（防御性复核，A-4）', async () => {
     const ex = createExecutors(mkDeps({ isWayland: true }))

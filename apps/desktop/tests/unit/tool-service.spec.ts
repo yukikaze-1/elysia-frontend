@@ -6,6 +6,23 @@ import { dirname } from 'node:path'
 import { createToolService, DesktopToolRequest, ToolServiceError } from '../../src/main/tools/tool-service'   // ToolServiceError import（H4）
 import { createToolRegistry } from '../../src/main/tools/tool-registry'
 
+/** 测试事件收集接口（按本文件断言字段最小建模；PublicToolEvent 可赋值） */
+interface ToolEv {
+  status?: string
+  error?: { code?: string; message?: string }
+  id?: string
+  diff?: { isNewFile?: boolean; totalLines?: number }
+  captureSources?: unknown[]
+  capturePreview?: { previewDataUrl: string }
+  resultSummary?: string
+}
+/** 测试审计收集接口（按本文件断言字段最小建模；AuditEvent 可赋值） */
+interface AuditEv {
+  type?: string
+  permissionDecision?: string
+  cancelSource?: string
+}
+
 const FIXTURES = '/tmp/cyrene-fixtures'
 beforeEach(() => { mkdirSync(FIXTURES, { recursive: true }) })
 afterEach(() => { rmSync(FIXTURES, { recursive: true, force: true }) })
@@ -15,12 +32,12 @@ function mkReq(over: Partial<DesktopToolRequest> = {}): DesktopToolRequest {
     runtime: 'desktop', arguments: { path: `${FIXTURES}/notes.md` }, reason: 'read notes', expiresAt: Date.now() + 30_000, ...over }
 }
 function mkService(over: Record<string, unknown> = {}) {
-  const events: any[] = []
-  const audit: any[] = []
+  const events: ToolEv[] = []
+  const audit: AuditEv[] = []
   const submitStatus = vi.fn().mockResolvedValue(undefined)
-  const pushEvent = (ev: any) => events.push(ev)
+  const pushEvent = (ev: ToolEv) => events.push(ev)
   const svc = createToolService({
-    registry: createToolRegistry(), platform: 'posix', audit: (e: any) => audit.push(e),
+    registry: createToolRegistry(), platform: 'posix', audit: (e: AuditEv) => audit.push(e),
     submitStatus, uploadAttachment: vi.fn().mockResolvedValue({ url: 'mock://a/1', mimeType: 'text/plain' }),
     pushEvent, allowRoots: [FIXTURES], ...over,
   })
@@ -31,7 +48,7 @@ describe('决策链', () => {
   it('未注册工具 → rejected CAPABILITY_UNAVAILABLE（不弹窗 + wire rejected，H1）', async () => {
     const { svc, events, submitStatus } = mkService()
     await svc.handleRequest(mkReq({ toolName: 'desktop.command.run' }))
-    const last = events.at(-1)
+    const last = events.at(-1)!
     expect(last.status).toBe('rejected'); expect(last.error?.code).toBe('CAPABILITY_UNAVAILABLE')
     // H1：策略拒也回 wire rejected（spec §3.2 step 13）
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'rejected', error: expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }) }))
@@ -41,12 +58,12 @@ describe('决策链', () => {
     registry.set('desktop.winonly', { name: 'desktop.winonly', version: '1.0', runtime: 'desktop', title: 'w', description: '', dataFlowNote: '', localRisk: 'safe', permissionMode: 'automatic', supportedPlatforms: ['windows'], inputSchema: z.object({}).strict(), outputSchema: z.record(z.string(), z.unknown()), executeRef: 'file.read', defaultTimeoutMs: 1000, isPathTool: false })
     const { svc, events } = mkService({ registry })
     await svc.handleRequest(mkReq({ toolName: 'desktop.winonly', arguments: {} }))
-    expect(events.at(-1).error?.code).toBe('CAPABILITY_UNAVAILABLE')
+    expect(events.at(-1)!.error?.code).toBe('CAPABILITY_UNAVAILABLE')
   })
   it('参数 schema 拒（未知键 strict / 缺 path）→ INVALID_ARGUMENTS 不弹窗', async () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ arguments: { path: '/home/u/a.txt', extra: 1 } }))
-    expect(events.at(-1).error?.code).toBe('INVALID_ARGUMENTS')
+    expect(events.at(-1)!.error?.code).toBe('INVALID_ARGUMENTS')
   })
   it('capture region:null 合法通过（H1/M-6）', async () => {
     const { svc } = mkService()
@@ -55,27 +72,27 @@ describe('决策链', () => {
   it('paramHash 不一致 → PARAM_HASH_MISMATCH（不弹窗）', async () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ paramHash: 'deadbeef'.repeat(8) }))
-    expect(events.at(-1).error?.code).toBe('PARAM_HASH_MISMATCH')
+    expect(events.at(-1)!.error?.code).toBe('PARAM_HASH_MISMATCH')
   })
   it('黑名单路径命中 → PATH_BLOCKLISTED 不弹窗（压过一切）', async () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ arguments: { path: '/etc/passwd' } }))
-    expect(events.at(-1).error?.code).toBe('PATH_BLOCKLISTED')
+    expect(events.at(-1)!.error?.code).toBe('PATH_BLOCKLISTED')
     expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
   })
   it('read 未豁免 → awaiting_permission；allowedRoots 内路径不被 /tmp 黑名单误伤（M-1）', async () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ arguments: { path: '/tmp/cyrene-fixtures/a.txt' } }))
-    expect(events.at(-1).status).toBe('awaiting_permission')
+    expect(events.at(-1)!.status).toBe('awaiting_permission')
   })
   it('write 授权前预读 + Diff 随 awaiting 事件下发（L7；fixture 前置，H8）', async () => {
     writeFileSync(`${FIXTURES}/w.txt`, 'old')
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: 'new' } }))
-    const ev = events.at(-1)
+    const ev = events.at(-1)!
     expect(ev.status).toBe('awaiting_permission')
-    expect(ev.diff).toBeDefined(); expect(ev.diff.isNewFile).toBe(false)
-    expect(ev.diff.totalLines).toBeGreaterThan(0)   // totalLines（A-20）
+    expect(ev.diff).toBeDefined(); expect(ev.diff!.isNewFile).toBe(false)
+    expect(ev.diff!.totalLines).toBeGreaterThan(0)   // totalLines（A-20）
   })
   it('wire accepted 在授权判定前发出（M1）', async () => {
     const { svc, submitStatus } = mkService()
@@ -88,7 +105,7 @@ describe('幂等与状态机', () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq())
     await svc.handleRequest(mkReq({ arguments: { path: '/home/u/other.txt' } }))
-    expect(events.at(-1).error?.code).toBe('PARAM_MISMATCH')
+    expect(events.at(-1)!.error?.code).toBe('PARAM_MISMATCH')
   })
   it('已拒绝保持拒绝（不重弹窗）', async () => {
     const { svc, events } = mkService()
@@ -96,7 +113,7 @@ describe('幂等与状态机', () => {
     await svc.decide('call_1', 'deny')
     const before = events.length
     await svc.handleRequest(mkReq())   // 同 callId 再来（幂等返回当前状态）
-    expect(events.at(-1).status).toBe('rejected')
+    expect(events.at(-1)!.status).toBe('rejected')
     expect(events.length).toBe(before + 1)   // 只补一条幂等回显，不二次 awaiting
   })
   it('awaiting 队列 FIFO 一次一个（A8）：两请求只有一个 awaiting 事件，decide 后第二个晋升', async () => {
@@ -118,7 +135,7 @@ describe('幂等与状态机', () => {
     const { svc, events, submitStatus } = mkService()
     await svc.handleRequest(mkReq({ expiresAt: Date.now() + 500 }))
     await vi.advanceTimersByTimeAsync(600)
-    expect(events.at(-1).status).toBe('timeout')
+    expect(events.at(-1)!.status).toBe('timeout')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
     vi.useRealTimers()
   })
@@ -141,7 +158,7 @@ describe('幂等与状态机', () => {
     const { svc, events, submitStatus, audit } = mkService()
     await svc.handleRequest(mkReq())
     await svc.cancel('call_1')
-    expect(events.at(-1).status).toBe('cancelled')
+    expect(events.at(-1)!.status).toBe('cancelled')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
     expect(audit.some(e => e.type === 'tool:terminal' && e.cancelSource === 'user')).toBe(true)   // L4③
   })
@@ -155,7 +172,7 @@ describe('幂等与状态机', () => {
     const deciding = svc.decide('call_1', 'allow_once')   // 不 await——executor 挂起
     await vi.advanceTimersByTimeAsync(0)                  // 让 running wireSend 微任务落定、执行超时 timer 挂起
     await vi.advanceTimersByTimeAsync(31_000)             // read defaultTimeoutMs=30s
-    expect(events.at(-1).status).toBe('timeout')
+    expect(events.at(-1)!.status).toBe('timeout')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'error', error: expect.objectContaining({ code: 'TIMEOUT' }) }))   // M1：wire error{TIMEOUT} 非 cancelled
     release()
     await deciding
@@ -178,7 +195,7 @@ describe('幂等与状态机', () => {
   it('expiresAt 已过期 → 立即 timeout + wire cancelled（L2）', async () => {
     const { svc, events, submitStatus } = mkService()
     await svc.handleRequest(mkReq({ expiresAt: Date.now() - 1000 }))
-    expect(events.at(-1).status).toBe('timeout')
+    expect(events.at(-1)!.status).toBe('timeout')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
   })
   it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1/M3：注入 executorOverride 返回非法输出）', async () => {
@@ -231,21 +248,21 @@ describe('幂等与状态机', () => {
     // mkService 注入 wayland: true → isWaylandSession 经 deps.isWayland 注入判断
     const { svc, events } = mkService({ isWayland: true })
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
-    expect(events.at(-1).error?.code).toBe('CAPTURE_UNAVAILABLE')
+    expect(events.at(-1)!.error?.code).toBe('CAPTURE_UNAVAILABLE')
     expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
   })
   it('select 自动执行（safe/automatic 不弹窗；经 pickFile+selectedAdd，A-14）', async () => {
     const p = `${FIXTURES}/sel-ok.txt`; writeFileSync(p, 'x')   // Task 3 实装后 select 需目标存在（stat + hash 元数据）
     const { svc, events } = mkService({ pickFile: async () => ({ canceled: false, path: p }) })
     await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
-    expect(events.at(-1).status).toBe('completed')   // 无 awaiting 直接执行
+    expect(events.at(-1)!.status).toBe('completed')   // 无 awaiting 直接执行
   })
   it('重连 selected-set 清空：豁免失效（L4①/D6B-20）', async () => {
     const p = `${FIXTURES}/sel.txt`; writeFileSync(p, 'x')
     const { svc, events } = mkService({ pickFile: async () => ({ canceled: false, path: p }) })
     // 先 select 豁免：文件选择器选中 p → selectedAdd(p) → selected-set 入 p
     await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
-    expect(events.at(-1).status).toBe('completed')
+    expect(events.at(-1)!.status).toBe('completed')
     // 豁免生效：同路径 read 不弹窗（直跑——Task 3 read 已实装故 completed，证明未走 awaiting）
     await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2', arguments: { path: p } }))
     expect(events.some(e => e.id === 'tc_2' && e.status === 'awaiting_permission')).toBe(false)
