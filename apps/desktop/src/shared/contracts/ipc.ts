@@ -52,12 +52,20 @@ export const IpcChannels = {
   audioCancel: 'audio:cancel',                           // 阶段 4 批次 B：TTS 播放取消（invoke）
   settingsLoad: 'settings:load',                         // 阶段 4 批次 B：设置装载（invoke）
   settingsSave: 'settings:save',                         // 阶段 4 批次 B：设置保存（invoke，patch merge）
-  live2dListModels: 'live2d:list-models'                 // 阶段 5 批次 A：Live2D 模型摘要清单（invoke）
+  live2dListModels: 'live2d:list-models',                // 阶段 5 批次 A：Live2D 模型摘要清单（invoke）
+  toolDecide: 'tool:decide',                              // 阶段 6 批次 B：权限决策（allow_once/deny，invoke）
+  toolCancel: 'tool:cancel',                              // 阶段 6 批次 B：取消工具调用（invoke）
+  toolList: 'tool:list',                                  // 阶段 6 批次 B：工具公开事件清单（invoke）
+  toolPickSource: 'tool:pick-source',                     // 阶段 6 批次 B：屏幕捕获源选择（invoke）
+  toolConfirmUpload: 'tool:confirm-upload'                // 阶段 6 批次 B：捕获预览确认上传（invoke）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
 /** Main → Renderer 主动推送通道(PushChannels)：不入 IpcChannels（非命令，无 invoke 语义） */
-export const PushChannels = { event: 'chat:event', state: 'chat:state', replay: 'chat:replay', error: 'chat:error' } as const
+export const PushChannels = {
+  event: 'chat:event', state: 'chat:state', replay: 'chat:replay', error: 'chat:error',
+  toolEvent: 'tool:event'                                 // 阶段 6 批次 B：工具公开事件推送（M2 契约：推送入 PushChannels）
+} as const
 
 /** IPC 错误体：只含公开信息，不泄漏堆栈/路径；结构化字段跨 contextBridge 经 message 前缀保真 */
 export interface IpcErrorBody {

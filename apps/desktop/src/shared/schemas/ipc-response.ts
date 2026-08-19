@@ -84,6 +84,58 @@ export const MessageToolInfoSchema = z.object({
   truncated: z.boolean().optional()
 })
 
+// —— 阶段 6 批次 B：工具 schema（镜像 ToolCallRecord/PublicToolEvent；ToolCallRecordSchema 需在 MessageSchema 定义之前，D6B-10）——
+export const ToolCallRecordSchema = z.object({
+  id: z.string(),
+  toolName: z.string(),
+  runtime: z.enum(['backend', 'desktop', 'local_worker']),
+  status: z.enum(['requested', 'awaiting_permission', 'running', 'completed', 'failed', 'rejected', 'cancelled', 'timeout']),
+  desktopCallId: z.string().optional(),
+  generationId: z.string().optional(),
+  conversationId: z.string().optional(),
+  reason: z.string().optional(),
+  inputSummary: z.string().optional(),
+  outputSummary: z.string().optional(),
+  error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
+  errorType: z.string().optional(),
+  truncated: z.boolean().optional(),
+  durationMs: z.number().optional(),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  attachmentCount: z.number().int().nonnegative().optional(),
+}).strict()
+
+const DiffLineSchema = z.object({ kind: z.enum(['added', 'removed', 'unchanged']), text: z.string() }).strict()
+const ToolDiffSchema = z.object({
+  lines: z.array(DiffLineSchema), added: z.number(), removed: z.number(),
+  truncated: z.boolean(), totalLines: z.number(), formatNote: z.string(), isNewFile: z.boolean(),   // totalLines=A-20（「共 X 行」）
+}).strict()
+const CaptureSourceSchema = z.object({ sourceId: z.string(), sourceName: z.string(), thumbnailDataUrl: z.string() }).strict()
+const CapturePreviewSchema = z.object({ sourceId: z.string(), previewDataUrl: z.string() }).strict()
+
+export const PublicToolEventSchema = z.object({
+  id: z.string(), desktopCallId: z.string().optional(), toolName: z.string(), title: z.string(),
+  runtime: z.literal('desktop'), status: z.enum(['requested', 'awaiting_permission', 'running', 'completed', 'failed', 'rejected', 'cancelled', 'timeout']),
+  reason: z.string().optional(), inputSummary: z.string().optional(), pathSummary: z.string().optional(),
+  resultSummary: z.string().optional(),
+  error: z.object({ code: z.string().optional(), message: z.string().optional() }).optional(),
+  truncated: z.boolean().optional(), durationMs: z.number().optional(),
+  startedAt: z.string().optional(), finishedAt: z.string().optional(),
+  attachmentCount: z.number().int().nonnegative().optional(),
+  dataFlowNote: z.string().optional(),
+  diff: ToolDiffSchema.optional(),
+  captureSources: z.array(CaptureSourceSchema).optional(),
+  capturePreview: CapturePreviewSchema.optional(),
+  occurredAt: z.string(),
+}).strict()
+
+// IPC 请求 schema（D6B-10「zod 双端」——Renderer 与 Main 共用；A-10）
+export const PermissionDecisionSchema = z.object({ callId: z.string(), decision: z.enum(['allow_once', 'deny']) }).strict()
+export const ToolCancelSchema = z.object({ callId: z.string() }).strict()
+export const ToolPickSourceSchema = z.object({ callId: z.string(), sourceId: z.string() }).strict()
+export const ToolConfirmUploadSchema = z.object({ callId: z.string() }).strict()
+export const ToolListResponseSchema = z.array(PublicToolEventSchema)
+
 export const MessageSchema = z.object({
   messageId: z.string().min(1),
   conversationId: z.string().min(1),
@@ -95,6 +147,7 @@ export const MessageSchema = z.object({
   assistantSegments: z.array(AssistantSegmentSchema).optional(),
   tool: MessageToolInfoSchema.optional(),   // 严格镜像 MessageToolInfo(rest-mapper assemble 产出;M4:输出须可赋值回 Message)
   attachments: z.array(MessageAttachmentSchema).optional(),   // 附件内嵌消息（阶段 3 G3，D2）
+  toolCalls: z.array(ToolCallRecordSchema).optional(),   // 阶段 6 批次 B：归档工具调用（修复 preload safeParse 剥字段缺陷，D6B-10）
   usage: TokenUsageSchema.optional(),
   model: z.string().optional(),
   emotion: z.string().optional(),
