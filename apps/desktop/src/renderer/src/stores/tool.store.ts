@@ -8,11 +8,13 @@
 //   3. REST 历史/WS 回放（Task 5 pairToolCalls）→ Message.toolCalls 归档卡片（组件只读渲染，不经本 store）。
 //
 // 终态单向（spec D6A-05）：completed/failed/rejected/cancelled/timeout 后不再回执行态；
-// running 不回退 awaiting_permission。liveOrder 只保留最近 LIVE_LIMIT 条（实时区上限）。
+// running 不回退 awaiting_permission。liveOrder 截断只逐出最旧的终态记录（L1 fix：awaiting/running
+// 不参与裁剪，可短暂 >LIVE_LIMIT——防 awaiting 被逐出导致 waitingForApproval 误变 false）。
 // clearForGeneration（generation.started 接线）只清终态——awaiting_permission 跨代保留（A9）。
 //
 // 侧信道（A-3/M4/M11）：pendingPathSummary/pendingDiff/pendingDataFlowNote 供权限窗（四问/写 Diff）
-// 与卡片取数据；awaiting_permission 写入、任何终态清空（clearApprovalLocal 完整清理含 captureState，L6）。
+// 与卡片取数据；awaiting_permission 写入（受终态单向守卫，L2 fix）、任何同 callId 终态清空
+// （M2 fix：按 callId 匹配，B 终态不清 A 的侧信道；captureState 仅同工具终态清，L6）。
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { PublicToolEvent, ToolCallRecord, ToolCallStatus } from '@shared/contracts/tool'
@@ -40,7 +42,16 @@ export const useToolStore = defineStore('tool', () => {
     if (existing?.status === 'running' && rec.status === 'awaiting_permission') return            // 不回退
     records.value[id] = rec
     if (!liveOrder.value.includes(id)) liveOrder.value.push(id)
-    if (liveOrder.value.length > LIVE_LIMIT) liveOrder.value = liveOrder.value.slice(-LIVE_LIMIT)
+    trimLiveOrder()
+  }
+  /** L1（fix round 1）：liveOrder 截断只逐出最旧的**终态**记录——awaiting/running 不参与裁剪（可短暂 >3），
+   *  防 awaiting 记录被逐出导致 waitingForApproval 变 false（Live2D waiting_permission 消失/权限窗关闭/探针不可达） */
+  function trimLiveOrder(): void {
+    if (liveOrder.value.length <= LIVE_LIMIT) return
+    const excess = liveOrder.value.length - LIVE_LIMIT
+    const evictable = liveOrder.value.filter((oid) => TERMINAL.includes(records.value[oid]?.status ?? 'completed'))
+    const evict = new Set(evictable.slice(0, excess))
+    if (evict.size) liveOrder.value = liveOrder.value.filter((oid) => !evict.has(oid))
   }
   function upsertLocal(ev: PublicToolEvent): void {
     const rec: ToolCallRecord = { id: ev.id, desktopCallId: ev.desktopCallId, toolName: ev.toolName, runtime: 'desktop',
@@ -48,15 +59,26 @@ export const useToolStore = defineStore('tool', () => {
       error: ev.error, truncated: ev.truncated, durationMs: ev.durationMs, startedAt: ev.startedAt, finishedAt: ev.finishedAt,
       attachmentCount: ev.attachmentCount }
     upsertRecord(ev.id, rec)
-    if (ev.status === 'awaiting_permission') {
-      if (ev.pathSummary) pendingPathSummary.value = { callId: ev.desktopCallId ?? ev.id, pathSummary: ev.pathSummary }
-      if (ev.diff) pendingDiff.value = { callId: ev.desktopCallId ?? ev.id, diff: ev.diff }
-      if (ev.dataFlowNote) pendingDataFlowNote.value = { callId: ev.desktopCallId ?? ev.id, dataFlowNote: ev.dataFlowNote }
+    const cid = ev.desktopCallId ?? ev.id
+    // L2（fix round 1）：侧信道写入受终态单向守卫——迟到 awaiting 事件（记录已终态，upsertRecord 已拒）不写侧信道
+    if (ev.status === 'awaiting_permission' && !TERMINAL.includes(records.value[ev.id]?.status ?? 'unknown')) {
+      if (ev.pathSummary) pendingPathSummary.value = { callId: cid, pathSummary: ev.pathSummary }
+      if (ev.diff) pendingDiff.value = { callId: cid, diff: ev.diff }
+      if (ev.dataFlowNote) pendingDataFlowNote.value = { callId: cid, dataFlowNote: ev.dataFlowNote }
     }
-    if (TERMINAL.includes(ev.status)) clearApprovalLocal()
+    // M2（fix round 1）：终态侧信道清理按 callId 匹配——A awaiting 时 B 终态不清 A 的侧信道（权限窗不退化）；
+    // captureState 仅同工具（desktop.screen.capture）终态清
+    if (TERMINAL.includes(ev.status)) clearApprovalFor(ev, cid)
     if (ev.toolName === 'desktop.screen.capture' && ev.status === 'running' && (ev.captureSources || ev.capturePreview)) {
-      captureState.value = { callId: ev.desktopCallId ?? ev.id, sources: ev.captureSources, preview: ev.capturePreview }
+      captureState.value = { callId: cid, sources: ev.captureSources, preview: ev.capturePreview }
     }
+  }
+  /** M2（fix round 1）：按 callId 清理终态侧信道（权限窗关闭/回收）；captureState 额外要求工具匹配 */
+  function clearApprovalFor(ev: PublicToolEvent, cid: string): void {
+    if (pendingPathSummary.value?.callId === cid) pendingPathSummary.value = null
+    if (pendingDiff.value?.callId === cid) pendingDiff.value = null
+    if (pendingDataFlowNote.value?.callId === cid) pendingDataFlowNote.value = null
+    if (ev.toolName === 'desktop.screen.capture' && captureState.value?.callId === cid) captureState.value = null
   }
   function clearApprovalLocal(): void {   // 完整 M11：终态清理侧信道（权限窗关闭/回收）
     pendingPathSummary.value = null; pendingDiff.value = null; pendingDataFlowNote.value = null

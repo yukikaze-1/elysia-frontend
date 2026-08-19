@@ -64,4 +64,51 @@ describe('toolStore 三来路归一化', () => {
     s.upsertLocal(mkLocal('completed'))
     expect(s.pendingDiff).toBeNull(); expect(s.pendingDataFlowNote).toBeNull()
   })
+  it('M2（fix round 1）：终态侧信道清理按 callId——A awaiting 时 B 终态不清 A；captureState 仅同工具终态清', () => {
+    const s = useToolStore()
+    // A awaiting（写侧信道）
+    s.upsertLocal({ ...mkLocal('awaiting_permission', 'tc_a'), pathSummary: '/a.md', diff: { lines: [{ kind: 'added', text: 'x' }], added: 1, removed: 0, truncated: false, totalLines: 1, formatNote: 'UTF-8', isNewFile: false }, dataFlowNote: 'A 的数据' })
+    // B 终态（不同 callId + 非 capture）→ A 侧信道保留
+    s.upsertLocal(mkLocal('completed', 'tc_b'))
+    expect(s.pendingPathSummary?.pathSummary).toBe('/a.md')
+    expect(s.pendingDiff).not.toBeNull()
+    expect(s.pendingDataFlowNote?.dataFlowNote).toBe('A 的数据')
+    // A 自身终态 → 侧信道清
+    s.upsertLocal(mkLocal('completed', 'tc_a'))
+    expect(s.pendingPathSummary).toBeNull(); expect(s.pendingDiff).toBeNull(); expect(s.pendingDataFlowNote).toBeNull()
+    // capture：capture running 写 captureState；非 capture 终态不清；同工具终态才清
+    s.upsertLocal({ ...mkLocal('running', 'tc_c'), toolName: 'desktop.screen.capture', captureSources: [{ sourceId: 's1', sourceName: '窗口1', thumbnailDataUrl: 'data:image/png;base64,xx' }] })
+    expect(s.captureState?.callId).toBe('tc_c')
+    s.upsertLocal(mkLocal('completed', 'tc_d'))
+    expect(s.captureState).not.toBeNull() // 非 capture 终态不清 captureState
+    s.upsertLocal({ ...mkLocal('completed', 'tc_c'), toolName: 'desktop.screen.capture' })
+    expect(s.captureState).toBeNull()
+  })
+  it('L1（fix round 1）：liveOrder 截断只逐出最旧终态——awaiting 保留', () => {
+    const s = useToolStore()
+    s.upsertLocal(mkLocal('completed', 't1')); s.upsertLocal(mkLocal('completed', 't2')); s.upsertLocal(mkLocal('completed', 't3'))
+    s.upsertLocal(mkLocal('awaiting_permission', 'wa'))
+    expect(s.liveOrder).toContain('wa')
+    expect(s.liveOrder).not.toContain('t1') // 只逐出最旧终态
+    expect(s.waitingForApproval).toBe(true)
+    expect(s.liveOrder.length).toBe(3)
+  })
+  it('L1b（fix round 1）：裁剪额度不足（非终态多）时 liveOrder 允许短暂 >3', () => {
+    const s = useToolStore()
+    s.upsertLocal(mkLocal('completed', 't1'))
+    s.upsertLocal(mkLocal('awaiting_permission', 'wa1'))
+    s.upsertLocal(mkLocal('awaiting_permission', 'wa2'))
+    s.upsertLocal(mkLocal('running', 'r1'))
+    s.upsertLocal(mkLocal('running', 'r2'))
+    expect(s.liveOrder).toEqual(['wa1', 'wa2', 'r1', 'r2'])
+    expect(s.waitingForApproval).toBe(true)
+  })
+  it('L2（fix round 1）：迟到 awaiting 事件（记录已终态）不写侧信道', () => {
+    const s = useToolStore()
+    s.upsertLocal(mkLocal('completed')) // tc_1 已终态
+    s.upsertLocal({ ...mkLocal('awaiting_permission'), pathSummary: '/late.md', dataFlowNote: 'late' })
+    expect(s.records['tc_1'].status).toBe('completed')
+    expect(s.pendingPathSummary).toBeNull()
+    expect(s.pendingDataFlowNote).toBeNull()
+  })
 })

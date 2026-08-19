@@ -18,7 +18,13 @@ const statusText = computed(() => STATUS_TEXT[props.record.status] ?? props.reco
 const isBackend = computed(() => props.record.runtime === 'backend')
 const awaiting = computed(() => props.record.status === 'awaiting_permission' && !props.readonly)
 const isCapture = computed(() => props.record.toolName === 'desktop.screen.capture')
-const pathSummary = computed(() => toolStore.pendingPathSummary && !props.readonly ? toolStore.pendingPathSummary.pathSummary : undefined)
+// L3（fix round 1）：pathSummary 按 record 的 callId 绑定（pendingPathSummary 侧信道 callId 匹配才展示，
+// 不串到其它卡片）
+const pathSummary = computed(() => {
+  if (props.readonly) return undefined
+  const p = toolStore.pendingPathSummary
+  return p && p.callId === (props.record.desktopCallId ?? props.record.id) ? p.pathSummary : undefined
+})
 </script>
 
 <template>

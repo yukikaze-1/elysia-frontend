@@ -3,7 +3,7 @@
      + 写 Diff（pendingDiff 侧信道）+ 对等按钮（拒绝/允许一次）+ 焦点陷阱（Tab 面板内循环，CyHistoryViewer
      先例）。由卡片「允许此电脑操作」触发打开（props.open，非自动弹出——四问必答流，doc 03 §10）。 -->
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useToolStore } from '../stores/tool.store'
 
 const toolStore = useToolStore()
@@ -14,11 +14,16 @@ const current = computed(() => toolStore.liveOrder.map(id => toolStore.records[i
 const props = defineProps<{ open: boolean }>()   // 卡片「允许此电脑操作」触发打开（非自动弹出——四问必答流，doc 03 §10）
 const open = computed(() => props.open && !!current.value)
 const emit = defineEmits<{ close: [] }>()
-onMounted(() => {
-  document.addEventListener('keydown', onKeydown)
-  if (open.value) { trigger.value = document.activeElement as HTMLElement; nextTick(() => denyBtn.value?.focus()) }
-})
+onMounted(() => { document.addEventListener('keydown', onKeydown) })
 onUnmounted(() => { document.removeEventListener('keydown', onKeydown) })
+// M1（fix round 1）：组件在 CyLiveToolCards 内常驻挂载（:open 切换无 v-if）——onMounted 只执行一次且此时
+// open 恒 false，初始焦点/触发元素记忆必须经 watch(open) 驱动（每次打开都记录 activeElement + 聚焦拒绝按钮）
+watch(() => open.value, (v) => {
+  if (v) {
+    trigger.value = document.activeElement as HTMLElement
+    nextTick(() => denyBtn.value?.focus())
+  }
+})
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && open.value) { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny'); returnToTrigger(); emit('close') }
   if (e.key === 'Tab' && open.value) { trapTab(e) }
