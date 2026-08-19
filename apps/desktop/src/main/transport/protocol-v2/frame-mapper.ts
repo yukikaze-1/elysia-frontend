@@ -100,7 +100,7 @@ export class FrameMapper {
       case 'action':
         return null // 已知忽略（D6A-03：v2 已停发，不告警、不作工具状态源）
       default:
-        return null // 握手/工具/音频等帧由连接层分流
+        return null // 握手等帧由连接层分流（工具/音频帧已由显式 case 处理）
     }
   }
 
