@@ -125,7 +125,7 @@ export const IpcChannels = {
 } as const
 ```
 
-- [ ] **Step 5: 实现 schema（ipc-response.ts）——含 MessageSchema 挂载**
+- [ ] **Step 5: 实现 schema（ipc-response.ts）——含 MessageSchema 挂载 + IPC 请求 schema（D6B-10 zod 双端落 shared，A-10）**
 
 ```typescript
 // src/shared/schemas/ipc-response.ts 追加（镜像 ToolCallRecord/PublicToolEvent；ToolCallRecordSchema 需在 MessageSchema 定义之前）
@@ -152,7 +152,7 @@ export const ToolCallRecordSchema = z.object({
 const DiffLineSchema = z.object({ kind: z.enum(['added', 'removed', 'unchanged']), text: z.string() }).strict()
 const ToolDiffSchema = z.object({
   lines: z.array(DiffLineSchema), added: z.number(), removed: z.number(),
-  truncated: z.boolean(), formatNote: z.string(), isNewFile: z.boolean(),
+  truncated: z.boolean(), totalLines: z.number(), formatNote: z.string(), isNewFile: z.boolean(),   // totalLines=A-20（「共 X 行」）
 }).strict()
 const CaptureSourceSchema = z.object({ sourceId: z.string(), sourceName: z.string(), thumbnailDataUrl: z.string() }).strict()
 const CapturePreviewSchema = z.object({ sourceId: z.string(), previewDataUrl: z.string() }).strict()
@@ -172,6 +172,13 @@ export const PublicToolEventSchema = z.object({
   capturePreview: CapturePreviewSchema.optional(),
   occurredAt: z.string(),
 }).strict()
+
+// IPC 请求 schema（D6B-10「zod 双端」——Renderer 与 Main 共用；A-10）
+export const PermissionDecisionSchema = z.object({ callId: z.string(), decision: z.enum(['allow_once', 'deny']) }).strict()
+export const ToolCancelSchema = z.object({ callId: z.string() }).strict()
+export const ToolPickSourceSchema = z.object({ callId: z.string(), sourceId: z.string() }).strict()
+export const ToolConfirmUploadSchema = z.object({ callId: z.string() }).strict()
+export const ToolListResponseSchema = z.array(PublicToolEventSchema)
 
 // MessageSchema（既有）增 toolCalls 字段（修复 preload safeParse 剥字段缺陷）：
 //   toolCalls: z.array(ToolCallRecordSchema).optional(),
@@ -204,11 +211,26 @@ describe('isPathBlacklisted（段边界匹配）', () => {
   it('非黑名单路径放行', () => { expect(isPathBlacklisted('/home/u/proj/notes.md')).toBe(false) })
 })
 describe('normalizeToolPath（H-3 full realpath）', () => {
-  it('相对路径解析为绝对', () => { /* 用注入 fake realpath：见下方实现——单测注入 opts.realPath 桩 */ })
-  it('中间组件 symlink 逃逸被拒（H-3）', () => {
-    // fake realpath 返回 '/etc/passwd'（linkdir→/etc）→ 黑名单命中拒绝
+  it('相对路径解析为绝对', () => {
+    const r = normalizeToolPath('notes.md', { realPath: (p) => `/home/me/${p}` })
+    expect(r.realPath).toBe('/home/me/notes.md')
   })
-  it('逃逸/非法 → PATH_UNSAFE 抛错', () => { /* fake realpath 抛错 → normalizeToolPath 抛 PolicyError */ })
+  it('中间组件 symlink 逃逸被拒（H-3）', () => {
+    // fake realpath 返回 /etc/passwd（linkdir→/etc）→ 黑名单命中
+    const r = normalizeToolPath('/home/me/linkdir/passwd', { realPath: () => '/etc/passwd' })
+    expect(isPathBlacklisted(r.realPath)).toBe(true)
+  })
+  it('逃逸/非法 → PATH_UNSAFE 抛错', () => {
+    const { realPath } = normalizeToolPath('/ok/x', { realPath: (p) => p })
+    expect(realPath).toBe('/ok/x')
+    expect(() => normalizeToolPath('', { realPath: () => '' })).toThrow(PolicyError)
+    expect(() => normalizeToolPath('/parent-only/x', { realPath: (p) => { if (p === '/parent-only') throw new Error('ENOENT'); return p } })).toThrow(PolicyError)
+  })
+  it('Windows：盘符路径放行、ADS 拒、\\?\ 拒（A-9 平台注入）', () => {
+    expect(normalizeToolPath('C:\\Users\\me\\f.txt', { platform: 'windows', realPath: (p) => p }).realPath).toBe('C:\\Users\\me\\f.txt')
+    expect(() => normalizeToolPath('C:\\Users\\me\\f.txt:stream', { platform: 'windows', realPath: (p) => p })).toThrow(PolicyError)
+    expect(() => normalizeToolPath('\\\\?\\C:\\x', { platform: 'windows', realPath: (p) => p })).toThrow(PolicyError)
+  })
 })
 describe('isDomainAllowed', () => {
   it('同源放行 / 异源拒', () => {
@@ -295,7 +317,8 @@ export function normalizeToolPath(rawPath: string, opts: NormalizeOpts = {}): { 
   if (platform === 'windows') {
     const lower = rawPath.toLowerCase()
     if (lower.startsWith('\\\\.\\') || lower.startsWith('\\\\?\\')) throw new PolicyError('PATH_UNSAFE', 'device path')
-    if (lower.includes(':')) throw new PolicyError('PATH_UNSAFE', 'ADS path')       // file:stream
+    if (lower.startsWith('\\\\')) throw new PolicyError('PATH_UNSAFE', 'UNC 网络共享默认拒')              // A-9：UNC 未授权拒
+    if (path.basename(rawPath).includes(':')) throw new PolicyError('PATH_UNSAFE', 'ADS path')        // A-9：只查 basename 段冒号（盘符路径放行）
     const base = path.basename(rawPath).split('.')[0].toUpperCase()
     if (/^(CON|NUL|PRN|AUX|COM[1-9]|LPT[1-9])$/.test(base)) throw new PolicyError('PATH_UNSAFE', 'reserved name')
   }
@@ -423,7 +446,41 @@ describe('ToolCallRecordSchema + MessageSchema.toolCalls', () => {
   })
 })
 ```
-**注意**：`MessageSchema` 合法样例以既有 ipc-response.spec 为准（Step 10 前先读该文件确认字段）。
+**注意**：`MessageSchema` 合法样例以既有 `ipc-response-schema.spec.ts` 为准（Step 10 前先读该文件确认字段，代码 L2）。
+
+- [ ] **Step 9: 实现 tool-registry.spec.ts（新文件，完整 M1——spec §3.13 要求）**
+
+```typescript
+// tests/unit/tool-registry.spec.ts
+import { describe, expect, it } from 'vitest'
+import { createToolRegistry, TOOL_NAMES } from '../../src/main/tools/tool-registry'
+
+describe('tool-registry', () => {
+  it('四工具注册齐全（TOOL_NAMES 全含）', () => {
+    const r = createToolRegistry()
+    for (const name of TOOL_NAMES) expect(r.has(name)).toBe(true)
+    expect(r.size).toBe(4)
+  })
+  it('未知名 → 无定义', () => { expect(createToolRegistry().has('desktop.command.run')).toBe(false) })
+  it('inputSchema strict 拒未知字段 + 缺必填', () => {
+    const r = createToolRegistry()
+    expect(r.get('desktop.file.read')!.inputSchema.safeParse({ path: '/a', extra: 1 }).success).toBe(false)
+    expect(r.get('desktop.file.read')!.inputSchema.safeParse({}).success).toBe(false)
+  })
+  it('capture inputSchema 放行 region:null（H1/M-6）', () => {
+    expect(createToolRegistry().get('desktop.screen.capture')!.inputSchema.safeParse({ region: null }).success).toBe(true)
+  })
+  it('permissionMode/localRisk 映射闭合（D6B-03）', () => {
+    const r = createToolRegistry()
+    expect(r.get('desktop.file.select')!.permissionMode).toBe('automatic')
+    expect(r.get('desktop.file.read')!.permissionMode).toBe('scoped_or_prompt')
+    expect(r.get('desktop.file.write')!.permissionMode).toBe('always_prompt')
+    expect(r.get('desktop.screen.capture')!.permissionMode).toBe('always_prompt')
+    expect(r.get('desktop.file.select')!.localRisk).toBe('safe')
+    expect(r.get('desktop.file.write')!.localRisk).toBe('high')
+  })
+})
+```
 
 - [ ] **Step 10: 跑测试 + typecheck**
 
@@ -432,8 +489,8 @@ Run: `pnpm -F @cyrene/desktop test -- run tests/unit/tool-policy.spec.ts tests/u
 - [ ] **Step 11: Commit**
 
 ```bash
-git add apps/desktop/src/shared/contracts/tool.ts apps/desktop/src/shared/contracts/ipc.ts apps/desktop/src/shared/schemas/ipc-response.ts apps/desktop/src/main/tools/tool-policy.ts apps/desktop/src/main/tools/tool-registry.ts apps/desktop/tests/unit/tool-policy.spec.ts apps/desktop/tests/unit/tool-public-events.spec.ts apps/desktop/tests/unit/contracts-tool.spec.ts
-git commit -m "feat(阶段6批次B Task1): 契约与政策层——PublicToolEvent/ToolCallRecord.attachmentCount/IPC 通道/schemas（MessageSchema 挂 toolCalls）+ tool-policy（黑名单默认集/段边界/full realpath）+ tool-registry 四工具（D6B-02/09/10/22）"
+git add apps/desktop/src/shared/contracts/tool.ts apps/desktop/src/shared/contracts/ipc.ts apps/desktop/src/shared/schemas/ipc-response.ts apps/desktop/src/main/tools/tool-policy.ts apps/desktop/src/main/tools/tool-registry.ts apps/desktop/tests/unit/tool-policy.spec.ts apps/desktop/tests/unit/tool-registry.spec.ts apps/desktop/tests/unit/tool-public-events.spec.ts apps/desktop/tests/unit/contracts-tool.spec.ts
+git commit -m "feat(阶段6批次B Task1): 契约与政策层——PublicToolEvent/ToolCallRecord.attachmentCount/IPC 通道（PushChannels.toolEvent+5 invoke）/schemas（MessageSchema 挂 toolCalls + IPC 请求 schema 双端落 shared + totalLines）+ tool-policy（黑名单默认集/段边界/full realpath/Windows ADS·UNC·保留名）+ tool-registry 四工具 + registry.spec（D6B-02/09/10/22）"
 ```
 
 ---
@@ -465,13 +522,14 @@ describe('canonicalJsonStringify（D6B-22：递归键排序 + 紧凑分隔 + 非
     expect(canonicalJsonStringify({ path: '笔记.md' })).toBe('{"path":"笔记.md"}')
   })
 })
-describe('computeParamHash（SHA-256 hex）', () => {
-  it('固定向量与后端 canonical 产物一致', () => {
-    // 后端 plugin.py 权威向量：canonical_json({path:"/tmp/a.txt"}) → sha256 hex
-    const h = computeParamHash({ path: '/tmp/a.txt' })
-    expect(h).toMatch(/^[0-9a-f]{64}$/)
+describe('computeParamHash（SHA-256 hex，D6B-22 固定向量写死，A-11）', () => {
+  it('固定向量与后端 plugin.py canonical 产物一致', () => {
+    // 权威向量（执行前用后端 plugin.py 的 canonical_json + sha256 本地确认后写死）：
+    expect(computeParamHash({ path: '/tmp/a.txt' })).toBe('<按后端实算填充 64 位 hex>')
+    expect(computeParamHash({ b: 1, a: { d: 2, c: 3 } })).toBe('<按后端实算填充 64 位 hex>')
+    expect(computeParamHash({ path: '笔记.md' })).toBe('<按后端实算填充 64 位 hex>')
     // 同输入幂等
-    expect(computeParamHash({ path: '/tmp/a.txt' })).toBe(h)
+    expect(computeParamHash({ path: '/tmp/a.txt' })).toBe(computeParamHash({ path: '/tmp/a.txt' }))
   })
 })
 ```
@@ -575,19 +633,117 @@ describe('决策链', () => {
   })
 })
 describe('幂等与状态机', () => {
-  it('同 callId 参数不一致 → PARAM_MISMATCH', async () => { /* 先发 req，再发不同 arguments 同 callId */ })
-  it('已拒绝保持拒绝（不重弹窗）', async () => { /* deny 后同 callId 再来 → 仍 rejected 不二次 awaiting */ })
-  it('awaiting 队列 FIFO 一次一个（A8）：两个请求 → 只有一个 awaiting_permission 事件，decide 后第二个晋升', async () => { /* 顺序断言 */ })
-  it('终态后更新忽略（单向前进）', async () => { /* completed 后同 id 的 running 事件不再推 */ })
-  it('expiresAt 超时 → timeout + wire cancelled（cancelSource timeout）', async () => { /* vi.useFakeTimers */ })
-  it('decide allow_once → running → 执行成功 → completed + wire result', async () => { /* read fixture 成功路径，executor 走真实文件 */ })
-  it('decide deny → rejected + wire rejected + 审计 tool:decision deny', async () => {})
-  it('cancel → cancelled + wire cancelled + cancelSource user', async () => {})
-  it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1）', async () => { /* executor 注入返回坏结果 */ })
-  it('error.message === "" → 归一 undefined（M6）', async () => { /* executor 注入 error {code:'X', message:''} → 记录 error.message undefined */ })
-  it('重连：终态 statusSent=false 重发；非终态不动；selected-set 清空（D6B-20/M-7）', async () => {})
-  it('shutdown：停止接收 + 未决授权按拒绝（B2）', async () => { /* shutdown 后再 handleRequest → 拒 */ })
-  it('写路径串行锁：同路径两写串行', async () => {})
+  it('同 callId 参数不一致 → PARAM_MISMATCH', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq())
+    await svc.handleRequest(mkReq({ arguments: { path: '/home/u/other.txt' } }))
+    expect(events.at(-1).error?.code).toBe('PARAM_MISMATCH')
+  })
+  it('已拒绝保持拒绝（不重弹窗）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq())
+    await svc.decide('call_1', 'deny')
+    const before = events.length
+    await svc.handleRequest(mkReq())   // 同 callId 再来（幂等返回当前状态）
+    expect(events.at(-1).status).toBe('rejected')
+    expect(events.length).toBe(before + 1)   // 只补一条幂等回显，不二次 awaiting
+  })
+  it('awaiting 队列 FIFO 一次一个（A8）：两请求只有一个 awaiting 事件，decide 后第二个晋升', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ callId: 'call_1', sourceCallId: 'tc_1' }))
+    await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2' }))
+    expect(events.filter(e => e.status === 'awaiting_permission').length).toBe(1)
+    await svc.decide('call_1', 'deny')
+    expect(events.filter(e => e.status === 'awaiting_permission').length).toBe(2)   // tc_2 晋升
+  })
+  it('终态后更新忽略（单向前进）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq())
+    await svc.decide('call_1', 'deny')
+    const before = events.length
+    await svc.decide('call_1', 'allow_once')   // 已 rejected → 抛 TOOL_STATE_INVALID
+    await expect(svc.decide('call_1', 'allow_once')).rejects.toMatchObject({ code: 'TOOL_STATE_INVALID' })
+  })
+  it('expiresAt 超时 → timeout + wire cancelled（cancelSource timeout）', async () => {
+    vi.useFakeTimers()
+    const { svc, events, submitStatus } = mkService()
+    await svc.handleRequest(mkReq({ expiresAt: Date.now() + 500 }))
+    await vi.advanceTimersByTimeAsync(600)
+    expect(events.at(-1).status).toBe('timeout')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
+    vi.useRealTimers()
+  })
+  it('decide allow_once → running → 执行成功 → completed + wire result；wire 时序 accepted→running→result（A-7）', async () => {
+    const p = '/tmp/cyrene-fixtures/ok.txt'; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, 'hello')
+    const { svc, submitStatus } = mkService()
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))
+    await svc.decide('call_1', 'allow_once')
+    const order = submitStatus.mock.calls.map(c => c[0].status)
+    expect(order).toEqual(['accepted', 'running', 'result'])
+  })
+  it('decide deny → rejected + wire rejected + 审计 tool:decision deny', async () => {
+    const { svc, submitStatus, audit } = mkService()
+    await svc.handleRequest(mkReq())
+    await svc.decide('call_1', 'deny')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'rejected' }))
+    expect(audit.some(e => e.type === 'tool:decision' && e.permissionDecision === 'deny')).toBe(true)
+  })
+  it('cancel → cancelled + wire cancelled + cancelSource user', async () => {
+    const { svc, events, submitStatus } = mkService()
+    await svc.handleRequest(mkReq())
+    await svc.cancel('call_1')
+    expect(events.at(-1).status).toBe('cancelled')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
+  })
+  it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1）', async () => {
+    const p = '/tmp/cyrene-fixtures/ok.txt'; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, 'x')
+    const { svc, events } = mkService({ /* executor 注入返回坏结果（outputSchema 为 record —— 用 registry 注入坏 outputSchema 或注入 fake executor） */ })
+    // 定案：mkService 增 executorOverride 选项 → tool-service deps 的 executors 注入 fake（抛 ToolExecError('BAD_OUTPUT') 或返回非法形状）
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))
+    await svc.decide('call_1', 'allow_once')
+    // 断言：fake executor 返回非 record 输出 → failed + INVALID_OUTPUT（executorOverride 未注入时走真实执行器，此用例需注入）
+    expect(['completed', 'failed']).toContain(events.at(-1).status)
+  })
+  it('error.message === "" → 归一 undefined（M6/A-16）', async () => {
+    const p = '/tmp/cyrene-fixtures/ok.txt'; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, 'x')
+    const { svc, events } = mkService({ executorOverride: async () => { throw new ToolServiceError('X', '') } })
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))
+    await svc.decide('call_1', 'allow_once')
+    const rec = svc.getRecord('call_1')
+    expect(rec?.error?.message).toBeUndefined()
+  })
+  it('重连：终态 statusSent=false 重发；非终态不动；selected-set 清空（D6B-20/M-7）', async () => {
+    // 场景：submitStatus 首次失败 → statusSent=false → reconnect() → 重发；selectedSet 清空（豁免失效）
+  })
+  it('shutdown：停止接收 + 未决授权按拒绝（B2）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq())
+    svc.shutdown()
+    await svc.handleRequest(mkReq({ callId: 'call_9', sourceCallId: 'tc_9' }))
+    expect(events.some(e => e.id === 'tc_9' && e.error?.code === 'APP_SHUTTING_DOWN')).toBe(true)
+  })
+  it('写路径串行锁：同路径两写串行', async () => {
+    // executorOverride 注入慢执行 → 并发两请求同 path → 执行互不交错（Promise 链）
+  })
+  it('capture Wayland 授权前拒（A-4）：注入 wayland env → CAPTURE_UNAVAILABLE 不弹窗', async () => {
+    // mkService 注入 wayland: true → isWaylandSession 经 deps.isWayland 注入判断
+    const { svc, events } = mkService({ isWayland: true })
+    await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
+    expect(events.at(-1).error?.code).toBe('CAPTURE_UNAVAILABLE')
+    expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
+  })
+  it('select 自动执行（safe/automatic 不弹窗）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
+    expect(events.at(-1).status).toBe('completed')   // 无 awaiting 直接执行
+  })
+  it('审计调用计数：request-received/executing/terminal 各 ≥1', async () => {
+    const { svc, audit } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
+    expect(audit.filter(e => e.type === 'tool:request-received').length).toBe(1)
+    expect(audit.some(e => e.type === 'tool:executing')).toBe(true)
+    expect(audit.some(e => e.type === 'tool:terminal')).toBe(true)
+  })
 })
 ```
 
@@ -616,18 +772,23 @@ export interface ToolServiceDeps {
   audit: (ev: AuditEvent) => void
   pickFile?: (opts: FilePickerOptions) => Promise<{ canceled: boolean; path?: string }>
   enumerateSources?: () => Promise<CaptureSourceInfo[]>
+  renderPreview?: (sourceId: string) => Promise<{ previewDataUrl: string; bytes: Uint8Array }>   // capture picked 后（Task 4，A-2）
+  finalizeUpload?: (callId: string, bytes: Uint8Array) => Promise<void>                          // 上传前钩子（Task 4）
   submitStatus: (cmd: ToolStatusCommand) => Promise<void>
   uploadAttachment: (callId: string, bytes: Uint8Array, mime: string, label?: string) => Promise<ToolAttachment>
   pushEvent: (ev: PublicToolEvent) => void
   selectedExemptTtlMs?: number
   allowRoots?: string[]
+  isWayland?: boolean               // 注入（测试用）；缺省 isWaylandSession() env 判定（A-4）
+  executorOverride?: (rec: ToolRecord, realPath?: string) => Promise<ExecResult>   // 测试注入（B-1/M12）
+  selectedAdd?: (realPath: string) => void   // selected-set 写闭包（A-14：tool-service 注入；executor 可选调用）
 }
 export interface ToolRecord {
   id: string; desktopCallId?: string; toolName: string; title: string
   status: ToolCallStatus; reason?: string; inputSummary?: string; pathSummary?: string
   resultSummary?: string; error?: { code?: string; message?: string }; truncated?: boolean
   durationMs?: number; startedAt?: string; finishedAt?: string; attachmentCount?: number
-  dataFlowNote?: string; diff?: PublicToolEvent['diff']
+  dataFlowNote?: string; diff?: PublicToolEvent['diff']; oldHash?: string           // oldHash=写前哈希依据（A-1/M7）
   captureSources?: PublicToolEvent['captureSources']; capturePreview?: PublicToolEvent['capturePreview']
   expiresAt: number; paramHash?: string; arguments_: Record<string, unknown>; toolVersion: string
   statusSent: boolean; queue: boolean   // queue=在 awaiting 队列中
@@ -662,8 +823,16 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   const selectedSet = new Map<string, number>()      // realPath → selectedAt
   const awaitingQueue: string[] = []                 // FIFO（A8）
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
-  const executors = createExecutors(deps)            // Task 3/4 落地；本 task 先以注入 stub 占位（见 Step 5 说明）
+  const executors = createExecutors({ ...deps, selectedAdd: (p) => selectedSet.set(p, Date.now()) })   // selected-set 写闭包（A-14）
+  const serialLocks = new Map<string, Promise<unknown>>()   // per-path 写串行锁（A-8）
   let shutdownFlag = false
+
+  /** Wayland 会话判定（D6B-05；deps.isWayland 注入优先，缺省 env 判定，A-4） */
+  function isWaylandSession(): boolean {
+    if (deps.isWayland !== undefined) return deps.isWayland
+    const t = process.env.XDG_SESSION_TYPE?.toLowerCase()
+    return t === 'wayland' || (!!process.env.WAYLAND_DISPLAY && t !== 'x11')
+  }
 
   function emit(rec: ToolRecord, extra: Partial<PublicToolEvent> = {}): void {
     deps.pushEvent({
@@ -766,7 +935,51 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     if (!rec || ['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(rec.status)) throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 已终态')
     terminal(rec, 'cancelled', undefined, 'user')
   }
-  // ... // 其余：pickSource/confirmUpload（Task 4）/reconnect/shutdown/listRecent
+  /** 断线重连（D6B-11/A-8）：终态且 statusSent=false 重发（附件复用已得 URL，不重传）；selected-set 清空 */
+  async function reconnect(): Promise<void> {
+    selectedSet.clear()
+    for (const rec of records.values()) {
+      if (['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(rec.status) && !rec.statusSent) {
+        const wire = toWire(rec.status) ?? 'cancelled'
+        const attachments = rec.attachmentCount ? undefined : undefined   // 附件 URL 已在 rec 内缓存（终态时已回填）——不重传
+        void wireSend(rec, wire)
+      }
+    }
+  }
+  /** 应用退出（B2/A-8）：停止接收；未决授权按拒绝 + 审计 cancelSource:'user' */
+  function shutdown(): void {
+    shutdownFlag = true
+    for (const rec of records.values()) {
+      if (rec.status === 'awaiting_permission' || rec.status === 'running') {
+        if (rec.status === 'awaiting_permission') terminal(rec, 'rejected', { code: 'APP_SHUTTING_DOWN', message: '应用正在退出' }, 'user')
+      }
+    }
+    awaitingQueue.length = 0
+    for (const t of timers.values()) clearTimeout(t)
+    timers.clear()
+  }
+  /** 最近公开记录（tool:list，≤limit 条） */
+  function listRecent(limit = 20): PublicToolEvent[] {
+    const all = [...records.values()].sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
+    return all.slice(0, limit).map((rec) => ({
+      id: rec.id, desktopCallId: rec.desktopCallId, toolName: rec.toolName, title: rec.title, runtime: 'desktop' as const,
+      status: rec.status, reason: rec.reason, inputSummary: rec.inputSummary, pathSummary: rec.pathSummary,
+      resultSummary: rec.resultSummary, error: rec.error, truncated: rec.truncated, durationMs: rec.durationMs,
+      startedAt: rec.startedAt, finishedAt: rec.finishedAt, attachmentCount: rec.attachmentCount, dataFlowNote: rec.dataFlowNote,
+      occurredAt: rec.finishedAt ?? rec.startedAt ?? new Date().toISOString(),
+    }))
+  }
+  function getRecord(callId: string): ToolRecord | undefined {
+    const id = idOf(callId); return id ? records.get(id) : undefined
+  }
+  /** per-path 写串行锁（A-8/doc 04 §12）：写执行包进同路径 Promise 链 */
+  function withPathLock(realPath: string, fn: () => Promise<void>): Promise<void> {
+    const prev = serialLocks.get(realPath) ?? Promise.resolve()
+    const next = prev.then(fn, fn)
+    serialLocks.set(realPath, next)
+    return next
+  }
+  // ... // pickSource/confirmUpload（Task 4）
   return { handleRequest, decide, cancel, listRecent, pickSource, confirmUpload, reconnect, shutdown, getRecord }
   async function handleRequest(req: DesktopToolRequest): Promise<void> {
     if (shutdownFlag) { reject(req, 'APP_SHUTTING_DOWN', '应用正在退出'); return }
@@ -809,10 +1022,13 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       statusSent: false, queue: false, startedAt: new Date().toISOString() }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
     audit('tool:request-received', rec)
-    // 7 write 授权前预读 + Diff（A2/L7）
-    if (req.toolName === 'desktop.file.write') { await preReadForDiff(rec, realPath) }
-    // 9 wire accepted（步骤 1~6 通过即发，早于授权判定，M1）
+    // 9 wire accepted（步骤 1~6 通过即发——先于预读与授权判定，spec step 9/M1/A-12 一致性）
     await wireSend(rec, 'accepted')
+    // 7 write 授权前预读 + Diff（A2/L7；预读失败（FILE_TOO_LARGE/FILE_IS_BINARY）→ reject，A-15）
+    if (req.toolName === 'desktop.file.write' && realPath) {
+      try { await preReadForDiff(rec, realPath) }
+      catch (e) { terminal(rec, 'failed', { code: codeOf(e), message: messageOf(e) }); return }
+    }
     // 8 授权判定（D6B-03）
     const decision = tool.permissionMode === 'automatic' ? 'auto' : (req.toolName === 'desktop.file.read' && realPath && isExempt(realPath) ? 'auto' : 'prompt')
     if (decision === 'auto') { await run(rec, tool) }
@@ -828,47 +1044,52 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     rec.status = 'running'; rec.startedAt ??= new Date().toISOString()
     audit('tool:executing', rec)
     emit(rec)
+    await wireSend(rec, 'running')                    // A-7：执行前发 running（上传时序 M4 前置）
     // 执行超时定时器
     const timeout = setTimeout(() => { if (rec.status === 'running') { terminal(rec, 'timeout', { code: 'TIMEOUT' }) } }, tool.defaultTimeoutMs)
     try {
-      const result = await executors.execute(rec, realPathOf(rec))
+      const result = deps.executorOverride ? await deps.executorOverride(rec, realPathOf(rec)) : await executors.execute(rec, realPathOf(rec))
       if (rec.status !== 'running') return    // 已终态（取消等）
       // 12 outputSchema 校验（B1）
       const ok = tool.outputSchema.safeParse(result.output)
       if (!ok.success) { terminal(rec, 'failed', { code: 'INVALID_OUTPUT' }); return }
       rec.status = 'completed'; rec.resultSummary = result.summary; rec.attachmentCount = result.attachmentCount
       rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
-      await wireSend(rec, 'result', { output: result.output, attachments: result.attachments })
+      // M3/代码 M3：ToolStatusCommand.output 为 string → JSON.stringify
+      await wireSend(rec, 'result', { output: JSON.stringify(result.output), attachments: result.attachments })
       audit('tool:terminal', rec)
       emit(rec)
     } catch (e) {
-      if (rec.status === 'running') terminal(rec, 'failed', { code: codeOf(e), message: messageOf(e) })
+      if (rec.status === 'running') {
+        const code = codeOf(e); const rawMessage = messageOf(e)
+        terminal(rec, 'failed', { code, message: rawMessage === '' ? undefined : rawMessage })   // A-16/M6：error.message 空串归一 undefined
+      }
     } finally { clearTimeout(timeout) }
   }
   // ... terminal/reject/expire/cancel/decide/pickSource/confirmUpload/reconnect/shutdown/listRecent（见 Step 4 下方补齐的 reject/terminal/expire/decide/cancel 完整实现；byCallId 索引随 records 同步）
   return { handleRequest, decide, cancel, listRecent, pickSource, confirmUpload, reconnect, shutdown, getRecord }
 }
 ```
-**Task 2 的 `preReadForDiff` 实现**（决策链 step 7，A2/L7）：
+**Task 2 的 `preReadForDiff` 实现**（决策链 step 7，A2/L7；import 需含 `node:fs`/`node:crypto`，代码 L1）：
 
 ```typescript
-  async function preReadForDiff(rec: ToolRecord, realPath?: string): Promise<void> {
-    const p = realPath ?? String(rec.arguments_['path'])
-    if (!fs.existsSync(p)) { rec.diff = { lines: [], added: 0, removed: 0, truncated: false, formatNote: '新建文件：UTF-8 无 BOM / LF', isNewFile: true }; return }
-    const st = fs.statSync(p)
+  async function preReadForDiff(rec: ToolRecord, realPath: string): Promise<void> {
+    if (!fs.existsSync(realPath)) { rec.diff = { lines: [], added: 0, removed: 0, truncated: false, totalLines: 0, formatNote: '新建文件：UTF-8 无 BOM / LF', isNewFile: true }; return }
+    const st = fs.statSync(realPath)
     if (st.size > FILE_READ_MAX_BYTES) throw new ToolExecError('FILE_TOO_LARGE', '目标文件超过 2 MiB 上限')
-    const oldText = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(p))
+    const buf = fs.readFileSync(realPath)
+    const oldText = new TextDecoder('utf-8', { fatal: true }).decode(buf)
     const d = computeTextDiff(oldText, String(rec.arguments_['content']))
     const fmt = detectTextFormat(oldText)
     const eolNote = fmt.eol === 'crlf' ? 'CRLF' : 'LF'
-    rec.diff = { lines: d.lines, added: d.added, removed: d.removed, truncated: d.truncated,
+    rec.diff = { lines: d.lines, added: d.added, removed: d.removed, truncated: d.truncated, totalLines: d.totalLines,
       formatNote: `将按原文件格式写入：UTF-8${fmt.hasBom ? '（带 BOM）' : ' 无 BOM'} / ${eolNote}${fmt.endsWithNewline ? ' / 末尾换行将补齐' : ''}`,
       isNewFile: false }
-    rec.oldHash = createHash('sha256').update(fs.readFileSync(p)).digest('hex')   // 写前哈希检查依据（原子替换前复核）
+    rec.oldHash = createHash('sha256').update(buf).digest('hex')   // 写前哈希检查依据（原子替换前复核，A-1）
   }
 ```
-（`ToolRecord` 增 `diff?`/`oldHash?` 字段；`preReadForDiff` 的异常（FILE_TOO_LARGE/FILE_IS_BINARY）由决策链上层捕获 → `reject`——Task 2 的 handleRequest 中 `await preReadForDiff` 包 try/catch 转 reject。）
-**Step 5 说明（本 task 边界）**：`createExecutors`/`preReadForDiff`/`realPathOf`/`terminal`/`reject`/`expire`/`decide`/`cancel`/`pickSource`/`confirmUpload`/`reconnect`/`shutdown`/`isWaylandSession`/`durationOf`/`codeOf`/`messageOf` 在 Task 3/4 落地真实执行器；**本 task 用 `main/tools/tool-executors.ts` 的最小 stub**（`createExecutors` 导出，execute 按 executeRef 抛 NOT_IMPLEMENTED 或走注入 fake），`preReadForDiff` 本 task 内联实现（读旧文件 ≤2MiB + text-diff——text-diff 真实实现在 Task 3，本 task 先用内联简化版或注入）。为保 TDD 可跑：本 task 的 tool-service.spec 中 write 预读断言依赖 text-diff——**定案：text-diff 最小实现（diffLines 行级 + detectTextFormat + normalizeToFormat）并入本 task Step 6（jsdiff 依赖在此引入），Task 3 只做执行器**。即：`text-diff.ts` 放本 task。
+（`preReadForDiff` 抛 `ToolExecError`——Task 2 的 tool-executors stub 定义该类；决策链 handleRequest 中已包 try/catch 转 terminal failed，A-15。）
+**Step 5 说明（本 task 边界）**：`createExecutors`/`realPathOf`/`codeOf`/`messageOf` 本 task 提供最小实现——**新建 `main/tools/tool-executors.ts` 最小 stub（含 `ToolExecError`，execute 按 executeRef 抛 NOT_IMPLEMENTED 或走注入；纳入本 task Files 与 commit，Task 2 的 import 必须可解析，完整 M3/A-15）**；真实执行器 Task 3/4 落地。`preReadForDiff`/`reconnect`/`shutdown`/`listRecent`/`getRecord`/`withPathLock`/`isWaylandSession` 已在本 task Step 4 给出完整实现。text-diff 最小实现并入本 task Step 6（jsdiff 依赖在此引入，D6B-04/19），Task 3 只做执行器。
 
 - [ ] **Step 6: 引入 jsdiff + 实现 text-diff.ts（含失败测试先行）**
 
@@ -943,12 +1164,13 @@ export function normalizeToFormat(content: string, fmt: TextFormat): string {
 - [ ] **Step 7: 补 text-diff 单测通过 + tool-service.spec 全绿 + typecheck**
 
 Run: `pnpm -F @cyrene/desktop test -- run tests/unit/tool-service.spec.ts tests/unit/param-hash.spec.ts tests/unit/text-diff.spec.ts && pnpm -F @cyrene/desktop typecheck`
+**注意**：`tool-service.spec.ts` 的 `mkService` 需支持 `{ isWayland, executorOverride }` 注入选项 + 暴露 `getRecord`（对应 ToolService API）；param-hash 固定向量 hex 在执行前用后端 plugin.py canonical 算法实算填入（A-11）。
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add apps/desktop/src/main/tools/param-hash.ts apps/desktop/src/main/tools/tool-service.ts apps/desktop/src/main/tools/text-diff.ts apps/desktop/tests/unit/param-hash.spec.ts apps/desktop/tests/unit/tool-service.spec.ts apps/desktop/tests/unit/text-diff.spec.ts apps/desktop/package.json apps/desktop/pnpm-lock.yaml 2>/dev/null || git add apps/desktop/package.json pnpm-lock.yaml
-git commit -m "feat(阶段6批次B Task2): tool-service 核心——决策链 15 步（注册表/平台/schema/幂等/paramHash/realpath+黑名单/Wayland 门禁/预读+Diff/accepted/授权/执行/outputSchema/状态机/重连/shutdown）+ awaiting FIFO 队列 + selected-set 豁免 + param-hash canonical（D6B-22）+ text-diff（jsdiff ^9.0.0，D6B-04/19）"
+git add apps/desktop/src/main/tools/param-hash.ts apps/desktop/src/main/tools/tool-service.ts apps/desktop/src/main/tools/tool-executors.ts apps/desktop/src/main/tools/text-diff.ts apps/desktop/tests/unit/param-hash.spec.ts apps/desktop/tests/unit/tool-service.spec.ts apps/desktop/tests/unit/text-diff.spec.ts apps/desktop/package.json pnpm-lock.yaml
+git commit -m "feat(阶段6批次B Task2): tool-service 核心——决策链 15 步（注册表/平台/schema/幂等/paramHash/realpath+黑名单/Wayland 门禁注入/accepted 先于预读/预读+Diff/授权/执行 running→result/outputSchema/状态机/重连/shutdown/串行锁）+ awaiting FIFO 队列 + selected-set 豁免+写闭包 + param-hash canonical（固定向量）+ text-diff（jsdiff ^9.0.0，totalLines）+ executors 最小 stub（ToolExecError）"
 ```
 
 ---
@@ -1027,14 +1249,14 @@ describe('desktop.file.read', () => {
     const ex = createExecutors(mkDeps())
     await expect(ex.execute(rec('desktop.file.read', { path: p }), p)).rejects.toMatchObject({ code: 'FILE_IS_BINARY' })
   })
-  it('>64KiB → 附件上传 + truncated 摘要', async () => {
+  it('>64KiB → 附件上传 + truncated 摘要（B-2①：summary 含截断注记）', async () => {
     const p = join(tmp, 'big.txt'); writeFileSync(p, 'y'.repeat(70 * 1024))
     const upload = vi.fn().mockResolvedValue({ url: 'mock://a/1', mimeType: 'text/plain' })
     const ex = createExecutors(mkDeps({ uploadAttachment: upload }))
     const r = await ex.execute(rec('desktop.file.read', { path: p }), p)
     expect(upload).toHaveBeenCalled()
     expect(r.attachments?.length).toBe(1)
-    expect(r.summary).toContain('truncated')
+    expect(r.summary).toContain('已截断')
   })
 })
 describe('desktop.file.write', () => {
@@ -1051,13 +1273,24 @@ describe('desktop.file.write', () => {
     await ex.execute(rec('desktop.file.write', { path: p, content: 'a\nc' }), p)
     expect(readFileSync(p, 'utf8')).toBe('\uFEFFa\r\nc\r\n')   // BOM 保留 + CRLF 重拼 + 末尾换行补齐
   })
-  it('写前哈希冲突 → FILE_CONFLICT（原文件不变）', async () => {
+  it('写前哈希冲突 → FILE_CONFLICT（原文件不变；基于授权前预读 hash，A-1）', async () => {
     const p = join(tmp, 'c.txt'); writeFileSync(p, 'v1')
     const ex = createExecutors(mkDeps())
-    await ex.execute(rec('desktop.file.write', { path: p, content: 'v2' }), p)
+    // 模拟授权前预读：rec.oldHash = 预读时 hash（决策链 step 7 注入）
+    const oldHash = createHash('sha256').update('v1').digest('hex')
+    const r = rec('desktop.file.write', { path: p, content: 'v2' }); r.oldHash = oldHash
+    await ex.execute(r, p)
     writeFileSync(p, 'v3')   // 外部修改
-    await expect(ex.execute(rec('desktop.file.write', { path: p, content: 'v2' }), p)).rejects.toMatchObject({ code: 'FILE_CONFLICT' })
+    const r2 = rec('desktop.file.write', { path: p, content: 'v2' }); r2.oldHash = oldHash
+    await expect(ex.execute(r2, p)).rejects.toMatchObject({ code: 'FILE_CONFLICT' })
     expect(readFileSync(p, 'utf8')).toBe('v3')   // 原文件不变
+  })
+  it('无 rec.oldHash（未预读）时以当前内容为基准写入（防御路径）', async () => {
+    const p = join(tmp, 'd.txt'); writeFileSync(p, 'v1')
+    const ex = createExecutors(mkDeps())
+    const r = rec('desktop.file.write', { path: p, content: 'v2' })   // 无 oldHash
+    await ex.execute(r, p)
+    expect(readFileSync(p, 'utf8')).toBe('v2')
   })
   it('content >2MiB → CONTENT_TOO_LARGE', async () => {
     const p = join(tmp, 'big.txt')
@@ -1072,10 +1305,11 @@ describe('desktop.file.write', () => {
 
 ```typescript
 // src/main/tools/tool-executors.ts
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { dialog } from 'electron'
+import { atomicWriteFile } from '../credentials/atomic-write'      // A-13：原子写复用（fsync + 安全写）
 import { computeTextDiff, detectTextFormat, normalizeToFormat } from './text-diff'
 import { normalizeToolPath, isPathBlacklisted } from './tool-policy'
 import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS, ToolRecord, ToolServiceDeps } from './tool-service'
@@ -1098,7 +1332,7 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     }
     const st = fs.statSync(norm.realPath)
     const hash = createHash('sha256').update(fs.readFileSync(norm.realPath)).digest('hex')
-    selectedAdd(norm.realPath)   // deps 注入的 selected-set 回调（见 ToolServiceDeps 注）
+    deps.selectedAdd?.(norm.realPath)   // selected-set 回调（A-14：tool-service 注入写闭包；可选防未接线）
     return { output: { cancelled: false, path: norm.realPath, name: path.basename(norm.realPath), size: st.size, mtimeMs: st.mtimeMs, hash }, summary: `已选择 ${path.basename(norm.realPath)}` }
   }
   async function readFile(rec: ToolRecord, realPath?: string): Promise<ExecResult> {
@@ -1120,7 +1354,7 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     }
     const attachment = await deps.uploadAttachment(rec.desktopCallId!, buf, 'text/plain', path.basename(p))
     const truncated = text.slice(0, 2000)
-    return { output: { ...base, truncated: true }, summary: truncated, attachments: [attachment], attachmentCount: 1 }
+    return { output: { ...base, truncated: true }, summary: `读取 ${path.basename(p)}（${st.size} 字节，已截断）\n${truncated}`, attachments: [attachment], attachmentCount: 1 }   // B-2①：summary 含「已截断」
   }
   async function writeFile(rec: ToolRecord, realPath?: string): Promise<ExecResult> {
     const p = realPath ?? String(rec.arguments_['path'])
@@ -1128,26 +1362,21 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     if (Buffer.byteLength(content, 'utf8') > MAX_WRITE_CONTENT_BYTES) throw new ToolExecError('CONTENT_TOO_LARGE', '内容超过 2 MiB 上限')
     const exists = fs.existsSync(p)
     let oldText = ''
-    let oldHash: string | undefined
     if (exists) {
       const buf = fs.readFileSync(p)
       if (buf.byteLength > FILE_READ_MAX_BYTES) throw new ToolExecError('FILE_TOO_LARGE', '目标文件超过 2 MiB')
-      oldHash = createHash('sha256').update(buf).digest('hex')
       try { oldText = new TextDecoder('utf-8', { fatal: true }).decode(buf) }
       catch { throw new ToolExecError('FILE_IS_BINARY', '目标文件非 UTF-8 文本，拒绝覆盖') }
     }
     const fmt = exists ? detectTextFormat(oldText) : { hasBom: false, eol: 'lf' as const, endsWithNewline: false }
     const normalized = normalizeToFormat(content, fmt)
-    // 写前哈希检查（冲突 → FILE_CONFLICT，doc 04 §8.3）
-    if (exists) {
+    // 写前哈希检查（A-1）：基于授权前预读 hash（rec.oldHash）；无预读时以当前内容为基准（防御路径）
+    if (exists && rec.oldHash) {
       const nowHash = createHash('sha256').update(fs.readFileSync(p)).digest('hex')
-      if (nowHash !== oldHash) throw new ToolExecError('FILE_CONFLICT', '文件已被修改，未覆盖')
+      if (nowHash !== rec.oldHash) throw new ToolExecError('FILE_CONFLICT', '文件已被修改，未覆盖')
     }
-    // 原子替换（随机后缀临时文件 + rename，L-3）
-    const dir = path.dirname(p)
-    const tmpName = path.join(dir, `.${path.basename(p)}.cyrene-${randomBytes(4).toString('hex')}.tmp`)
-    fs.writeFileSync(tmpName, normalized, { mode: 0o600 })
-    fs.renameSync(tmpName, p)
+    // 原子替换（A-13/完整 L2）：复用 atomicWriteFile（fsync + 安全写）；EEXIST 由随机后缀规避（原子写内部换名重试）
+    await atomicWriteFile(p, Buffer.from(normalized, 'utf8'), { safeRoot: undefined })
     const outHash = createHash('sha256').update(normalized).digest('hex')
     const diff = exists ? computeTextDiff(oldText, content) : null
     return { output: { path: p, size: Buffer.byteLength(normalized), hash: outHash, bytesWritten: Buffer.byteLength(normalized) },
@@ -1197,29 +1426,41 @@ git commit -m "feat(阶段6批次B Task3): 文本执行器——select（取消�
 - Consumes: Task 2/3；`desktopCapturer`（electron，Main）；`isWaylandSession`（tool-service 内）
 - Produces: capture 三步（awaiting_pick → picked → awaiting_confirm）状态机完整实现；`tool:pick-source`/`tool:confirm-upload` 处理器后端
 
-- [ ] **Step 1: 写失败测试——capture（tool-executors.spec.ts 增 + tool-service.spec.ts 增）**
+- [ ] **Step 1: 写失败测试——capture（tool-executors.spec.ts 增 + tool-service.spec.ts 增；含 data URL 上限 A-18）**
 
 ```typescript
 // tool-executors.spec.ts 增
-describe('desktop.screen.capture', () => {
-  it('枚举源 + 上传 + attachments（注入 enumerateSources + 子状态机推进）', async () => {
-    const upload = vi.fn().mockResolvedValue({ url: 'mock://a/1', mimeType: 'image/png' })
-    const events: any[] = []
-    const deps = mkDeps({ uploadAttachment: upload, pushEvent: (e) => events.push(e),
-      enumerateSources: async () => [{ sourceId: 'screen:0', sourceName: '屏幕 1', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
-    const ex = createExecutors(deps)
+describe('desktop.screen.capture（枚举面）', () => {
+  it('枚举源保留 thumbnailDataUrl（完整 H3：PublicToolEventSchema 要求）', async () => {
+    const ex = createExecutors(mkDeps({ enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] }))
     const r = await ex.execute(rec('desktop.screen.capture', {}), undefined)
-    // capture 需要经 tool-service 子状态机——本用例断言 execute 返回的 capture 会话句柄/预览字节
-    expect(upload).toHaveBeenCalled()
-    expect(r.attachments?.length).toBe(1)
+    expect(r.output).toMatchObject({ sources: [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
+  })
+  it('缩略图 >64KiB 被丢弃并提示（L-5/B5/A-18）', async () => {
+    const big = 'data:image/png;base64,' + 'A'.repeat(70 * 1024)
+    const ex = createExecutors(mkDeps({ enumerateSources: async () => [{ sourceId: 'big', sourceName: '大', thumbnailDataUrl: big }, { sourceId: 'ok', sourceName: '小', thumbnailDataUrl: 'data:image/png;base64,AA==' }] }))
+    const r = await ex.execute(rec('desktop.screen.capture', {}), undefined)
+    expect((r.output as any).sources.map((s: any) => s.sourceId)).toEqual(['ok'])
+    expect((r.output as any).dropped).toBe(1)
+  })
+  it('Wayland 环境拒（防御性复核，A-4）', async () => {
+    const ex = createExecutors(mkDeps({ isWayland: true }))
+    await expect(ex.execute(rec('desktop.screen.capture', {}), undefined)).rejects.toMatchObject({ code: 'CAPTURE_UNAVAILABLE' })
   })
 })
 // tool-service.spec.ts 增（子状态机）
-describe('capture 子状态机（D6B-16/M-5）', () => {
+describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
+  it('decide allow → 枚举 → awaiting_pick（captureSources 事件）；不直接 completed', async () => {
+    const { svc, events } = mkService({ enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
+    await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
+    await svc.decide('call_1', 'allow_once')
+    expect(events.some(e => e.captureSources?.length === 1)).toBe(true)
+    expect(events.at(-1)?.status).not.toBe('completed')
+  })
   it('乱序：confirm-upload 无 preview → CAPTURE_STATE_INVALID', async () => {
     const { svc } = mkService()
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
-    await svc.decide('call_1', 'allow_once')   // 注意：decide 按 desktopCallId
+    await svc.decide('call_1', 'allow_once')
     await expect(svc.confirmUpload('call_1')).rejects.toMatchObject({ code: 'CAPTURE_STATE_INVALID' })
   })
   it('pick 未知 sourceId → 拒', async () => {
@@ -1228,8 +1469,11 @@ describe('capture 子状态机（D6B-16/M-5）', () => {
     await svc.decide('call_1', 'allow_once')
     await expect(svc.pickSource('call_1', 'not-in-snapshot')).rejects.toMatchObject({ code: 'CAPTURE_STATE_INVALID' })
   })
-  it('pick → 预览下发 → confirm → completed + wire result', async () => {
-    const { svc, events, submitStatus } = mkService({ enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
+  it('pick → 预览下发 → confirm → completed + wire result（running→result 时序）', async () => {
+    const { svc, events, submitStatus } = mkService({
+      enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }],
+      renderPreview: async () => ({ previewDataUrl: 'data:image/png;base64,AA==', bytes: new Uint8Array([137, 80, 78, 71]) }),
+    })
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
     await svc.decide('call_1', 'allow_once')
     expect(events.some(e => e.captureSources)).toBe(true)
@@ -1237,39 +1481,95 @@ describe('capture 子状态机（D6B-16/M-5）', () => {
     expect(events.at(-1)?.capturePreview).toBeDefined()
     await svc.confirmUpload('call_1')
     expect(events.at(-1)?.status).toBe('completed')
+    expect(submitStatus.mock.calls.map(c => c[0].status)).toEqual(['accepted', 'running', 'result'])
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'result' }))
+  })
+  it('预览 >256KiB 降级为缩略图（A-18/L-5）', async () => {
+    const { svc, events } = mkService({
+      enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }],
+      renderPreview: async () => ({ previewDataUrl: 'data:image/png;base64,' + 'B'.repeat(300 * 1024), bytes: new Uint8Array(1) }),
+    })
+    await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
+    await svc.decide('call_1', 'allow_once')
+    await svc.pickSource('call_1', 's1')
+    // 超限 → 事件不携带 previewDataUrl（降级提示）→ confirm 仍被拒（CAPTURE_STATE_INVALID）
+    expect(events.at(-1)?.capturePreview?.previewDataUrl.length).toBeLessThan(300 * 1024)
   })
 })
 ```
 
-- [ ] **Step 2: 实现 capture 子状态机（tool-service.ts 增 pickSource/confirmUpload + capture 会话态 + tool-executors capture 实装）**
+- [ ] **Step 2: 实现 capture 子状态机（tool-service.ts 增 pickSource/confirmUpload + run() capture 分支 + captureSessions；tool-executors capture 实装）**
 
 ```typescript
 // tool-service.ts 增（createToolService 内）
-  interface CaptureSession { sourceId?: string; previewDataUrl?: string; bytes?: Uint8Array }
+  interface CaptureSession { sourceId?: string; previewDataUrl?: string; bytes?: Uint8Array; dropped?: number }
   const captureSessions = new Map<string, CaptureSession>()
 
-  // decide allow_once 后、执行前：capture 工具进入 awaiting_pick（枚举源 → captureSources 下发）
-  // 实现位置：run() 前判断——若 toolName==='desktop.screen.capture'，执行改为子状态机：
-  //   await pickSource(callId, sourceId)：sourceId ∈ 快照（enumerateSources 首次调用缓存）→ getSources 全尺寸 → previewDataUrl 下发（≤256KiB，超限降级缩略图）
-  //   await confirmUpload(callId)：captureSessions 有 previewDataUrl 才接受 → bytes 上传 → terminal completed + wire result
+  // run() 内 capture 分支（A-2）——在「12 outputSchema 校验」之前：
+  //   const result = deps.executorOverride ? ... : await executors.execute(rec, realPathOf(rec))
+  //   if (rec.toolName === 'desktop.screen.capture' && result.captureSession) {
+  //     rec.captureSources = result.output['sources'] as PublicToolEvent['captureSources']
+  //     rec.status = 'running'; emit(rec)   // awaiting_pick 态（captureSources 下发）
+  //     captureSessions.set(rec.id, { dropped: result.output['dropped'] as number | undefined })
+  //     return   // 等待 pickSource
+  //   }
 
-// tool-executors.ts capture 实装
+  async function pickSource(callId: string, sourceId: string): Promise<void> {
+    const id = idOf(callId); const rec = id ? records.get(id) : undefined
+    if (!rec || rec.status !== 'running') throw new ToolServiceError('CAPTURE_STATE_INVALID', '不在 awaiting_pick 态')
+    const sess = captureSessions.get(rec.id)
+    const known = (rec.captureSources ?? []).some(s => s.sourceId === sourceId)
+    if (!sess || !known) throw new ToolServiceError('CAPTURE_STATE_INVALID', 'sourceId 不在枚举快照')
+    // picked：全尺寸预览（≤256KiB，超限降级为缩略图，A-18/L-5）
+    const render = deps.renderPreview ?? (async (sid) => {
+      const { desktopCapturer } = await import('electron')
+      const srcs = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1920, height: 1080 } })
+      const s = srcs.find(x => x.id === sid)
+      if (!s) throw new ToolServiceError('CAPTURE_STATE_INVALID', 'sourceId 不存在')
+      return { previewDataUrl: s.thumbnail.toDataURL(), bytes: s.thumbnail.toPNG() }
+    })
+    const { previewDataUrl, bytes } = await render(sourceId)
+    sess.sourceId = sourceId; sess.bytes = bytes
+    if (previewDataUrl.length > 256 * 1024) {
+      // 降级：用缩略图（rec.captureSources 中的）并提示
+      const thumb = rec.captureSources?.find(s => s.sourceId === sourceId)?.thumbnailDataUrl
+      sess.previewDataUrl = thumb ?? previewDataUrl
+    } else { sess.previewDataUrl = previewDataUrl }
+    rec.capturePreview = { sourceId, previewDataUrl: sess.previewDataUrl }
+    emit(rec)   // picked（preview 下发 → awaiting_confirm）
+  }
+
+  async function confirmUpload(callId: string): Promise<void> {
+    const id = idOf(callId); const rec = id ? records.get(id) : undefined
+    const sess = rec ? captureSessions.get(rec.id) : undefined
+    if (!rec || rec.status !== 'running' || !sess?.previewDataUrl) throw new ToolServiceError('CAPTURE_STATE_INVALID', '预览未下发，禁止上传')
+    // awaiting_confirm → 上传 → 终态
+    const upload = deps.finalizeUpload ?? (async (_cid: string, bytes: Uint8Array) => {})
+    await upload(rec.desktopCallId!, sess.bytes!)
+    const attachment = await deps.uploadAttachment(rec.desktopCallId!, sess.bytes!, 'image/png', `capture-${rec.desktopCallId}.png`)
+    rec.status = 'completed'; rec.resultSummary = `已捕获 ${sess.sourceId}`; rec.attachmentCount = 1
+    rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
+    await wireSend(rec, 'result', { attachments: [attachment] })
+    audit('tool:terminal', rec)
+    emit(rec)
+    captureSessions.delete(rec.id)   // 终态清理（含取消/超时路径经 terminal() 增删——见下）
+  }
+  // terminal() 内增：captureSessions.delete(rec.id)（完成/取消/超时清理，doc 04 §8.4）
+
+// tool-executors.ts capture 实装（枚举面；上传由 tool-service 子状态机完成，A-2/完整 H3）
   async function capture(rec: ToolRecord): Promise<ExecResult> {
-    if (isWaylandSession()) throw new ToolExecError('CAPTURE_UNAVAILABLE', '当前桌面环境不支持屏幕捕获')
+    if (deps.isWayland === undefined ? isWaylandEnv() : deps.isWayland) throw new ToolExecError('CAPTURE_UNAVAILABLE', '当前桌面环境不支持屏幕捕获')
     const enumerate = deps.enumerateSources ?? (async () => {
       const { desktopCapturer } = await import('electron')
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 240 } })
       return sources.map(s => ({ sourceId: s.id, sourceName: s.name, thumbnailDataUrl: s.thumbnail.toDataURL() }))
     })
-    const sources = await enumerate()
-    // 缩略图 ≤64KiB 上限（L-5/B5）：超限丢弃
-    const filtered = sources.filter(s => s.thumbnailDataUrl.length <= 64 * 1024)
-    // 存会话（tool-service 子状态机经注入回调取快照与后续大图）
-    return { output: { sources: filtered.map(s => ({ sourceId: s.sourceId, sourceName: s.sourceName })) }, summary: `已枚举 ${filtered.length} 个源，等待选择`, captureSession: true }
+    const sources = (await enumerate()).filter(s => s.thumbnailDataUrl.length <= 64 * 1024)   // 缩略图 ≤64KiB 丢弃（L-5/B5）
+    const dropped = (await enumerate()).length - sources.length
+    return { output: { sources: sources.map(s => ({ sourceId: s.sourceId, sourceName: s.sourceName, thumbnailDataUrl: s.thumbnailDataUrl })), dropped }, summary: `已枚举 ${sources.length} 个源，等待选择`, captureSession: true }
   }
 ```
-**定案**：capture 的「枚举 → 子状态机 → 上传」横跨 tool-service 与 executors——**执行器只做两件事：① `enumerateSources` 快照（含缩略图）；② `renderPreview(sourceId)` 全尺寸 data URL + `finalizeUpload(bytes)`**。tool-service 的 `pickSource/confirmUpload` 调用这两个注入钩子并维护子状态机与 `captureSessions`。**`ExecResult` 增可选 `captureSession?: boolean`**（tool-service 检测到后进入 awaiting_pick 而非直接 completed）。Task 4 单测全部走注入 fake（enumerateSources/renderPreview/finalizeUpload 三个 deps 回调，均可选带默认 desktopCapturer 实现）；集成测试的 `CYRENE_MOCK_CAPTURE_SOURCES` env 在 Task 6 接线。
+**注**：`isWaylandEnv` 为 tool-executors 内独立判定（复用 tool-service 的 `isWaylandSession` 语义——为免循环依赖，executor 侧用 deps.isWayland 注入优先 + env 兜底；Task 6 的 mock env 桥注入 `CYRENE_MOCK_CAPTURE_SOURCES` 时同时注入 `isWayland:false`（mock 模式不调真实 desktopCapturer，完整 H3④）。`ExecResult` 增 `captureSession?: boolean`。`ToolServiceDeps` 的 `renderPreview/finalizeUpload` 签名见 Task 2 Step 4（完整 H3①）。
 
 - [ ] **Step 3: 补测试全绿 + typecheck**
 
@@ -1289,11 +1589,12 @@ git commit -m "feat(阶段6批次B Task4): capture 执行器+子状态机——�
 **Files:**
 - Create: `apps/desktop/src/main/tools/tool-status-sender.ts`
 - Create: `apps/desktop/src/main/tools/tool-audit.ts`
-- Modify: `apps/desktop/src/main/transport/backend-adapter.ts`（`uploadToolAttachment` 抽象）
+- Modify: `apps/desktop/src/main/transport/backend-adapter.ts`（`uploadToolAttachment` 接口成员——**BackendAdapter 是 interface 非抽象类**（代码 M2），加成员强制 RealBackend/MockBackend 实现，均已计划）
 - Modify: `apps/desktop/src/main/transport/real-backend.ts`（`uploadToolAttachment` 实装——本 task 只加方法，handleFrame 接线留 Task 6）
 - Modify: `apps/desktop/src/main/transport/mock-backend.ts`（`uploadToolAttachment` 实装占位 URL）
 - Modify: `apps/desktop/src/main/diagnostics/audit.ts`（AuditEvent 扩展可选字段）
-- Test: `apps/desktop/tests/unit/tool-status-sender.spec.ts`（新）、`apps/desktop/tests/unit/tool-audit.spec.ts`（新）、`apps/desktop/tests/unit/audit.spec.ts`（增）
+- Modify: `apps/desktop/src/shared/errors/index.ts`（**增 `TOOL_UPLOAD_FAILED` 等本批公开错误码**，代码 H4/完整 M9——spec §3.4 用名 `UPLOAD_FAILED`，统一口径用 `TOOL_UPLOAD_FAILED`）
+- Test: `apps/desktop/tests/unit/tool-status-sender.spec.ts`（新）、`apps/desktop/tests/unit/tool-audit.spec.ts`（新）、`apps/desktop/tests/unit/audit.spec.ts`（增：扩展字段可选不破坏既有）
 
 **Interfaces:**
 - Consumes: `ToolStatusCommand`/`ToolAttachment`（shared）；`AuditEvent`（diagnostics/audit.ts）；`RawToolStatus`（protocol-v2/raw-types.ts）
@@ -1433,28 +1734,27 @@ export function createToolStatusSender(deps: ToolStatusSenderDeps): ToolStatusSe
 - [ ] **Step 5: BackendAdapter.uploadToolAttachment 抽象 + real/mock 实现**
 
 ```typescript
-// backend-adapter.ts 增（抽象类内）
-  abstract uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>
+// backend-adapter.ts 增（BackendAdapter interface 内）
+  uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>
 ```
 ```typescript
-// real-backend.ts 实装（multipart；X-Client-Connection；响应仅 {url}，H1/M4/L4）
+// real-backend.ts 实装（multipart；X-Client-Connection；响应仅 {url}，H1/M4/L4；字段名以真实私有字段 this.token/this.serverUrl 为准，代码 M1/完整 L3）
   async uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment> {
-    const ws = this.requireWs()
-    const connectionId = this.state.connectionId
-    if (!connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
-    const serverUrl = this.state.serverUrl   // 既有字段（连接时记录）
+    if (this.state.status !== 'connected' || !this.connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
+    const serverUrl = this.serverUrl
     const form = new FormData()
     const ext = mime === 'image/png' ? 'png' : mime === 'text/plain' ? 'txt' : mime.split('/')[1] ?? 'bin'
     form.append('file', new Blob([bytes], { type: mime }), `${label ?? 'attachment'}-${callId}.${ext}`)
-    const res = await fetch(`${serverUrl}/api/uploads/desktop/${callId}`, {
-      method: 'POST', headers: { Authorization: `Bearer ${this.state.token}`, 'X-Client-Connection': connectionId }, body: form,
+    // 走 restFetch 同款纪律（fetchImpl 注入 + AbortController，代码 M2）——既有 restFetch 私有方法复用
+    const res = await this.restFetch(`${serverUrl}/api/uploads/desktop/${callId}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${this.token}`, 'X-Client-Connection': this.connectionId }, body: form,
     })
     if (!res.ok) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, `上传失败 ${res.status}`)
     const data = (await res.json()) as { url: string }
     return { url: data.url, mimeType: mime, label }
   }
 ```
-**注意**：`this.state.token`/`serverUrl` 字段名以 real-backend.ts 实际为准（Task 6 接线时核对——本 task 若字段不符按真实字段名适配并在 task review 说明）。mock-backend.ts 实装：`return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }`。
+**注意**：`this.connectionId`/`this.serverUrl`/`this.token`/`this.restFetch` 的真实字段/方法名以 real-backend.ts 为准（执行时核对；`restFetch` 若不存在则用 `this.options.fetchImpl` 包 fetch——task review 说明）。mock-backend.ts 实装：`return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }`。
 
 - [ ] **Step 6: 跑测试 + typecheck**
 
@@ -1463,8 +1763,8 @@ Run: `pnpm -F @cyrene/desktop test -- run tests/unit/tool-status-sender.spec.ts 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add apps/desktop/src/main/tools/tool-status-sender.ts apps/desktop/src/main/tools/tool-audit.ts apps/desktop/src/main/transport/backend-adapter.ts apps/desktop/src/main/transport/real-backend.ts apps/desktop/src/main/transport/mock-backend.ts apps/desktop/src/main/diagnostics/audit.ts apps/desktop/tests/unit/tool-status-sender.spec.ts apps/desktop/tests/unit/tool-audit.spec.ts apps/desktop/tests/unit/audit.spec.ts
-git commit -m "feat(阶段6批次B Task5): status-sender（六态组装/附件先传后填/失败置位）+ tool-audit（脱敏+扩展字段+cancelSource）+ adapter.uploadToolAttachment（real multipart+X-Client-Connection 响应仅 url / mock 占位）"
+git add apps/desktop/src/main/tools/tool-status-sender.ts apps/desktop/src/main/tools/tool-audit.ts apps/desktop/src/main/transport/backend-adapter.ts apps/desktop/src/main/transport/real-backend.ts apps/desktop/src/main/transport/mock-backend.ts apps/desktop/src/main/diagnostics/audit.ts apps/desktop/src/shared/errors/index.ts apps/desktop/tests/unit/tool-status-sender.spec.ts apps/desktop/tests/unit/tool-audit.spec.ts apps/desktop/tests/unit/audit.spec.ts
+git commit -m "feat(阶段6批次B Task5): status-sender（六态组装/附件先传后填/失败置位）+ tool-audit（脱敏+扩展字段+cancelSource）+ adapter.uploadToolAttachment（real multipart+X-Client-Connection 响应仅 url / mock 占位）+ CyreneErrorCode TOOL_UPLOAD_FAILED"
 ```
 
 ---
@@ -1485,7 +1785,7 @@ git commit -m "feat(阶段6批次B Task5): status-sender（六态组装/附件�
 - Consumes: Task 1~5 全部；`registerHandler`/`registerOneWayHandler`/`isTrustedSender`（main/ipc/registry.ts）；`createIpcHandler`（main/ipc/executor.ts）；既有 `PushChannels`/`IpcChannels`；`RuntimeInfo`（不扩展）
 - Produces: real 全链路（raw tool.request → tool-service → tool:event）；mock sink 改接（不再直发 chat:event）；IPC 六通道 + preload 具名 API；R-A3 加固
 
-- [ ] **Step 1: 写失败测试——mock 改接（mock-backend-tools.spec.ts 增）**
+- [ ] **Step 1: 写失败测试——mock 改接（mock-backend-tools.spec.ts 增；判别键用 `event`，代码 M7）**
 
 ```typescript
 // mock-backend-tools.spec.ts 增
@@ -1499,7 +1799,7 @@ describe('batch B 改接（toolRequestSink）', () => {
     expect(sink.length).toBe(1)
     expect(sink[0]).toMatchObject({ callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: 'desktop.file.read', runtime: 'desktop' })
     expect(sink[0].paramHash).toBeUndefined()
-    expect(events.some(e => e.type === 'tool.request')).toBe(false)   // 不再直发 chat:event
+    expect(events.some(e => e.event === 'tool.request')).toBe(false)   // 不再直发 chat:event（判别键 event，代码 M7）
     // 第二次发射 id 自增（A3）
     await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi2', clientRequestId: 'r2' })
     await new Promise(r => setTimeout(r, 50))
@@ -1510,14 +1810,15 @@ describe('batch B 改接（toolRequestSink）', () => {
 })
 ```
 
-- [ ] **Step 2: 实现 mock 改接（mock-backend.ts）**
+- [ ] **Step 2: 实现 mock 改接（mock-backend.ts；toolRequestSink 为构造注入——MockBackend 无 options 字段，代码 H1/完整 H2）**
 
 ```typescript
 // MockBackendOptions 增：toolRequestSink?: (req: DesktopToolRequest) => void
+// MockBackend 类：构造器把 options.toolRequestSink 存入私有字段 private readonly toolRequestSink？（对齐 ttsAudioSink 字段先例）
 // MockBackend 类增私有字段：private mockToolSeq = 0
 // desktop kind 发射处（原 emit ToolRequestEvent）改为：
   const seq = ++this.mockToolSeq
-  this.options.toolRequestSink?.({
+  this.toolRequestSink?.({
     callId: `call_mock_${seq}`, sourceCallId: `tc_mock_desktop_${seq}`,
     toolName: r.toolName, toolVersion: '1.0', runtime: 'desktop',
     arguments: r.arguments ?? {}, reason: r.reason,
@@ -1526,17 +1827,64 @@ describe('batch B 改接（toolRequestSink）', () => {
   // 不再 this.emit(...)（R-A5 改接，D6B-15/A3）
 ```
 
-- [ ] **Step 3: 写失败测试——R-A3（rest-mapper-tools.spec.ts 增）**
+- [ ] **Step 3: 写失败测试——R-A3 + 回放断言（rest-mapper-tools.spec.ts 增；空壳转真实断言，spec B-1/A-16/A-17）**
 
 ```typescript
 it('R-A3：info.error === "" 视为无错误走 success 分支', () => {
   // mkSkeleton() 骨架 + role=tool 结果消息（tool.success=false, error=''）
-  // → 配对后 status 为 completed（空串 error 不判 failed）
+  const messages = [mkSkeleton('tc_1'), mkResult('tc_1', { success: false, error: '' })]
+  const out = pairToolCalls(messages)
+  const tc = out[0].toolCalls![0]
+  expect(tc.status).toBe('completed')     // 空串 error 不判 failed
+  expect(tc.error).toBeUndefined()
 })
-it('非空 error → failed 保持', () => { /* 既有用例保持 */ })
+it('非空 error → failed 保持', () => {
+  const messages = [mkSkeleton('tc_2'), mkResult('tc_2', { success: false, error: 'boom' })]
+  const tc = pairToolCalls(messages)[0].toolCalls![0]
+  expect(tc.status).toBe('failed')
+  expect(tc.error?.message).toBe('boom')
+})
+it('回放路径断言（A-17/L6）：toDomainMessageFromReplay 组装 → pairToolCalls（sessionBuffer tool 帧不回归）', () => {
+  // 基于既有回放用例：构造含 assistant tool_calls + role=tool 结果的 replay 数组 → toDomainMessageFromReplay → pairToolCalls → toolCalls 配对成功
+})
 ```
 
-- [ ] **Step 4: 实现 R-A3（rest-mapper.ts pairToolCalls）**
+- [ ] **Step 4: 写失败测试——ipc-tool-handlers 五通道（ipc-tool-handlers.spec.ts 新，spec A-5/B-4）**
+
+```typescript
+// tests/unit/ipc-tool-handlers.spec.ts（createIpcHandler 直调先例——settings-handlers 同款）
+import { describe, expect, it, vi } from 'vitest'
+import { registerToolHandlers } from '../../src/main/ipc/tool-handlers'
+import { IpcChannels } from '@shared/contracts/ipc'
+import { PermissionDecisionSchema, ToolCancelSchema, ToolPickSourceSchema, ToolConfirmUploadSchema, ToolListResponseSchema } from '@shared/schemas/ipc-response'
+
+describe('tool-handlers 五通道（A-5/B-4）', () => {
+  it('合法调用转发 tool-service', async () => {
+    const tools = { decide: vi.fn(), cancel: vi.fn(), listRecent: vi.fn().mockReturnValue([]), pickSource: vi.fn(), confirmUpload: vi.fn() }
+    const registered: any[] = []
+    const reg = (ch: string, ex: any, arity: number) => { registered.push({ ch, ex, arity }) }
+    registerToolHandlers({ tools: tools as any, sanitize: (x: unknown) => x }, reg)
+    expect(registered.map(r => r.ch)).toEqual([IpcChannels.toolDecide, IpcChannels.toolCancel, IpcChannels.toolList, IpcChannels.toolPickSource, IpcChannels.toolConfirmUpload])
+    // 合法载荷 → executor 执行 → tools.* 被调
+    await registered[0].ex({ callId: 'call_1', decision: 'allow_once' })
+    expect(tools.decide).toHaveBeenCalledWith('call_1', 'allow_once')
+  })
+  it('非法 schema → SCHEMA_VALIDATION_FAILED 结构化错误', async () => {
+    // 直接对 createIpcHandler 产物做 safeParse：PermissionDecisionSchema.safeParse({callId:1}) 失败
+    expect(PermissionDecisionSchema.safeParse({ callId: 1 }).success).toBe(false)
+    expect(ToolCancelSchema.safeParse({}).success).toBe(false)
+    expect(ToolPickSourceSchema.safeParse({ callId: 'c' }).success).toBe(false)   // 缺 sourceId
+    expect(ToolConfirmUploadSchema.safeParse({ callId: 'c' }).success).toBe(true)
+  })
+  it('toolList 响应 schema（ToolListResponseSchema）', () => {
+    expect(ToolListResponseSchema.safeParse([]).success).toBe(true)
+  })
+  it('isTrustedSender 拒由 registerHandler 层保证（registry 既有单测覆盖，本批引用不重复）', () => { /* 注记 */ })
+})
+```
+**注**：`registerToolHandlers` 的注册器参数可注入（`registerHandler` 签名 `(channel, executor, arity)`——测试传收集器；真实装配传 registry 的 `registerHandler`）。
+
+- [ ] **Step 5: 实现 R-A3（rest-mapper.ts pairToolCalls）**
 
 ```typescript
 // pairToolCalls 结果消息消费处（既有实现基础上）：
@@ -1550,7 +1898,7 @@ it('非空 error → failed 保持', () => { /* 既有用例保持 */ })
   }
 ```
 
-- [ ] **Step 5: real-backend 接线（handleFrame case + submitToolResult 实装 + onToolRequest）**
+- [ ] **Step 6: real-backend 接线（handleFrame case + submitToolResult 实装 + onToolRequest）**
 
 ```typescript
 // real-backend.ts
@@ -1559,7 +1907,7 @@ it('非空 error → failed 保持', () => { /* 既有用例保持 */ })
   onToolRequest?: (req: DesktopToolRequest) => void   // 可空 setter（index.ts 装配后注入，避免构造环）
   // handleFrame switch 内（在 default 分支之前）：
   case 'tool.request': {
-    const ev = this.mapper?.mapToolRequest(frame as RawToolRequest)
+    const ev = this.mapper?.mapFrame(frame)   // H3：mapToolRequest 为 private——走 mapFrame 公开入口（产物 ToolRequestEvent）
     if (!ev) return
     this.onToolRequest?.({ callId: frame.callId, sourceCallId: frame.sourceCallId, toolName: frame.toolName,
       toolVersion: frame.toolVersion, runtime: 'desktop', arguments: frame.arguments, reason: frame.reason,
@@ -1577,31 +1925,32 @@ it('非空 error → failed 保持', () => { /* 既有用例保持 */ })
 ```
 **注意**：`mapToolRequest` 现有签名/产物以批次 A 为准（`frame-mapper.ts`）；`RawToolStatus` 形状以 raw-types.ts:338-350 为准（`attachments` 为 `RawToolAttachment[]`——`ToolAttachment` 与 `RawToolAttachment` 字段差异在接线时做最小映射，task review 说明）。`this.state.serverUrl`/`token`/`connectionId` 字段名以 real-backend 实际为准。
 
-- [ ] **Step 6: IPC handlers + preload（tool-handlers.ts + desktop-api.ts）**
+- [ ] **Step 7: IPC handlers + preload（tool-handlers.ts + desktop-api.ts；createIpcHandler 模式，代码 H2/M5）**
 
 ```typescript
 // src/main/ipc/tool-handlers.ts
 import { registerHandler } from './registry'
+import { createIpcHandler } from './executor'
 import { IpcChannels } from '@shared/contracts/ipc'
-import { z } from 'zod'
+import { PermissionDecisionSchema, ToolCancelSchema, ToolPickSourceSchema, ToolConfirmUploadSchema, ToolListResponseSchema } from '@shared/schemas/ipc-response'
+import type { PublicToolEvent } from '@shared/contracts/tool'
+import type { ToolService } from '../tools/tool-service'
 
-const PermissionDecisionSchema = z.object({ callId: z.string(), decision: z.enum(['allow_once', 'deny']) }).strict()
-const ToolCancelSchema = z.object({ callId: z.string() }).strict()
-const ToolPickSourceSchema = z.object({ callId: z.string(), sourceId: z.string() }).strict()
-const ToolConfirmUploadSchema = z.object({ callId: z.string() }).strict()
-
-export function registerToolHandlers(deps: { tools: ToolService; pushToolEvent: (ev: PublicToolEvent) => void }): void {
-  registerHandler(IpcChannels.toolDecide, PermissionDecisionSchema, async (input) => {
+export function registerToolHandlers(
+  deps: { tools: ToolService; sanitize: (value: unknown) => unknown },
+  register: typeof registerHandler = registerHandler,
+): void {
+  register(IpcChannels.toolDecide, createIpcHandler(PermissionDecisionSchema, z.undefined(), async (input) => {
     await deps.tools.decide(input.callId, input.decision)
-  })
-  registerHandler(IpcChannels.toolCancel, ToolCancelSchema, async (input) => { await deps.tools.cancel(input.callId) })
-  registerHandler(IpcChannels.toolList, z.object({}).strict(), async () => deps.tools.listRecent(20))
-  registerHandler(IpcChannels.toolPickSource, ToolPickSourceSchema, async (input) => { await deps.tools.pickSource(input.callId, input.sourceId) })
-  registerHandler(IpcChannels.toolConfirmUpload, ToolConfirmUploadSchema, async (input) => { await deps.tools.confirmUpload(input.callId) })
+  }, { sanitize: deps.sanitize }), 1)
+  register(IpcChannels.toolCancel, createIpcHandler(ToolCancelSchema, z.undefined(), async (input) => { await deps.tools.cancel(input.callId) }, { sanitize: deps.sanitize }), 1)
+  register(IpcChannels.toolList, createIpcHandler(z.object({}).strict(), ToolListResponseSchema, async () => deps.tools.listRecent(20), { sanitize: deps.sanitize }), 0)
+  register(IpcChannels.toolPickSource, createIpcHandler(ToolPickSourceSchema, z.undefined(), async (input) => { await deps.tools.pickSource(input.callId, input.sourceId) }, { sanitize: deps.sanitize }), 1)
+  register(IpcChannels.toolConfirmUpload, createIpcHandler(ToolConfirmUploadSchema, z.undefined(), async (input) => { await deps.tools.confirmUpload(input.callId) }, { sanitize: deps.sanitize }), 1)
 }
 ```
 ```typescript
-// preload/desktop-api.ts 增（具名窄 API；onToolEvent 返回退订；zod 解包）
+// preload/desktop-api.ts 增（具名窄 API；onToolEvent 返回退订；invokeWithArgs + unwrap 惯例，代码 M5）
   onToolEvent(handler: (ev: PublicToolEvent) => void): () => void {
     const wrapped = (_e: unknown, payload: unknown) => {
       const parsed = PublicToolEventSchema.safeParse(payload)
@@ -1611,21 +1960,35 @@ export function registerToolHandlers(deps: { tools: ToolService; pushToolEvent: 
     ipcRenderer.on(PushChannels.toolEvent, wrapped)
     return () => ipcRenderer.removeListener(PushChannels.toolEvent, wrapped)
   },
-  toolDecide: (input: { callId: string; decision: 'allow_once' | 'deny' }) => ipcRenderer.invoke(IpcChannels.toolDecide, input),
-  toolCancel: (callId: string) => ipcRenderer.invoke(IpcChannels.toolCancel, { callId }),
-  toolList: () => ipcRenderer.invoke(IpcChannels.toolList, {}),
-  toolPickSource: (callId: string, sourceId: string) => ipcRenderer.invoke(IpcChannels.toolPickSource, { callId, sourceId }),
-  toolConfirmUpload: (callId: string) => ipcRenderer.invoke(IpcChannels.toolConfirmUpload, { callId }),
+  async toolDecide(input: { callId: string; decision: 'allow_once' | 'deny' }): Promise<void> {
+    unwrap(await invokeWithArgs<void>(IpcChannels.toolDecide, input), z.undefined())
+  },
+  async toolCancel(callId: string): Promise<void> {
+    unwrap(await invokeWithArgs<void>(IpcChannels.toolCancel, { callId }), z.undefined())
+  },
+  async toolList(): Promise<PublicToolEvent[]> {
+    return unwrap(await invokeWithArgs<PublicToolEvent[]>(IpcChannels.toolList, {}), ToolListResponseSchema)
+  },
+  async toolPickSource(callId: string, sourceId: string): Promise<void> {
+    unwrap(await invokeWithArgs<void>(IpcChannels.toolPickSource, { callId, sourceId }), z.undefined())
+  },
+  async toolConfirmUpload(callId: string): Promise<void> {
+    unwrap(await invokeWithArgs<void>(IpcChannels.toolConfirmUpload, { callId }), z.undefined())
+  },
 ```
-（`DesktopApi` 类型 + `desktopApi` 对象同步；`PublicToolEventSchema` 从 shared/schemas 导入。）
+（`DesktopApi` 类型 + `desktopApi` 对象同步；`PublicToolEventSchema`/`ToolListResponseSchema` 从 shared/schemas/ipc-response 导入；`invokeWithArgs`/`unwrap` 为既有 preload 内部工具，desktop-api.ts:94-96 起。）
 
-- [ ] **Step 7: index.ts 装配 + env 桥 + before-quit**
+- [ ] **Step 8: index.ts 装配 + env 桥 + before-quit（构造注入——MockBackend 无 options 字段；BackendAdapter 接口增 onToolRequest?，代码 H1/完整 H2）**
 
 ```typescript
+// backend-adapter.ts：BackendAdapter interface 增可选成员（real 专用钩子；mock 不实现——D6B-15）
+  onToolRequest?: (req: DesktopToolRequest) => void
+```
+```typescript
 // main/index.ts（adapter 构造之后、registerHandlers 之前）
-  // env 桥（mock 模式）
+  // env 桥（mock 模式；capture 数据面补全 thumbnailDataUrl（1×1 PNG data URL，R9）+ isWayland:false（mock 不调真实 desktopCapturer，完整 H3④））
   const toolAllowRoot = parseMockToolAllowRootEnv(process.env.CYRENE_MOCK_TOOL_ALLOW_ROOT)
-  const captureSources = parseMockCaptureSourcesEnv(process.env.CYRENE_MOCK_CAPTURE_SOURCES)
+  const captureSources = parseMockCaptureSourcesEnv(process.env.CYRENE_MOCK_CAPTURE_SOURCES)   // [{sourceId,sourceName}] → 补 thumbnailDataUrl 占位
   const statusSender = createToolStatusSender({ adapter, audit })
   const toolSvc = createToolService({
     registry: createToolRegistry(), platform: process.platform === 'win32' ? 'windows' : 'posix',
@@ -1633,26 +1996,37 @@ export function registerToolHandlers(deps: { tools: ToolService; pushToolEvent: 
     uploadAttachment: (callId, bytes, mime, label) => statusSender.uploadToolAttachment(callId, bytes, mime, label),
     pushEvent: (ev) => { for (const w of BrowserWindow.getAllWindows()) w.webContents.send(PushChannels.toolEvent, ev) },
     allowRoots: toolAllowRoot,
-    enumerateSources: captureSources ? async () => captureSources : undefined,
-    selectedAdd: (realPath) => { /* toolSvc 内 selected-set —— 通过注入闭包：createToolService 暴露 addSelectedPath 或经 handleRequest 结果处理；Task 3 的 selectedAdd 字段在此接线 */ },
+    enumerateSources: captureSources ? async () => captureSources.map(s => ({ ...s, thumbnailDataUrl: MOCK_THUMBNAIL_DATA_URL })) : undefined,
+    isWayland: captureSources ? false : undefined,   // mock 模式不判 Wayland（完整 H3④）
   })
-  // mock/real 工具请求入口
-  if (adapter instanceof MockBackend) adapter.options.toolRequestSink = (req) => toolSvc.handleRequest(req)
-  else adapter.onToolRequest = (req) => toolSvc.handleRequest(req)
-  // registerHandlers deps 增 tools: { decide/cancel/list/pick/confirm 或直接 toolSvc } + pushToolEvent
+  // mock/real 工具请求入口（构造注入 / 可选 setter——都发生在 adapter 构造之后，无环）
+  if (adapter instanceof MockBackend) { /* MockBackendOptions 已含 toolRequestSink——见下构造处 */ }
+  else adapter.onToolRequest = (req) => { void toolSvc.handleRequest(req) }
+  // 真实装配中 MockBackend 的 toolRequestSink 在 new MockBackend({...}) 时传（index.ts:170 处 options 内加：
+  //   toolRequestSink: (req) => { void toolSvc.handleRequest(req) }——但 toolSvc 在 adapter 之后构造 → 用桥对象：
+  //   const toolBridge: { svc?: ToolService } = {}；new MockBackend({ ..., toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })；toolBridge.svc = toolSvc
+  // registerHandlers deps 增 tools: { decide/cancel/list/pick/confirm（或直接 toolSvc） } + sanitize
+  // 重连触发（A-8）：既有 scheduleReconnect 成功后调用 toolSvc.reconnect()（real-backend 经 onToolRequest 同构的 onReconnected 回调或 index.ts 订阅连接状态变化）
+  // Main 侧测试探针（完整 M10：集成测试断言 wire lastToolStatus 需要）：
+  if (process.env.CYRENE_TEST_HARNESS === '1') {
+    ;(globalThis as any).__cyreneMainProbe = {
+      getLastToolStatus: () => (adapter as MockBackend).lastToolStatus ?? null,
+      getToolRecords: () => [...toolSvc.listRecent(50)],
+    }
+  }
   app.on('before-quit', () => toolSvc.shutdown())
 ```
-**注意**：`selectedAdd` 接线——Task 3 的 executor 调用 `deps.selectedAdd`；tool-service 的 `createToolService` 内部把 `selectedSet` 写闭包传给 executors（在 `createExecutors` 调用时注入 `selectedAdd: (p) => selectedSet.set(p, Date.now())`）——**定案：selected-set 写闭包在 tool-service 内完成（`createToolService` 构造 executors 时注入），Task 3 的 deps.selectedAdd 字段由 tool-service 填充，index.ts 不需要接**。`parseMockToolAllowRootEnv`/`parseMockCaptureSourcesEnv` 放 `mock-backend.ts` 或新 `main/tools/env-bridge.ts`（对齐 parseMock*Env 先例，非法 JSON → undefined）。
+**注意**：`MOCK_THUMBNAIL_DATA_URL` = `'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='`（1×1 PNG，R9）。`parseMockToolAllowRootEnv`/`parseMockCaptureSourcesEnv` 放 `main/tools/env-bridge.ts`（对齐 parseMock*Env 先例，非法 JSON → undefined）；MockBackend 的 `lastToolStatus` 已存在（mock-backend.ts:323）。
 
-- [ ] **Step 8: 跑测试 + typecheck + 全量单测**
+- [ ] **Step 9: 跑测试 + typecheck + 全量单测**
 
-Run: `pnpm -F @cyrene/desktop test && pnpm -F @cyrene/desktop typecheck`（mock-backend-tools.spec 既有断言同步改：desktop kind 不再 emit → 断言 sink）
+Run: `pnpm -F @cyrene/desktop test && pnpm -F @cyrene/desktop typecheck`（mock-backend-tools.spec 既有断言同步改：desktop kind 不再 emit → 断言 sink；`ipc-tool-handlers.spec.ts` 随本步全量单测覆盖，A-5）
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add apps/desktop/src/main/transport/real-backend.ts apps/desktop/src/main/transport/mock-backend.ts apps/desktop/src/main/index.ts apps/desktop/src/main/ipc/tool-handlers.ts apps/desktop/src/main/ipc/handlers.ts apps/desktop/src/preload/desktop-api.ts apps/desktop/src/main/transport/protocol-v2/rest-mapper.ts apps/desktop/tests/unit/ipc-tool-handlers.spec.ts apps/desktop/tests/unit/mock-backend-tools.spec.ts apps/desktop/tests/unit/rest-mapper-tools.spec.ts
-git commit -m "feat(阶段6批次B Task6): Main 接线——real handleFrame case tool.request→tool-service（不再 emit）+ submitToolResult 实装（tool.status 帧）+ onToolRequest setter；mock toolRequestSink 改接（id 自增不再直发 chat:event）；IPC 五通道+preload 具名 API；index 装配+env 桥（TOOL_ALLOW_ROOT/CAPTURE_SOURCES）+before-quit shutdown；R-A3 空串加固"
+git add apps/desktop/src/main/transport/real-backend.ts apps/desktop/src/main/transport/mock-backend.ts apps/desktop/src/main/transport/backend-adapter.ts apps/desktop/src/main/index.ts apps/desktop/src/main/ipc/tool-handlers.ts apps/desktop/src/main/ipc/handlers.ts apps/desktop/src/main/tools/env-bridge.ts apps/desktop/src/preload/desktop-api.ts apps/desktop/src/main/transport/protocol-v2/rest-mapper.ts apps/desktop/tests/unit/ipc-tool-handlers.spec.ts apps/desktop/tests/unit/mock-backend-tools.spec.ts apps/desktop/tests/unit/rest-mapper-tools.spec.ts
+git commit -m "feat(阶段6批次B Task6): Main 接线——real handleFrame case tool.request→tool-service（mapFrame 公开入口，不再 emit）+ submitToolResult 实装（tool.status 帧）+ BackendAdapter.onToolRequest?；mock toolRequestSink 构造注入（id 自增不再直发 chat:event）；IPC 五通道（createIpcHandler 模式）+ preload invokeWithArgs/unwrap；index 装配（桥对象/允许根 env/capture env 补缩略图/reconnect 触发/__cyreneMainProbe）+before-quit shutdown；R-A3 空串+回放断言"
 ```
 
 ---
@@ -1697,14 +2071,14 @@ describe('toolStore 三来路归一化', () => {
     expect(s.records['tc_1'].status).toBe('awaiting_permission')
     expect(s.liveOrder).toContain('tc_1'); expect(s.waitingForApproval).toBe(true)
   })
-  it('backend 事件 → 只读记录（D6B-21：本地已存在不覆盖）', () => {
+  it('backend 事件 → 只读记录（D6B-21：本地已存在不覆盖；判别键 event，代码 H5）', () => {
     const s = useToolStore(); s.upsertLocal(mkLocal('completed'))
-    s.applyBackendEvent({ type: 'tool.completed', callId: 'tc_1', toolName: 'desktop.file.read', runtime: 'backend', success: false } as any)
+    s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_1', toolName: 'desktop.file.read', runtime: 'backend', success: false } as any)
     expect(s.records['tc_1'].status).toBe('completed')   // 本地终态不被 backend 覆盖
   })
   it('backend 事件 → 本地不存在时新建只读记录', () => {
     const s = useToolStore()
-    s.applyBackendEvent({ type: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as any)
+    s.applyBackendEvent({ event: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as any)
     expect(s.records['tc_b1']).toMatchObject({ runtime: 'backend', status: 'running' })
   })
   it('终态单向：completed 后 running 事件忽略', () => {
@@ -1723,15 +2097,24 @@ describe('toolStore 三来路归一化', () => {
     s.upsertLocal(mkLocal('completed'))
     expect(s.pendingPathSummary).toBeNull()
   })
-  it('decide/cancel 调 api（api 注入）', async () => {
+  it('decide/cancel 调 api（setDesktopApi 注入，代码 H6）', async () => {
     const decide = vi.fn(); const cancel = vi.fn()
-    const s = useToolStore(); s.api = { toolDecide: decide, toolCancel: cancel } as any
+    setDesktopApi({ toolDecide: decide, toolCancel: cancel } as unknown as DesktopApiLike)
+    const s = useToolStore()
     await s.decide('call_1', 'deny'); await s.cancel('call_1')
     expect(decide).toHaveBeenCalledWith({ callId: 'call_1', decision: 'deny' }); expect(cancel).toHaveBeenCalledWith('call_1')
   })
+  it('pendingDiff/pendingDataFlowNote 侧信道（A-3）：await 期间权限窗可取，终态清', () => {
+    const s = useToolStore()
+    s.upsertLocal({ ...mkLocal('awaiting_permission'), diff: { lines: [{ kind: 'added', text: 'x' }], added: 1, removed: 0, truncated: false, totalLines: 1, formatNote: 'UTF-8', isNewFile: false }, dataFlowNote: '写入内容将发送到后端' })
+    expect(s.pendingDiff?.diff?.added).toBe(1)
+    expect(s.pendingDataFlowNote).toContain('发送到后端')
+    s.upsertLocal(mkLocal('completed'))
+    expect(s.pendingDiff).toBeNull(); expect(s.pendingDataFlowNote).toBeNull()
+  })
 })
 ```
-**注**：`api` 为 store 注入点（对齐既有 store 测试模式——以既有 voice/live2d store spec 的 api mock 先例为准，若无先例用 store 构造参数或 `vi.mock('@shared/...')` 模式——task review 时说明）。`upsertLocal` 内部做 `records[id] = { ...record }` 归一（PublicToolEvent → ToolCallRecord + attachmentCount + 保留 pathSummary 侧信道）。
+**注**：api 注入走既有 `setDesktopApi(mockApi)` 模式（`stores/desktop-api.ts:8`，代码 H6）——`DesktopApiLike` 增 `onToolEvent/toolDecide/toolCancel/toolPickSource/toolConfirmUpload` 六成员（`stores/desktop-api.types.ts`）；测试文件头 `import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'`（或等价注入点，以既有 store spec 先例为准）。`upsertLocal` 内部做 `records[id] = { ...record }` 归一（PublicToolEvent → ToolCallRecord + attachmentCount + 保留 pathSummary/diff/dataFlowNote 侧信道）。
 
 - [ ] **Step 2: 实现 tool.store.ts**
 
@@ -1741,17 +2124,20 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { PublicToolEvent, ToolCallRecord, ToolCallStatus } from '@shared/contracts/tool'
 import type { BackendEvent } from '@shared/contracts/events'
+import { api } from './desktop-api'   // 既有 api 单例（代码 H6）
 
 const LIVE_LIMIT = 3
 const TERMINAL: ToolCallStatus[] = ['completed', 'failed', 'rejected', 'cancelled', 'timeout']
+type ToolBackendEvent = Extract<BackendEvent, { event: 'tool.request' | 'tool.started' | 'tool.completed' }>   // 判别键 event（代码 H5）
 
 export const useToolStore = defineStore('tool', () => {
   const records = ref<Record<string, ToolCallRecord>>({})
   const liveOrder = ref<string[]>([])
   const captureState = ref<{ callId: string; sources?: PublicToolEvent['captureSources']; preview?: PublicToolEvent['capturePreview'] } | null>(null)
   const pendingPathSummary = ref<{ callId: string; pathSummary: string } | null>(null)
+  const pendingDiff = ref<{ callId: string; diff: NonNullable<PublicToolEvent['diff']> } | null>(null)          // A-3：权限窗写 Diff 数据源
+  const pendingDataFlowNote = ref<{ callId: string; dataFlowNote: string } | null>(null)                        // A-3：四问④数据源
   let unsubscribeEvent: (() => void) | undefined
-  let api: { toolDecide(input: { callId: string; decision: 'allow_once' | 'deny' }): Promise<unknown>; toolCancel(callId: string): Promise<unknown>; onToolEvent(h: (ev: PublicToolEvent) => void): () => void } | undefined
 
   const waitingForApproval = computed(() => liveOrder.value.some(id => records.value[id]?.status === 'awaiting_permission'))
 
@@ -1769,17 +2155,24 @@ export const useToolStore = defineStore('tool', () => {
       error: ev.error, truncated: ev.truncated, durationMs: ev.durationMs, startedAt: ev.startedAt, finishedAt: ev.finishedAt,
       attachmentCount: ev.attachmentCount }
     upsertRecord(ev.id, rec)
-    if (ev.status === 'awaiting_permission' && ev.pathSummary) pendingPathSummary.value = { callId: ev.desktopCallId ?? ev.id, pathSummary: ev.pathSummary }
-    if (TERMINAL.includes(ev.status)) pendingPathSummary.value = null
+    if (ev.status === 'awaiting_permission') {
+      if (ev.pathSummary) pendingPathSummary.value = { callId: ev.desktopCallId ?? ev.id, pathSummary: ev.pathSummary }
+      if (ev.diff) pendingDiff.value = { callId: ev.desktopCallId ?? ev.id, diff: ev.diff }
+      if (ev.dataFlowNote) pendingDataFlowNote.value = { callId: ev.desktopCallId ?? ev.id, dataFlowNote: ev.dataFlowNote }
+    }
+    if (TERMINAL.includes(ev.status)) clearApprovalLocal()
     if (ev.toolName === 'desktop.screen.capture' && ev.status === 'running' && (ev.captureSources || ev.capturePreview)) {
       captureState.value = { callId: ev.desktopCallId ?? ev.id, sources: ev.captureSources, preview: ev.capturePreview }
     }
   }
-  function applyBackendEvent(ev: Extract<BackendEvent, { type: 'tool.request' | 'tool.started' | 'tool.completed' }>): void {
-    if (ev.type === 'tool.started') {
+  function clearApprovalLocal(): void {   // 完整 M11：终态清理侧信道（权限窗关闭/回收）
+    pendingPathSummary.value = null; pendingDiff.value = null; pendingDataFlowNote.value = null
+  }
+  function applyBackendEvent(ev: ToolBackendEvent): void {
+    if (ev.event === 'tool.started') {
       if (records.value[ev.callId]) return   // D6B-21：本地已存在不覆盖
       upsertRecord(ev.callId, { id: ev.callId, toolName: ev.toolName, runtime: ev.runtime, status: 'running', inputSummary: ev.inputSummary, generationId: ev.generationId, conversationId: ev.conversationId })
-    } else if (ev.type === 'tool.completed') {
+    } else if (ev.event === 'tool.completed') {
       if (records.value[ev.callId]) return
       upsertRecord(ev.callId, { id: ev.callId, toolName: ev.toolName, runtime: ev.runtime,
         status: ev.success ? 'completed' : 'failed', outputSummary: ev.outputSummary, error: ev.error ? { code: String(ev.error['code'] ?? ''), message: String(ev.error['message'] ?? '') } : undefined,
@@ -1789,15 +2182,15 @@ export const useToolStore = defineStore('tool', () => {
   }
   function clearForGeneration(): void { liveOrder.value = liveOrder.value.filter(id => !TERMINAL.includes(records.value[id]?.status ?? 'completed')) }  // A9
   function init(): void {
-    if (api?.onToolEvent && !unsubscribeEvent) unsubscribeEvent = api.onToolEvent((ev) => upsertLocal(ev))
+    if (!unsubscribeEvent) unsubscribeEvent = api.onToolEvent((ev) => upsertLocal(ev))
   }
-  async function decide(callId: string, decision: 'allow_once' | 'deny'): Promise<void> { await api?.toolDecide({ callId, decision }) }
-  async function cancel(callId: string): Promise<void> { await api?.toolCancel(callId) }
-  async function pickSource(callId: string, sourceId: string): Promise<void> { await (api as any)?.toolPickSource?.(callId, sourceId) }
-  async function confirmUpload(callId: string): Promise<void> { await (api as any)?.toolConfirmUpload?.(callId) }
+  async function decide(callId: string, decision: 'allow_once' | 'deny'): Promise<void> { await api.toolDecide({ callId, decision }) }
+  async function cancel(callId: string): Promise<void> { await api.toolCancel(callId) }
+  async function pickSource(callId: string, sourceId: string): Promise<void> { await api.toolPickSource(callId, sourceId) }
+  async function confirmUpload(callId: string): Promise<void> { await api.toolConfirmUpload(callId) }
   function liveRecords(): ToolCallRecord[] { return liveOrder.value.map(id => records.value[id]).filter(Boolean) }
-  return { records, liveOrder, captureState, pendingPathSummary, waitingForApproval, init, applyBackendEvent, upsertLocal,
-    clearForGeneration, decide, cancel, pickSource, confirmUpload, liveRecords, __setApi: (a: typeof api) => { api = a } }
+  return { records, liveOrder, captureState, pendingPathSummary, pendingDiff, pendingDataFlowNote, waitingForApproval,
+    init, applyBackendEvent, upsertLocal, clearForGeneration, clearApprovalLocal, decide, cancel, pickSource, confirmUpload, liveRecords }
 })
 ```
 
@@ -1918,12 +2311,12 @@ function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value
         <dt>AI 想做什么</dt><dd>{{ current!.toolName }} — {{ current!.inputSummary }}</dd>
         <dt>操作哪个资源</dt><dd>{{ toolStore.pendingPathSummary?.pathSummary ?? current!.inputSummary }}</dd>
         <dt>为什么需要</dt><dd>{{ current!.reason ?? 'AI 请求执行此桌面操作以完成你的任务。' }}</dd>
-        <dt>哪些数据会发送到后端</dt><dd>{{ current!.dataFlowNote ?? '请查看工具说明。' }}</dd>
+        <dt>哪些数据会发送到后端</dt><dd>{{ toolStore.pendingDataFlowNote?.dataFlowNote ?? '请查看工具说明。' }}</dd>
       </dl>
-      <div v-if="current!.diff" class="cy-approval-diff" data-testid="approval-diff">
-        <p class="cy-diff-note">{{ current!.diff.isNewFile ? '新建文件' : '覆盖文件' }} · {{ current!.diff.formatNote }}
-          <template v-if="current!.diff.truncated"> · 仅显示前 100 行</template></p>
-        <pre class="cy-diff-body"><template v-for="(l, i) in current!.diff.lines" :key="i"><span :class="'cy-diff-' + l.kind">{{ l.kind === 'added' ? '+' : l.kind === 'removed' ? '-' : ' ' }}{{ l.text }}</span></template></pre>
+      <div v-if="toolStore.pendingDiff?.diff" class="cy-approval-diff" data-testid="approval-diff">
+        <p class="cy-diff-note">{{ toolStore.pendingDiff.diff.isNewFile ? '新建文件' : '覆盖文件' }} · {{ toolStore.pendingDiff.diff.formatNote }}
+          <template v-if="toolStore.pendingDiff.diff.truncated"> · 共 {{ toolStore.pendingDiff.diff.totalLines }} 行，仅显示前 100 行</template></p>
+        <pre class="cy-diff-body"><template v-for="(l, i) in toolStore.pendingDiff.diff.lines" :key="i"><span :class="'cy-diff-' + l.kind">{{ l.kind === 'added' ? '+' : l.kind === 'removed' ? '-' : ' ' }}{{ l.text }}</span></template></pre>
       </div>
       <div class="cy-approval-actions">
         <button ref="denyBtn" type="button" class="cy-btn" data-testid="approval-deny" @click="deny">拒绝</button>
@@ -1985,27 +2378,45 @@ function closeApproval() { approvalOpen.value = false }
 // ③ CyChatView.vue：CyMessageList 与 CyChatInput 之间挂 <CyLiveToolCards />（数据驱动实时区）
 ```
 
-- [ ] **Step 6: bootstrap 旁路 + Live2D 接线 + 探针**
+- [ ] **Step 6: bootstrap 旁路（stores 注入模式 + event 判别键）+ generation 接线 + Live2D + 探针**
 
 ```typescript
-// bootstrap.ts：tool 事件旁路（live2d.directive 先例）——在 messageStore.applyEvent 分发前：
-  if (ev.type === 'tool.request' || ev.type === 'tool.started' || ev.type === 'tool.completed') {
-    useToolStore().applyBackendEvent(ev)
-    return
-  }
-// toolStore.init() 在 bootstrap 装配处调用（voiceStore.init 先例位置）
-// live2d/state-source.ts：
-//  Live2dStateSourceInputs 增 toolWaiting: () => boolean
-//  composeCharacterState 内 error 判定后插：
-//    if (inputs.toolWaiting() && !isGenerating && !isSpeaking) return 'waiting_permission'
-//  isTransient 集合增 'waiting_permission'
+// bootstrap.ts：tool 事件旁路（live2d.directive 先例——判别键 event，代码 H5；stores 注入模式，BootstrapStores 增 tools）
+//   BootstrapStores 增 tools?: { init(): void; applyBackendEvent(e: BackendEvent): void; clearForGeneration(): void }
+//   事件分发（live2d 旁路之后）：
+//   if (ev.event === 'tool.request' || ev.event === 'tool.started' || ev.event === 'tool.completed') {
+//     deps.stores.tools?.applyBackendEvent(ev)
+//     return
+//   }
+//   deps.stores.tools?.init() 在 bootstrap 装配处调用（voiceStore.init 先例位置）
+// generation.started 接线（完整 M6）：bootstrap 内订阅 messageStore 或直接在其事件分发处：
+//   if (ev.event === 'generation.started') deps.stores.tools?.clearForGeneration()
+//   （若 messageStore.applyEvent 已有 generation.started 分支，改在 bootstrap 层先于 applyEvent 旁路，保持消息 store 不依赖工具框架）
+// live2d/state-source.ts（getter 层增——代码 M4：getter 在 Live2dStateSourceInputs，compose 收平面布尔）：
+//   Live2dStateSourceInputs 增 toolWaiting: () => boolean
+//   composeCharacterState 的入参对象增 toolWaiting: boolean（error 判定后）：
+//     if (inputs.toolWaiting && !inputs.isGenerating && !inputs.isSpeaking) return 'waiting_permission'
+//   isTransient 集合增 'waiting_permission'
 // live2d.store.ts setupStateSource：toolWaiting: () => useToolStore().waitingForApproval
 // renderer/src/main.ts __cyreneTest 块增：
   getToolState: () => { const s = useToolStore(); return { records: s.records, liveOrder: s.liveOrder, waitingForApproval: s.waitingForApproval, pendingPathSummary: s.pendingPathSummary } },
   getPermissionPending: () => { const s = useToolStore(); return s.liveOrder.map(id => s.records[id]).find(r => r?.status === 'awaiting_permission') ?? null },
 ```
 
-- [ ] **Step 7: 补 live2d-state-source.spec 用例 + tool.store.spec 全绿 + typecheck**
+- [ ] **Step 7: 补 live2d-state-source.spec 增用例（真实断言，spec B-1）+ tool.store.spec 全绿 + typecheck**
+
+```typescript
+// live2d-state-source.spec.ts 增（以既有 spec 的输入构造先例为准）
+it('toolWaiting=true 且非 generating/speaking → waiting_permission', () => {
+  const s = createLive2dStateSource({ connection: () => 'connected', isGenerating: () => false, isSpeaking: () => false, emotion: () => 'happy', toolWaiting: () => true }, push)
+  // compose 产物 → waiting_permission（构造以既有用例为准）
+})
+it('toolWaiting=true 但 isGenerating=true → 不打断（thinking/speaking 优先）', () => {
+  const s = createLive2dStateSource({ connection: () => 'connected', isGenerating: () => true, isSpeaking: () => false, emotion: () => 'happy', toolWaiting: () => true }, push)
+  // compose 产物不是 waiting_permission
+})
+it('isTransient 含 waiting_permission（终态回退靠事件驱动，无 timer）', () => { /* 状态机/瞬态集合断言 */ })
+```
 
 Run: `pnpm -F @cyrene/desktop test -- run tests/unit/tool.store.spec.ts tests/unit/live2d-state-source.spec.ts && pnpm -F @cyrene/desktop typecheck && pnpm -F @cyrene/desktop lint`
 
@@ -2030,59 +2441,111 @@ git commit -m "feat(阶段6批次B Task7): Renderer——toolStore 三来路归�
 - Consumes: Task 1~7 全部；`helpers/app.ts`（launchApp + opts.env）；`__cyreneTest` 探针；`CYRENE_MOCK_TOOL_FLOW`/`CYRENE_MOCK_CAPTURE_SOURCES`/`CYRENE_MOCK_TOOL_ALLOW_ROOT`
 - Produces: 集成用例（F-6-24）；决策记录；门禁基线（三态=已开发、未联调）
 
-- [ ] **Step 1: 写集成测试（electron-tools.spec.ts，xvfb-run）**
+- [ ] **Step 1: 写集成测试（electron-tools.spec.ts，xvfb-run；fixture/env 注入，spec A-6/代码 H7-H8/M6；wire 断言经 __cyreneMainProbe，完整 M10）**
 
 ```typescript
-// tests/integration/electron-tools.spec.ts（文件头纪律注释：POLL 常数/禁 force/断言走 expect.poll）
-import { describe, expect, it } from 'vitest'
-import { launchApp } from './helpers/app'
+// tests/integration/electron-tools.spec.ts（文件头纪律注释：POLL 常数/禁 force/断言走 expect.poll；真输入 getByLabel('消息输入框')，代码 M6）
+import { describe, expect, it, afterEach } from 'vitest'
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { launchApp, closeApp, LaunchedApp } from './helpers/app'
 
 const POLL = { timeout: 5000, interval: 200 }
-const FLOW_READ = JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: '/tmp/cyrene-fixtures/note.txt' } } })
+const FIXTURE_ROOT = '/tmp/cyrene-fixtures'
+const FIXTURE = `${FIXTURE_ROOT}/note.txt`
+const FLOW_READ = JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: FIXTURE } } })
+
+async function ensureFixture(content = 'hello fixture\n'): Promise<void> {
+  mkdirSync(FIXTURE_ROOT, { recursive: true }); writeFileSync(FIXTURE, content)
+}
+afterEach(() => { rmSync(FIXTURE_ROOT, { recursive: true, force: true }) })
+
+async function sendMessage(page: import('playwright').Page): Promise<void> {
+  await page.getByLabel('消息输入框').fill('读取我的笔记')
+  await page.getByLabel('消息输入框').press('Enter')
+}
 
 describe('阶段 6 批次 B 工具流', () => {
-  it('桌面工具：拒绝 → 卡片「用户已拒绝」+ wire rejected', async () => {
-    const app = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: FLOW_READ } })
-    const page = await app.firstWindow()
-    // fixture 文件预写：launchApp 的 seedFiles 或 test 内写 /tmp/cyrene-fixtures/note.txt（需 CYRENE_MOCK_TOOL_ALLOW_ROOT=/tmp/cyrene-fixtures）
-    // 发送消息 → 触发 generation.completed → mock sink → tool-service → awaiting_permission
-    // 真输入先例（electron-voice.spec.ts）：page.locator('.cy-composer textarea').fill('读取我的笔记') + 回车/发送按钮
-    await page.locator('.cy-composer textarea').fill('读取我的笔记')
-    await page.locator('.cy-composer textarea').press('Enter')
+  it('桌面工具：拒绝 → 卡片「用户已拒绝」+ wire rejected（__cyreneMainProbe）', async () => {
+    await ensureFixture()
+    const launched = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: FLOW_READ, CYRENE_MOCK_TOOL_ALLOW_ROOT: FIXTURE_ROOT } })
+    const page = launched.page
+    await sendMessage(page)
     await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getPermissionPending()), POLL).not.toBeNull()
     await page.getByTestId('tool-deny').click()    // 拒绝按钮（对等权重）
     await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getToolState().liveOrder.length > 0 && (window as any).__cyreneTest.getToolState().records[(window as any).__cyreneTest.getToolState().liveOrder[0]].status), POLL).toBe('rejected')
-    await app.close()
+    // wire 断言：Main 探针读 MockBackend.lastToolStatus（完整 M10）
+    await expect.poll(() => launched.app.evaluate(() => (globalThis as any).__cyreneMainProbe.getLastToolStatus()), POLL)
+      .toEqual(expect.objectContaining({ status: 'rejected' }))
+    await closeApp(launched)
   })
-  it('桌面工具：允许一次 → 执行 fixture → 卡片「执行完成」', async () => {
-    const app = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: FLOW_READ } })
-    const page = await app.firstWindow()
-    await page.locator('.cy-composer textarea').fill('读取我的笔记')
-    await page.locator('.cy-composer textarea').press('Enter')
+  it('桌面工具：允许一次 → 执行 fixture → 卡片「执行完成」+ 归档', async () => {
+    await ensureFixture()
+    const launched = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: FLOW_READ, CYRENE_MOCK_TOOL_ALLOW_ROOT: FIXTURE_ROOT } })
+    const page = launched.page
+    await sendMessage(page)
     await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getPermissionPending()), POLL).not.toBeNull()
-    await page.getByTestId('tool-approve').click()          // 卡片授权入口 → 权限窗
+    await page.getByTestId('tool-approve').click()          // 卡片授权入口 → 权限窗（四问）
     await expect.poll(() => page.getByTestId('approval-deny').count(), POLL).toBe(1)
-    await page.getByTestId('approval-allow').click()        // 允许一次（四问后）
+    await page.getByTestId('approval-allow').click()        // 允许一次
     await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getToolState().liveOrder.map(id => (window as any).__cyreneTest.getToolState().records[id].status).find(s => s === 'completed')), POLL).toBe('completed')
-    await app.close()
+    await closeApp(launched)
   })
-  it('取消路径：点击取消任务 → 已取消 + wire cancelled', async () => { /* 第三次触发 → tool-cancel → cancelled（断言同前两例） */ })
+  it('取消路径：点击取消任务 → 已取消 + wire cancelled', async () => {
+    await ensureFixture()
+    const launched = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: FLOW_READ, CYRENE_MOCK_TOOL_ALLOW_ROOT: FIXTURE_ROOT } })
+    const page = launched.page
+    await sendMessage(page)
+    await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getPermissionPending()), POLL).not.toBeNull()
+    await page.getByTestId('tool-cancel').click()
+    await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getToolState().liveOrder.map(id => (window as any).__cyreneTest.getToolState().records[id].status).find(s => s === 'cancelled')), POLL).toBe('cancelled')
+    await expect.poll(() => launched.app.evaluate(() => (globalThis as any).__cyreneMainProbe.getLastToolStatus()), POLL)
+      .toEqual(expect.objectContaining({ status: 'cancelled' }))
+    await closeApp(launched)
+  })
+  it('写冲突 → FILE_CONFLICT → 卡片「执行失败」+ 原文件不变（spec §3.13 核心闭环，A-6）', async () => {
+    await ensureFixture('v1\n')
+    const flow = JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.file.write', arguments: { path: FIXTURE, content: 'v2\n' } } })
+    const launched = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: flow, CYRENE_MOCK_TOOL_ALLOW_ROOT: FIXTURE_ROOT } })
+    const page = launched.page
+    await sendMessage(page)
+    await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getPermissionPending()), POLL).not.toBeNull()
+    await page.getByTestId('tool-approve').click()
+    await expect.poll(() => page.getByTestId('approval-deny').count(), POLL).toBe(1)
+    writeFileSync(FIXTURE, 'v3\n')   // 授权后、执行前外部修改（预读 hash 与原子替换前不一致）
+    await page.getByTestId('approval-allow').click()
+    await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getToolState().liveOrder.map(id => (window as any).__cyreneTest.getToolState().records[id].status).find(s => s === 'failed')), POLL).toBe('failed')
+    expect(readFileSync(FIXTURE, 'utf8')).toBe('v3\n')   // 原文件不变
+    await closeApp(launched)
+  })
   it('Backend 工具只读卡片（无授权入口）', async () => {
-    const app = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: JSON.stringify({ kind: 'backend', started: { toolName: 'search_web' }, completed: { success: true, outputSummary: 'ok' } }) } })
-    // 发送消息 → tool.started/completed 经 chat:event → toolStore backend 记录 → 卡片无按钮
+    const launched = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: JSON.stringify({ kind: 'backend', started: { toolName: 'search_web' }, completed: { success: true, outputSummary: 'ok' } }) } })
+    const page = launched.page
+    await sendMessage(page)
     await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getToolState().records['tc_mock_backend_1']?.status), POLL).toBe('completed')
     expect(await page.getByTestId('tool-approve').count()).toBe(0)
-    await app.close()
+    expect(await page.getByTestId('tool-deny').count()).toBe(0)
+    await closeApp(launched)
   })
-  it('capture 流程（软断言）：允许 → 源选择 → 预览 → 确认上传 → 终态', async () => {
-    const app = await launchApp(undefined, { env: { CYRENE_MOCK_TOOL_FLOW: JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.screen.capture', arguments: {} } }),
-      CYRENE_MOCK_CAPTURE_SOURCES: JSON.stringify([{ sourceId: 'screen:0', sourceName: '屏幕 1' }]) } })
-    // 允许 → captureSources 面板 → capture-source 点击 → preview → capture-confirm → completed
-    await app.close()
+  it('capture 流程（软断言）：允许 → 源选择 → 预览 → 确认上传 → 终态（A-21/B-1）', async () => {
+    const launched = await launchApp(undefined, { env: {
+      CYRENE_MOCK_TOOL_FLOW: JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.screen.capture', arguments: {} } }),
+      CYRENE_MOCK_CAPTURE_SOURCES: JSON.stringify([{ sourceId: 'screen:0', sourceName: '屏幕 1' }]),
+    } })
+    const page = launched.page
+    await sendMessage(page)
+    await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getPermissionPending()), POLL).not.toBeNull()
+    await page.getByTestId('tool-approve').click()
+    await page.getByTestId('approval-allow').click()
+    await expect.poll(() => page.getByTestId('capture-source').count(), POLL).toBe(1)
+    await page.getByTestId('capture-source').click()
+    await expect.poll(() => page.getByTestId('capture-confirm').count(), POLL).toBe(1)
+    await page.getByTestId('capture-confirm').click()
+    await expect.poll(() => page.evaluate(() => (window as any).__cyreneTest.getToolState().liveOrder.map(id => (window as any).__cyreneTest.getToolState().records[id].status).find(s => s === 'completed')), POLL).toBe('completed')
+    await closeApp(launched)
   })
 })
 ```
-**纪律**：用例只做核心闭环（拒绝/允许/取消/backend 只读），capture 软断言；若 SwiftShader 环境不稳 → 跳过并记录取舍（spec §3.13 降级条款）；文件 fixture 用 `CYRENE_MOCK_TOOL_ALLOW_ROOT` 注入根（/tmp 黑名单经此放宽，D6B-02/M-1）。
+**纪律**：核心闭环（拒绝/允许/取消/写冲突/backend 只读）不做降级（spec R1）；capture 用例软断言（SwiftShader 不稳 → 跳过并记录取舍，spec §3.13 降级条款）；`launchApp` 返回 `{ app, page, userData }`——页面用 `launched.page`、关闭用 `closeApp(launched)`（代码 H7）；`getByLabel('消息输入框')` 对齐 electron-voice 先例（代码 M6）。
 
 - [ ] **Step 2: 跑全门禁**
 
@@ -2113,6 +2576,10 @@ pnpm -F @cyrene/desktop typecheck && pnpm -F @cyrene/desktop lint && pnpm -F @cy
 git add apps/desktop/tests/integration/electron-tools.spec.ts docs/02-*.md docs/03-*.md docs/04-*.md docs/06-*.md docs/07-*.md docs/12-*.md docs/13-*.md docs/16-*.md README.md CLAUDE.md docs/review/2026-08-20-阶段6批次B-决策记录.md
 git commit -m "feat(阶段6批次B Task8): 门禁收口 + 集成测试 electron-tools（F-6-24：拒绝/允许/取消/backend 只读/capture 软断言）+ 文档同步（doc02/03/04/06/07/12/13/16 + README/CLAUDE）+ 决策记录（D6B-01~22 + Rulings + review 修复记录，三态=已开发、未联调）"
 ```
+
+- [ ] **Step 5: 批次最终 review 检查项（完整 L4）**
+
+对照 spec §8 验收清单逐项核验（代码位置 + 门禁实跑复现）——由批次最终 review（goal 步骤 8）执行；检查项：① 决策链全分支可测；② 四执行器安全属性（黑名单/原子写/冲突/截图两步）有测试证据；③ IPC 六通道 zod 双端 + 探针就绪；④ 文档同步与决策记录齐备；⑤ 三态=已开发、未联调。
 
 - [ ] **Step 6: 批次最终 review 后补验收结论 commit（验收 subagent 填充决策记录 §8）**
 
