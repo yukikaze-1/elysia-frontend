@@ -71,7 +71,7 @@
 - **F-01~F-05**（工具注册表/Runtime/事件/幂等/P0 清单）——契约已确认；`desktop.command.run` 确认不注册；
 - **G-04**（情绪→状态映射）——`expression`/`mood` 源字段已确认，映射表仍需设计产出。
 
-**仍未提供（维持 `[ ]`，需外部输入）：** B-07（数据保留策略；**B-01 真实测试环境已到位**，2026-08-14 联调通过后关闭）、E-09（Local Worker 接口，P2）、F-06~F-09（沙盒/授权/命令模板/Diff 等产品与安全决策）、G-01~G-03/G-05/G-06（Live2D SDK 许可与模型资源）、H 组全部（平台/发布/演示等产品决策）。
+**仍未提供（维持 `[ ]`，需外部输入）：** B-07（数据保留策略；**B-01 真实测试环境已到位**，2026-08-14 联调通过后关闭）、E-09（Local Worker 接口，P2）、F-08（受控命令模板是否进入 Demo——**命令模板空态归批次 C 确认**；F-06/F-07/F-09/F-10 已于 2026-08-20 批次 B 预检拍板关闭）、G-01~G-03/G-05/G-06（Live2D SDK 许可与模型资源）、H 组全部（平台/发布/演示等产品决策）。
 
 ### 4.1 工程、仓库与协作方式
 
@@ -149,10 +149,10 @@
 | [ ] | F-03 | P1 | 工具请求、状态、进度、结果、失败、取消和超时事件 | 至少提供 Backend 与 Desktop 各一条完整记录 | 6 |
 | [ ] | F-04 | P1 | `callId` 幂等、重连查询和结果重传规则 | 重复调用不会重复产生副作用 | 6 |
 | [ ] | F-05 | P1 | Demo P0 Desktop 工具最终清单 | 默认采用文件读取、文件写入、截图 | 6 |
-| [ ] | F-06 | P1 | 沙盒目录、路径黑名单、域名黑名单的默认值和管理权限 | 默认策略经产品和安全 Review | 6 |
-| [ ] | F-07 | P1 | 授权级别：仅一次、目录范围、命令模板、有效期及撤销 | 每类授权的产品行为明确 | 6 |
-| [ ] | F-08 | P1 | 受控命令模板是否进入 Demo；若进入，允许命令与参数范围 | 不存在“允许任意 Shell”配置 | 6 |
-| [ ] | F-09 | P1 | 文件写入 Diff、覆盖、写前哈希、冲突和回滚要求 | 冲突样例不会覆盖用户新内容 | 6 |
+| [x] | F-06 | P1 | 沙盒目录、路径黑名单、域名黑名单的默认值和管理权限 | **2026-08-20 预检拍板（F-06）**：仅黑名单、零预授权——`sandboxDirectories` 恒空；`PATH_BLACKLIST_DEFAULTS`（realpath 后段边界匹配：POSIX 17 项系统目录含 `/tmp` + 14 项用户敏感目录 + `/home/*` 排除当前用户 + Windows 6 项 + 设备路径/保留名/UNC 拒）；域名黑名单 = 仅已连接后端端点；批次 B 已落地 | 6 |
+| [x] | F-07 | P1 | 授权级别：仅一次、目录范围、命令模板、有效期及撤销 | **2026-08-20 预检拍板（F-07）**：仅一次/拒绝最小闭环——select=safe/automatic、read=medium 每次确认+selected-set 豁免、write/capture=high 强确认；`PermissionDecision` 只产出 allow_once/deny；allow_scoped + 设置页授权管理/命令模板空态归批次 C | 6 |
+| [ ] | F-08 | P1 | 受控命令模板是否进入 Demo；若进入，允许命令与参数范围 | **命令模板空态归批次 C 确认**（F-07 拍板承接；`desktop.command.run` 全阶段不注册） | 6 |
+| [x] | F-09 | P1 | 文件写入 Diff、覆盖、写前哈希、冲突和回滚要求 | **2026-08-20 预检拍板（F-09）**：引成熟 diff 库（jsdiff `diff@^9.0.0`）行级 `diffLines`（本批不做词级标注）；写前哈希冲突 → `FILE_CONFLICT`；原子替换 + 格式保留（BOM/换行/末尾换行）；批次 B 已落地 | 6 |
 | [ ] | F-10 | P1 | 截图在 Windows、X11、Wayland 的选择与授权要求 | 目标平台各有可执行方案 | 6 |
 | [ ] | F-11 | P2 | 审批历史和工具日志的保留时间、容量、清理与导出策略 | 设置页行为和存储上限明确 | 7 |
 
@@ -422,9 +422,9 @@ cyrene-integration-input/
 
 ### 9.7 阶段 6：统一工具、权限与 Desktop P0 能力
 
-**进入条件：** 阶段 1 和阶段 2 通过；F-01～F-10 已确认。
+**进入条件：** 阶段 1 和阶段 2 通过；F-01～F-10 已确认（**现状：F-06/F-07/F-09/F-10 已于 2026-08-20 批次 B 预检拍板关闭；F-08（受控命令模板）保持待确认——命令模板空态归批次 C，M1 规范**）。
 
-> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A 已落地）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push）。实施要求：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**批次 B（Main 工具服务/权限/四执行器/UI）仍待 F-06/F-07/F-09/F-10 拍板。**
+> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A/B 已落地）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push）。实施要求：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**F-6 批次 B（Main 工具注册表/服务/四执行器/状态发送/审计 + Preload IPC 面 + toolStore/卡片/权限窗/聊天接线/Live2D `waiting_permission` + mock 改接 + 集成测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**——F-06/F-07/F-09/F-10 预检拍板落地（§4.6 已勾选，仅 F-08 待批次 C），见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`；**批次 C（真实 Windows Electron 联调 + allow_scoped/授权管理页/命令模板空态 + `GET /api/tools/calls/{callId}` + action 移除评估 + 跨页/跨会话配对复核）为批次 B 后置**，真实联调通过后三态升「已真实联调」。
 
 主要任务：
 

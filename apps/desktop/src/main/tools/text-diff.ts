@@ -6,7 +6,8 @@ export const MAX_DIFF_LINES = 100
 
 export function computeTextDiff(oldText: string, newText: string): TextDiffResult {
   const parts = diffLines(oldText, newText)
-  let added = 0, removed = 0, lines: DiffLine[] = []
+  let added = 0, removed = 0
+  const lines: DiffLine[] = []   // lint：lines 从未重赋值 → const
   for (const p of parts) {
     const kind = p.added ? 'added' : p.removed ? 'removed' : 'unchanged'
     if (kind !== 'unchanged') { if (p.added) added += p.count ?? 0; else removed += p.count ?? 0 }

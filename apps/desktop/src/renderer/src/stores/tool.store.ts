@@ -89,7 +89,8 @@ export const useToolStore = defineStore('tool', () => {
       if (records.value[ev.callId]) return   // D6B-21：本地已存在不覆盖
       upsertRecord(ev.callId, { id: ev.callId, toolName: ev.toolName, runtime: ev.runtime, status: 'running', inputSummary: ev.inputSummary, generationId: ev.generationId, conversationId: ev.conversationId })
     } else if (ev.event === 'tool.completed') {
-      if (records.value[ev.callId]) return
+      const existing = records.value[ev.callId]
+      if (existing && existing.runtime === 'desktop') return   // D6B-21 修正：仅 desktop 本地记录存在时不覆盖（本地裁决优先）；backend 自身 started→completed 正常推进（Task 8 集成发现）
       upsertRecord(ev.callId, { id: ev.callId, toolName: ev.toolName, runtime: ev.runtime,
         status: ev.success ? 'completed' : 'failed', outputSummary: ev.outputSummary, error: ev.error ? { code: String(ev.error['code'] ?? ''), message: String(ev.error['message'] ?? '') } : undefined,
         errorType: ev.errorType, truncated: ev.truncated, durationMs: ev.durationMs, generationId: ev.generationId, conversationId: ev.conversationId })

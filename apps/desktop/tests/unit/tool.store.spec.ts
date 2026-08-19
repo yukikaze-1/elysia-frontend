@@ -33,6 +33,17 @@ describe('toolStore 三来路归一化', () => {
     s.applyBackendEvent({ event: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as unknown as ToolBackendEvent)
     expect(s.records['tc_b1']).toMatchObject({ runtime: 'backend', status: 'running' })
   })
+  it('D6B-21 修正：backend 自身 started→completed 正常推进（仅 desktop 记录挡覆盖——Task 8 集成发现）', () => {
+    const s = useToolStore()
+    s.applyBackendEvent({ event: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as unknown as ToolBackendEvent)
+    s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', success: true, outputSummary: 'ok' } as unknown as ToolBackendEvent)
+    expect(s.records['tc_b1']).toMatchObject({ runtime: 'backend', status: 'completed', outputSummary: 'ok' })
+    // desktop 记录存在 → backend completed 不覆盖（原 D6B-21 语义保持）
+    const s2 = useToolStore()
+    s2.upsertLocal(mkLocal('completed', 'tc_d1'))
+    s2.applyBackendEvent({ event: 'tool.completed', callId: 'tc_d1', toolName: 'desktop.file.read', runtime: 'backend', success: false } as unknown as ToolBackendEvent)
+    expect(s2.records['tc_d1'].status).toBe('completed')
+  })
   it('终态单向：completed 后 running 事件忽略', () => {
     const s = useToolStore(); s.upsertLocal(mkLocal('completed')); s.upsertLocal(mkLocal('running'))
     expect(s.records['tc_1'].status).toBe('completed')

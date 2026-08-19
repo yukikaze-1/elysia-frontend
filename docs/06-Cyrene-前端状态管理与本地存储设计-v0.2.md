@@ -86,6 +86,8 @@
 
 > **阶段 6 决策注记（2026-08-19 定案；2026-08-20 批次 A 落地契约与归档配对，store 本体归批次 B）：** `toolStore` 只存统一 `ToolCallRecord`，权威键 = `sourceCallId`（LLM `tool_call_id`）；三来路归一化——`tool.request`（Desktop 本地状态机）、`tool.started/tool.completed`（Backend 展示 + Desktop 服务端确认）、归档重建（`assistant.tool_calls + role=tool`）。**实时记录为易失视图；归档/REST 回放是历史持久权威**，重连 replay 与历史查看器由归档重建。**批次 A 已落地**：领域契约（`shared/contracts/tool.ts`）、三事件映射（`FrameMapper` 脱敏）、归档配对（`rest-mapper.pairToolCalls` → `Message.toolCalls`，REST 历史 + WS 回放双路径）；toolStore 状态机与卡片渲染归批次 B。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md` 与 `docs/review/2026-08-20-阶段6批次A-决策记录.md`。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：`toolStore` 已落地（`stores/tool.store.ts`，`init()` 启动装配订阅 `api.onToolEvent`，bootstrap 旁路 `applyBackendEvent`）——**三来路归一化落地**：① `tool:event` 推送（desktop 本地状态机，权威；`upsertLocal`）；② `chat:event` `tool.started/tool.completed`（backend 只读展示；`ToolRequestEvent` 分支仅防御性处理——desktop 请求批次 B 起不再经 chat:event，D6B-08）；③ `Message.toolCalls` 归档（`hydrateFromMessage`，只读卡片数据源为消息本体，toolStore 不复制，不清 live）。**合并规则（D6B-21）**：desktop 本地记录已存在 → 后端 started/completed 不覆盖（**本地状态机裁决优先**）；本地不存在（纯 backend 工具）→ 新建只读记录。**终态单向守卫**：同 id 终态后忽略非终态更新。**双区渲染数据源**：实时区 `CyLiveToolCards` 读 `liveOrder`（上限 3，`generation.started` 清空但**只清终态记录**——awaiting_permission/running 保留，权限窗不消失；trimLiveOrder 只逐出最旧终态）；归档区读 `message.toolCalls`。`waitingForApproval` computed（供权限窗宿主 CyChatView 与 Live2D `waiting_permission` 接线，D6B-13）；`pendingPathSummary` 侧信道（仅 `awaiting_permission` 期间暂存 `pathSummary`，终态即弃，不进领域记录，H-1）；`captureState`（capture 选择/预览态）；`ToolCallRecord` 契约增可选 `attachmentCount?`（`MessageSchema.toolCalls` 同步补 `ToolCallRecordSchema`——修复 preload `safeParse` 剥字段缺陷）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ### 3.6 `live2dStore`
 
 - 模型加载状态；

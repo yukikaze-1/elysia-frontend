@@ -395,3 +395,32 @@
 ### 15.3 自动回归
 
 对修订后的 02/04/06/12/13/16 与决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+## 16. 增量 Review：阶段 6 批次 B Main 工具服务/权限/四执行器/UI 同步（2026-08-20）
+
+**触发条件：** doc 13 §9——「修改安全策略或权限模型」与「真实协议变更」：批次 B 落地 Desktop 工具全生命周期（注册表/黑名单/决策链/四执行器/状态发送/审计）、新 IPC 推送面 `tool:event` + 五个 invoke 通道、权限 UI（CyToolApproval）与工具卡片双区渲染、Live2D `waiting_permission` 真实驱动。
+
+### 16.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 02 §10 | 批次 B 注记：领域模型补 `PublicToolEvent`（`id = sourceCallId` 权威键、`runtime:'desktop'` 收窄、`pathSummary?/dataFlowNote?/diff?/captureSources?/capturePreview?/attachmentCount?` 扩展、无原始参数/安全元数据）；desktop `tool.request` 不再进 renderer 事件管线（handleFrame 显式 case 路由 tool-service）；`tool.status` 发送方 = Main tool-status-sender（缓存组装 + `adapter.submitToolResult`/`uploadToolAttachment`，上传时序 running 后 result 前） |
+| 03 §9/§10 | 工具卡片双区渲染落地注记（实时区 CyLiveToolCards ≤3 + 归档区 message.toolCalls 只读；`requested`/`awaiting_permission` 合并「等待授权」）；权限窗落地注记（CyToolApproval 四问/初始焦点拒绝按钮/对等权重/无倒计时/关闭=拒绝/写 Diff+格式元信息条/截图三步） |
+| 04 §2/§6/§7.4/§8/§11/§13/§14 | 注册表四工具元数据落地；IPC 面落地（PushChannels.tool:event + IpcChannels 五 invoke + zod 双端）；§6.3 `PublicToolEvent` 形状对齐（callId→id、增扩展字段、runtime 收窄 desktop）；§7.4 决策链 13 步落地 + F-06（仅黑名单零预授权）/F-07（仅一次/拒绝最小闭环）拍板值；§8 四工具实现要求落地（上限/编码/原子写/截图平台 + §8.1 受控句柄 → selected-set TTL 替代语义 B12）；§11 Backend 审批样式按 D6-08 改写（「批准服务器操作」样式退役、backend 全只读，B13）；§13 幂等落地（paramHash canonical 校验/拒绝保持拒绝/重连重发）；§14 审计落地（tool:request-received/decision/executing/status-sent/terminal + cancelSource + AuditEvent 扩展字段） |
+| 06 §3.5 | toolStore 三来路归一化落地 + 双区渲染数据源 + D6B-21 同 id 合并（本地裁决优先）+ waitingForApproval/pendingPathSummary 侧信道 + `MessageSchema.toolCalls` 补 `ToolCallRecordSchema` |
+| 07 §9/§10 | Desktop 工具安全落地注记（黑名单默认集含 /tmp 与用户敏感面、full realpath 段边界、执行器安全无 child_process、截图 Win+X11/Wayland 降级）；权限 UI 落地（初始焦点拒绝按钮/关闭=拒绝/M-8 残余风险记录） |
+| 12 §4/§9.7 | 外部输入清单 F-06/F-07/F-09 拍板关闭（§4.6 勾选 [x] + 拍板值；F-08 保持 `[ ]`——命令模板空态归批次 C）；§9.7 批次 B 状态注记（三态=已开发、未联调，批次 C 前置；进入条件 F-08 待批次 C 关闭） |
+| 16 §9 + changelog | F-6-07~18/22/24 任务行勾选/落地状态；2026-08-20 批次 B changelog 行 |
+| 决策记录 | `docs/review/2026-08-20-阶段6批次B-决策记录.md`（D6B-01~22 + 预检拍板 F-06/F-07/F-09/F-10 + 推荐定案 D-§7-4/§7-5 + Rulings R-B1~R-B11 + review 修复记录 + 门禁基线 + 批次 C 前置） |
+
+### 16.2 交叉 Review 结论
+
+- **wire 契约不变**：批次 B 不动 raw wire（`RawFrameSchema`/`RawClientFrameSchema` 服务端帧 shape 零变更，`rawSchemasFingerprint()` 不变，check:contract 13 组 manifest 不刷新）；`PublicToolEvent` 为前端领域公开形状（Main 派生、经 `tool:event` 推送），不入 raw/领域事件联合，与批次 A 四件套无冲突；
+- **`PublicToolEvent` 领域形状**：`id = sourceCallId` 权威键 + `desktopCallId?` 桥关联 + `runtime:'desktop'` 收窄 + `pathSummary?/dataFlowNote?/diff?/captureSources?/capturePreview?/attachmentCount?` 扩展；无原始 arguments/paramHash/expiresAt/安全元数据（D6-07），`pathSummary` 只进权限窗/卡片不进审计（H-1）——doc 04 §6.3 已按落地形状对齐；
+- **F-06~F-10 拍板记录**：F-06（仅黑名单零预授权）、F-07（仅一次/拒绝最小闭环）、F-09（jsdiff 行级 Diff）、F-10（Win+X11 + Wayland 降级）四项预检拍板 + D-§7-4（read 上限/附件回传）+ D-§7-5（action 保留至阶段 8）全部落文（doc 12 §4.6 / 决策记录 §2）；F-08（受控命令模板）保持 `[ ]`，命令模板空态归批次 C；
+- 三态 = **已开发、未联调**（真实 Windows Electron 联调归批次 C/开发者事后）——**不触发全量交叉 Review 重跑**，真实联调后再做收口 Review；
+- 信任边界无放宽：四执行器只读 Main 编译后注册的 `executeRef`（无 `child_process`）、`desktop.command.run` 确认不注册、IPC 零通用通道（zod 双端 + `isTrustedSender`）、Renderer 仍只收脱敏公开事件；M-8 残余风险（被攻破 renderer 可自动 allow_once/deny）已显式记录，批次 C 评估 Main 侧原生确认对话框。
+
+### 16.3 自动回归
+
+对修订后的 02/03/04/06/07/12/13/16 与决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。

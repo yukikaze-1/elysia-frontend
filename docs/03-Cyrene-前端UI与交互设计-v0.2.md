@@ -337,6 +337,8 @@ Backend 工具若要求用户审批，入口必须写明“批准服务器操作
 
 > **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** 卡片统一由 `ToolCallRecord` 渲染，权威键 `sourceCallId`（LLM `tool_call_id`）；Backend 卡片数据源为 `tool.started/tool.completed`（只读，后端已实发），Desktop 卡片数据源为 `tool.request` + 本地状态机 + `tool.status`。`tool.request.reason` P0 缺省时，「请求原因」以工具说明 + 脱敏输入摘要 + 数据流向替代。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：工具卡片**双区渲染**已落地——**实时区 `CyLiveToolCards`**（聊天消息列表与输入区之间，数据驱动 `toolStore` 当前会话记录，上限 3 条；`generation.started` 清空，但只清终态记录——`awaiting_permission`/`running` 保留，权限窗不消失）+ **归档区**（`CyMessageBubble` assistant 分支 `.cy-response-cluster` 内按 `message.toolCalls` 渲染只读卡片，历史/回放持久权威，数据源为消息本体不复制到 toolStore）。状态文案落地细节：`requested` 与 `awaiting_permission` 合并显示「等待授权」；桌面卡片 `awaiting_permission` 才显示授权入口（「允许此电脑操作」+ 拒绝按钮，对等权重），非终态显示「取消任务」；backend 卡片零按钮零授权入口（只读）；原始 JSON 仅开发模式脱敏展示（`import.meta.env.DEV` 守卫）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ## 10. 权限确认交互
 
 权限窗口必须先回答四个问题：
@@ -362,6 +364,8 @@ P0 操作：
 - 倒计时自动允许；
 - 后端传来的原因未经转义直接渲染 HTML；
 - 用户关闭窗口后按允许处理。
+
+> **阶段 6 批次 B 注记（2026-08-20）**：权限窗已落地为 `CyToolApproval`——宿主 `CyChatView` 尾部（权限窗只出现在聊天流，`CySettingsView` 不挂），`v-if="toolStore.waitingForApproval"` 显示当前等待记录（tool-service `awaiting_permission` 队列 FIFO 串行弹窗，一次一个）；四问落地：① 做什么（title + description + inputSummary）② 操作哪个资源（**`pathSummary` 展示目标路径**——inputSummary 的 path 键被脱敏为 `<redacted>` 不能用于展示，H-1）③ 为什么（reason 或回退文案）④ 哪些数据发后端（registry `dataFlowNote` 静态文案）。落地要点：**允许一次与拒绝对等权重**、无倒计时自动允许、**关闭窗口 = 拒绝**（doc 07 §10）、写文件附加「取消任务」；**初始焦点在拒绝按钮（安全默认）+ Tab 陷阱 + Esc=拒绝 + 回焦 triggerElement**（CyHistoryViewer 先例）；写文件展示 **Diff 面板（Main 计算后随 `PublicToolEvent.diff` 下发，renderer 不引 jsdiff）+ 新建/覆盖标注 + 格式元信息条（D6B-19 如实标注「将按原文件格式写入：UTF-8 / LF / 末尾换行将补齐」）+ 首 100 行截断提示**；截图**三步交互**：授权确认（权限窗）→ 源选择（缩略图 grid，`captureSources`）→ 预览 + 上传确认（`capturePreview` + `tool:confirm-upload`）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
 
 ## 11. Live2D 区域
 

@@ -357,23 +357,23 @@
 
 **进入条件：** 阶段 1 与阶段 2 通过；F-01～F-10 已确认。
 
-> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地）：** 工具双轨统筹决策与前后端更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；**后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push**——push 后前端 pull 再动 `check:contract` manifest）。核心口径：wire 双轨（Desktop `tool.request/tool.status`；Backend 新增 `tool.started/tool.completed`）→ 前端领域单轨 `ToolCallRecord`；权威键 = LLM `tool_call_id`（`sourceCallId`）；实时 `toolStore` 易失、归档（assistant `tool_calls` + role=tool 结果）为历史/回放持久权威；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。旧后端 `action` 帧按「已知忽略」兼容帧过渡，不作工具状态源。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**批次 B（Main 工具服务/权限/四执行器/UI）仍待 F-06/F-07/F-09/F-10 拍板。**
+> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A/B 已落地）：** 工具双轨统筹决策与前后端更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；**后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push**——push 后前端 pull 再动 `check:contract` manifest）。核心口径：wire 双轨（Desktop `tool.request/tool.status`；Backend 新增 `tool.started/tool.completed`）→ 前端领域单轨 `ToolCallRecord`；权威键 = LLM `tool_call_id`（`sourceCallId`）；实时 `toolStore` 易失、归档（assistant `tool_calls` + role=tool 结果）为历史/回放持久权威；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。旧后端 `action` 帧按「已知忽略」兼容帧过渡，不作工具状态源。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**F-6 批次 B（Main 工具注册表/服务/四执行器/状态发送/审计 + Preload IPC 面 + toolStore/卡片/权限窗/聊天接线/Live2D `waiting_permission` + mock 改接 + 集成测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**——F-06/F-07/F-09/F-10 预检拍板落地，见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`；**批次 C 前置**：真实 Windows Electron 联调（三态升「已真实联调」）+ allow_scoped 授权 UI/有效期 + 设置页授权管理/命令模板空态（F-08 待确认）+ `GET /api/tools/calls/{callId}` 状态查询 + action 移除评估 + 跨页/跨会话配对复核。
 
 ### 任务清单
 
-- [ ] raw/领域四件套：`tool.request/tool.started/tool.completed`（Server→Client）与 `tool.status`（Client→Server）raw schema + FrameMapper + 领域事件 + zod 镜像（F-6-01~04；`action` 过渡期兼容帧）
-- [ ] Tool Store、工具卡片、统一状态机与公开错误（`ToolCallRecord` 按 `sourceCallId` 三来路归一化）
-- [ ] Backend / Desktop / Local Worker Runtime 区分（Backend 只展示；Desktop 本地状态机裁决终态）
-- [ ] 归档配对：`RestMapper` 解析 assistant `tool_calls` + 按 `tool_call_id` 配对 role=tool 结果，回放/历史重建卡片
-- [ ] Desktop 静态注册表、版本、Schema 与本地风险重算
-- [ ] `callId` 幂等、取消、超时与结果重传（`tool.status` 安全元数据仅由 Main 缓存组装）
-- [ ] 权限窗口、沙盒、路径/域名黑名单、范围授权与撤销
-- [ ] 审批历史、已授权命令模板/目录与空状态
-- [ ] `desktop.file.select` 与受控资源句柄
-- [ ] `desktop.file.read` 的类型、大小、路径与内容返回
-- [ ] `desktop.file.write` 的 Diff、写前哈希、原子替换与冲突保护
-- [ ] `desktop.screen.capture` 的系统选择、预览、上传确认与清理
-- [ ] 可选 `desktop.command.run` 仅在范围明确确认后注册（当前不注册）
+- [x] raw/领域四件套：`tool.request/tool.started/tool.completed`（Server→Client）与 `tool.status`（Client→Server）raw schema + FrameMapper + 领域事件 + zod 镜像（F-6-01~04；`action` 过渡期兼容帧）【批次 A 已落地】
+- [x] Tool Store、工具卡片、统一状态机与公开错误（`ToolCallRecord` 按 `sourceCallId` 三来路归一化）（F-6-15/16/17，批次 B 已落地）
+- [x] Backend / Desktop / Local Worker Runtime 区分（Backend 只展示；Desktop 本地状态机裁决终态）（F-6-18，批次 B 已落地——backend 卡片零按钮只读、desktop 卡片 awaiting_permission 才出权限入口）
+- [x] 归档配对：`RestMapper` 解析 assistant `tool_calls` + 按 `tool_call_id` 配对 role=tool 结果，回放/历史重建卡片（F-6-19~21；批次 A 已落地；批次 C 复核跨页/跨会话配对）【批次 A 已落地】
+- [x] Desktop 静态注册表、版本、Schema 与本地风险重算（F-6-07，批次 B 已落地——`tool-registry.ts` 四工具 + 本地 risk 常量 + inputSchema strict）
+- [x] `callId` 幂等、取消、超时与结果重传（`tool.status` 安全元数据仅由 Main 缓存组装）（F-6-08/10，批次 B 已落地——tool-service 13 步决策链 + tool-status-sender + paramHash canonical 校验 + 重连重发终态）
+- [x] 权限窗口、沙盒、路径/域名黑名单、范围授权与撤销（F-6-08/17，批次 B 已落地——CyToolApproval 四问 + `PATH_BLACKLIST_DEFAULTS` 仅黑名单零预授权；**范围授权与撤销归批次 C**）
+- [ ] 审批历史、已授权命令模板/目录与空状态【批次 C（F-07 拍板承接；命令模板空态归批次 C 确认）】
+- [x] `desktop.file.select` 与受控资源句柄（F-6-09，批次 B 已落地——selected-set TTL 豁免替代受控句柄语义，B12）
+- [x] `desktop.file.read` 的类型、大小、路径与内容返回（F-6-09，批次 B 已落地——2 MiB 上限/64 KiB 内联/附件上传/二进制拒/TOCTOU）
+- [x] `desktop.file.write` 的 Diff、写前哈希、原子替换与冲突保护（F-6-09，批次 B 已落地——jsdiff 行级 Diff/写前哈希 `FILE_CONFLICT`/原子替换/格式保留）
+- [x] `desktop.screen.capture` 的系统选择、预览、上传确认与清理（F-6-09/10，批次 B 已落地——Win+X11 desktopCapturer/Wayland 降级/子状态机钉死/两步确认）
+- [x] 可选 `desktop.command.run` 仅在范围明确确认后注册（当前不注册）（**确认全阶段不注册**，F-07 拍板）
 
 ### 验收门槛
 
@@ -508,3 +508,4 @@
 | 2026-08-19 | **阶段 6 工具双轨统筹决策（方案 B）定案，仅文档批次**：核对结论（backend 工具实发 `action` 帧但前端未收录；一个回合一个 generation 且 `generation.completed` 无 `tool_calls`；ID 双轨断裂）→ 方案 B（Desktop `tool.request/tool.status` + Backend 新增 `tool.started/tool.completed`，前端领域层统一 `ToolCallRecord`，权威键 `sourceCallId`）→ §9 任务清单补 raw/领域四件套与归档配对；决策与 F-6-01~25/B-6-01~09 更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`；**代码批尚未开始，阶段 6 三态保持「未开始」** | 未开始（方案 B 已定案，待契约批） |
 | 2026-08-20 | **后端 B-6 批已落地并同步到前端文档（后端本地 HEAD `03a6e882`，领先 origin 13 commit 未 push）**：契约 `ToolRuntime` + `tool.started/tool.completed` + `tool.request.sourceCallId` 必填已合并，三产物再生成；v2 停发工具 `action`（v1 逐字节不变）；scheduler 线程化 `tc.id` 修复生产 `sourceCallId` 空串；`outputSummary` 2000 字符截断 + `inputSummary=_safe_arg_summary` + `reason` 缺省已按默认定案。后端门禁前端侧独立复跑：test-quick **3652 passed** / ruff / pyright **0** / check-types 全绿；前端 `check:contract` WS 28/28 + 12 帧有意滞后 warn（新帧待 F-6-01 收编）。**F-6 批次 A（raw/领域四件套 + 归档配对）可立即开；批次 B 仍待 F-06/F-07/F-09/F-10 拍板**；同步详情见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md` §7 | 未开始（后端契约就绪，待前端 F-6 批次 A） |
 | 2026-08-20 | **阶段 6 批次 A（工具契约与领域层）已落地并全量验证（三态=已开发、未联调）**：raw wire 四件套（`tool.request/started/completed` + `action` 兼容帧 + client `tool.status`，`.strict()` 镜像契约，WS 28→32/未纳 8）+ 领域事件三件套（`BackendEvent` + `BackendEventSchema` 镜像，tool.request 无安全元数据字段）+ `ToolCallRecord` 契约（id=sourceCallId 权威键，展示 8 态/协议 6 态分离）+ `ToolResult`→`ToolStatusCommand` 收敛 + 归档配对（`pairToolCalls` 纯函数：缺配对降级/error 优先/去重，REST 历史 + WS 回放双路径 → `Message.toolCalls`）+ mock 工具场景（`CYRENE_MOCK_TOOL_FLOW` 两 kind + `submitToolResult` 实装 + `CYRENE_MOCK_TOOL_HISTORY` seed）+ `refresh-wire-manifests.mjs` 脚本；门禁 **1639 单测（124 files）** + typecheck/lint + check:contract（WS 32/32 + 8 未纳 warn + REST 15/15）；spec/plan 各 2 轮 code-review APPROVE（`56ddce6`/`e43ae5a`），Task1~6 提交链 `319d8cf`→`c95b9c9`→`8cda431`→`b92d6f5`→`2d8e337`→`f9d4af5a`；集成用例按 R-A2 取舍跳过（mock 模式不经 rest-mapper，配对归 real/批次 C 联调）；决策记录 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**批次 B 仍待 F-06/F-07/F-09/F-10 拍板** | 已开发、未联调（批次 A 代码批完成） |
+| 2026-08-20 | **阶段 6 批次 B（Main 工具服务/权限/四执行器/UI）已落地并全量验证（三态=已开发、未联调）**：F-6-07~18 + F-6-22/24 + 承载项（R-A3 `error:''` 加固、`MessageSchema` 补 `toolCalls`、jsdiff ^9.0.0）——tool-registry 静态注册表四工具 + `PATH_BLACKLIST_DEFAULTS`（realpath 段边界、含 /tmp 与用户敏感面/Windows 面，测试经 `CYRENE_MOCK_TOOL_ALLOW_ROOT` 放宽）+ tool-service 13 步决策链（paramHash canonical 固定向量校验/黑名单命中不弹窗/Wayland 授权前拒/write 授权前预读+Diff/awaiting FIFO 一次一个/shutdown 收尾）+ 四执行器（select selected-set TTL 豁免、read 2 MiB 上限+64 KiB 内联+附件上传+二进制拒+TOCTOU、write Diff+写前哈希 `FILE_CONFLICT`+原子替换+格式保留、capture Win+X11 desktopCapturer+Wayland 降级+子状态机钉死+两步确认）+ tool-status-sender（Main 缓存组装 + `adapter.submitToolResult`/`uploadToolAttachment`，上传时序 running 后 result 前）+ IPC 面（`PushChannels.tool:event` + `IpcChannels` 五 invoke，zod 双端 + `SCHEMA_VALIDATION_FAILED` + `isTrustedSender`）+ toolStore 三来路归一化 + 双区渲染（CyLiveToolCards 实时区 ≤3 + CyMessageBubble 归档只读卡片）+ CyToolCard/CyToolApproval（四问/初始焦点拒绝按钮/写 Diff+格式元信息/截图三步）+ Live2D `waiting_permission` 真实驱动 + mock 改接 `toolRequestSink` 统一入口 + 集成 electron-tools.spec.ts 6 用例（拒绝/允许/取消/写冲突/backend 只读/capture 软断言）；**F-06/F-07/F-09/F-10 预检拍板落地**（仅黑名单零预授权/仅一次+拒绝最小闭环/jsdiff/桌面捕获平台）；门禁 **1770 单测（136 files）+ 104 集成（17 files）** + typecheck/lint/build + check:contract（WS 32/32 + 8 未纳 warn + REST 15/15，**manifest 未刷新**——raw wire 未变）；spec/plan 各 2 轮 review APPROVE，Task1~8 提交链 + lint 清零 `c0e1167`；决策记录 `docs/review/2026-08-20-阶段6批次B-决策记录.md`；**批次 C 前置**：真实 Windows Electron 联调 + allow_scoped/授权管理页/命令模板空态（F-08 待确认）+ `GET /api/tools/calls/{callId}` + action 移除评估 + 跨页配对复核；（门禁计数最终值见 CLAUDE.md——主会话统一更新） | 已开发、未联调（批次 B 代码批完成） |

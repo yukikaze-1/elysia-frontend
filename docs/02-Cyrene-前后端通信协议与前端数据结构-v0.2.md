@@ -485,6 +485,8 @@ interface ToolCall {
 
 > **阶段 6 批次 A 注记（2026-08-20）**：上图为设计期领域模型；批次 A 落地为 `shared/contracts/tool.ts` 的 **`ToolCallRecord`**（`id = sourceCallId`（LLM tool_call_id）权威键、`desktopCallId?` 桥关联、`runtime` 三值、8 态展示 `ToolCallStatus`），`arguments` 不进领域事件（Main 侧 `redactToolArguments` 脱敏为 `inputSummary`）；客户端→服务端回传收敛为 `ToolStatusCommand`（wire `tool.status` 六态协议态，Main 组装、Renderer 不可见）。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：批次 B 落地 Main 工具服务/权限/四执行器/UI，领域层补充公开事件 **`PublicToolEvent`**（`id = sourceCallId` 权威键、`desktopCallId?` 桥关联、`runtime: 'desktop'` 收窄、`pathSummary?/dataFlowNote?/diff?/captureSources?/capturePreview?/attachmentCount?` 扩展字段；**无原始 arguments/paramHash/expiresAt/安全元数据**，D6B-09）。**Desktop 工具全生命周期归 Main tool-service**：real 路径 `handleFrame` 对 `tool.request` 加显式 `case`——FrameMapper 校验+脱敏产出仍存在（mapper 纯函数与批次 A 单测不变），但 **real-backend 不再把它 emit 给 renderer 事件管线**（raw `arguments/paramHash` 只在 Main），改路由 tool-service（D6B-08）；状态变化经新 IPC 推送通道 `tool:event` 下发 `PublicToolEvent` → toolStore。Backend 展示事件（`tool.started/tool.completed`）仍走既有 `chat:event` 管线（批次 A 现状不动）。**`tool.status`（wire 六态）发送方 = Main tool-status-sender**（F-6-10 落地）：Main 缓存每次请求的 `toolName/toolVersion/runtime/paramHash` → `adapter.submitToolResult`（real WS / mock 记录+归档）；附件经 `adapter.uploadToolAttachment`（real `POST /api/uploads/desktop/{callId}` + `X-Client-Connection: <connectionId>`，响应仅 `{url}` 本地回填 mimeType/label；mock 占位 URL 不上传）**先上传后回填 `attachments`**，上传时序在 `tool.status{running}` 之后、`result` 之前。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ### 10.1 Desktop Runtime 请求
 
 前端收到后依次执行：
@@ -906,10 +908,10 @@ idle → connecting → connected
 | generation.failed | Chat Store | 保留内容并展示错误 |
 | resource.changed | Resource Store | 合并会话媒体、表情、文件和链接索引 |
 | tool.call | Tool Store / Main | 注册调用并路由 Runtime |
-| tool.request | Main Tool Service / Tool Store | Desktop 调用注册、本地风险重算、权限窗；Renderer 只收脱敏公开事件（**批次 A 已落地**：raw schema 校验 + `redactToolArguments` 脱敏 emit，原始 arguments 永不进 Renderer；权限/执行归批次 B） |
-| tool.started | Tool Store | 按 `sourceCallId` 创建/推进统一 `ToolCallRecord`；Backend Runtime 只读卡片（**批次 A 已落地**：领域事件映射 + 归档配对数据源；卡片渲染归批次 B） |
-| tool.completed | Tool Store | 服务端完成确认，按 `sourceCallId` 合并；Desktop 终态由本地状态机裁决（**批次 A 已落地**：领域事件映射；本地状态机归批次 B） |
-| tool.status | Tool Store | 更新工具卡片（契约与 mock 发送面批次 A 已就绪；Main 组装发送归批次 B） |
+| tool.request | Main Tool Service / Tool Store | Desktop 调用注册、本地风险重算、权限窗；Renderer 只收脱敏公开事件（**批次 A 已落地**：raw schema 校验 + `redactToolArguments` 脱敏，原始 arguments 永不进 Renderer；**批次 B 已落地**：real 路径不再 emit 给 renderer 事件管线——handleFrame 显式 case 路由 tool-service 全生命周期（D6B-08），经 `tool:event` 推送 `PublicToolEvent`） |
+| tool.started | Tool Store | 按 `sourceCallId` 创建/推进统一 `ToolCallRecord`；Backend Runtime 只读卡片（**批次 A 已落地**：领域事件映射 + 归档配对数据源；**批次 B 已落地**：toolStore 归一化 + 双区渲染） |
+| tool.completed | Tool Store | 服务端完成确认，按 `sourceCallId` 合并；Desktop 终态由本地状态机裁决（**批次 A 已落地**：领域事件映射；**批次 B 已落地**：toolStore 本地状态机裁决优先，D6B-21） |
+| tool.status | Tool Store | 更新工具卡片（契约与 mock 发送面批次 A 已就绪；**批次 B 已落地**：Main tool-status-sender 缓存组装发送，经 `adapter.submitToolResult`（real WS / mock 记录+归档），附件先 `uploadToolAttachment` 后回填） |
 | live2d.directive | Live2D Store | 校验后映射表现 |
 | model.profile.changed | Model Service Store | 更新 LLM/STT/TTS Profile 与当前选择 |
 | voice.caption | Voice Store | 更新直接语音会话的临时或最终字幕，不修改草稿 |

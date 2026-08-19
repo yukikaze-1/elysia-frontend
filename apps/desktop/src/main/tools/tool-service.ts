@@ -392,7 +392,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
         try {
           const r = normalizeToolPath(p, { platform: deps.platform })
           realPath = r.realPath
-        } catch (e) { return reject(req, 'PATH_UNSAFE', '路径不安全') }
+        } catch { return reject(req, 'PATH_UNSAFE', '路径不安全') }   // lint：e 未使用 → 省略绑定
         const rp = realPath   // 局部 const 供闭包（TS CFA 不把外层 let 窄化传入闭包）
         const blacklisted = isPathBlacklisted(rp) && !(deps.allowRoots ?? []).some(root => rp === root || rp.startsWith(root + '/'))
         if (blacklisted) return reject(req, 'PATH_BLOCKLISTED', '路径被黑名单拦截')

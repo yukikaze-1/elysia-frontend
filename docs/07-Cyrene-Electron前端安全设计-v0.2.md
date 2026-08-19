@@ -221,6 +221,8 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 - 路径与域名黑名单继续生效；
 - 非只读命令原则上逐次确认。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：Desktop 工具安全已落地（Main 工具服务/四执行器/审计，F-6-07~12/14）——**黑名单默认集** `PATH_BLACKLIST_DEFAULTS` 落地为常量（不进 settings.json，D6B-14）：POSIX 17 项系统目录（**含 `/tmp`**——测试 fixture 经 `CYRENE_MOCK_TOOL_ALLOW_ROOT` 显式注入 allowlist 放宽，生产默认不注入）+ 14 项用户敏感目录（~/.ssh、~/.config、~/.gnupg、~/.password-store、~/.aws、~/.npm、~/.cache、~/.local 整树、~/.mozilla、~/.netrc、~/.bash_history、~/.Xauthority、~/.pki、~/.git-credentials + dot-secret 精确项 `.env/.pypirc/.dockercfg` + `.kube/config` 路径段精确项）+ `/home/*` 排除当前用户 + Windows 6 项 + `\\.\`/`\\?\`/ADS/保留名（CON/NUL/PRN/AUX/COM1-9/LPT1-9）/UNC 默认拒；**匹配时机 = full realpath（含父链，防中间组件 symlink 逃逸）之后按路径段边界**（等于 root 或 root+分隔符开头，防 `/var2` 误伤）；域名黑名单 = 仅已连接后端端点。**执行器安全**：四执行器全部只读 Main 编译后注册的 `executeRef`（无命令/脚本/Worker/`child_process`），`desktop.command.run` 确认不注册；写操作原子替换（随机后缀临时文件 + rename + fsync）+ 写前哈希冲突保护（`FILE_CONFLICT`）+ 失败保持原文件；read/write 均 TOCTOU 复核（open 前 stat + open 后 fstat inode）；**截图平台**：Win + X11 `desktopCapturer`（仅 Main 调用），**Wayland 授权前降级** `CAPTURE_UNAVAILABLE`（不静默失败），每次用户选择 + 预览 + 上传确认（两步确认），临时图完成/取消/超时清理，审计只记元数据。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ## 10. 权限 UI 安全
 
 - 使用本地模板，不渲染后端 HTML；
@@ -232,6 +234,8 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 - 不自动允许；
 - 授权与 `callId`、工具、参数摘要绑定；
 - 参数在授权后变化必须重新授权。
+
+> **阶段 6 批次 B 注记（2026-08-20）**：权限 UI 已落地为 `CyToolApproval`——**初始焦点在拒绝按钮（安全默认）** + Tab 陷阱 + Esc=拒绝 + 回焦 triggerElement（CyHistoryViewer 先例）；允许一次与拒绝对等权重、无倒计时自动允许、**关闭窗口 = 拒绝**（tool-service 未决授权按拒绝处理并审计）；授权绑定 `callId` + zod 校验 + `isTrustedSender`（`tool:decide` 只校验这些——被攻破 renderer 可对 pending 调用自动 allow_once/deny 为**已记录残余风险（M-8）**，缓解层：raw `.strict()` + Main 侧黑名单/风险重算（renderer 无法授权黑名单路径）+ capture 子状态机（无法跳过预览/上传确认）仍有效；批次 C 评估 write/capture 的 Main 侧原生确认对话框）；参数在授权后变化 → 重新授权（paramHash 重算 + 幂等参数一致性校验）；权限窗只出现在聊天流（CyChatView 单宿主，CySettingsView 不挂）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
 
 ## 11. 凭据和本地数据
 

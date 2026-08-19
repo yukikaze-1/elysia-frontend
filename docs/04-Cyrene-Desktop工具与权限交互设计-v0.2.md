@@ -34,6 +34,8 @@
 
 > **阶段 6 批次 A 注记（2026-08-20）**：领域统一调用记录为 `ToolCallRecord`，**权威键 `id = sourceCallId`（LLM `tool_call_id`）**；`desktopCallId`（桥 `call_*`）只作执行协议关联（ID 双轨，D6-03）。wire 双轨：Desktop 执行握手 `tool.request/tool.status`、Backend 展示生命周期 `tool.started/tool.completed`；前端领域单轨统一。详见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：静态注册表已落地为 `apps/desktop/src/main/tools/tool-registry.ts` 的 `createToolRegistry()`——四个 Desktop P0 工具（`desktop.file.select/read/write` + `desktop.screen.capture`），每项 `name/version/runtime:'desktop'/title/description/dataFlowNote/localRisk/permissionMode/supportedPlatforms/inputSchema/outputSchema/executeRef/defaultTimeoutMs/isPathTool`；未知名称/版本/运行时/**平台不匹配**一律拒绝（`CAPABILITY_UNAVAILABLE`，不弹窗）。四工具元数据落地值：`desktop.file.select`（safe/automatic，`{title?}` 不接受 filters——客户端白名单生成，dataFlowNote「选择的文件路径、大小与哈希摘要将发送到已连接的后端服务器；文件内容不会自动上传」）、`desktop.file.read`（medium/scoped_or_prompt，本批按「每次确认 + selected-set 豁免」实现，`{path: string.min(1)}` strict，dataFlowNote「读取的文件内容（≤64 KiB 内联 / 更大经附件上传）将发送到已连接的后端服务器」）、`desktop.file.write`（high/always_prompt，`{path, content}` strict，dataFlowNote「写入内容将覆盖/创建目标文件，文件内容将发送到已连接的后端服务器」）、`desktop.screen.capture`（high/always_prompt，`{region: string.nullish()}` strict——契约对齐：后端 `ScreenCaptureParams` 产出 `{"region": null}`，nullish() 放行 null/缺省，dataFlowNote「所选屏幕/窗口截图将发送到已连接的后端服务器」）；`desktop.command.run` 确认不注册（全阶段不注册）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ```typescript
 interface LocalToolDefinition<TInput, TOutput> {
   name: string;
@@ -134,6 +136,8 @@ interface ToolDesktopBridge {
 }
 ```
 
+> **阶段 6 批次 B 注记（2026-08-20）**：IPC 面已落地（F-6-13/14）——`PushChannels` 增 **`tool:event`**（Main→Renderer 主动推送，`webContents.send` + preload `onToolEvent(handler)` 返回退订，非法事件丢弃 + warn，对齐 `onChatEvent` 模式；推送通道入 `PushChannels` 而非 `IpcChannels`，对齐 chat:event 分类纪律）；`IpcChannels` 增五个 Renderer→Main invoke：**`tool:decide`**（`PermissionDecision`）、**`tool:cancel`**（`{callId}`）、**`tool:list`**（→ 最近 20 条 `PublicToolEvent[]`）、**`tool:pick-source`**（`{callId, sourceId}`，capture 源选择）、**`tool:confirm-upload`**（`{callId}`，capture 上传确认）；preload 对应 `toolDecide/toolCancel/toolList/toolPickSource/toolConfirmUpload` 具名窄 API。全部 `registerHandler` + `isTrustedSender` + **zod 双端校验**（`PublicToolEventSchema`/`PermissionDecisionSchema`/`toolCancelSchema`/`toolListResponseSchema`/`toolPickSourceSchema`/`toolConfirmUploadSchema` 落 `shared/schemas/ipc-response.ts`，失败 `SCHEMA_VALIDATION_FAILED` 结构化错误）；`PermissionDecision` 本批只产出 `allow_once/deny` 两值（`grantScope` 字段类型保留不产出），`decidedAt` 由 Main 落审计时打戳（Renderer 时钟不可信）；禁止 `invoke(channel)` 式通用通道纪律不变。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ### 6.2 禁止接口
 
 ```typescript
@@ -153,18 +157,31 @@ Renderer 只接收脱敏后的事件：
 
 ```typescript
 interface PublicToolEvent {
-  callId: string;
+  id: string;                 // = sourceCallId（LLM tool_call_id）权威键
+  desktopCallId?: string;     // 桥 callId（执行协议关联）
   toolName: string;
-  title: string;
-  runtime: "backend" | "desktop" | "local_worker";
-  status: ToolCallStatus;
+  title: string;              // 友好名（Main 注册表派生）
+  runtime: "desktop";         // 批次 B 落地收窄：tool:event 只承载 desktop
+  status: ToolCallStatus;     // 8 态展示态
   reason?: string;
-  inputSummary?: ToolInputSummary;
+  inputSummary?: string;      // redactToolArguments 脱敏产物
+  pathSummary?: string;       // Main 派生路径展示摘要（父目录+basename；仅权限窗/卡片，不进审计，H-1）
   resultSummary?: string;
-  error?: PublicError;
+  error?: { code?: string; message?: string };
+  truncated?: boolean;
+  durationMs?: number;
+  startedAt?: string;
+  finishedAt?: string;
+  attachmentCount?: number;   // 附件数（卡片「含 N 个附件」数据源）
+  dataFlowNote?: string;      // registry 静态文案（非敏感）
+  diff?: { lines: DiffLine[]; added: number; removed: number; truncated: boolean; formatNote: string; isNewFile: boolean };  // write 授权前计算随 awaiting 事件下发
+  captureSources?: Array<{ sourceId: string; sourceName: string; thumbnailDataUrl: string }>;  // 仅 capture awaiting_pick
+  capturePreview?: { sourceId: string; previewDataUrl: string };                                // 仅 capture picked 后
   occurredAt: string;
 }
 ```
+
+> **阶段 6 批次 B 注记（2026-08-20）**：上图为落地后的领域公开形状（与设计期 `PublicToolEvent` 存在形变，D6B-08/09 定案）：`callId` → **`id` = sourceCallId 权威键**；新增 `desktopCallId?/pathSummary?/attachmentCount?/dataFlowNote?/diff?/captureSources?/capturePreview?`；**`runtime` 收窄为 `'desktop'`**（tool:event 通道只承载 Desktop 本地状态机事件——Backend 展示事件仍走 `chat:event` 管线）；**无原始 arguments/paramHash/expiresAt/安全元数据**（D6-07），`pathSummary` 只进权限窗/卡片、不进审计（H-1）；`title`/`dataFlowNote` 来自 Main 注册表（Renderer 无注册表）；`diff` 由 Main 用 jsdiff 计算后序列化下发（renderer 不引 diff 库）；`expiresAt` 只存 Main（超时定时器用，不进事件）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
 
 ## 7. 权限模型
 
@@ -260,6 +277,8 @@ interface SecurityPolicy {
 
 黑名单始终覆盖沙盒和历史授权。路径先规范化并解析符号链接；域名转为规范形式后再匹配精确项和受控通配符。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：决策链已落地为 `tool-service` 13 步（注册表+平台 → 参数 schema → callId 幂等 → paramHash 重算校验 → full realpath+黑名单 → Wayland 门禁 → write 授权前受控预读+Diff → 本地风险重算+授权判定 → wire `accepted`（步骤 1~6 校验通过即发，早于授权判定）→ 等待授权/超时/取消 → 决定 → 执行（outputSchema 校验）→ 状态机单向+断线重连+退出收尾），任一步失败返回结构化错误不继续。**F-06 拍板值（仅黑名单、零预授权）**：`sandboxDirectories` 恒空（本批不产出任何预授权目录）；**路径黑名单默认集** `PATH_BLACKLIST_DEFAULTS`（realpath 后按路径段边界匹配，含子目录）——POSIX 17 项系统目录（**含 `/tmp`**——测试 fixture 经 `CYRENE_MOCK_TOOL_ALLOW_ROOT` 显式注入 allowlist 放宽，生产默认不注入）+ 14 项用户敏感目录（`~/.ssh ~/.config ~/.gnupg ~/.password-store ~/.aws ~/.npm ~/.cache ~/.local（整树）~/.mozilla ~/.netrc ~/.bash_history ~/.Xauthority ~/.pki ~/.git-credentials` + dot-secret 精确项 `.env/.pypirc/.dockercfg` + `.kube/config` 路径段精确项）+ `/home/*` 排除当前用户 + Windows 6 项（`C:\Windows C:\Program Files C:\Program Files (x86) C:\ProgramData C:\System Volume Information C:\$Recycle.Bin` + `%USERPROFILE%\.ssh/AppData` + `%TEMP%`）+ `\\.\`/`\\?\`/ADS/保留名（CON/NUL/PRN/AUX/COM1-9/LPT1-9）/UNC 默认拒；**域名黑名单** = 上传/连接仅限已连接后端端点（`ConnectionConfig` baseUrl origin）。黑名单永远压过一切（决策优先级第 2 层），命中不弹窗（用户无法授权黑名单路径）。**F-07 拍板值（仅一次/拒绝最小闭环）**：四工具映射 select=safe/automatic（用户主动选择即授权）、read=medium/每次确认+selected-set 豁免、write/capture=high/强确认；`PermissionDecision` 只产出 `allow_once/deny`；allow_scoped（目录授权+有效期）与设置页授权管理/命令模板空态归批次 C。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ## 8. Desktop P0 工具定义
 
 ### 8.1 `desktop.file.select`
@@ -311,6 +330,16 @@ interface SecurityPolicy {
 - 不支持静默捕获、定时捕获或录屏；
 - 返回图片附件 ID、尺寸和格式；
 - 临时图片在完成或取消后按策略清理。
+
+> **阶段 6 批次 B 注记（2026-08-20）**：四执行器已落地为 `apps/desktop/src/main/tools/tool-executors.ts`（依赖全注入可单测，对齐 SafeOpenPlatform 平台层先例），实现要求落地值如下。
+>
+> **§8.1 `desktop.file.select`（受控句柄 → selected-set TTL 替代语义，B12）**：本批**不产出受控句柄**——改为 **selected-set TTL 豁免**语义：select 成功后把规范化路径记入 tool-service `selected-set`（`Map<path, selectedAt>`，TTL 10 分钟 + 本次连接会话，重连即清空，常量 `SELECT_EXEMPT_TTL_MS`）；read 的 path 命中 → 免弹窗自动执行（用户刚主动选过该文件）；未命中 → 每次确认。select 返回路径**先过黑名单复核**（命中 → 返回 `{cancelled:true, reason:'PATH_BLOCKLISTED'}` 走 result 态，刻意伪装为「用户取消」不泄露黑名单细节，L10，且不记录 selected-set）；**取消选择不是错误**——result `{cancelled:true}`（LLM 可感知，不走 error 态）；过滤器白名单（文本为主对齐 read 能力）：`txt md markdown json log csv tsv js ts jsx tsx py rb go rs c h cpp hpp java kt swift css scss html htm yaml yml toml ini cfg conf xml svg sh bash env`；结果 `{path, name, size, mtimeMs, hash: sha256}`（hash/mtimeMs 经 dataFlowNote 声明发送）。
+>
+> **§8.2 `desktop.file.read`（上限/编码/TOCTOU）**：`FILE_READ_MAX_BYTES = 2 MiB` 常量（超限 → `FILE_TOO_LARGE` 拒绝，不截断）；内容 ≤ `RESULT_INLINE_BYTES = 64 KiB` → 内联 `tool.status.output`（LLM 直接读）；> 64 KiB → 附件上传（`POST /api/uploads/desktop/{callId}`）回填 `attachments[]` + `outputSummary` 前 2000 字符 + `truncated=true`；二进制检测（NUL 字节比例 ≥0.1% 或首个 8 KiB 含 NUL；UTF-16LE/BE BOM）→ `FILE_IS_BINARY`；无 BOM → 严格 UTF-8 解码（`fatal:true`）；TOCTOU 复核（open 前 stat + open 后 fstat inode）；返回 `{path, name, size, hash, charset:'utf-8'}` + content。
+>
+> **§8.3 `desktop.file.write`（Diff/哈希/原子写/格式保留）**：`MAX_WRITE_CONTENT_BYTES = 2 MiB`（超限 → `CONTENT_TOO_LARGE`）；授权前受控预读 + Diff（`text-diff.ts`：jsdiff `diffLines` 行级，首 100 行截断，renderer 只渲染不下发库）；写前哈希检查——旧文件授权前预读已算 hash → 原子替换前重读对比 → 不一致 → `FILE_CONFLICT`（UI 文案「文件已被修改，未覆盖」；重新确认 = LLM 重新发起请求，前端不自动重试）；**原子替换** = 同目录临时文件（随机后缀名，EEXIST 换名重试不自动 unlink）+ rename + fsync（复用 credentials/atomic-write.ts 语义；M1/M3 的 TOCTOU size 复核形态与临时文件固定 `.tmp` 策略为批次 C 前按 spec 修正或正式否决的留档项）；**格式保留**（D6B-19）：BOM 原样保留、CRLF/LF 按旧文件计数判定、末尾换行补齐——`normalizeToFormat` 先拆行段再按目标 EOL 重拼（防 `\r\r\n` 双转换）；无法无损解码 → 拒绝按文本覆盖；新文件 → UTF-8 无 BOM + LF + 内容原样；所有格式决策在确认窗元信息条如实标注。
+>
+> **§8.4 `desktop.screen.capture`（截图平台）**：**Win + X11（`desktopCapturer`，Main 调用），Wayland 明确降级**（`XDG_SESSION_TYPE==='wayland'` 或 `WAYLAND_DISPLAY` 存在且非 X11）→ 授权前直接 `CAPTURE_UNAVAILABLE` 错误（「当前桌面环境不支持屏幕捕获」明确提示，不静默失败）；**两步确认**（授权确认 + 上传确认）+ 中间用户选择/预览（D6B-16 三步：授权确认 → 缩略图 grid 源选择 → 预览 + 上传确认）；**capture 子状态机钉死** `awaiting_pick → picked（预览已下发）→ awaiting_confirm`——`tool:confirm-upload` 仅在 preview 已下发后接受（乱序拒 `CAPTURE_STATE_INVALID`）、`tool:pick-source` 校验 `sourceId ∈ 本次枚举快照`（被攻破 renderer 无法跳过预览直接上传）；缩略图 data URL 单张 ≤ 64 KiB（超限丢弃该源并提示）、预览 ≤ 256 KiB（超限降级为缩略图提示）；上传 PNG bytes（mime `image/png`、文件名 `capture-<callId>.png`）→ attachments 回填 + result `{sourceId, sourceName, size, mimeType, url}`（attachmentId 由 url 派生）；停留态 TTL `CAPTURE_SESSION_TTL_MS = 120s`；临时图完成/取消/超时/退出清理。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
 
 ## 9. 可选受控命令：`desktop.command.run`
 
@@ -372,6 +401,8 @@ Worker 断开时返回失败，不能自动切换到后端执行并上传用户�
 
 > **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** Backend Runtime 的展示数据源定为新帧 `tool.started/tool.completed`（v2，后端已实发），不再消费泛型 `action`；前端统一领域键 = `sourceCallId`（LLM `tool_call_id`），Desktop 桥 `call_*` 只用于 `tool.request/tool.status` 执行协议。Desktop 终态由前端本地状态机裁决，后端 `tool.completed` 按 `sourceCallId` 与服务端归档确认合并。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
 
+> **阶段 6 批次 B 注记（2026-08-20，D6-08/B13 定案）**：**Backend 工具全只读，「批准服务器操作」审批样式退役**——v2 后端 Desktop 工具不发实时 `tool.request`（`approvalAuthority='client'` 且本地授权），Backend Runtime 工具亦无服务端审批回传路径（无实时 `tool.request` 即无决定可回传），上文「若后端要求用户审批，则使用明确标注『服务器操作』的审批样式并把决定回传后端」条款按 D6-08 改写为退役语义：后端工具只走 `tool.started/tool.completed` 只读展示（卡片零按钮零授权入口，doc 03 §9 注记）；若未来后端明确发送由用户决定的服务端审批（`approvalAuthority='backend'`），仍需产品拍板后另行设计，**不自动恢复本条款**。其余 §11 条款不变（「在服务器执行」标注、客户端审计只记录收到的公开事件等）。
+
 ## 12. 取消、超时和并发
 
 - 每个工具定义默认超时；
@@ -396,6 +427,8 @@ Main 按 `callId` 保存短期执行记录：
 
 副作用工具的幂等记录应跨短时重连保留。
 
+> **阶段 6 批次 B 注记（2026-08-20）**：幂等已落地于 `tool-service`（决策链 step 3）——内存短期记录**跨短时重连保留**：已等待授权 → 返回当前状态不重复弹窗；正在执行 → 返回运行中；已完成 → 返回既有结果；已拒绝 → **保持拒绝**（重连后不重弹）；**参数与相同 `callId` 不一致 → `rejected` + `PARAM_MISMATCH` 协议错误**（不覆盖原记录）；**paramHash 重算校验**（D6B-22 canonical 算法：递归键排序 + 紧凑 `,`/`:` + 非 ASCII 不转义 + SHA-256 hex，固定向量单测钉死，与后端 `core/tools/desktop/plugin.py` 产物一致——不一致 → `PARAM_HASH_MISMATCH` 拒绝不弹窗；mock 流无 paramHash → 本地计算回退值自洽校验）；未知 callId 的 `tool:decide/cancel` → 结构化拒绝；终态不重回执行（状态机单向前进）。重连语义（D6B-11）：未确认**终态**（`statusSent=false`）重连成功后重发 `tool.status`（附件复用已得 URL 不重传字节）；非终态保持展示状态不重投执行、不重弹权限窗（权限窗关闭即拒绝）；断线时执行中调用安全收尾（写操作原子完成/失败保持原文件，截图取消清理）；`GET /api/tools/calls/{callId}` 服务端状态查询本批不做（归批次 C 真实联调）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
 ## 14. 审计记录
 
 ```typescript
@@ -419,6 +452,8 @@ interface ToolAuditRecord {
 审批历史应允许用户按工具、目录、命令模板、结果和时间查看，并可从相关记录跳转撤销长期授权。不得保存完整文件内容、截图内容、认证 Token、密钥或未脱敏的敏感参数。
 
 Backend Runtime 记录只保存客户端实际收到的公开事件；Desktop/Local Worker 记录由 Main 生成。两者必须在 UI 中标明数据完整性范围，不能把客户端摘要称为后端完整审计。
+
+> **阶段 6 批次 B 注记（2026-08-20，F-6-12）**：审计已落地为 `tool-audit.ts` 的 `auditToolEvent`，走既有 audit 闭包（fail-open——审计失败不改变操作结果）。**新增事件类型**：`tool:request-received` / `tool:decision` / `tool:executing` / `tool:status-sent` / `tool:terminal`（含 rejected/cancelled/timeout/failed + **`cancelSource: 'user'|'timeout'|'backend'`** 区分取消来源，对齐 §12「后端取消与用户取消使用不同审计来源」）；`AuditEvent` 既有字段映射 `toolId=sourceCallId`、`callId`、`status`、`durationMs`、`summary=脱敏摘要`、`runtime`，**扩展可选字段 `riskLevel?/permissionDecision?/startedAt?/errorCode?`**（audit.ts 为自有文件，扩展无外部影响）；`permissionDecision` 只产出 allow_once/deny；`summary` 只允许 `redactToolArguments` 产物或固定元数据，**显式禁止 resultSummary/outputSummary/error.message 入审计**（文件内容片段/路径不得落盘）；runtime 区分 desktop（Main 完整记录）/ backend（仅记收到的公开事件 + summary 注记「客户端公开事件，非后端完整审计」）；不落文件内容/截图/token/未脱敏参数。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
 
 ## 15. 失败处理
 
