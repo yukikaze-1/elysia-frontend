@@ -1136,7 +1136,8 @@ export class RealBackend implements BackendAdapter {
     // bytes 为调用方 Uint8Array；BlobPart 需 ArrayBufferView<ArrayBuffer>（uploadAttachments 同款 cast，TS2322 兼容）
     form.append('file', new Blob([bytes as unknown as BlobPart], { type: mime }), `${label ?? 'attachment'}-${callId}.${ext}`)
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.restTimeoutMs)
+    const uploadTimeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS   // M2：工具附件走长超时（60s，与 uploadAttachments 同口径——截图/大文件传输常超 10s）
+    const timer = setTimeout(() => controller.abort(), uploadTimeoutMs)
     this.activeControllers.add(controller)
     const url = `${serverUrl.replace(/\/$/, '')}/api/uploads/desktop/${callId}`
     try {
@@ -1153,7 +1154,7 @@ export class RealBackend implements BackendAdapter {
       if (controller.signal.aborted) {
         // I3/D17：disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED；否则是超时 timer abort → TIMEOUT
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
-        throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件上传超时(${this.restTimeoutMs}ms)`)
+        throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件上传超时(${uploadTimeoutMs}ms)`)
       }
       throw e
     } finally {

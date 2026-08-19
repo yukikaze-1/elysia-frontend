@@ -16,7 +16,7 @@ export function auditToolEvent(audit: (ev: AuditEvent) => void, input: ToolAudit
   audit({ ts: new Date().toISOString(), type: input.type, runtime: input.runtime, toolId: input.sourceCallId,
     callId: input.callId, status: input.status, durationMs: input.durationMs, summary,
     riskLevel: input.riskLevel, permissionDecision: input.permissionDecision, startedAt: input.startedAt,
-    errorCode: input.errorCode, cancelSource: input.cancelSource } as unknown as AuditEvent)
+    errorCode: input.errorCode, cancelSource: input.cancelSource })   // L1：去双跳 cast——ToolAuditInput 与扩展后 AuditEvent 逐字段兼容，直接赋值让编译器承担映射检查
 }
 function isSafeSummary(s: string): boolean {
   // 安全形态：redactToolArguments 产物（<redacted>/<str:N>/类型名/固定元数据）——无原始文件内容特征
