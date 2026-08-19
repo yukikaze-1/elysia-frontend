@@ -18,7 +18,7 @@ import type {
   ToolStatusCommand
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
-import type { BackendEvent } from '@shared/contracts/events'
+import type { BackendEvent, ToolCompletedEvent, ToolRequestEvent, ToolStartedEvent } from '@shared/contracts/events'
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
 import type {
   ActiveModelSelection,
@@ -63,6 +63,7 @@ import { parseBackendEvent } from '@shared/schemas'
 import { isoToLocalDate } from '@shared/domain'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
+import { redactToolArguments } from '../tools/input-summary'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
 
 /** 上传 MIME → kind 提示值（Mock 确定性；真实后端以魔数真值为准） */
@@ -204,6 +205,34 @@ export function parseMockDirectiveEnv(value: string | undefined): Omit<RawLive2D
   return out
 }
 
+/** CYRENE_MOCK_TOOL_FLOW env → MockToolFlow（阶段 6 批次 A / F-6-22 集成）：未设/非法 JSON/形状 → undefined（不注入）。
+ * backend kind：generation.completed 后按序发射 tool.started/tool.completed；desktop kind：发射 tool.request（固定串 call_mock_1/tc_mock_desktop_1）。 */
+export type MockToolFlow =
+  | { kind: 'backend'; started: { toolName: string; inputSummary?: string }; completed: { success: boolean; outputSummary?: string; errorType?: string; durationMs?: number } }
+  | { kind: 'desktop'; request: { toolName: string; arguments?: Record<string, unknown>; reason?: string; riskLevel?: string; permissionRequired?: boolean } }
+
+export function parseMockToolFlowEnv(env: string | undefined): MockToolFlow | undefined {
+  if (env === undefined || env === '') return undefined
+  try {
+    const v = JSON.parse(env) as Record<string, unknown>
+    if (v && typeof v === 'object' && v.kind === 'backend' && v.started && v.completed) {
+      const s = v.started as Record<string, unknown>
+      const c = v.completed as Record<string, unknown>
+      return { kind: 'backend', started: { toolName: String(s.toolName ?? 'get_time'), ...(typeof s.inputSummary === 'string' ? { inputSummary: s.inputSummary } : {}) }, completed: { success: c.success !== false, ...(typeof c.outputSummary === 'string' ? { outputSummary: c.outputSummary } : {}), ...(typeof c.errorType === 'string' ? { errorType: c.errorType } : {}), ...(typeof c.durationMs === 'number' ? { durationMs: c.durationMs } : {}) } }
+    }
+    if (v && typeof v === 'object' && v.kind === 'desktop' && v.request) {
+      const r = v.request as Record<string, unknown>
+      return { kind: 'desktop', request: { toolName: String(r.toolName ?? 'desktop.file.read'), ...(typeof r.arguments === 'object' && r.arguments !== null ? { arguments: r.arguments as Record<string, unknown> } : {}), ...(typeof r.reason === 'string' ? { reason: r.reason } : {}), ...(typeof r.riskLevel === 'string' ? { riskLevel: r.riskLevel } : {}), ...(typeof r.permissionRequired === 'boolean' ? { permissionRequired: r.permissionRequired } : {}) } }
+    }
+    return undefined
+  } catch { return undefined }
+}
+
+/** CYRENE_MOCK_TOOL_HISTORY env → boolean（'1'/'true' → true；归档配对 seed） */
+export function parseMockToolHistoryEnv(env: string | undefined): boolean {
+  return env === '1' || env === 'true'
+}
+
 /** C3：DirectiveState 七值（与 wire 契约一致；剔除 error——error=3 必须 client 驱动，D5C-07） */
 const MOCK_DIRECTIVE_STATES: ReadonlySet<string> = new Set([
   'idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised'
@@ -248,6 +277,14 @@ export interface MockBackendOptions {
   /** 批次 C（C3）：后端 Live2D 表现指令建议（CYRENE_MOCK_DIRECTIVE env 解析）。非 undefined 时，scheduleReplay
    *  落 generation.completed 后追加发射一帧 `live2d.directive`（对齐 emotion 注入点）。缺省 undefined 不注入。 */
   directive?: Omit<RawLive2DDirective, 'type'>
+  /** 阶段 6 批次 A（F-6-22）：工具双轨模拟（CYRENE_MOCK_TOOL_FLOW env 解析）。非 undefined 时，scheduleReplay
+   *  落 generation.completed 后按 kind 发射领域事件（backend → tool.started/tool.completed 固定串 tc_mock_backend_1
+   *  含活动会话 conversationId；desktop → tool.request 固定串 call_mock_1/tc_mock_desktop_1 + 脱敏 inputSummary）。
+   *  缺省 undefined 不注入。 */
+  toolFlow?: MockToolFlow
+  /** 阶段 6 批次 A（F-6-22）：归档配对 seed（CYRENE_MOCK_TOOL_HISTORY env）。true 时构造注入
+   *  tc_seed_1 骨架 + 结果消息（conv-1001，历史/回放持久权威演示）。缺省 false 不注入。 */
+  toolHistory?: boolean
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -278,6 +315,12 @@ export class MockBackend implements BackendAdapter {
   private readonly ttsAudioSink?: (id: string, bytes: Uint8Array, mime?: string) => { url: string } | undefined
   private readonly mouthTtsWindowMs: number // C1：TTS 采样窗口时长（缺省 MOUTH_TTS_WINDOW_MS）
   private readonly directive?: Omit<RawLive2DDirective, 'type'> // 批次 C（C3）：generation.completed 后发射 live2d.directive
+  /** 阶段 6 批次 A（F-6-22）：工具双轨模拟注入（CYRENE_MOCK_TOOL_FLOW）；缺省 undefined 不发射 */
+  private readonly toolFlow?: MockToolFlow
+  /** 阶段 6 批次 A（F-6-22）：归档配对 seed（CYRENE_MOCK_TOOL_HISTORY）；缺省 false 不注入 */
+  private readonly toolHistory: boolean
+  /** 阶段 6 批次 A（F-6-22）：最近一次 submitToolResult 回传（mock 模式 client→server 发送面记录；测试断言用） */
+  public lastToolStatus: ToolStatusCommand | undefined
   private ttsCancelTimer: ReturnType<typeof setTimeout> | undefined // C1：TTS 采样窗口结束时发 audio.session.cancelled
   private readonly onConnectionStateChange?: (state: ConnectionState) => void
   private readonly idFactory: () => string
@@ -367,7 +410,22 @@ export class MockBackend implements BackendAdapter {
     this.voiceErrorOpt = options.voiceError
     this.transcriptText = options.voiceTranscriptText ?? '这是一段测试录音的转写文本'
     this.transcriptDelayMs = options.transcriptDelayMs ?? 0
+    this.toolFlow = options.toolFlow
+    this.toolHistory = options.toolHistory ?? false
     this.messageRecords = this.seedMessages()
+    // 阶段 6 批次 A（F-6-22）：CYRENE_MOCK_TOOL_HISTORY=1 → 归档配对 seed（tc_seed_1 骨架 + 结果消息）
+    if (this.toolHistory) {
+      this.messageRecords.push({
+        messageId: 'msg-tool-seed-assistant', conversationId: 'conv-1001', role: 'assistant', createdAt: '2026-08-19T00:00:00.000Z', status: 'completed',
+        assistantSegments: [{ segmentId: 'pr-msg-tool-seed-assistant-0', segmentIndex: 0, channel: 'public_reply', kind: 'markdown', text: '已读取文件', completed: true }],
+        toolCalls: [{ id: 'tc_seed_1', toolName: 'seed.tool.read', runtime: 'backend', status: 'completed' }]
+      })
+      this.messageRecords.push({
+        messageId: 'msg-tool-seed-result', conversationId: 'conv-1001', role: 'tool', createdAt: '2026-08-19T00:00:01.000Z', status: 'completed',
+        content: '文件内容摘要（模拟）',
+        tool: { callId: 'tc_seed_1', name: 'seed.tool.read', success: true }
+      })
+    }
     this.emitDelayMs = options.emitDelayMs ?? 30
     this.generationEmotion = options.generationEmotion
     this.mockMouthLevel = options.mockMouthLevel
@@ -714,8 +772,30 @@ export class MockBackend implements BackendAdapter {
     return true
   }
 
-  async submitToolResult(_input: ToolStatusCommand): Promise<void> {
-    // Mock 无操作
+  /** 阶段 6 批次 A（F-6-22）：桌面工具状态回传（mock 模式 client→server 发送面）。记录最近回传；
+   *  终态（result/error/rejected/cancelled）追加 role=tool 归档消息（独立消息，配对以同页骨架为准，不补骨架）；非终态仅记录。 */
+  async submitToolResult(input: ToolStatusCommand): Promise<void> {
+    this.lastToolStatus = input
+    const terminal = input.status === 'result' || input.status === 'error' || input.status === 'rejected' || input.status === 'cancelled'
+    if (!terminal) return
+    const sourceCallId = input.callId === 'call_mock_1' ? 'tc_mock_desktop_1' : input.callId // 固定串关联（D6A-07 确定性）
+    const createdAt = this.now().toISOString()
+    this.messageRecords.push({
+      messageId: `msg-tool-${this.idFactory()}`,
+      conversationId: this.activeConversationId ?? 'conv-1001',
+      role: 'tool',
+      createdAt,
+      status: 'completed',
+      ...(input.output !== undefined ? { content: input.output } : {}),
+      tool: {
+        callId: sourceCallId,
+        name: input.toolName,
+        success: input.status === 'result',
+        ...(input.status === 'error' && input.error !== undefined ? { error: input.error.message ?? '工具执行失败', errorType: input.error.code ?? 'TOOL_ERROR' } : {}),
+        ...(input.status === 'rejected' ? { error: '用户拒绝' } : {}),
+        ...(input.status === 'cancelled' ? { error: '已取消' } : {})
+      }
+    })
   }
 
   /** 释放定时器(测试清理用) */
@@ -773,6 +853,19 @@ export class MockBackend implements BackendAdapter {
         // （对齐 emotion 注入点：同一 completed 帧后发射，指令>emotion 消费时序可观测）
         if (event.event === 'generation.completed' && this.directive) {
           this.emit({ ...this.stamp(), event: 'live2d.directive', ...this.directive } satisfies Live2DDirectiveEvent)
+        }
+        // 阶段 6 批次 A（F-6-22）：工具双轨模拟——generation.completed 之后按 kind 发射（领域事件，不经 raw 层）
+        if (event.event === 'generation.completed' && this.toolFlow) {
+          if (this.toolFlow.kind === 'backend') {
+            const t = this.toolFlow
+            this.emit({ ...this.stamp(), event: 'tool.started', callId: 'tc_mock_backend_1', toolName: t.started.toolName, runtime: 'backend', ...(t.started.inputSummary !== undefined ? { inputSummary: t.started.inputSummary } : {}), ...(this.activeConversationId !== undefined ? { conversationId: this.activeConversationId } : {}) } satisfies ToolStartedEvent)
+            this.emit({ ...this.stamp(), event: 'tool.completed', callId: 'tc_mock_backend_1', toolName: t.started.toolName, runtime: 'backend', success: t.completed.success, ...(t.completed.outputSummary !== undefined ? { outputSummary: t.completed.outputSummary } : {}), ...(t.completed.errorType !== undefined ? { errorType: t.completed.errorType } : {}), ...(t.completed.durationMs !== undefined ? { durationMs: t.completed.durationMs } : {}), ...(this.activeConversationId !== undefined ? { conversationId: this.activeConversationId } : {}) } satisfies ToolCompletedEvent)
+          } else {
+            const r = this.toolFlow.request
+            const expiresAt = new Date(Date.now() + 30_000).toISOString()
+            const inputSummary = r.arguments !== undefined ? redactToolArguments(r.arguments) : undefined
+            this.emit({ ...this.stamp(), event: 'tool.request', callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: r.toolName, toolVersion: '1.0', runtime: 'desktop', ...(r.reason !== undefined ? { reason: r.reason } : {}), ...(inputSummary !== undefined ? { inputSummary } : {}), expiresAt } satisfies ToolRequestEvent)
+          }
         }
         // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件。
         // C1（批次 C，mockMouthLevel 注入时）：写合法静音 WAV 进 media 缓存（mock-silent 不再 404 → <audio> 可解码
