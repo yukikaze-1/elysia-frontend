@@ -84,6 +84,8 @@
 - 当前等待权限的调用 ID；
 - 不拥有实际执行器和完整敏感参数。
 
+> **阶段 6 决策注记（2026-08-19，方案 B，待实现）：** `toolStore` 只存统一 `ToolCallRecord`，权威键 = `sourceCallId`（LLM `tool_call_id`）；三来路归一化——`tool.request`（Desktop 本地状态机）、`tool.started/tool.completed`（Backend 展示 + Desktop 服务端确认）、归档重建（`assistant.tool_calls + role=tool`）。**实时记录为易失视图；归档/REST 回放是历史持久权威**，重连 replay 与历史查看器由归档重建。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
+
 ### 3.6 `live2dStore`
 
 - 模型加载状态；

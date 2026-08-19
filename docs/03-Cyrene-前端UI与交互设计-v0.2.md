@@ -335,6 +335,8 @@ Backend 工具若要求用户审批，入口必须写明“批准服务器操作
 
 原始 JSON 默认不展示，仅在开发模式提供脱敏后的详情。
 
+> **阶段 6 决策注记（2026-08-19，方案 B，待实现）：** 卡片统一由 `ToolCallRecord` 渲染，权威键 `sourceCallId`（LLM `tool_call_id`）；Backend 卡片数据源为 `tool.started/tool.completed`（只读），Desktop 卡片数据源为 `tool.request` + 本地状态机 + `tool.status`。`tool.request.reason` P0 缺省时，「请求原因」以工具说明 + 脱敏输入摘要 + 数据流向替代。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
+
 ## 10. 权限确认交互
 
 权限窗口必须先回答四个问题：

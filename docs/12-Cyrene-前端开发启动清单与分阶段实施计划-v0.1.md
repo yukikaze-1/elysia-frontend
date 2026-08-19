@@ -424,6 +424,8 @@ cyrene-integration-input/
 
 **进入条件：** 阶段 1 和阶段 2 通过；F-01～F-10 已确认。
 
+> **决策注记（2026-08-19，方案 B 已定案）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent）。实施前必须补：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。
+
 主要任务：
 
 1. 实现工具注册表、状态机和工具卡片；

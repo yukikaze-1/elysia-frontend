@@ -357,12 +357,16 @@
 
 **进入条件：** 阶段 1 与阶段 2 通过；F-01～F-10 已确认。
 
+> **决策注记（2026-08-19，方案 B 已定案）：** 工具双轨统筹决策与前后端更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent 同名校验记录）。核心口径：wire 双轨（Desktop `tool.request/tool.status`；Backend 新增 `tool.started/tool.completed`）→ 前端领域单轨 `ToolCallRecord`；权威键 = LLM `tool_call_id`（`sourceCallId`）；实时 `toolStore` 易失、归档（assistant `tool_calls` + role=tool 结果）为历史/回放持久权威；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。旧后端 `action` 帧按「已知忽略」兼容帧过渡，不作工具状态源。
+
 ### 任务清单
 
-- [ ] Tool Store、工具卡片、统一状态机与公开错误
-- [ ] Backend / Desktop / Local Worker Runtime 区分
+- [ ] raw/领域四件套：`tool.request/tool.started/tool.completed`（Server→Client）与 `tool.status`（Client→Server）raw schema + FrameMapper + 领域事件 + zod 镜像（F-6-01~04；`action` 过渡期兼容帧）
+- [ ] Tool Store、工具卡片、统一状态机与公开错误（`ToolCallRecord` 按 `sourceCallId` 三来路归一化）
+- [ ] Backend / Desktop / Local Worker Runtime 区分（Backend 只展示；Desktop 本地状态机裁决终态）
+- [ ] 归档配对：`RestMapper` 解析 assistant `tool_calls` + 按 `tool_call_id` 配对 role=tool 结果，回放/历史重建卡片
 - [ ] Desktop 静态注册表、版本、Schema 与本地风险重算
-- [ ] `callId` 幂等、取消、超时与结果重传
+- [ ] `callId` 幂等、取消、超时与结果重传（`tool.status` 安全元数据仅由 Main 缓存组装）
 - [ ] 权限窗口、沙盒、路径/域名黑名单、范围授权与撤销
 - [ ] 审批历史、已授权命令模板/目录与空状态
 - [ ] `desktop.file.select` 与受控资源句柄
@@ -380,6 +384,7 @@
 - [ ] 黑名单优先于沙盒与历史授权
 - [ ] 相同 `callId` 不重复弹窗或产生副作用
 - [ ] 用户拒绝/关闭/超时后不执行；文件冲突不覆盖；截图不静默采集或上传
+- [ ] `tool.request.sourceCallId` 必填且与 `tool.started/completed.callId`、归档 `tool_call_id` 同值；缺 `sourceCallId` 或回传安全元数据不一致按协议错误拒绝
 - [ ] 命令执行未确认时不注册；启用时也不能接收任意 Shell 字符串
 - [ ] 审计与日志不含完整敏感内容
 
@@ -500,3 +505,4 @@
 | 2026-08-18 | **阶段 5 批次 B（Live2D 表现：状态映射 + 待机 + 动作/表情 + 参数回退 + 设置子页 + Panel）落地并全量验证**：`Live2DSettings` 扩全量 10 字段 + `PerformanceMode` 四值统一（旧三值 `high/low` 读回归一，`normalizePerformanceMode` schema 归一）+ settings patch 无默认子 schema（防单字段 patch clobber）；`Live2DAdapter` 参数通道 + motion/expression 加载播放 + Layout 装配；Controller 状态机收敛表（thinking→speaking→idle、error 打断、低优先不打断 3 级、同态幂等、结束回正确回退态）+ 待机眨眼/呼吸纯函数 + 无动作参数级回退（B4）+ `switchModel` 返回生效 id（D5B-10 竞态硬化）；动作调度仲裁（白名单/合并/超时/清队列/点击不打断）+ 情绪态→表情本地映射（happy/f01、sad/f02、surprised/f06，不命中落 B4）+ `live2dStateSource` 状态编排（connection/message/voice 读值组合，N1 情绪/error 超时回退）+ store 接线 + 设置子页 CyLive2DPane（模型/表现/互动/性能四组 + 恢复默认）+ CyLive2DPanel 状态徽标/缩放偏移手柄/鼠标跟随点击回正；Electron 集成新增 7 用例（状态驱动徽标 / Haru B3 动作播放 / 情绪 happy→表情 / 设置子页即时+重启持久化 / 性能模式四值+旧值回归 / 布局画幅 / 切换竞态三方一致）；mock env 桥 `CYRENE_MOCK_EMIT_DELAY_MS`（放宽 replay 间隔供状态断言）+ `CYRENE_MOCK_GENERATION_EMOTION`（generation.completed 情绪注入）；门禁 **1508 单测（114 files）+ 90 集成（16 files）** + typecheck/lint/build 全绿；三态标「已开发、未联调」，真实 Windows Electron（REAL）联调归批次 C；spec/plan 见 `docs/superpowers/specs|plans/2026-08-18-phase5-live2d-batchb-expression-*`，决策记录 D5B-01~10 由主会话落文 `docs/review/2026-08-18-阶段5批次B-决策记录.md` | 已开发、未联调（真实联调待批次 C） |
 | 2026-08-18 | **阶段 5 批次 C（Live2D 收口代码批次：TTS 口型 + 性能降级 + 后端指令 + 防御加固 + 文档/联调清单）落地并全量验证**：C1 TTS 口型数据源（`computeMouthLevel` 包络纯函数（噪声门/攻放不对称/钳制/归零）+ `tts-mouth-source.ts`（MediaElementSource→Analyser RMS，每元素终生一次）+ 口部写出通用化（`updateAnimation` 对所有 ready 模型写 `ParamMouthOpenY`，B3 动作后写覆盖）+ `voiceStore.ttsAudioEl`/CyTtsPlayer 挂接 + `tick()` 采样 + `CYRENE_MOCK_MOUTH_LEVEL` env 桥）；C2 性能降级（`FrameBudget` 四值真实降帧（quality/balanced/low_power/auto 迟滞）+ GPU 丢失一次重建 `reset(modelId?)`（rebuildGuard finally 复位 + 重放 settings/CharacterState）+ `setVisibility` 接线 + `adapter.initialize` 半初始化兜底）+ C3 后端 `live2d.directive` 扁平冻结契约四件套（`raw-types.ts`/`raw-schemas.ts` `.strict()` 整帧拒/`FrameMapper`/`BackendEventSchema` 镜像；`state` 七值剔除 error + priority 建议强度钳制 ≤1 + durationMs 15s 封顶 + `pushDirective` 建议强度仲裁（永不覆盖 client 2/3 级现实态）+ 指令>emotion + 脱敏日志 + mock `CYRENE_MOCK_DIRECTIVE`/real 桩）+ 防御加固收口（M1 `%` 同口径 / M2 registry 强校验 / M3 空数组 / M4 reason 闭合枚举 / F2 blink 速率 / F3 expressions 空→B4 / restore 分叉 / 批次 A F2-F4 关单）+ 文档同步 + 决策记录 + 联调清单；Electron 集成新增 7 用例（C1 口型链路 / C2.1 四值切换+持久化 / C2.2 GPU 丢失重建一次 / C3.1 指令 happy+F01 / C3.2 非白名单脱敏 / C3.3 working 越界 / 收口回归），既有第 6 号「设备丢失」改写为一次重建；门禁 **1599 单测（119 files）+ 97 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿；三态标「已开发、未联调」，真实 Windows Electron（REAL）联调由开发者事后凭 `docs/review/2026-08-18-阶段5批次C-联调清单.md` 执行（通过后升「已真实联调」）；批次 commits：spec `3708f08` → plan `3cd374d` → Task1 `21bcda6` → Task2 `d6f9d58`+`2057a74`（F1）→ Task3 `fea778c` → Task4 `96283c3` → Task5 `328ce16`+`7065aee`（I-1）→ Task6 文档（HEAD）；spec/plan 见 `docs/superpowers/specs|plans/2026-08-18-phase5-live2d-batchc-closure-*`，决策记录 D5C-01~09 由主会话落文 `docs/review/2026-08-18-阶段5批次C-决策记录.md` | 已开发、未联调（真实联调待联调清单轮） |
 | 2026-08-19 | **阶段 5 真实 Windows Electron（REAL）联调通过，三态升「已真实联调」**（验收 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`；实测基线含 C2-2 真机 GPU context 恢复修复 `da7f617`）；联调前整改 F-1（后端 mood 自由文本 → `normalizeEmotionCode` 中英文归一，`4f0d627`）落地并全量验证；**CI 修复 5 轮**（`ad3d1e0` C1 稳健化 + Windows 单测兼容 / `4791e7e` backgroundThrottling:false / `f3475c0` mock WAV 0.0625s 时长修复 + 直轮询 + 诊断探针 / `664190a` 断言改持久标志 `mouthMoved/mouthSettled`）——本机门禁全绿（1612 单测 + 98 集成 + typecheck/lint/build + check:contract WS28/REST15）；**遗留待办：CI `test:integration` 的 C1 口型用例仍红（SwiftShader 渲染饱和 renderer 主线程 → 外部观察饿死，口部 attach 断链在 CI 未定位），暂缓修复，已记录 `docs/review/2026-08-19-阶段5批次C-C1集成测试CI失败-待办.md`——不影响生产（阶段 5 已真实联调）与阶段 6 开发，仅 CI 集成 job 保持红（1 用例）** | 阶段 5 已真实联调（C1 CI 待办挂起） |
+| 2026-08-19 | **阶段 6 工具双轨统筹决策（方案 B）定案，仅文档批次**：核对结论（backend 工具实发 `action` 帧但前端未收录；一个回合一个 generation 且 `generation.completed` 无 `tool_calls`；ID 双轨断裂）→ 方案 B（Desktop `tool.request/tool.status` + Backend 新增 `tool.started/tool.completed`，前端领域层统一 `ToolCallRecord`，权威键 `sourceCallId`）→ §9 任务清单补 raw/领域四件套与归档配对；决策与 F-6-01~25/B-6-01~09 更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`；**代码批尚未开始，阶段 6 三态保持「未开始」** | 未开始（方案 B 已定案，待契约批） |
