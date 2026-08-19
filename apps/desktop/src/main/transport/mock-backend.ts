@@ -63,6 +63,7 @@ import { parseBackendEvent } from '@shared/schemas'
 import { isoToLocalDate } from '@shared/domain'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
+import type { ToolAttachment } from '@shared/contracts/tool'
 import { redactToolArguments } from '../tools/input-summary'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
 
@@ -796,6 +797,11 @@ export class MockBackend implements BackendAdapter {
         ...(input.status === 'cancelled' ? { error: '已取消' } : {})
       }
     })
+  }
+
+  /** 阶段 6 批次 B（Task 5）：工具附件上传 mock 占位 URL（不落盘；url 确定性可断言，real 响应仅 {url} 语义对齐） */
+  async uploadToolAttachment(callId: string, _bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment> {
+    return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }
   }
 
   /** 释放定时器(测试清理用) */

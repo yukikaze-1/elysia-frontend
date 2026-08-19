@@ -29,6 +29,7 @@ import type {
   UpsertModelProfileCommand
 } from '@shared/contracts/model'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
+import type { ToolAttachment } from '@shared/contracts/tool'
 import type { AttachmentKind } from '@shared/contracts/message'
 import type { StickerManifest } from '@shared/contracts/sticker'
 import type {
@@ -118,6 +119,9 @@ export interface BackendAdapter {
   audioCancel(input: AudioCancelInput): Promise<void>
 
   submitToolResult(input: ToolStatusCommand): Promise<void>
+  /** 工具附件上传（阶段 6 批次 B Task 5：先 POST /api/uploads/desktop/{callId}（X-Client-Connection 持有者校验）
+   *  拿 url 再回填 tool.status attachments，H1——响应仅 {url}，mimeType/label 本地回填） */
+  uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>
 
   /** 订阅后端公开领域事件;返回取消订阅函数 */
   subscribe(handler: BackendEventHandler): () => void

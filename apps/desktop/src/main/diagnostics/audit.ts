@@ -13,6 +13,12 @@ export interface AuditEvent {
   status?: string
   durationMs?: number
   summary?: string
+  // —— 阶段 6 批次 B（Task 5）：工具审计扩展可选字段（auditToolEvent 写入；缺省不出现不破坏既有） ——
+  riskLevel?: 'safe' | 'medium' | 'high'
+  permissionDecision?: 'allow_once' | 'deny'
+  startedAt?: string
+  errorCode?: string
+  cancelSource?: 'user' | 'timeout' | 'backend'
 }
 export interface Auditor { audit(event: AuditEvent): Promise<void>; close(): Promise<void> }
 

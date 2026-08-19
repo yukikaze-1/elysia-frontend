@@ -20,7 +20,9 @@ export enum CyreneErrorCode {
   /** 语音族 IPC 错误码（Task 3 R-S4-03，对齐 wire VoiceErrorCode）：录音 discard recordingId 不匹配（另一录音活跃）→ 拒绝不误清 */
   VOICE_RECORDING_NOT_FOUND = 'VOICE_RECORDING_NOT_FOUND',
   /** 语音族 IPC 错误码（Task 3 R-S4-03，对齐 wire VoiceErrorCode）：realtime/dictation 活跃时 discard 普通录音 → 拒绝不动 */
-  VOICE_SESSION_CONFLICT = 'VOICE_SESSION_CONFLICT'
+  VOICE_SESSION_CONFLICT = 'VOICE_SESSION_CONFLICT',
+  /** 阶段 6 批次 B（Task 5）：工具附件上传失败（uploadToolAttachment REST 上传非 2xx / 未连接缺 connectionId） */
+  TOOL_UPLOAD_FAILED = 'TOOL_UPLOAD_FAILED'
 }
 
 export class CyreneError extends Error {

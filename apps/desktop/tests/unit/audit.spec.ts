@@ -40,6 +40,17 @@ describe('createAuditor', () => {
     expect(parsed.callId).toBe('cid')
     expect(parsed.durationMs).toBe(12)
   })
+  it('扩展字段（riskLevel/permissionDecision/startedAt/errorCode/cancelSource）可选透传不破坏既有（Task 5）', async () => {
+    const { writer, lines } = fakeWriter()
+    const a = createAuditor(writer, { sanitize: (m) => m, retentionDays: 30, dir: '/audit' })
+    await a.audit({ ts: 't', type: 'tool:decision', toolId: 'tid', callId: 'cid', status: 'awaiting_permission', summary: 'path=<str:8>', riskLevel: 'medium', permissionDecision: 'allow_once', startedAt: '2026-08-20T00:00:00.000Z', errorCode: 'TOOL_ERROR', cancelSource: 'user' })
+    const parsed = JSON.parse(lines[0])
+    expect(parsed).toMatchObject({ riskLevel: 'medium', permissionDecision: 'allow_once', startedAt: '2026-08-20T00:00:00.000Z', errorCode: 'TOOL_ERROR', cancelSource: 'user' })
+    // 既有字段不受扩展影响
+    expect(parsed.toolId).toBe('tid')
+    expect(parsed.callId).toBe('cid')
+    expect(parsed.status).toBe('awaiting_permission')
+  })
   it('close 委托 writer.close', async () => {
     const { writer } = fakeWriter()
     const a = createAuditor(writer, { sanitize: (m) => m, retentionDays: 30, dir: '/audit' })

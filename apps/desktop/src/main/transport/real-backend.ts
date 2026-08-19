@@ -46,6 +46,7 @@ import { VOICE_ERROR_CODES } from '@shared/contracts'
 import type { HistoryCategory, StickerManifest, VoiceErrorEvent, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceInputMode, VoiceRecordStartInput, VoiceRecordStopInput, AudioSessionReadyEvent } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
+import type { ToolAttachment } from '@shared/contracts/tool'
 
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
@@ -1122,6 +1123,44 @@ export class RealBackend implements BackendAdapter {
   }
 
   async submitToolResult(_input: ToolStatusCommand): Promise<void> { throw this.notImplemented('submitToolResult') }
+
+  /** 工具附件上传（阶段 6 批次 B Task 5）：multipart POST /api/uploads/desktop/{callId}，
+   *  X-Client-Connection 持有者校验（server_info.connectionId，docs/02 §19）；响应仅 {url}（H1/M4/L4），
+   *  mimeType/label 本地回填。注意：不复用 restFetch——其强制 content-type: application/json 会覆盖 multipart
+   *  boundary（uploadAttachments L778 同款注释），故按同款纪律（fetchImpl 注入 + AbortController + activeControllers，代码 M2）直写。 */
+  async uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment> {
+    if (this.state.status !== 'connected' || !this.state.connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
+    const serverUrl = this.serverUrl
+    const form = new FormData()
+    const ext = mime === 'image/png' ? 'png' : mime === 'text/plain' ? 'txt' : mime.split('/')[1] ?? 'bin'
+    // bytes 为调用方 Uint8Array；BlobPart 需 ArrayBufferView<ArrayBuffer>（uploadAttachments 同款 cast，TS2322 兼容）
+    form.append('file', new Blob([bytes as unknown as BlobPart], { type: mime }), `${label ?? 'attachment'}-${callId}.${ext}`)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.restTimeoutMs)
+    this.activeControllers.add(controller)
+    const url = `${serverUrl.replace(/\/$/, '')}/api/uploads/desktop/${callId}`
+    try {
+      const res = await (this.options.fetchImpl ?? fetch)(url, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: { authorization: `Bearer ${this.token}`, 'X-Client-Connection': this.state.connectionId },   // multipart 不设 content-type（fetch 自动带 boundary）
+        body: form
+      })
+      if (!res.ok) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, `上传失败 ${res.status}`)
+      const data = (await res.json()) as { url: string }
+      return { url: data.url, mimeType: mime, label }
+    } catch (e) {
+      if (controller.signal.aborted) {
+        // I3/D17：disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED；否则是超时 timer abort → TIMEOUT
+        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
+        throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件上传超时(${this.restTimeoutMs}ms)`)
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+      this.activeControllers.delete(controller)
+    }
+  }
 
   private notImplemented(method: string): CyreneError {
     return new CyreneError(CyreneErrorCode.NOT_IMPLEMENTED, `RealBackend.${method} 尚未实现(后续阶段落地)`)
