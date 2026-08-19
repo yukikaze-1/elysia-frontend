@@ -53,6 +53,7 @@ import type {
   VoiceRecordStartInput,
   VoiceRecordStopInput
 } from '@shared/contracts'
+import type { PublicToolEvent } from '@shared/contracts/tool'
 import type { StickerManifest } from '@shared/contracts/sticker'
 
 /** Renderer 面附件输入文件（含 file?: File / bytes?: ArrayBuffer；真实路径由 Preload webUtils 注入，不在此面） */
@@ -123,4 +124,11 @@ export interface DesktopApiLike {
   settingsSave(patch: SettingsPatch): Promise<SettingsState>
   // —— 阶段 5 批次 A Live2D 面 ——
   listLive2dModels(): Promise<Live2DModelSummary[]>
+  // —— 阶段 6 批次 B 工具面（Task 7，L3 修正）：tool:event 订阅 + 四 invoke 通道（Task 6 已实装 preload）——
+  onToolEvent(handler: (event: PublicToolEvent) => void): () => void
+  toolDecide(input: { callId: string; decision: 'allow_once' | 'deny' }): Promise<void>
+  toolCancel(callId: string): Promise<void>
+  toolList(): Promise<PublicToolEvent[]>
+  toolPickSource(callId: string, sourceId: string): Promise<void>
+  toolConfirmUpload(callId: string): Promise<void>
 }

@@ -29,7 +29,8 @@ const mockApi = {
   voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
   audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
   // 阶段 5 批次 A（A6）
-  listLive2dModels: vi.fn()
+  listLive2dModels: vi.fn(),
+  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(),
 }
 
 function state(over: Partial<SettingsState> = {}): SettingsState {

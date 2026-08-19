@@ -17,6 +17,7 @@ interface Sources {
   gen: Ref<boolean>
   speak: Ref<boolean>
   emo: Ref<string | undefined>
+  toolWait: Ref<boolean>
   input: Live2dStateSourceInputs
 }
 
@@ -25,18 +26,21 @@ function makeSources(init: {
   gen?: boolean
   speak?: boolean
   emo?: string | undefined
+  toolWait?: boolean
 }): Sources {
   const conn = ref<ConnectionState>(init.conn ?? { status: 'connected' })
   const gen = ref(init.gen ?? false)
   const speak = ref(init.speak ?? false)
   const emo = ref<string | undefined>(init.emo)
+  const toolWait = ref(init.toolWait ?? false)
   return {
-    conn, gen, speak, emo,
+    conn, gen, speak, emo, toolWait,
     input: {
       connection: () => conn.value,
       isGenerating: () => gen.value,
       isSpeaking: () => speak.value,
-      emotion: () => emo.value
+      emotion: () => emo.value,
+      toolWaiting: () => toolWait.value
     }
   }
 }
@@ -348,6 +352,66 @@ describe('createLive2dStateSource 批次 C（C3）：pushDirective 指令建议�
     vi.advanceTimersByTime(2100) // 超时 → onDirectiveEnd 回调 + 回业务态
     expect(ended).toBe(1)
     expect(pushes.at(-1)).toBe('idle')
+    vi.useRealTimers()
+  })
+})
+
+describe('createLive2dStateSource 阶段 6（Task7）：toolWaiting → waiting_permission（waiting_permission 瞬态，事件驱动回退）', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('compose：toolWaiting=true 且非 generating/speaking → waiting_permission（优先于 emotion）', () => {
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: 'happy', toolWaiting: true })).toBe('waiting_permission')
+  })
+
+  it('compose：toolWaiting=true 但 isGenerating=true → 不打断（thinking 优先）', () => {
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: true, isSpeaking: false, emotion: 'happy', toolWaiting: true })).toBe('thinking')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: true, emotion: 'happy', toolWaiting: true })).toBe('speaking')
+  })
+
+  it('compose：connection error（3 级）仍优先于 waiting_permission', () => {
+    expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: false, isSpeaking: false, emotion: undefined, toolWaiting: true })).toBe('error')
+  })
+
+  it('toolWaiting=true 且非 generating/speaking → 真实组合产物 waiting_permission', () => {
+    const s = makeSources({ emo: 'happy' })
+    const push = vi.fn()
+    const handle = createLive2dStateSource(s.input, push)
+    push.mockClear()
+    s.toolWait.value = true
+    expect(push).toHaveBeenLastCalledWith('waiting_permission')
+    handle.unsub()
+  })
+
+  it('toolWaiting=true 但 isGenerating=true → 不打断（thinking 保持）', () => {
+    const s = makeSources({ gen: true })
+    const push = vi.fn()
+    const handle = createLive2dStateSource(s.input, push)
+    expect(push).toHaveBeenLastCalledWith('thinking') // 初始组合 thinking
+    push.mockClear()
+    s.toolWait.value = true
+    // 组合仍是 thinking：waiting_permission 永不出现（thinking 优先）；同态不重推
+    expect(push).not.toHaveBeenCalledWith('waiting_permission')
+    s.speak.value = true
+    expect(push).toHaveBeenLastCalledWith('speaking')
+    handle.unsub()
+  })
+
+  it('isTransient 含 waiting_permission（终态回退靠事件驱动，无 timer）', () => {
+    vi.useFakeTimers()
+    const s = makeSources({})
+    const push = vi.fn()
+    const handle = createLive2dStateSource(s.input, push)
+    push.mockClear()
+    s.toolWait.value = true
+    expect(push).toHaveBeenLastCalledWith('waiting_permission')
+    push.mockClear()
+    // 等待授权期间无 mood/error 类超时 timer：不自动回退、不心跳重推
+    vi.advanceTimersByTime(5000)
+    expect(push).not.toHaveBeenCalled()
+    // 事件驱动回退：toolWaiting 清除（审批结果经 tool:event）→ 回业务态 idle
+    s.toolWait.value = false
+    expect(push).toHaveBeenLastCalledWith('idle')
+    handle.unsub()
     vi.useRealTimers()
   })
 })

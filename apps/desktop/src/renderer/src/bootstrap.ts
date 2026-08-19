@@ -3,7 +3,7 @@
 // 启动代次守卫(epoch)防迟到 snapshot 覆盖已收到的新 push(D1,不改 ConnectionState 契约)。
 // G2(P1-1/P2-2):先 hydratePersistence 水合 draft/cache,再取连接 snapshot——disconnected 分支离线水合,
 // connected 分支缓存不进入 messageStore(只作内存储备,由 initializeConnected+activate 覆盖)。
-import type { ConnectionState, Conversation, Live2DDirectiveEvent, SessionPersistenceState } from '@shared/contracts'
+import type { BackendEvent, ConnectionState, Conversation, Live2DDirectiveEvent, SessionPersistenceState } from '@shared/contracts'
 import type { PublicError } from './utils/public-error'
 import type { DesktopApiLike } from './stores/desktop-api.types'
 
@@ -24,6 +24,9 @@ export interface BootstrapStores {
   // 批次 C（C3）：live2dStore handleDirective——live2d.directive 与消息流同通道（onChatEvent）到达，经
   // applyEvent 分发路径旁路到 Live2D 消费（不产生消息副作用）。live2d 为可选（未接线/未初始化时 no-op）。
   live2d?: { handleDirective(e: Live2DDirectiveEvent): void }
+  // 阶段 6 批次 B（Task 7）：toolStore——tool.* 事件旁路（判别键 event，代码 H5；stores 注入模式，
+  // 与 live2d.directive 旁路同款——消息 store 不依赖工具框架）+ generation.started 清终态接线（M6）。
+  tools?: { init(): void; applyBackendEvent(e: BackendEvent): void; clearForGeneration(): void }
 }
 
 export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapStores): { register(): void } {
@@ -50,9 +53,21 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
       // Live2DCubismCore 全局缺失拖挂）。
       if (stores.live2d && e && typeof e === 'object' && (e as { event?: unknown }).event === 'live2d.directive') {
         stores.live2d.handleDirective(e as Live2DDirectiveEvent)
-      } else {
-        stores.message.applyEvent(e)
+        return
       }
+      if (e && typeof e === 'object') {
+        const kind = (e as { event?: unknown }).event
+        // 阶段 6 批次 B（Task 7）：tool 事件旁路到 toolStore（判别键 event，代码 H5；live2d 旁路先例）。
+        // 工具事件完全由 toolStore 消费，不产生消息副作用；tools 未接线时照常落 messageStore 默认忽略。
+        if (kind === 'tool.request' || kind === 'tool.started' || kind === 'tool.completed') {
+          if (stores.tools) { stores.tools.applyBackendEvent(e as BackendEvent); return }
+        } else if (kind === 'generation.started') {
+          // 完整 M6：generation.started 先于 applyEvent 清工具实时区终态（A9 只清终态，awaiting 跨代保留）；
+          // 消息 store 仍需消费 generation.started（本事件自带 conversationId），此处只做旁路钩子不 return。
+          stores.tools?.clearForGeneration()
+        }
+      }
+      stores.message.applyEvent(e)
     })
     api.onChatState((s) => { stateEpoch++; applyChatState(s) })
     api.onChatReplay(({ conversationId, messages }) => stores.message.loadReplay(conversationId, messages))
@@ -85,6 +100,8 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
     // 均不阻塞启动：settings.hydrate 内部 fail-open；voice.init 返回退订（常驻订阅，不持有）。
     void stores.settings.hydrate()
     stores.voice.init()
+    // 阶段 6 批次 B（Task 7）：toolStore 常驻订阅 tool:event（与 voiceStore.init 同款位置；可选，未接线 no-op）
+    stores.tools?.init()
   }
   return { register }
 }

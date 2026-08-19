@@ -34,6 +34,8 @@ export interface Live2dStateSourceInputs {
   isSpeaking: () => boolean
   /** 最后完成 assistant message 的 `.emotion`（未知码忽略） */
   emotion: () => string | undefined
+  /** 阶段 6（Task 7）：工具等待授权（toolStore.waitingForApproval；waiting_permission 态源） */
+  toolWaiting: () => boolean
   /** 建议强度仲裁（C3）：当前机器优先级（生产 = live2dStore 注入真实 controller 优先级 getter；
    *  缺省读自身 currentState 优先级镜像——镜像在所有机器优先级变化时同步，含 client setState/指令 push） */
   getCurrentPriority?: () => number
@@ -79,24 +81,31 @@ export function normalizeEmotionCode(raw: string | undefined): MoodEmotion | und
   return undefined
 }
 
-/** transient 态（进入时记录回退基底；结束时由 N1 超时回退到进入前业务态） */
+/** transient 态（进入时记录回退基底；结束时由 N1 超时回退到进入前业务态）。
+ *  阶段 6（Task 7）：waiting_permission 计入瞬态（状态机优先级 3 语义），但其回退**靠事件驱动**（审批结果经
+ *  tool:event 到达 → toolWaiting 清除 → watch 重组），不挂 N1 超时 timer（handleCompose/pushRecomposed
+ *  对 waiting_permission 特判清 timer 不启动）。 */
 function isTransient(s: CharacterState): boolean {
-  return s === 'happy' || s === 'sad' || s === 'surprised' || s === 'error'
+  return s === 'happy' || s === 'sad' || s === 'surprised' || s === 'error' || s === 'waiting_permission'
 }
 
 /** 纯组合（可独立单测）：按优先级收敛表把各源读值归约为最终 CharacterState。
- *  顺序（I-4 拍板：spec §3.1 优先级表 binding）：offline(0) → error(3) → thinking/speaking(2) →
- *  emotion(1) → idle(0)——error 优先级最高，紧跟连接判定，不被 thinking(2)/emotion(1) 遮蔽。 */
+ *  顺序（I-4 拍板：spec §3.1 优先级表 binding）：offline(0) → error(3) → waiting_permission(3) →
+ *  thinking/speaking(2) → emotion(1) → idle(0)——error 优先级最高，紧跟连接判定，不被 thinking(2)/emotion(1)
+ *  遮蔽；waiting_permission（工具等待授权，Task 7）紧随 error：生成/说话中不打断（thinking/speaking 优先）。 */
 export function composeCharacterState(inputs: {
   connection: ConnectionState
   isGenerating: boolean
   isSpeaking: boolean
   emotion: string | undefined
+  toolWaiting?: boolean
 }): CharacterState {
   const { connection, isGenerating, isSpeaking, emotion } = inputs
   if (connection.status === 'disconnected') return 'offline'
   // error=3（最高）：连接存活错误态优先于 thinking/speaking(2) 与 emotion(1)
   if (connection.status === 'error') return 'error'
+  // 阶段 6（Task 7）：工具等待授权（优先级 3）——error 判定后；生成/说话不打断（thinking/speaking 优先）
+  if (inputs.toolWaiting && !isGenerating && !isSpeaking) return 'waiting_permission'
   if (isGenerating && !isSpeaking) return 'thinking'
   if (isSpeaking) return 'speaking'
   const mood = normalizeEmotionCode(emotion) // F-1：中/英文自由文本归一；未命中 undefined → idle
@@ -156,11 +165,13 @@ export function createLive2dStateSource(
       connection: overrides.forceBusinessConnection ? { ...conn, status: 'connected' } : conn,
       isGenerating: sources.isGenerating(),
       isSpeaking: sources.isSpeaking(),
-      emotion: overrides.emotion
+      emotion: overrides.emotion,
+      toolWaiting: sources.toolWaiting()
     })
     if (isTransient(s)) {
+      // waiting_permission 回退靠事件驱动（Task 7），不挂/不重启 timer（防审批等待期 2s 心跳重推）
       if (s === 'error') startErrorTimer()
-      else startMoodTimer()
+      else if (s !== 'waiting_permission') startMoodTimer()
     }
     applyPush(s)
   }
@@ -196,6 +207,11 @@ export function createLive2dStateSource(
       if (s === 'error') {
         clearMoodTimer()
         startErrorTimer()
+      } else if (s === 'waiting_permission') {
+        // Task 7：waiting_permission 回退靠事件驱动（审批结果经 tool:event），无 N1 超时 timer——清既有
+        // mood/error timer（含进入前 emotion 遗留），等待期间不心跳、不清除前也保持（直至 toolWaiting 清除）
+        clearMoodTimer()
+        clearErrorTimer()
       } else {
         clearErrorTimer()
         startMoodTimer()
@@ -213,7 +229,8 @@ export function createLive2dStateSource(
         connection: sources.connection(),
         isGenerating: sources.isGenerating(),
         isSpeaking: sources.isSpeaking(),
-        emotion: sources.emotion()
+        emotion: sources.emotion(),
+        toolWaiting: sources.toolWaiting()
       }),
     (s) => handleCompose(s),
     { immediate: true, flush: 'sync' }
@@ -228,7 +245,8 @@ export function createLive2dStateSource(
         connection: sources.connection(),
         isGenerating: sources.isGenerating(),
         isSpeaking: sources.isSpeaking(),
-        emotion: sources.emotion()
+        emotion: sources.emotion(),
+        toolWaiting: sources.toolWaiting()
       })
     )
   }

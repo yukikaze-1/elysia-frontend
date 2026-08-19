@@ -6,6 +6,7 @@ import type { AssistantSegment, Message } from '@shared/contracts'
 import { stickerRenderUrl } from '@shared/domain'
 import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
+import CyToolCard from './CyToolCard.vue'   // 阶段 6 批次 B（Task 7）：归档工具卡片（只读）
 
 const props = defineProps<{ message: Message }>()
 
@@ -67,6 +68,9 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
     </div>
   </div>
 
+  <!-- tool 角色消息：不渲染空气泡（归档工具卡片在 assistant 消息内；tool 消息自身只留空占位） -->
+  <div v-else-if="message.role === 'tool'" class="cy-tool-role-placeholder" />
+
   <!-- assistant 消息:左对齐,avatar + 双通道(inner_voice / public_reply 同属一条消息) -->
   <div v-else class="cy-message-row">
     <span class="cy-message-avatar">Cy</span>
@@ -90,6 +94,8 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
             <strong>Cyrene</strong>
             <span class="cy-muted">· {{ message.status }}</span>
           </div>
+          <!-- 阶段 6 批次 B（Task 7）：归档工具卡片（Message.toolCalls，REST 历史 + WS 回放双路径配对产物；只读） -->
+          <CyToolCard v-for="tc in message.toolCalls" :key="tc.id" :record="tc" readonly />
           <template v-for="seg in publicSegments" :key="seg.segmentId">
             <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :source="segmentText(seg)" />
             <!-- G4：sticker 分段渲染（wire seg.stickerId，复用通用媒体代理） -->

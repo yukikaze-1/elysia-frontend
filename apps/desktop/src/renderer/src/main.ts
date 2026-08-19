@@ -12,6 +12,7 @@ import { useCacheStore } from './stores/cache.store'
 import { useVoiceStore } from './stores/voice.store'
 import { useSettingsStore } from './stores/settings.store'
 import { useLive2dStore } from './stores/live2d.store'
+import { useToolStore } from './stores/tool.store'
 import { createRendererBootstrap } from './bootstrap'
 
 const app = createApp(App)
@@ -33,7 +34,8 @@ if (window.desktopApi) {
     cache: useCacheStore(),
     voice: useVoiceStore(),
     settings: useSettingsStore(),
-    live2d: useLive2dStore() // 批次 C（C3）：live2d.directive 分发（handleDirective 消费）
+    live2d: useLive2dStore(), // 批次 C（C3）：live2d.directive 分发（handleDirective 消费）
+    tools: useToolStore() // 阶段 6 批次 B（Task 7）：tool.* 事件旁路 + tool:event 常驻订阅 + generation 清终态接线
   }).register()
 }
 
@@ -55,6 +57,14 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
         ttsAudioElPresent: boolean
       }
       getMouthInfo: () => { kind: 'step' | 'sine' | 'real' | null; moved: boolean; settled: boolean }
+      // 阶段 6 批次 B（Task 7）：工具实时区探针（Task 8 集成测试消费）
+      getToolState: () => {
+        records: Record<string, import('@shared/contracts/tool').ToolCallRecord>
+        liveOrder: string[]
+        waitingForApproval: boolean
+        pendingPathSummary: { callId: string; pathSummary: string } | null
+      }
+      getPermissionPending: () => import('@shared/contracts/tool').ToolCallRecord | null
     }
   }).__cyreneTest = {
     getMouthLevel: () => useLive2dStore().mouthLevel,
@@ -73,7 +83,9 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
     getMouthInfo: () => {
       const s = useLive2dStore()
       return { kind: s.mouthSourceKind, moved: s.mouthMoved, settled: s.mouthSettled }
-    }
+    },
+    getToolState: () => { const s = useToolStore(); return { records: s.records, liveOrder: s.liveOrder, waitingForApproval: s.waitingForApproval, pendingPathSummary: s.pendingPathSummary } },
+    getPermissionPending: () => { const s = useToolStore(); return s.liveOrder.map(id => s.records[id]).find(r => r?.status === 'awaiting_permission') ?? null }
   }
 }
 

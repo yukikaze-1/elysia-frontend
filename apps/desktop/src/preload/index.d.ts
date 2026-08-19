@@ -121,6 +121,13 @@ declare global {
       settingsSave(patch: SettingsPatch): Promise<SettingsState>
       // —— 阶段 5 批次 A Live2D 面 ——
       listLive2dModels(): Promise<Live2DModelSummary[]>
+      // —— 阶段 6 批次 B 工具面（Task 6/7：preload 已实装；Renderer DesktopApiLike 消费面镜像）——
+      onToolEvent(handler: (event: import('@shared/contracts/tool').PublicToolEvent) => void): () => void
+      toolDecide(input: { callId: string; decision: 'allow_once' | 'deny' }): Promise<void>
+      toolCancel(callId: string): Promise<void>
+      toolList(): Promise<import('@shared/contracts/tool').PublicToolEvent[]>
+      toolPickSource(callId: string, sourceId: string): Promise<void>
+      toolConfirmUpload(callId: string): Promise<void>
     }
   }
 }

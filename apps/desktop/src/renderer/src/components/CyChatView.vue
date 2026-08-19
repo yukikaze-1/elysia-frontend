@@ -11,6 +11,7 @@ import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
 import CyConnectionPanel from './CyConnectionPanel.vue'
 import CyTtsPlayer from './CyTtsPlayer.vue'
+import CyLiveToolCards from './CyLiveToolCards.vue'   // 阶段 6 批次 B（Task 7）：工具实时区（消息列表与输入区之间）
 
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
@@ -89,6 +90,7 @@ async function newConversation(): Promise<void> {
     </header>
 
     <CyMessageList />
+    <CyLiveToolCards />
     <CyChatInput />
     <!-- P4-B TTS 播放宿主：隐藏 <audio>，由 voiceStore.tts.url 驱动（spec §5.12 / D-P8） -->
     <CyTtsPlayer />

@@ -22,6 +22,7 @@ import { useConnectionStore } from './connection.store'
 import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
 import { useLayoutStore } from './layout.store'
+import { useToolStore } from './tool.store'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
 import type { DirectiveState, Live2DDirectiveEvent, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
 
@@ -146,6 +147,7 @@ export const useLive2dStore = defineStore('live2d', () => {
         isSpeaking: () =>
           useVoiceStore().tts.playing || currentGenHasContent(),
         emotion: () => (directiveExpressionActive.value ? undefined : lastCompletedEmotion()),
+        toolWaiting: () => useToolStore().waitingForApproval, // 阶段 6（Task 7）：工具等待授权 → waiting_permission
         getCurrentPriority: () => (ctrl.characterState ? statePriority(ctrl.characterState) : 0),
         onDirectiveEnd: () => {
           directiveExpressionActive.value = false

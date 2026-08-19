@@ -1,0 +1,77 @@
+<!-- src/renderer/src/components/CyToolApproval.vue -->
+<!-- 阶段 6 批次 B（Task 7）：工具权限窗——四问（AI 想做什么/操作哪个资源/为什么需要/哪些数据发后端）
+     + 写 Diff（pendingDiff 侧信道）+ 对等按钮（拒绝/允许一次）+ 焦点陷阱（Tab 面板内循环，CyHistoryViewer
+     先例）。由卡片「允许此电脑操作」触发打开（props.open，非自动弹出——四问必答流，doc 03 §10）。 -->
+<script setup lang="ts">
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { useToolStore } from '../stores/tool.store'
+
+const toolStore = useToolStore()
+const denyBtn = ref<HTMLButtonElement | null>(null)
+const box = ref<HTMLElement | null>(null)
+const trigger = ref<HTMLElement | null>(null)
+const current = computed(() => toolStore.liveOrder.map(id => toolStore.records[id]).find(r => r?.status === 'awaiting_permission'))
+const props = defineProps<{ open: boolean }>()   // 卡片「允许此电脑操作」触发打开（非自动弹出——四问必答流，doc 03 §10）
+const open = computed(() => props.open && !!current.value)
+const emit = defineEmits<{ close: [] }>()
+onMounted(() => {
+  document.addEventListener('keydown', onKeydown)
+  if (open.value) { trigger.value = document.activeElement as HTMLElement; nextTick(() => denyBtn.value?.focus()) }
+})
+onUnmounted(() => { document.removeEventListener('keydown', onKeydown) })
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape' && open.value) { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny'); returnToTrigger(); emit('close') }
+  if (e.key === 'Tab' && open.value) { trapTab(e) }
+}
+/** 焦点陷阱：Tab/Shift+Tab 在面板内循环（CyHistoryViewer 先例） */
+function trapTab(e: KeyboardEvent): void {
+  if (!box.value) return
+  const focusables = box.value.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+  if (focusables.length === 0) { e.preventDefault(); return }
+  const first = focusables[0]
+  const last = focusables[focusables.length - 1]
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+}
+function returnToTrigger() { trigger.value?.focus?.(); toolStore.clearApprovalLocal?.() }
+function allow() { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'allow_once'); returnToTrigger(); emit('close') }
+function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny'); returnToTrigger(); emit('close') }
+</script>
+
+<template>
+  <div v-if="open" class="cy-approval-overlay" data-testid="tool-approval">
+    <div ref="box" class="cy-approval-box" role="dialog" aria-modal="true" aria-label="工具权限确认">
+      <h3>允许此电脑操作？</h3>
+      <dl class="cy-approval-questions">
+        <dt>AI 想做什么</dt><dd>{{ current!.toolName }} — {{ current!.inputSummary }}</dd>
+        <dt>操作哪个资源</dt><dd>{{ toolStore.pendingPathSummary?.pathSummary ?? current!.inputSummary }}</dd>
+        <dt>为什么需要</dt><dd>{{ current!.reason ?? 'AI 请求执行此桌面操作以完成你的任务。' }}</dd>
+        <dt>哪些数据会发送到后端</dt><dd>{{ toolStore.pendingDataFlowNote?.dataFlowNote ?? '请查看工具说明。' }}</dd>
+      </dl>
+      <div v-if="toolStore.pendingDiff?.diff" class="cy-approval-diff" data-testid="approval-diff">
+        <p class="cy-diff-note">{{ toolStore.pendingDiff.diff.isNewFile ? '新建文件' : '覆盖文件' }} · {{ toolStore.pendingDiff.diff.formatNote }}
+          <template v-if="toolStore.pendingDiff.diff.truncated"> · 共 {{ toolStore.pendingDiff.diff.totalLines }} 行，仅显示前 100 行</template></p>
+        <pre class="cy-diff-body"><template v-for="(l, i) in toolStore.pendingDiff.diff.lines" :key="i"><span :class="'cy-diff-' + l.kind">{{ l.kind === 'added' ? '+' : l.kind === 'removed' ? '-' : ' ' }}{{ l.text }}</span></template></pre>
+      </div>
+      <div class="cy-approval-actions">
+        <button ref="denyBtn" type="button" class="cy-btn" data-testid="approval-deny" @click="deny">拒绝</button>
+        <button type="button" class="cy-btn cy-btn-approve" data-testid="approval-allow" @click="allow">允许一次</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.cy-approval-overlay { position: fixed; inset: 0; z-index: 80; background: var(--cy-overlay, rgba(0,0,0,.45)); display: flex; align-items: center; justify-content: center; }
+.cy-approval-box { background: var(--cy-bg); border-radius: 10px; padding: 16px 18px; max-width: 520px; width: min(92vw, 520px); max-height: 84vh; overflow: auto; }
+.cy-approval-questions { margin: 10px 0; }
+.cy-approval-questions dt { font-weight: 600; margin-top: 6px; }
+.cy-approval-questions dd { margin: 2px 0 0; color: var(--cy-text-secondary); overflow-wrap: anywhere; }
+.cy-approval-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.cy-btn { padding: 6px 16px; border: 1px solid var(--cy-border); border-radius: 6px; background: var(--cy-bg); cursor: pointer; }
+.cy-btn-approve { border-color: var(--cy-accent, #1a66ff); color: var(--cy-accent, #1a66ff); }
+.cy-diff-note { color: var(--cy-text-muted); margin: 6px 0; }
+.cy-diff-body { background: var(--cy-bg-sub); padding: 6px; border-radius: 6px; max-height: 240px; overflow: auto; margin: 0; font-size: 12px; white-space: pre-wrap; }
+.cy-diff-added { color: var(--cy-diff-add, #18794e); }
+.cy-diff-removed { color: var(--cy-diff-del, #cd2b3a); }
+</style>
