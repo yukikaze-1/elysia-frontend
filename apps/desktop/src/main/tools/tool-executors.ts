@@ -73,13 +73,15 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
       const nowHash = createHash('sha256').update(fs.readFileSync(p)).digest('hex')
       if (nowHash !== rec.oldHash) throw new ToolExecError('FILE_CONFLICT', '文件已被修改，未覆盖')
     }
-    // 原子替换（A-13/完整 L2/H10）：复用 atomicWriteFile——签名 (filePath: string, data: string, opts: { safeRoot: string })
-    // data 传字符串（非 Buffer）；safeRoot 传目标父目录（内部 realpath + 包含性复核）
-    await atomicWriteFile(p, normalized, { safeRoot: path.dirname(p) })
+    // 原子替换（A-13/完整 L2/H10/M2）：复用 atomicWriteFile——签名 (filePath, data, { safeRoot, mode? })
+    // data 传字符串（非 Buffer）；safeRoot 传目标父目录；覆盖场景透传原文件 mode（保留权限，M2）
+    const origMode = exists && process.platform !== 'win32' ? fs.statSync(p).mode & 0o777 : undefined
+    await atomicWriteFile(p, normalized, { safeRoot: path.dirname(p), mode: origMode })
     const outHash = createHash('sha256').update(normalized).digest('hex')
-    const diff = exists ? computeTextDiff(oldText, content) : null
+    const diffText = exists ? oldText.replace(/^﻿/, '') : ''   // L1：diff 用去 BOM 串（format 探测仍用原串）
+    const diff = computeTextDiff(diffText, content)                // 新文件 diffText='' → 全新增（L2 统一行数口径）
     return { output: { path: p, size: Buffer.byteLength(normalized), hash: outHash, bytesWritten: Buffer.byteLength(normalized) },
-      summary: `${exists ? '覆盖' : '新建'} ${path.basename(p)}（Diff：+${diff?.added ?? content.length} -${diff?.removed ?? 0}）` }
+      summary: `${exists ? '覆盖' : '新建'} ${path.basename(p)}（Diff：+${diff.added} -${diff.removed}）` }
   }
   async function capture(_rec: ToolRecord): Promise<ExecResult> {
     // Task 4 实装；本 task 抛占位

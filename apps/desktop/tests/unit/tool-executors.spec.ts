@@ -1,7 +1,7 @@
 // tests/unit/tool-executors.spec.ts（node；临时目录 mkdtemp；picker/enumerate 注入）
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs'   // readdirSync/statSync：L4/M2 断言
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createExecutors } from '../../src/main/tools/tool-executors'
@@ -43,6 +43,17 @@ describe('desktop.file.select', () => {
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(r.output).toEqual({ cancelled: true, reason: 'PATH_BLOCKLISTED' })
   })
+  it('selectedAdd 只对通过复核的路径调用（L3）', async () => {
+    const selectedAdd = vi.fn()
+    const p = join(tmp, 'ok.txt'); writeFileSync(p, 'x')
+    const ex = createExecutors(mkDeps({ allowRoots: [tmp], selectedAdd, pickFile: async () => ({ canceled: false, path: p }) }))
+    await ex.execute(rec('desktop.file.select', {}), undefined)
+    expect(selectedAdd).toHaveBeenCalledTimes(1)
+    expect(selectedAdd).toHaveBeenCalledWith(p)   // normalize 后路径（L3：与豁免检查同口径）
+    const ex2 = createExecutors(mkDeps({ selectedAdd, pickFile: async () => ({ canceled: false, path: '/etc/passwd' }) }))
+    await ex2.execute(rec('desktop.file.select', {}), undefined)
+    expect(selectedAdd).toHaveBeenCalledTimes(1)   // 伪装取消时不调用
+  })
 })
 describe('desktop.file.read', () => {
   it('读取 UTF-8 文本 → 内联 output + 摘要', async () => {
@@ -79,12 +90,27 @@ describe('desktop.file.write', () => {
     const r = await ex.execute(rec('desktop.file.write', { path: p, content: 'abc\n' }), p)
     expect(readFileSync(p, 'utf8')).toBe('abc\n')
     expect((r.output as any).bytesWritten).toBe(4)
+    expect(readdirSync(tmp).some(f => f.endsWith('.tmp'))).toBe(false)   // L4：无 .tmp 残留（原子写产物断言）
   })
   it('覆盖保留原格式（CRLF + BOM + 末尾换行，D6B-19/L-2）', async () => {
     const p = join(tmp, 'crlf.txt'); writeFileSync(p, '﻿a\r\nb\r\n')
     const ex = createExecutors(mkDeps())
     await ex.execute(rec('desktop.file.write', { path: p, content: 'a\nc' }), p)
     expect(readFileSync(p, 'utf8')).toBe('﻿a\r\nc\r\n')   // BOM 保留 + CRLF 重拼 + 末尾换行补齐
+  })
+  it('覆盖写保留原文件权限（M2：atomicWriteFile mode 透传）', async () => {
+    if (process.platform === 'win32') return   // POSIX 专属
+    const p = join(tmp, 'mode.txt'); writeFileSync(p, 'v1', { mode: 0o644 })
+    const ex = createExecutors(mkDeps())
+    await ex.execute(rec('desktop.file.write', { path: p, content: 'v2' }), p)
+    expect((statSync(p).mode & 0o777).toString(8)).toBe('644')
+  })
+  it('覆盖保留 BOM 时 Diff 无 BOM 噪音（L1）', async () => {
+    const p = join(tmp, 'bom-diff.txt'); writeFileSync(p, '﻿a\n')
+    const ex = createExecutors(mkDeps())
+    const r = await ex.execute(rec('desktop.file.write', { path: p, content: 'b\n' }), p)
+    expect((r.output as any).bytesWritten).toBeGreaterThan(0)
+    expect(r.summary).toContain('覆盖')   // 覆盖路径正常（BOM 不造成 diff 计数异常即可——首行 removed/added 仅影响计数非失败）
   })
   it('写前哈希冲突 → FILE_CONFLICT（原文件不变；基于授权前预读 hash，A-1）', async () => {
     const p = join(tmp, 'c.txt'); writeFileSync(p, 'v1')

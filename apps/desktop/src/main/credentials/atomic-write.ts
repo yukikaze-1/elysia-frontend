@@ -18,11 +18,11 @@ async function assertParentContained(filePath: string, safeRoot: string): Promis
 
 /**
  * 原子替换写（多 key 凭据文件整文件改写，崩溃/中断不截断）：
- * 同目录 temp O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW 0o600 → fchmod 兜底 → 写 + fsync(fd) → rename 覆盖
+ * 同目录 temp O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW 0o600 → fchmod 兜底（opts.mode 存在时按原文件权限回设，M2——覆盖写不静默改权限）→ 写 + fsync(fd) → rename 覆盖
  * → POSIX fsync(dir)（Windows 跳过，记录平台差异）。写前父目录 realpath 包含性复核。
  * EEXIST = 陈旧 temp（单实例无并发写者）→ unlink 重试一次（仍 EEXIST → 抛），不留永久砖。
  */
-export async function atomicWriteFile(filePath: string, data: string, opts: { safeRoot: string }): Promise<void> {
+export async function atomicWriteFile(filePath: string, data: string, opts: { safeRoot: string; mode?: number }): Promise<void> {
   await assertParentContained(filePath, opts.safeRoot)
   const dir = dirname(filePath)
   const tmp = join(dir, `${basename(filePath)}.tmp`)
@@ -30,6 +30,7 @@ export async function atomicWriteFile(filePath: string, data: string, opts: { sa
   const writeTemp = async (): Promise<void> => {
     const { fd } = await openSafeFile(tmp, { mode: 'create', purpose: 'append', safeRoot: opts.safeRoot, onConflict: 'error' })
     try {
+      if (opts.mode !== undefined && isPosix) await fd.chmod(opts.mode)   // M2：覆盖写保留原文件权限（新文件保持 0o600 安全默认）
       await fd.writeFile(data, 'utf8')
       await fd.sync()
     } finally {

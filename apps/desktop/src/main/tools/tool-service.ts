@@ -293,7 +293,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     // ignoreBOM:true——TextDecoder 缺省会剥 BOM，detectTextFormat 的 hasBom 探测需见原始 BOM（D6B-19/L-2，Task 3 统一）
     try { oldText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf) }
     catch { throw new ToolExecError('FILE_IS_BINARY', '目标文件不是 UTF-8 文本') }
-    const d = computeTextDiff(oldText, String(rec.arguments_['content']))
+    const d = computeTextDiff(oldText.replace(/^﻿/, ''), String(rec.arguments_['content']))   // L1：diff 用去 BOM 串（format 探测仍用原串，防 BOM 噪音首行差异）
     const fmt = detectTextFormat(oldText)
     const eolNote = fmt.eol === 'crlf' ? 'CRLF' : 'LF'
     rec.diff = { lines: d.lines, added: d.added, removed: d.removed, truncated: d.truncated, totalLines: d.totalLines,
