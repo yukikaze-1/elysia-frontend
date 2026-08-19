@@ -35,6 +35,7 @@ import type {
   PageQuery,
   PersistSessionInput,
   PersistSessionResult,
+  PublicToolEvent,
   RealtimeVoiceControlInput,
   RealtimeVoiceStartInput,
   RuntimeInfo,
@@ -75,10 +76,12 @@ import {
   ModelProfilesSchema,
   PageSchema,
   PersistSessionResultSchema,
+  PublicToolEventSchema,
   RuntimeInfoSchema,
   SessionPersistenceStateSchema,
   SettingsStateSchema,
   StickerManifestSchema,
+  ToolListResponseSchema,
   TtsPreviewOutcomeSchema,
   TtsVoiceListResultSchema
 } from '@shared/schemas'
@@ -374,6 +377,34 @@ async function listLive2dModels(): Promise<Live2DModelSummary[]> {
   return unwrap(await invoke<Live2DModelSummary[]>(IpcChannels.live2dListModels), z.array(Live2DModelSummarySchema))
 }
 
+// —— 阶段 6 批次 B 工具面（Task 6，spec A-5/B-4/M5）：tool:event 推送订阅 + 四 invoke 通道（invokeWithArgs + unwrap 惯例）——
+/** 订阅 tool:event（Main pushEvent → PushChannels.toolEvent）；PublicToolEventSchema 校验，非法丢弃 + warn；返回取消函数 */
+function onToolEvent(handler: (ev: PublicToolEvent) => void): () => void {
+  const wrapped = (_event: unknown, payload: unknown): void => {
+    const parsed = PublicToolEventSchema.safeParse(payload)
+    if (!parsed.success) { console.warn('[desktopApi] tool:event 非法载荷已丢弃'); return }
+    handler(parsed.data)
+  }
+  ipcRenderer.on(PushChannels.toolEvent, wrapped)
+  return () => ipcRenderer.removeListener(PushChannels.toolEvent, wrapped)
+}
+async function toolDecide(input: { callId: string; decision: 'allow_once' | 'deny' }): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.toolDecide, input), z.undefined())
+}
+async function toolCancel(callId: string): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.toolCancel, { callId }), z.undefined())
+}
+async function toolList(): Promise<PublicToolEvent[]> {
+  // arity 1：恒带 {} 载荷（与 modelsListProfiles 同款惯例——registry 精确匹配 arity）
+  return unwrap(await invokeWithArgs<PublicToolEvent[]>(IpcChannels.toolList, {}), ToolListResponseSchema)
+}
+async function toolPickSource(callId: string, sourceId: string): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.toolPickSource, { callId, sourceId }), z.undefined())
+}
+async function toolConfirmUpload(callId: string): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.toolConfirmUpload, { callId }), z.undefined())
+}
+
 /**
  * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
  * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
@@ -512,7 +543,14 @@ export const desktopApi = {
   settingsLoad,
   settingsSave,
   // —— 阶段 5 批次 A Live2D 面 ——
-  listLive2dModels
+  listLive2dModels,
+  // —— 阶段 6 批次 B 工具面 ——
+  onToolEvent,
+  toolDecide,
+  toolCancel,
+  toolList,
+  toolPickSource,
+  toolConfirmUpload
 }
 
 export type DesktopApi = typeof desktopApi

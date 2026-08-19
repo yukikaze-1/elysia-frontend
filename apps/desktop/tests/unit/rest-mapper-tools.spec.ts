@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RestMapper, pairToolCalls } from '../../src/main/transport/protocol-v2/rest-mapper'
-import type { Message } from '@shared/contracts/message'
+import type { Message, MessageToolInfo } from '@shared/contracts/message'
 import type { RestMessage } from '../../src/main/transport/protocol-v2/rest-types'
 import type { RawSessionMessageItem } from '../../src/main/transport/protocol-v2/raw-types'
 
@@ -54,5 +54,38 @@ describe('pairToolCalls 配对（Task 5 / F-6-19/21）', () => {
     ]
     const out = pairToolCalls(msgs)
     expect(out[0].toolCalls?.[0]?.outputSummary).toBe('ok')
+  })
+})
+
+describe('pairToolCalls R-A3 空串错误（Task 6 / D6B-21）', () => {
+  const mkSkeleton = (id: string): Message => ({ messageId: 'm1', conversationId: 'c', role: 'assistant', createdAt: 't0', status: 'completed', toolCalls: [{ id, toolName: 'get_time', runtime: 'backend', status: 'completed' }] })
+  const mkResult = (id: string, tool: Partial<MessageToolInfo>): Message =>
+    ({ messageId: 'm2', conversationId: 'c', role: 'tool', createdAt: 't1', status: 'completed', tool: { callId: id, name: 'get_time', ...tool } })
+
+  it('R-A3：info.error === "" 视为无错误走 success 分支', () => {
+    // mkSkeleton() 骨架 + role=tool 结果消息（tool.success=false, error=''）——空串错误不判 failed（spec B-1/A-16/A-17）
+    const messages = [mkSkeleton('tc_1'), mkResult('tc_1', { success: false, error: '' })]
+    const out = pairToolCalls(messages)
+    const tc = out[0].toolCalls![0]
+    expect(tc.status).toBe('completed')     // 空串 error 不判 failed
+    expect(tc.error).toBeUndefined()
+  })
+  it('非空 error → failed 保持', () => {
+    const messages = [mkSkeleton('tc_2'), mkResult('tc_2', { success: false, error: 'boom' })]
+    const tc = pairToolCalls(messages)[0].toolCalls![0]
+    expect(tc.status).toBe('failed')
+    expect(tc.error?.message).toBe('boom')
+  })
+  it('回放路径断言（A-17/L6）：toDomainMessageFromReplay 组装 → pairToolCalls（sessionBuffer tool 帧不回归）', () => {
+    // 基于既有回放用例：构造含 assistant tool_calls + role=tool 结果（error 空串）的 replay 数组 →
+    // toDomainMessageFromReplay → pairToolCalls → toolCalls 配对成功且不被空串错误翻转
+    const msgs = [
+      mapper.toDomainMessageFromReplay({ role: 'assistant', message_id: 'm1', timestamp: 't0', tool_calls: [{ id: 'tc_1', function: { name: 'get_time', arguments: '{}' } }] } as unknown as RawSessionMessageItem, 'c'),
+      mapper.toDomainMessageFromReplay({ role: 'tool', message_id: 'm2', timestamp: 't1', content: 'ok', tool_call_id: 'tc_1', name: 'get_time', success: false, error: '' } as unknown as RawSessionMessageItem, 'c')
+    ]
+    const out = pairToolCalls(msgs)
+    expect(out[0].toolCalls?.[0]?.status).toBe('completed')
+    expect(out[0].toolCalls?.[0]?.outputSummary).toBe('ok')
+    expect(out[0].toolCalls?.[0]?.error).toBeUndefined()
   })
 })

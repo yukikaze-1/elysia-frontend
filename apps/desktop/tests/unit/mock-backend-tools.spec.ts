@@ -25,16 +25,16 @@ describe('MockBackend 工具场景（Task 6 / F-6-22）', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(events).toEqual(['tool.started', 'tool.completed'])
   })
-  it('desktop kind：发射 tool.request（call_mock_1/tc_mock_desktop_1/expiresAt 未来/inputSummary 脱敏）', async () => {
-    let req: unknown
-    const mock = new MockBackend({ emitDelayMs: 0, toolFlow: { kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: '/etc/passwd' }, reason: '读取文件' } } })
-    mock.subscribe((e) => { if (e.event === 'tool.request') req = e })
+  it('desktop kind：经 toolRequestSink 交付 DesktopToolRequest（call_mock_1/tc_mock_desktop_1/原始 arguments/expiresAt 未来）', async () => {
+    const sink: unknown[] = []
+    const mock = new MockBackend({ emitDelayMs: 0, toolFlow: { kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: '/etc/passwd' }, reason: '读取文件' } }, toolRequestSink: (req) => sink.push(req) })
     await mock.connect({ serverUrl: 'mock://test' })
     await mock.activateConversation('conv-1001')
     await mock.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'cr-1' })
     await new Promise((r) => setTimeout(r, 50))
-    expect(req).toMatchObject({ callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: 'desktop.file.read', runtime: 'desktop', toolVersion: '1.0', inputSummary: 'path=<redacted>' })
-    expect((req as { expiresAt: string }).expiresAt > new Date().toISOString()).toBe(true)
+    expect(sink).toHaveLength(1)
+    expect(sink[0]).toMatchObject({ callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: 'desktop.file.read', runtime: 'desktop', toolVersion: '1.0', reason: '读取文件', arguments: { path: '/etc/passwd' } })
+    expect((sink[0] as { expiresAt: number }).expiresAt > Date.now()).toBe(true)
   })
   it('submitToolResult：记录回传；终态追加 role=tool 归档消息（独立消息不补骨架）；非终态仅记录', async () => {
     const mock = new MockBackend({ emitDelayMs: 0 })
@@ -50,6 +50,16 @@ describe('MockBackend 工具场景（Task 6 / F-6-22）', () => {
     expect(toolMsgs[0].tool).toMatchObject({ callId: 'tc_mock_desktop_1', name: 'desktop.file.read', success: true })
     expect(toolMsgs[0].content).toBe('文件内容')
   })
+  it('submitToolResult：id 自增后 call_mock_<n> → tc_mock_desktop_<n> 通用映射（新发现4，固定串不再只认 call_mock_1）', async () => {
+    const mock = new MockBackend({ emitDelayMs: 0 })
+    await mock.connect({ serverUrl: 'mock://test' })
+    await mock.activateConversation('conv-1001')
+    await mock.submitToolResult({ callId: 'call_mock_2', status: 'result', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', paramHash: 'h', output: '内容' })
+    const page = await mock.getMessageContext({ conversationId: 'conv-1001', messageId: 'msg-1002', before: 0, after: 10 })
+    const toolMsgs = page.items.filter((m) => m.role === 'tool' && m.tool?.callId === 'tc_mock_desktop_2')
+    expect(toolMsgs).toHaveLength(1)
+    expect(toolMsgs[0].tool).toMatchObject({ callId: 'tc_mock_desktop_2', success: true })
+  })
   it('CYRENE_MOCK_TOOL_HISTORY：seed tc_seed_1 骨架 + 结果消息（经 getMessageContext 断言）', async () => {
     const mock = new MockBackend({ emitDelayMs: 0, toolHistory: true })
     const page = await mock.getMessageContext({ conversationId: 'conv-1001', messageId: 'msg-tool-seed-assistant', before: 0, after: 5 })
@@ -58,4 +68,27 @@ describe('MockBackend 工具场景（Task 6 / F-6-22）', () => {
     expect(skeleton?.toolCalls).toEqual([{ id: 'tc_seed_1', toolName: 'seed.tool.read', runtime: 'backend', status: 'completed' }])
     expect(result?.tool).toMatchObject({ callId: 'tc_seed_1', success: true })
   })
+})
+
+describe('批次 B 改接（toolRequestSink）', () => {
+  it('desktop kind 不再 emit chat:event；经 sink 交付 DesktopToolRequest（id 自增）', async () => {
+    const sink: any[] = []
+    const mb = new MockBackend({ emitDelayMs: 0, toolFlow: { kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: '/tmp/x.txt' } } }, toolRequestSink: (req) => sink.push(req) })
+    const events: any[] = []
+    mb.subscribe((e) => events.push(e))
+    await mb.connect({ serverUrl: 'mock://test' })
+    await mb.activateConversation('conv-1001')
+    await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'r1' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(sink.length).toBe(1)
+    expect(sink[0]).toMatchObject({ callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: 'desktop.file.read', runtime: 'desktop' })
+    expect(sink[0].paramHash).toBeUndefined()
+    expect(events.some((e) => e.event === 'tool.request')).toBe(false)   // 不再直发 chat:event（判别键 event，代码 M7）
+    // 第二次发射 id 自增（A3）
+    await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi2', clientRequestId: 'r2' })
+    await new Promise((r) => setTimeout(r, 50))
+    expect(sink[1].callId).toBe('call_mock_2')
+    expect(sink[1].sourceCallId).toBe('tc_mock_desktop_2')
+  })
+  it('backend kind 发射不变', async () => { /* 既有 backend kind 用例保持 emit 断言（tool.started/tool.completed 仍经订阅面） */ })
 })

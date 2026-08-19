@@ -35,6 +35,7 @@ import type {
   RawServerInfo,
   RawSessionMessage,
   RawSessionMessageItem,
+  RawToolStatus,
   RawUserAck
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
@@ -47,6 +48,7 @@ import type { HistoryCategory, StickerManifest, VoiceErrorEvent, AudioCancelInpu
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
+import type { DesktopToolRequest } from '../tools/tool-service'
 
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
@@ -145,7 +147,7 @@ function mapHttpError(status: number, code: string): CyreneErrorCode {
  * Task 4 实现 connect/握手/帧分派/session 回放/心跳重连/ack 关联/error 路由;
  * Task 5 实现 REST 会话方法(list/get/messages/create/rename/delete/activate + Bearer + 错误映射);
  * P4-A 模型/TTS 方法已真实落成;P4-B 语音控制帧/sendAudioBytes/voice.error 路由已落地(Task 4);
- * submitToolResult 等工具方法仍抛 NOT_IMPLEMENTED 占位(阶段 6)。
+ * 批次 B（Task 6）submitToolResult（tool.status 帧）与 tool.request 路由（onToolRequest）已落地。
  */
 export class RealBackend implements BackendAdapter {
   private ws?: WebSocketLike
@@ -179,6 +181,9 @@ export class RealBackend implements BackendAdapter {
   private activeVoice?: { kind: VoiceInputMode; key: string }
   /** TTS audio_* 帧缓冲（Task 5）：按 stream_id 积累 chunks；audio_end 时拼装写入 sink 并 emit ready；新 stream supersede 旧 */
   private ttsBuffers = new Map<number, { chunks: Uint8Array[]; bytes: number; format: 'wav' | 'mp3'; durationMs?: number }>()
+  /** 批次 B（Task 6，D6B-08）：tool.request 路由目标——可空 setter（index.ts 在 adapter 构造后注入 tool-service，
+   *  避免构造环；BackendAdapter 接口可选成员，real 专用）。 */
+  onToolRequest?: (req: DesktopToolRequest) => void
 
   constructor(options: RealBackendOptions = {}) { this.options = options }
 
@@ -264,6 +269,19 @@ export class RealBackend implements BackendAdapter {
         // 不再需要运行时 canary（漂移 canary 放单测级）。
         const ev = this.mapper?.mapFrame(frame)
         if (ev) this.emit(ev)
+        return
+      }
+      case 'tool.request': {
+        // 批次 B（Task 6，D6B-08）：显式 case——mapper 校验+脱敏产出仍保留（批次 A 单测依赖 mapFrame 校验），
+        // 但不再 emit（Renderer 不经领域事件收桌面工具请求），改路由 tool-service（onToolRequest；index.ts 装配后注入）。
+        // arguments/paramHash 只在 Main 流转（D6-07：公开事件不带原始参数）。
+        const ev = this.mapper?.mapFrame(frame)   // H3：mapToolRequest 为 private——走 mapFrame 公开入口（产物 ToolRequestEvent）
+        if (!ev) return
+        this.onToolRequest?.({
+          callId: frame.callId, sourceCallId: frame.sourceCallId, toolName: frame.toolName,
+          toolVersion: frame.toolVersion, runtime: 'desktop', arguments: frame.arguments, reason: frame.reason,
+          expiresAt: Date.parse(frame.expiresAt), paramHash: frame.paramHash,
+        })
         return
       }
       default: {
@@ -1122,7 +1140,18 @@ export class RealBackend implements BackendAdapter {
     ws.send(JSON.stringify({ type: 'audio.cancel', stream_id: input.streamId }))
   }
 
-  async submitToolResult(_input: ToolStatusCommand): Promise<void> { throw this.notImplemented('submitToolResult') }
+  async submitToolResult(input: ToolStatusCommand): Promise<void> {
+    // 批次 B（Task 6）：ToolStatusCommand → tool.status 帧发送（Client→Server 方向，不进 RawFrameSchema——
+    // Task 4 语音控制帧同款构造发送；D-status-runtime runtime 保持 str）。RawToolAttachment 与 ToolAttachment
+    // 字段同形（url/mimeType/label），attachments 直接透传无需映射。
+    const ws = this.requireWs()
+    const frame: RawToolStatus = {
+      type: 'tool.status', callId: input.callId, status: input.status,
+      toolName: input.toolName, toolVersion: input.toolVersion, runtime: input.runtime, paramHash: input.paramHash,
+      output: input.output, error: input.error, attachments: input.attachments, executionSummary: input.executionSummary,
+    }
+    ws.send(JSON.stringify(frame))
+  }
 
   /** 工具附件上传（阶段 6 批次 B Task 5）：multipart POST /api/uploads/desktop/{callId}，
    *  X-Client-Connection 持有者校验（server_info.connectionId，docs/02 §19）；响应仅 {url}（H1/M4/L4），
@@ -1161,9 +1190,5 @@ export class RealBackend implements BackendAdapter {
       clearTimeout(timer)
       this.activeControllers.delete(controller)
     }
-  }
-
-  private notImplemented(method: string): CyreneError {
-    return new CyreneError(CyreneErrorCode.NOT_IMPLEMENTED, `RealBackend.${method} 尚未实现(后续阶段落地)`)
   }
 }

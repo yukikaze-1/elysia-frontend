@@ -20,7 +20,9 @@ import { registerSettingsHandlers } from '../settings/settings-handlers'
 import type { SettingsService } from '../settings/settings-service'
 import { registerVoiceHandlers } from '../voice/voice-handlers'
 import { registerLive2dHandlers } from './live2d-handlers'
+import { registerToolHandlers } from './tool-handlers'
 import type { Live2DModelRegistry } from '../live2d/model-registry'
+import type { ToolService } from '../tools/tool-service'
 import { createIpcHandler } from './executor'
 import { registerHandler } from './registry'
 import { appInfoSchema } from './channels'
@@ -33,6 +35,7 @@ export function registerHandlers(deps: {
   settings: { svc: SettingsService }
   voice: { adapter: BackendAdapter; media: MediaService }
   live2d: { registry: Live2DModelRegistry }
+  tools: ToolService
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -48,4 +51,5 @@ export function registerHandlers(deps: {
   registerSettingsHandlers({ settings: deps.settings.svc, sanitize, logger: deps.logger })
   registerVoiceHandlers({ adapter: deps.voice.adapter, media: deps.voice.media, sanitize, logger: deps.logger })
   registerLive2dHandlers({ registry: deps.live2d.registry, sanitize, logger: deps.logger })
+  registerToolHandlers({ tools: deps.tools, sanitize })
 }

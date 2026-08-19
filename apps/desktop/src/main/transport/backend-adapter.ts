@@ -30,6 +30,7 @@ import type {
 } from '@shared/contracts/model'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
+import type { DesktopToolRequest } from '../tools/tool-service'
 import type { AttachmentKind } from '@shared/contracts/message'
 import type { StickerManifest } from '@shared/contracts/sticker'
 import type {
@@ -122,6 +123,10 @@ export interface BackendAdapter {
   /** 工具附件上传（阶段 6 批次 B Task 5：先 POST /api/uploads/desktop/{callId}（X-Client-Connection 持有者校验）
    *  拿 url 再回填 tool.status attachments，H1——响应仅 {url}，mimeType/label 本地回填） */
   uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>
+  /** 桌面工具请求钩子（阶段 6 批次 B Task 6，D6B-08/D6B-15）：real 专用——handleFrame case 'tool.request'
+   *  路由至此（不再 emit 领域事件）；index.ts 在 adapter 构造后注入（避免构造环）。mock 不实现（MockBackend 经
+   *  toolRequestSink 构造注入，D6B-15）。 */
+  onToolRequest?: (req: DesktopToolRequest) => void
 
   /** 订阅后端公开领域事件;返回取消订阅函数 */
   subscribe(handler: BackendEventHandler): () => void

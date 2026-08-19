@@ -219,8 +219,10 @@ export function pairToolCalls(messages: Message[]): Message[] {
       const r = results.get(tc.id)
       const info = r?.tool
       if (!r || !info) continue // 缺配对：保持 completed + 无摘要（降级）
-      const hasError = info.error !== undefined
-      const ok = !hasError && info.success !== false // ToolCallResult 缺省视为 true；error 非空以错误为准
+      // R-A3（D6B-21）：空串 error 视为无错误且视为成功——后端序列化空串无失败细节，不判 failed（走 success 分支）；
+      // error 非空以错误为准；error 缺省（undefined）按 success 旗标（缺省视为 true）
+      const hasError = info.error !== undefined && info.error !== ''
+      const ok = info.error === '' ? true : (!hasError && info.success !== false)
       tc.status = ok ? 'completed' : 'failed'
       if (ok) {
         if (r.content) tc.outputSummary = r.content

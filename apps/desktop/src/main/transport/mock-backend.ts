@@ -18,7 +18,7 @@ import type {
   ToolStatusCommand
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
-import type { BackendEvent, ToolCompletedEvent, ToolRequestEvent, ToolStartedEvent } from '@shared/contracts/events'
+import type { BackendEvent, ToolCompletedEvent, ToolStartedEvent } from '@shared/contracts/events'
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
 import type {
   ActiveModelSelection,
@@ -64,7 +64,7 @@ import { isoToLocalDate } from '@shared/domain'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
-import { redactToolArguments } from '../tools/input-summary'
+import type { DesktopToolRequest } from '../tools/tool-service'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
 
 /** 上传 MIME → kind 提示值（Mock 确定性；真实后端以魔数真值为准） */
@@ -280,12 +280,16 @@ export interface MockBackendOptions {
   directive?: Omit<RawLive2DDirective, 'type'>
   /** 阶段 6 批次 A（F-6-22）：工具双轨模拟（CYRENE_MOCK_TOOL_FLOW env 解析）。非 undefined 时，scheduleReplay
    *  落 generation.completed 后按 kind 发射领域事件（backend → tool.started/tool.completed 固定串 tc_mock_backend_1
-   *  含活动会话 conversationId；desktop → tool.request 固定串 call_mock_1/tc_mock_desktop_1 + 脱敏 inputSummary）。
-   *  缺省 undefined 不注入。 */
+   *  含活动会话 conversationId；desktop → 经 toolRequestSink 交付 DesktopToolRequest，id 自增
+   *  call_mock_<n>/tc_mock_desktop_<n>——批次 B 改接，不再 emit tool.request）。缺省 undefined 不注入。 */
   toolFlow?: MockToolFlow
   /** 阶段 6 批次 A（F-6-22）：归档配对 seed（CYRENE_MOCK_TOOL_HISTORY env）。true 时构造注入
    *  tc_seed_1 骨架 + 结果消息（conv-1001，历史/回放持久权威演示）。缺省 false 不注入。 */
   toolHistory?: boolean
+  /** 阶段 6 批次 B（Task 6）：桌面工具请求 sink（构造注入——mock 模式不再 emit tool.request 领域事件，
+   *  改经此交付 DesktopToolRequest 给 Main 装配的 tool-service；id 自增 call_mock_<n>/tc_mock_desktop_<n>，A3）。
+   *  对齐 ttsAudioSink 构造注入先例；缺省 undefined 不交付。 */
+  toolRequestSink?: (req: DesktopToolRequest) => void
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -320,6 +324,10 @@ export class MockBackend implements BackendAdapter {
   private readonly toolFlow?: MockToolFlow
   /** 阶段 6 批次 A（F-6-22）：归档配对 seed（CYRENE_MOCK_TOOL_HISTORY）；缺省 false 不注入 */
   private readonly toolHistory: boolean
+  /** 阶段 6 批次 B（Task 6）：桌面工具请求 sink（构造注入；缺省 undefined 不交付） */
+  private readonly toolRequestSink?: (req: DesktopToolRequest) => void
+  /** 阶段 6 批次 B（Task 6）：桌面工具请求序号——每次 desktop kind 发射自增 → call_mock_<n>/tc_mock_desktop_<n>（A3） */
+  private mockToolSeq = 0
   /** 阶段 6 批次 A（F-6-22）：最近一次 submitToolResult 回传（mock 模式 client→server 发送面记录；测试断言用） */
   public lastToolStatus: ToolStatusCommand | undefined
   private ttsCancelTimer: ReturnType<typeof setTimeout> | undefined // C1：TTS 采样窗口结束时发 audio.session.cancelled
@@ -413,6 +421,7 @@ export class MockBackend implements BackendAdapter {
     this.transcriptDelayMs = options.transcriptDelayMs ?? 0
     this.toolFlow = options.toolFlow
     this.toolHistory = options.toolHistory ?? false
+    this.toolRequestSink = options.toolRequestSink
     this.messageRecords = this.seedMessages()
     // 阶段 6 批次 A（F-6-22）：CYRENE_MOCK_TOOL_HISTORY=1 → 归档配对 seed（tc_seed_1 骨架 + 结果消息）
     if (this.toolHistory) {
@@ -774,12 +783,15 @@ export class MockBackend implements BackendAdapter {
   }
 
   /** 阶段 6 批次 A（F-6-22）：桌面工具状态回传（mock 模式 client→server 发送面）。记录最近回传；
-   *  终态（result/error/rejected/cancelled）追加 role=tool 归档消息（独立消息，配对以同页骨架为准，不补骨架）；非终态仅记录。 */
+   *  终态（result/error/rejected/cancelled）追加 role=tool 归档消息（独立消息，配对以同页骨架为准，不补骨架）；非终态仅记录。
+   *  新发现4（批次 B）：sink id 自增后 call_mock_<n> → tc_mock_desktop_<n> **通用映射**（固定串 call_mock_1 已不足——
+   *  归档 tool.callId 必须落 sourceCallId，否则归档与骨架配对断裂）；非 call_mock_* 原样透传。 */
   async submitToolResult(input: ToolStatusCommand): Promise<void> {
     this.lastToolStatus = input
     const terminal = input.status === 'result' || input.status === 'error' || input.status === 'rejected' || input.status === 'cancelled'
     if (!terminal) return
-    const sourceCallId = input.callId === 'call_mock_1' ? 'tc_mock_desktop_1' : input.callId // 固定串关联（D6A-07 确定性）
+    const m = /^call_mock_(\d+)$/.exec(input.callId)
+    const sourceCallId = m ? `tc_mock_desktop_${m[1]}` : input.callId // 通用映射（D6B-15/A3；非 call_mock_* 原样）
     const createdAt = this.now().toISOString()
     this.messageRecords.push({
       messageId: `msg-tool-${this.idFactory()}`,
@@ -868,9 +880,17 @@ export class MockBackend implements BackendAdapter {
             this.emit({ ...this.stamp(), event: 'tool.completed', callId: 'tc_mock_backend_1', toolName: t.started.toolName, runtime: 'backend', success: t.completed.success, ...(t.completed.outputSummary !== undefined ? { outputSummary: t.completed.outputSummary } : {}), ...(t.completed.errorType !== undefined ? { errorType: t.completed.errorType } : {}), ...(t.completed.durationMs !== undefined ? { durationMs: t.completed.durationMs } : {}), ...(this.activeConversationId !== undefined ? { conversationId: this.activeConversationId } : {}) } satisfies ToolCompletedEvent)
           } else {
             const r = this.toolFlow.request
-            const expiresAt = new Date(Date.now() + 30_000).toISOString()
-            const inputSummary = r.arguments !== undefined ? redactToolArguments(r.arguments) : undefined
-            this.emit({ ...this.stamp(), event: 'tool.request', callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: r.toolName, toolVersion: '1.0', runtime: 'desktop', ...(r.reason !== undefined ? { reason: r.reason } : {}), ...(inputSummary !== undefined ? { inputSummary } : {}), expiresAt } satisfies ToolRequestEvent)
+            // 批次 B 改接（R-A5/D6B-15/A3）：不再 emit tool.request 领域事件（Renderer 不经领域事件收桌面
+            // 工具请求——由 Main tool-service 统一决策链），改经 toolRequestSink 交付 DesktopToolRequest
+            // （原始 arguments 透传——脱敏在 tool-service handleRequest 做；paramHash 无——real 才有，本地回退）。
+            // id 自增：call_mock_<seq>/tc_mock_desktop_<seq>（A3）。
+            const seq = ++this.mockToolSeq
+            this.toolRequestSink?.({
+              callId: `call_mock_${seq}`, sourceCallId: `tc_mock_desktop_${seq}`,
+              toolName: r.toolName, toolVersion: '1.0', runtime: 'desktop',
+              arguments: r.arguments ?? {}, reason: r.reason,
+              expiresAt: Date.now() + 30_000,
+            })
           }
         }
         // TTS 模拟（D-P13）：generation.completed 之后、ttsActive（已激活 TTS Profile）时追加 audio 会话事件。

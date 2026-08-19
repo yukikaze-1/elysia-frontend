@@ -1,8 +1,8 @@
 // apps/desktop/src/main/index.ts
-import { app, dialog, Menu, safeStorage } from 'electron'
+import { app, dialog, Menu, safeStorage, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { realpath } from 'fs/promises'
-import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, isKeyAllowed } from '@shared/contracts'
+import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, PushChannels, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
 import type { Message } from '@shared/contracts/message'
 import { installAppIdentity, expectedUserDataBase } from './app/lifecycle'
@@ -33,6 +33,10 @@ import { UploadService } from './attachments/upload-service'
 import { MediaService } from './attachments/media-service'
 import { defaultSafeOpenPlatform } from './persistence/safe-open'
 import { Live2DModelRegistry } from './live2d/model-registry'
+import { createToolStatusSender } from './tools/tool-status-sender'
+import { createToolService, type ToolService } from './tools/tool-service'
+import { createToolRegistry } from './tools/tool-registry'
+import { MOCK_THUMBNAIL_DATA_URL, parseMockCaptureSourcesEnv, parseMockToolAllowRootEnv } from './tools/env-bridge'
 
 let diagnostics: Diagnostics | undefined
 
@@ -164,10 +168,17 @@ async function main(): Promise<void> {
     // getTtsMedia 回调只在 audio_end 帧到达时触发，此时 mediaSvc 已装配完。
     const mediaBridge: { media: MediaService | undefined } = { media: undefined }
     const chatBridge: { svc: ChatService | undefined } = { svc: undefined }
-    const onState = (state: ConnectionState) => chatBridge.svc?.pushState(state)
+    // 批次 B（Task 6）：tool-service 桥容器（MockBackend 构造 options 的 toolRequestSink 闭包读取——
+    // toolSvc 在 adapter 之后构造，回调只在桌面工具请求到达时触发，此时已装配完）
+    const toolBridge: { svc: ToolService | undefined } = { svc: undefined }
+    const onState = (state: ConnectionState) => {
+      chatBridge.svc?.pushState(state)
+      // A-8（D6B-11）：重连成功（connected）→ 工具服务重发未确认终态 + 清 selected-set；首次连接无记录为 no-op
+      if (state.status === 'connected') void toolBridge.svc?.reconnect()
+    }
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}) })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,
@@ -191,6 +202,44 @@ async function main(): Promise<void> {
               : undefined
           })
         })()
+    // —— 阶段 6 批次 B（Task 6）：Desktop 工具服务装配（Main 权限/执行边界；adapter 构造之后、registerHandlers 之前）——
+    // env 桥（mock 模式集成测试注入；非法 JSON → undefined 不注入）：CYRENE_MOCK_TOOL_ALLOW_ROOT 黑名单放行根 +
+    // CYRENE_MOCK_CAPTURE_SOURCES 屏幕源枚举（补 1×1 PNG thumbnailDataUrl 占位，R9——mock 不调真实 desktopCapturer，H11）
+    const toolAllowRoot = parseMockToolAllowRootEnv(process.env.CYRENE_MOCK_TOOL_ALLOW_ROOT)
+    const captureSources = parseMockCaptureSourcesEnv(process.env.CYRENE_MOCK_CAPTURE_SOURCES)
+    const statusSender = createToolStatusSender({ adapter, audit })
+    const toolSvc = createToolService({
+      registry: createToolRegistry(),
+      platform: process.platform === 'win32' ? 'windows' : 'posix',
+      audit,
+      submitStatus: async (cmd) => { const ok = await statusSender.send(cmd); if (!ok) throw new Error('send failed') },
+      uploadAttachment: (callId, bytes, mime, label) => statusSender.uploadToolAttachment(callId, bytes, mime, label),
+      pushEvent: (ev) => { for (const w of BrowserWindow.getAllWindows()) w.webContents.send(PushChannels.toolEvent, ev) },
+      ...(toolAllowRoot !== undefined ? { allowRoots: toolAllowRoot } : {}),
+      ...(captureSources !== undefined
+        ? {
+            enumerateSources: async () => captureSources.map((s) => ({ ...s, thumbnailDataUrl: MOCK_THUMBNAIL_DATA_URL })),
+            renderPreview: async () => ({ previewDataUrl: MOCK_THUMBNAIL_DATA_URL, bytes: new Uint8Array([137, 80, 78, 71]) }),   // H11：固定 PNG 头 bytes 供上传断言（R9）
+            isWayland: false,   // mock 模式不判 Wayland（完整 H3④）
+          }
+        : {}),
+    })
+    toolBridge.svc = toolSvc
+    // 工具请求入口（mock 构造注入 / real 可选 setter——都在 adapter 构造之后，无环）
+    if (adapter instanceof MockBackend) {
+      // MockBackend 的 toolRequestSink 已在构造 options 传入（经 toolBridge 打破 adapter→toolSvc 环）
+    } else {
+      adapter.onToolRequest = (req) => { void toolSvc.handleRequest(req) }
+    }
+    // Main 侧测试探针（M10：集成测试断言 wire lastToolStatus 需要；仅测试 harness 装配）
+    if (process.env.CYRENE_TEST_HARNESS === '1') {
+      const probe = globalThis as unknown as { __cyreneMainProbe: { getLastToolStatus: () => unknown; getToolRecords: () => unknown[] } }
+      probe.__cyreneMainProbe = {
+        getLastToolStatus: () => (adapter as MockBackend).lastToolStatus ?? null,
+        getToolRecords: () => [...toolSvc.listRecent(50)],
+      }
+    }
+    app.on('before-quit', () => toolSvc.shutdown())
     // connection-config：注入 CredentialStore 端口（token 与 origin 绑定同仓不同 key）——
     // BACKEND_TOKEN_KEY 由 connection-config 的 set/clear 经 credentials IPC 特判委派（决策 9）。
     // onEndpointChanged 审计：只记规范化 origin（不含 token/完整 URL 参数，spec 3.1.2）；AuditEvent 字段 ts/type/summary（无 data）。
@@ -246,7 +295,7 @@ async function main(): Promise<void> {
     // 阶段 5 批次 A Live2D 模型注册表（spec D5A-07）：扫 dirs.models，manifest+integrity 两级可用性 + fail-closed verify。
     // 纯磁盘只读，无生命周期（懒加载 integrity），registerHandlers 前装配即可。
     const live2dRegistry = new Live2DModelRegistry({ modelsDir: dirs.models })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
