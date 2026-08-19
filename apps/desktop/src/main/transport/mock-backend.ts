@@ -15,7 +15,7 @@ import type {
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
-  ToolResult
+  ToolStatusCommand
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
@@ -714,7 +714,7 @@ export class MockBackend implements BackendAdapter {
     return true
   }
 
-  async submitToolResult(_input: ToolResult): Promise<void> {
+  async submitToolResult(_input: ToolStatusCommand): Promise<void> {
     // Mock 无操作
   }
 

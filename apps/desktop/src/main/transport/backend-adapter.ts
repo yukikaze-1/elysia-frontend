@@ -13,7 +13,7 @@ import type {
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
-  ToolResult
+  ToolStatusCommand
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
@@ -117,7 +117,7 @@ export interface BackendAdapter {
   sendAudioBytes(bytes: Uint8Array): void
   audioCancel(input: AudioCancelInput): Promise<void>
 
-  submitToolResult(input: ToolResult): Promise<void>
+  submitToolResult(input: ToolStatusCommand): Promise<void>
 
   /** 订阅后端公开领域事件;返回取消订阅函数 */
   subscribe(handler: BackendEventHandler): () => void

@@ -1,5 +1,6 @@
 import type { Conversation, PageQuery } from './conversation'
 import type { Message } from './message'
+import type { ToolAttachment } from './tool'
 
 /** 建立连接后的会话标识(协议版本协商) */
 export interface BackendSession {
@@ -131,9 +132,18 @@ export interface ChatHistoryPage {
   snapshotId?: string         // 可选：避免查询期间新消息致分页重复/漏项
 }
 
-/** 工具结果回传 */
-export interface ToolResult {
+// —— 阶段 6 批次 A（F-6-06）：桌面工具状态回传命令（Main 组装、Renderer 不可见，D6-07）——
+/** wire tool.status 六态协议态（与展示态 ToolCallStatus 分离，D6A-05） */
+export type ToolWireStatus = 'accepted' | 'rejected' | 'running' | 'result' | 'error' | 'cancelled'
+export interface ToolStatusCommand {
   callId: string
-  status: 'completed' | 'failed' | 'rejected' | 'cancelled' | 'timeout'
-  summary?: string
+  status: ToolWireStatus
+  toolName: string
+  toolVersion: string
+  runtime: string                   // D-status-runtime：wire 保持 str
+  paramHash: string
+  output?: string
+  error?: { code?: string; message?: string }
+  attachments?: ToolAttachment[]
+  executionSummary?: string
 }

@@ -16,7 +16,7 @@ import type {
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
-  ToolResult
+  ToolStatusCommand
 } from '@shared/contracts/backend'
 export type { ConnectionState, ConnectionStatus } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
@@ -1121,7 +1121,7 @@ export class RealBackend implements BackendAdapter {
     ws.send(JSON.stringify({ type: 'audio.cancel', stream_id: input.streamId }))
   }
 
-  async submitToolResult(_input: ToolResult): Promise<void> { throw this.notImplemented('submitToolResult') }
+  async submitToolResult(_input: ToolStatusCommand): Promise<void> { throw this.notImplemented('submitToolResult') }
 
   private notImplemented(method: string): CyreneError {
     return new CyreneError(CyreneErrorCode.NOT_IMPLEMENTED, `RealBackend.${method} 尚未实现(后续阶段落地)`)
