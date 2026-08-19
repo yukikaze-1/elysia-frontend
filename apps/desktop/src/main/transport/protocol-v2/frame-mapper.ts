@@ -1,8 +1,9 @@
-import type { BackendEvent, Live2DDirectiveEvent } from '@shared/contracts/events'
+import type { BackendEvent, Live2DDirectiveEvent, ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent } from '@shared/contracts/events'
 import type { ConversationTokenUsage, SegmentChannel, SegmentKind, TokenUsage } from '@shared/contracts/message'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
+import { redactToolArguments } from '../../tools/input-summary'
 import type {
   RawFrame, RawGenerationCompleted, RawGenerationFailed,
   RawSegmentChannel, RawSegmentKind, RawTokenUsage, RawConversationUsage
@@ -89,6 +90,15 @@ export class FrameMapper {
       // —— 阶段 5 批次 C（C3）：后端 Live2D 表现指令建议 ——
       case 'live2d.directive':
         return this.mapDirective(frame)
+      // —— 阶段 6 批次 A（F-6-04）：工具双轨（D6-01~08）——
+      case 'tool.request':
+        return this.mapToolRequest(frame)
+      case 'tool.started':
+        return this.mapToolStarted(frame)
+      case 'tool.completed':
+        return this.mapToolCompleted(frame)
+      case 'action':
+        return null // 已知忽略（D6A-03：v2 已停发，不告警、不作工具状态源）
       default:
         return null // 握手/工具/音频等帧由连接层分流
     }
@@ -235,6 +245,58 @@ export class FrameMapper {
       ...(frame.state !== undefined ? { state: frame.state } : {}),
       ...(frame.priority !== undefined ? { priority: frame.priority } : {}),
       ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {})
+    }
+  }
+
+  /** tool.request raw 帧 → 脱敏公开事件（原始 arguments/安全元数据永不进 Renderer，D6-07；toolVersion/expiresAt 必填直映） */
+  private mapToolRequest(frame: Extract<RawFrame, { type: 'tool.request' }>): ToolRequestEvent {
+    const inputSummary = redactToolArguments(frame.arguments)
+    return {
+      ...this.envelope(),
+      event: 'tool.request',
+      callId: frame.callId,
+      sourceCallId: frame.sourceCallId,
+      toolName: frame.toolName,
+      toolVersion: frame.toolVersion,
+      runtime: frame.runtime,
+      ...(frame.reason !== undefined ? { reason: frame.reason } : {}),
+      ...(inputSummary !== undefined ? { inputSummary } : {}),
+      expiresAt: frame.expiresAt,
+      ...(frame.requestId !== undefined ? { requestId: frame.requestId } : {})
+    }
+  }
+
+  /** tool.started → ToolStartedEvent（直映） */
+  private mapToolStarted(frame: Extract<RawFrame, { type: 'tool.started' }>): ToolStartedEvent {
+    return {
+      ...this.envelope(),
+      event: 'tool.started',
+      callId: frame.callId,
+      toolName: frame.toolName,
+      runtime: frame.runtime,
+      ...(frame.inputSummary !== undefined ? { inputSummary: frame.inputSummary } : {}),
+      ...(frame.generationId !== undefined ? { generationId: frame.generationId } : {}),
+      ...(frame.conversationId !== undefined ? { conversationId: frame.conversationId } : {})
+    }
+  }
+
+  /** tool.completed → ToolCompletedEvent（error record 只提取已知键 code/message） */
+  private mapToolCompleted(frame: Extract<RawFrame, { type: 'tool.completed' }>): ToolCompletedEvent {
+    const err = frame.error
+    return {
+      ...this.envelope(),
+      event: 'tool.completed',
+      callId: frame.callId,
+      toolName: frame.toolName,
+      runtime: frame.runtime,
+      success: frame.success,
+      ...(frame.outputSummary !== undefined ? { outputSummary: frame.outputSummary } : {}),
+      ...(err !== undefined ? { error: { ...(typeof err.code === 'string' ? { code: err.code } : {}), ...(typeof err.message === 'string' ? { message: err.message } : {}) } } : {}),
+      ...(frame.errorType !== undefined ? { errorType: frame.errorType } : {}),
+      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
+      ...(frame.truncated !== undefined ? { truncated: frame.truncated } : {}),
+      ...(frame.generationId !== undefined ? { generationId: frame.generationId } : {}),
+      ...(frame.conversationId !== undefined ? { conversationId: frame.conversationId } : {})
     }
   }
 

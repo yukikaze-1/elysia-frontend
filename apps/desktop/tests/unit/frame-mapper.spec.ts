@@ -8,7 +8,8 @@ import type {
   VoiceTranscriptEvent, VoiceSessionStartedEvent, VoiceSessionPartialEvent,
   VoiceSessionTurnEvent, VoiceSessionAckEvent, VoiceSessionEndedEvent,
   DictationPartialEvent, DictationFinalEvent, DictationCancelledEvent,
-  AudioSessionStartedEvent, AudioSessionReadyEvent, AudioSessionCancelledEvent, VoiceErrorEvent
+  AudioSessionStartedEvent, AudioSessionReadyEvent, AudioSessionCancelledEvent, VoiceErrorEvent,
+  ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent
 } from '@shared/contracts/events'
 import type { RawFrame } from '../../src/main/transport/protocol-v2/raw-types'
 
@@ -342,5 +343,40 @@ describe('FrameMapper live2d.directive → 领域（阶段5 批次C）', () => {
     expect(b!.sequence).toBe(2)
     expect(a!.eventId).toBe('conn-1:1')
     expect(b!.eventId).toBe('conn-1:2')
+  })
+})
+
+describe('阶段 6 批次 A 工具帧映射（Task 4）', () => {
+  it('tool.started → ToolStartedEvent（直映）', () => {
+    const ev = new FrameMapper({ connectionId: 'conn-1' }).mapFrame({ type: 'tool.started', callId: 'tc_1', toolName: 'get_time', runtime: 'backend', inputSummary: 'q=<redacted>', generationId: 'gen-1' }) as ToolStartedEvent
+    expect(ev.event).toBe('tool.started')
+    expect(ev.callId).toBe('tc_1')
+    expect(ev.inputSummary).toBe('q=<redacted>')
+    expect(ev.generationId).toBe('gen-1')
+  })
+  it('tool.completed success/失败 → ToolCompletedEvent（error record 提取 code/message）', () => {
+    const ok = new FrameMapper({ connectionId: 'c' }).mapFrame({ type: 'tool.completed', callId: 'tc_1', toolName: 'get_time', runtime: 'backend', success: true, outputSummary: '2026-08-20', durationMs: 12.5 }) as ToolCompletedEvent
+    expect(ok.success).toBe(true)
+    expect(ok.outputSummary).toBe('2026-08-20')
+    const fail = new FrameMapper({ connectionId: 'c' }).mapFrame({ type: 'tool.completed', callId: 'tc_1', toolName: 'web_search', runtime: 'backend', success: false, error: { code: 'NETWORK', message: '超时', extra: 1 } }) as ToolCompletedEvent
+    expect(fail.success).toBe(false)
+    expect(fail.error).toEqual({ code: 'NETWORK', message: '超时' }) // 未知键不透传
+  })
+  it('tool.request → ToolRequestEvent 脱敏 emit（arguments/安全元数据不在事件内；toolVersion/expiresAt 必填直映）', () => {
+    const ev = new FrameMapper({ connectionId: 'c' }).mapFrame({ type: 'tool.request', callId: 'call_1', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', sourceCallId: 'tc_1', arguments: { path: '/etc/passwd', resource_handle: 'h' }, reason: '读取文件', riskLevel: 'medium', permissionRequired: true, approvalAuthority: 'client', paramHash: 'h', expiresAt: '2026-08-20T12:00:00Z', requestId: 'req_1' }) as ToolRequestEvent
+    expect(ev.event).toBe('tool.request')
+    expect(ev.sourceCallId).toBe('tc_1')
+    expect(ev.toolVersion).toBe('1.0')
+    expect(ev.expiresAt).toBe('2026-08-20T12:00:00Z')
+    expect(ev.inputSummary).toBe('path=<redacted>, resource_handle=<str:1>')
+    expect('arguments' in ev).toBe(false)
+    expect('riskLevel' in ev).toBe(false)
+    expect('paramHash' in ev).toBe(false)
+  })
+  it('action → null 且不告警（onProtocolWarning 未被调用）', () => {
+    const warnings: string[] = []
+    const mapper = new FrameMapper({ connectionId: 'c', onProtocolWarning: (w) => warnings.push(w.code) })
+    expect(mapper.mapFrame({ type: 'action', action: 'tool_executing', params: { tool: 'save_memory' } })).toBeNull()
+    expect(warnings).toHaveLength(0)
   })
 })
