@@ -1,1 +1,1 @@
-{ "backendCommit": "unverified", "protocol": "2", "serverProtocolVersion": "2.0", "schemaHash": "5102664f34abf25f7504d87e66c0a3c96bd806ad6f7450d9172e0087ade21b43", "verified": false, "scenario": "chat-no-delta-public-reply" }
+{"backendCommit":"unverified","protocol":"2","serverProtocolVersion":"2.0","schemaHash":"d0a13d5a4be46d94d3b45f46b8f97c1cfd1cffddf3be0a0d80d7ab5215c43aeb","verified":false,"scenario":"chat-no-delta-public-reply"}

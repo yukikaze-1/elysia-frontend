@@ -277,6 +277,85 @@ export interface RawLive2DDirective {
   durationMs?: number
 }
 
+// —— 阶段 6 批次 A（F-6-01）：工具双轨 wire 帧（镜像 frontend_contract/contract.raw.ts，保留后端原始命名）——
+
+/** 工具 Runtime（对齐契约 ToolRuntime StrEnum；raw 层自包含，不与领域层混用） */
+export type RawToolRuntime = 'backend' | 'desktop' | 'local_worker'
+
+/** 桌面工具执行请求（Server→Client 定向投递；sourceCallId 必填 = LLM tool_call_id 权威键，D6-03/D6-07） */
+export interface RawToolRequest {
+  type: 'tool.request'
+  callId: string                    // 桥 callId（call_ 前缀；执行协议关联）
+  toolName: string
+  toolVersion: string
+  runtime: RawToolRuntime
+  sourceCallId: string              // LLM tool_call_id（必填，缺省即整帧拒）
+  arguments: Record<string, unknown>
+  reason?: string
+  riskLevel: string                 // 契约为 str（safe/medium/high）；本地风险重算归批次 B
+  permissionRequired: boolean
+  approvalAuthority: string         // desktop → client
+  paramHash: string                 // 规范化 arguments SHA-256（篡改拒绝权威依据，批次 B 消费）
+  expiresAt: string                 // UTC ISO（桥 request_timeout 绝对过期）
+  requestId?: string
+}
+
+/** Backend 工具开始（v2 展示生命周期；callId = LLM tool_call_id，与 started/completed/归档同值） */
+export interface RawToolStarted {
+  type: 'tool.started'
+  callId: string
+  toolName: string
+  runtime: RawToolRuntime
+  inputSummary?: string             // 服务端 _safe_arg_summary
+  generationId?: string
+  conversationId?: string
+}
+
+/** Backend 工具完成（v2 展示生命周期；outputSummary ≤2000 截断带 truncated） */
+export interface RawToolCompleted {
+  type: 'tool.completed'
+  callId: string
+  toolName: string
+  runtime: RawToolRuntime
+  success: boolean
+  outputSummary?: string
+  error?: Record<string, unknown>   // {code,message}；契约未冻结内层 → 按 record 收，mapper 提取已知键
+  errorType?: string
+  durationMs?: number               // 可为小数（契约 float）
+  truncated?: boolean
+  generationId?: string
+  conversationId?: string
+}
+
+/** 旧后端泛型动作帧（v2 已停发、v1 不变；契约识别 + 有意忽略，不告警不作工具状态源，D6A-03） */
+export interface RawAction {
+  type: 'action'
+  action: string                    // 'tool_executing' | 'tool_done' | 其它（契约 Literal|str）
+  params?: Record<string, unknown>
+}
+
+/** 桌面工具状态回传（Client→Server 六态；runtime 保持 str——D-status-runtime 不扩大回传契约 churn） */
+export interface RawToolStatus {
+  type: 'tool.status'
+  callId: string
+  status: 'accepted' | 'rejected' | 'running' | 'result' | 'error' | 'cancelled'
+  toolName: string
+  toolVersion: string
+  runtime: string
+  paramHash: string
+  output?: string
+  error?: Record<string, unknown>   // {code,message} 同 tool.completed 收法
+  attachments?: RawToolAttachment[]
+  executionSummary?: string
+}
+
+/** 桌面工具结果附件引用（后端托管 URL；批次 B 上传后回填） */
+export interface RawToolAttachment {
+  url: string
+  mimeType: string
+  label?: string
+}
+
 /** 客户端→服务器语音控制帧（对齐 ws_message.py ClientMessage 各成员；不进 RawFrameSchema/RAW_FRAME_TYPES，Task 4 构造发送用） */
 export interface RawVoiceRecordStart {
   type: 'voice.record.start'
@@ -329,12 +408,13 @@ export interface RawAudioCancel {
   stream_id: number
 }
 
-/** 客户端→服务器帧判别联合（11 型语音控制帧；只作发送契约，不参与 RAW_FRAME_TYPES 计数） */
+/** 客户端→服务器帧判别联合（11 型语音控制帧 + tool.status；只作发送契约，不参与 RAW_FRAME_TYPES 计数） */
 export type RawClientFrame =
   | RawVoiceRecordStart | RawVoiceRecordStop | RawVoiceCommit | RawVoiceDiscard
   | RawVoiceSessionStart | RawVoiceSessionStop | RawVoiceSessionCancel
   | RawDictationStart | RawDictationStop | RawDictationCancel
   | RawAudioCancel
+  | RawToolStatus                       // 新增（客户端→服务器，不进 RawFrameSchema/RAW_FRAME_TYPES 计数）
 
 export type RawFrame =
   | RawSessionMessage | RawServerInfo | RawExpression | RawState | RawTyping
@@ -349,3 +429,5 @@ export type RawFrame =
   | RawAudioStart | RawAudioChunk | RawAudioEnd | RawAudioCancelled
   // 阶段 5 批次 C：后端 Live2D 表现指令建议（C3 契约冻结）
   | RawLive2DDirective
+  // 阶段 6 批次 A（F-6-01）：工具双轨帧 + action 兼容帧
+  | RawToolRequest | RawToolStarted | RawToolCompleted | RawAction

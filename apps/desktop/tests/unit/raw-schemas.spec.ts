@@ -200,15 +200,15 @@ describe('state/typing 兼容帧（FE-INT-P1-01）', () => {
 })
 
 describe('raw schemas fingerprint(2C)', () => {
-  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),15 → 28(阶段4 批次B 增 13 语音/TTS 帧) → 29(阶段5 批次C 增 live2d.directive)', () => {
-    expect(RAW_FRAME_TYPES).toHaveLength(29)
+  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),15 → 28(阶段4 批次B 增 13 语音/TTS 帧) → 29(阶段5 批次C 增 live2d.directive) → 33(阶段6 批次A 工具帧+action)', () => {
+    expect(RAW_FRAME_TYPES).toHaveLength(33)
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
-      'audio', 'audio_cancelled', 'audio_end', 'audio_start',
+      'action', 'audio', 'audio_cancelled', 'audio_end', 'audio_start',
       'dictation.cancelled', 'dictation.final', 'dictation.partial',
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',
       'generation.started', 'live2d.directive', 'server_info', 'session', 'set_tts_voice_result', 'state',
-      'switch_model_result', 'typing', 'user_message.ack',
+      'switch_model_result', 'tool.completed', 'tool.request', 'tool.started', 'typing', 'user_message.ack',
       'voice.transcript', 'voice_session.ack', 'voice_session.ended',
       'voice_session.partial', 'voice_session.started', 'voice_session.turn'
     ])
@@ -364,5 +364,33 @@ describe('阶段5 批次C：live2d.directive raw schema（C3 契约冻结）', (
   it('空帧合法（全可选，仅 type 必填）；缺 type 拒绝', () => {
     expect(parseRawFrame({ type: 'live2d.directive' }).success).toBe(true)
     expect(parseRawFrame({ state: 'happy' }).success).toBe(false) // 非 live2d.directive 帧
+  })
+})
+
+describe('阶段 6 批次 A 工具帧（Task 2）', () => {
+  const validRequest = {
+    type: 'tool.request', callId: 'call_1', toolName: 'desktop.file.read', toolVersion: '1.0',
+    runtime: 'desktop', sourceCallId: 'tc_1', arguments: { resource_handle: 'h' },
+    reason: '读取用户选中的文件', riskLevel: 'medium', permissionRequired: true,
+    approvalAuthority: 'client', paramHash: 'abc123', expiresAt: '2026-08-20T12:00:00Z', requestId: 'req_1'
+  }
+  it('tool.request 合法帧全字段通过；sourceCallId 缺省拒；runtime 非法拒；未知字段整帧拒', () => {
+    expect(parseRawFrame(validRequest).success).toBe(true)
+    const noSource = { ...validRequest }
+    delete (noSource as { sourceCallId?: string }).sourceCallId
+    expect(parseRawFrame(noSource).success).toBe(false)
+    expect(parseRawFrame({ ...validRequest, runtime: 'cloud' }).success).toBe(false)
+    expect(parseRawFrame({ ...validRequest, unknown_field: 1 }).success).toBe(false)
+  })
+  it('tool.started/tool.completed 合法 + strict 拒未知字段；success 必填', () => {
+    expect(parseRawFrame({ type: 'tool.started', callId: 'tc_1', toolName: 'get_time', runtime: 'backend', inputSummary: 'query=<redacted>' }).success).toBe(true)
+    expect(parseRawFrame({ type: 'tool.completed', callId: 'tc_1', toolName: 'get_time', runtime: 'backend', success: true, outputSummary: '2026-08-20', durationMs: 12.5 }).success).toBe(true)
+    expect(parseRawFrame({ type: 'tool.completed', callId: 'tc_1', toolName: 'get_time', runtime: 'backend' }).success).toBe(false) // success 必填
+    expect(parseRawFrame({ type: 'tool.started', callId: 'tc_1', toolName: 'get_time', runtime: 'backend', extra: 1 }).success).toBe(false)
+  })
+  it('action 兼容帧（旧 trace 形状）通过；tool.status client 帧六态 + runtime str 放行', () => {
+    expect(parseRawFrame({ type: 'action', action: 'tool_executing', params: { tool: 'save_memory', call_id: 'call_1' } }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'tool.status', callId: 'call_1', status: 'result', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', paramHash: 'h', output: 'ok' }).success).toBe(true)
+    expect(parseRawClientFrame({ type: 'tool.status', callId: 'call_1', status: 'accepted', toolName: 'x', toolVersion: '1', runtime: 'desktop', paramHash: 'h' }).success).toBe(true)
   })
 })

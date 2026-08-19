@@ -308,6 +308,73 @@ const RawLive2DDirectiveSchema = z.object({
   durationMs: z.number().int().min(0).max(30000).optional()
 }).strict()
 
+// —— 阶段 6 批次 A（F-6-02）：工具双轨 wire schema（镜像 frontend_contract/contract.raw.ts；.strict() 未知字段整帧拒）——
+
+const RawToolRuntimeSchema = z.enum(['backend', 'desktop', 'local_worker'])
+
+const RawToolRequestSchema = z.object({
+  type: z.literal('tool.request'),
+  callId: z.string().min(1),
+  toolName: z.string().min(1),
+  toolVersion: z.string().min(1),
+  runtime: RawToolRuntimeSchema,
+  sourceCallId: z.string().min(1),              // 必填（后端契约 B-6 已强制；缺省整帧拒）
+  arguments: z.record(z.string(), z.unknown()),
+  reason: z.string().optional(),
+  riskLevel: z.string(),                        // 契约 str；后端恒发
+  permissionRequired: z.boolean(),              // 契约必填
+  approvalAuthority: z.string().min(1),         // 契约必填
+  paramHash: z.string().min(1),                 // 契约必填
+  expiresAt: z.string().min(1),                 // 契约必填
+  requestId: z.string().optional()
+}).strict()
+
+const RawToolStartedSchema = z.object({
+  type: z.literal('tool.started'),
+  callId: z.string().min(1),
+  toolName: z.string().min(1),
+  runtime: RawToolRuntimeSchema,
+  inputSummary: z.string().optional(),
+  generationId: z.string().optional(),
+  conversationId: z.string().optional()
+}).strict()
+
+const RawToolCompletedSchema = z.object({
+  type: z.literal('tool.completed'),
+  callId: z.string().min(1),
+  toolName: z.string().min(1),
+  runtime: RawToolRuntimeSchema,
+  success: z.boolean(),                         // 契约必填
+  outputSummary: z.string().optional(),
+  error: z.record(z.string(), z.unknown()).optional(),   // 内层不冻结（契约 Record），mapper 提取 code/message
+  errorType: z.string().optional(),
+  durationMs: z.number().optional(),            // 可为小数
+  truncated: z.boolean().optional(),
+  generationId: z.string().optional(),
+  conversationId: z.string().optional()
+}).strict()
+
+const RawActionSchema = z.object({
+  type: z.literal('action'),
+  action: z.string(),                           // 契约 Literal|str → str 全收
+  params: z.record(z.string(), z.unknown()).optional()
+}).strict()
+
+const RawToolAttachmentSchema = z.object({ url: z.string().min(1), mimeType: z.string().min(1), label: z.string().optional() }).strict()
+const RawToolStatusSchema = z.object({
+  type: z.literal('tool.status'),
+  callId: z.string().min(1),
+  status: z.enum(['accepted', 'rejected', 'running', 'result', 'error', 'cancelled']),
+  toolName: z.string().min(1),
+  toolVersion: z.string().min(1),
+  runtime: z.string(),                          // D-status-runtime：保持 str
+  paramHash: z.string().min(1),
+  output: z.string().optional(),
+  error: z.record(z.string(), z.unknown()).optional(),
+  attachments: z.array(RawToolAttachmentSchema).optional(),
+  executionSummary: z.string().optional()
+}).strict()
+
 export const RawFrameSchema = z.discriminatedUnion('type', [
   RawSessionMessageSchema,
   RawServerInfoSchema,
@@ -337,7 +404,12 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawAudioChunkSchema,
   RawAudioEndSchema,
   RawAudioCancelledSchema,
-  RawLive2DDirectiveSchema
+  RawLive2DDirectiveSchema,
+  // 阶段 6 批次 A（F-6-02）：工具双轨帧 + 过渡期 action 兼容帧
+  RawToolRequestSchema,
+  RawToolStartedSchema,
+  RawToolCompletedSchema,
+  RawActionSchema
 ])
 
 export function parseRawFrame(input: unknown): {
@@ -389,7 +461,8 @@ export const RawClientFrameSchema = z.discriminatedUnion('type', [
   RawDictationStartSchema,
   RawDictationStopSchema,
   RawDictationCancelSchema,
-  RawAudioCancelSchema
+  RawAudioCancelSchema,
+  RawToolStatusSchema
 ])
 
 export function parseRawClientFrame(input: unknown): {
