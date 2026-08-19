@@ -31,6 +31,7 @@
     "check:node": "node scripts/check-node-version.mjs"
   },
   "dependencies": {
+    "diff": "^9.0.0",
     "marked": "^18.0.9",
     "pinia": "^4.0.2",
     "vue": "^3.5.41",
