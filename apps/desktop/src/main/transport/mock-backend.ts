@@ -207,7 +207,7 @@ export function parseMockDirectiveEnv(value: string | undefined): Omit<RawLive2D
 }
 
 /** CYRENE_MOCK_TOOL_FLOW env → MockToolFlow（阶段 6 批次 A / F-6-22 集成）：未设/非法 JSON/形状 → undefined（不注入）。
- * backend kind：generation.completed 后按序发射 tool.started/tool.completed；desktop kind：发射 tool.request（固定串 call_mock_1/tc_mock_desktop_1）。 */
+ * backend kind：generation.completed 后按序发射 tool.started/tool.completed；desktop kind：批次 B 起经 toolRequestSink 交付（id 自增 call_mock_<n>/tc_mock_desktop_<n>，不再直发 chat:event，D6B-15/A3）。 */
 export type MockToolFlow =
   | { kind: 'backend'; started: { toolName: string; inputSummary?: string }; completed: { success: boolean; outputSummary?: string; errorType?: string; durationMs?: number } }
   | { kind: 'desktop'; request: { toolName: string; arguments?: Record<string, unknown>; reason?: string; riskLevel?: string; permissionRequired?: boolean } }

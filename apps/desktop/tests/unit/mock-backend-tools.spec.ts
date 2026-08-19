@@ -90,5 +90,14 @@ describe('批次 B 改接（toolRequestSink）', () => {
     expect(sink[1].callId).toBe('call_mock_2')
     expect(sink[1].sourceCallId).toBe('tc_mock_desktop_2')
   })
-  it('backend kind 发射不变', async () => { /* 既有 backend kind 用例保持 emit 断言（tool.started/tool.completed 仍经订阅面） */ })
+  it('backend kind 发射不变（L3：补最小断言——started/completed 仍经订阅面且 sourceCallId 固定）', async () => {
+    const mb = new MockBackend({ toolFlow: { kind: 'backend', started: { toolName: 'search_web', inputSummary: 'q=<str:2>' }, completed: { success: true, outputSummary: 'ok' } }, emitDelayMs: 0 })   // emitDelayMs:0——scheduleReplay 缺省 30ms×11 帧尾事件（对齐既有 sink 用例）
+    const events: any[] = []; mb.subscribe((e) => events.push(e))
+    mb.connect({ serverUrl: 'mock://server' }); await mb.activateConversation('conv-1001'); await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'r1' })
+    await new Promise(r => setTimeout(r, 50))
+    const started = events.find(e => e.event === 'tool.started')
+    const completed = events.find(e => e.event === 'tool.completed')
+    expect(started).toMatchObject({ callId: 'tc_mock_backend_1', toolName: 'search_web' })
+    expect(completed).toMatchObject({ callId: 'tc_mock_backend_1', success: true, outputSummary: 'ok' })
+  })
 })
