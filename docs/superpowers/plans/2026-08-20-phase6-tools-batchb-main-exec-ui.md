@@ -94,7 +94,7 @@ export interface PublicToolEvent {
   finishedAt?: string
   attachmentCount?: number          // 卡片「含 N 个附件」数据源（A10）
   dataFlowNote?: string             // 注册表静态文案（「哪些数据发后端」）
-  diff?: { lines: DiffLine[]; added: number; removed: number; truncated: boolean; formatNote: string; isNewFile: boolean }
+  diff?: { lines: DiffLine[]; added: number; removed: number; truncated: boolean; totalLines: number; formatNote: string; isNewFile: boolean }   // totalLines（A-20/H2：接口与 schema/消费三方一致）
   captureSources?: Array<{ sourceId: string; sourceName: string; thumbnailDataUrl: string }>
   capturePreview?: { sourceId: string; previewDataUrl: string }
   occurredAt: string
@@ -189,7 +189,7 @@ export const ToolListResponseSchema = z.array(PublicToolEventSchema)
 ```typescript
 // tests/unit/tool-policy.spec.ts（node 环境）
 import { describe, expect, it } from 'vitest'
-import { isPathBlacklisted, normalizeToolPath, PATH_BLACKLIST_DEFAULTS, isDomainAllowed } from '../../src/main/tools/tool-policy'
+import { isPathBlacklisted, normalizeToolPath, PATH_BLACKLIST_DEFAULTS, isDomainAllowed, PolicyError } from '../../src/main/tools/tool-policy'   // PolicyError import（H3）
 
 describe('isPathBlacklisted（段边界匹配）', () => {
   it('/etc 前缀含子目录', () => {
@@ -210,10 +210,10 @@ describe('isPathBlacklisted（段边界匹配）', () => {
   })
   it('非黑名单路径放行', () => { expect(isPathBlacklisted('/home/u/proj/notes.md')).toBe(false) })
 })
-describe('normalizeToolPath（H-3 full realpath）', () => {
-  it('相对路径解析为绝对', () => {
-    const r = normalizeToolPath('notes.md', { realPath: (p) => `/home/me/${p}` })
-    expect(r.realPath).toBe('/home/me/notes.md')
+describe('normalizeToolPath（H-3 full realpath；注入 realPath 桩，M7 语义：桩收到的输入是 resolve 后的绝对路径）', () => {
+  it('相对路径解析为绝对（桩透传）', () => {
+    const r = normalizeToolPath('notes.md', { realPath: (p) => p })
+    expect(r.realPath.endsWith('/notes.md')).toBe(true)   // resolve 产物以 basename 结尾
   })
   it('中间组件 symlink 逃逸被拒（H-3）', () => {
     // fake realpath 返回 /etc/passwd（linkdir→/etc）→ 黑名单命中
@@ -221,12 +221,10 @@ describe('normalizeToolPath（H-3 full realpath）', () => {
     expect(isPathBlacklisted(r.realPath)).toBe(true)
   })
   it('逃逸/非法 → PATH_UNSAFE 抛错', () => {
-    const { realPath } = normalizeToolPath('/ok/x', { realPath: (p) => p })
-    expect(realPath).toBe('/ok/x')
-    expect(() => normalizeToolPath('', { realPath: () => '' })).toThrow(PolicyError)
+    expect(() => normalizeToolPath('', { realPath: (p) => p })).toThrow(PolicyError)
     expect(() => normalizeToolPath('/parent-only/x', { realPath: (p) => { if (p === '/parent-only') throw new Error('ENOENT'); return p } })).toThrow(PolicyError)
   })
-  it('Windows：盘符路径放行、ADS 拒、\\?\ 拒（A-9 平台注入）', () => {
+  it('Windows：盘符路径放行、ADS 拒、\\?\ 拒（A-9 平台注入；实现用 path.win32 处理，见 Step 7）', () => {
     expect(normalizeToolPath('C:\\Users\\me\\f.txt', { platform: 'windows', realPath: (p) => p }).realPath).toBe('C:\\Users\\me\\f.txt')
     expect(() => normalizeToolPath('C:\\Users\\me\\f.txt:stream', { platform: 'windows', realPath: (p) => p })).toThrow(PolicyError)
     expect(() => normalizeToolPath('\\\\?\\C:\\x', { platform: 'windows', realPath: (p) => p })).toThrow(PolicyError)
@@ -315,11 +313,12 @@ export function normalizeToolPath(rawPath: string, opts: NormalizeOpts = {}): { 
   const platform = opts.platform ?? (process.platform === 'win32' ? 'windows' : 'posix')
   if (!rawPath || rawPath.length === 0) throw new PolicyError('PATH_UNSAFE', 'empty path')
   if (platform === 'windows') {
+    const win = path.win32                                   // A-9/新发现3：POSIX 主机上 path 是 posix——Windows 语义必须用 path.win32（M7）
     const lower = rawPath.toLowerCase()
     if (lower.startsWith('\\\\.\\') || lower.startsWith('\\\\?\\')) throw new PolicyError('PATH_UNSAFE', 'device path')
-    if (lower.startsWith('\\\\')) throw new PolicyError('PATH_UNSAFE', 'UNC 网络共享默认拒')              // A-9：UNC 未授权拒
-    if (path.basename(rawPath).includes(':')) throw new PolicyError('PATH_UNSAFE', 'ADS path')        // A-9：只查 basename 段冒号（盘符路径放行）
-    const base = path.basename(rawPath).split('.')[0].toUpperCase()
+    if (lower.startsWith('\\\\')) throw new PolicyError('PATH_UNSAFE', 'UNC 网络共享默认拒')
+    if (win.basename(rawPath).includes(':')) throw new PolicyError('PATH_UNSAFE', 'ADS path')
+    const base = win.basename(rawPath).split('.')[0].toUpperCase()
     if (/^(CON|NUL|PRN|AUX|COM[1-9]|LPT[1-9])$/.test(base)) throw new PolicyError('PATH_UNSAFE', 'reserved name')
   }
   let realPath: string
@@ -431,13 +430,13 @@ describe('PublicToolEventSchema', () => {
   it('capture/diff/pathSummary/attachmentCount 扩展通过', () => {
     expect(PublicToolEventSchema.safeParse({ ...VALID, pathSummary: '/home/u/notes.md', attachmentCount: 2,
       captureSources: [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] }).success).toBe(true)
-    expect(PublicToolEventSchema.safeParse({ ...VALID, diff: { lines: [{ kind: 'added', text: 'x' }], added: 1, removed: 0, truncated: false, formatNote: 'UTF-8', isNewFile: false } }).success).toBe(true)
+    expect(PublicToolEventSchema.safeParse({ ...VALID, diff: { lines: [{ kind: 'added', text: 'x' }], added: 1, removed: 0, truncated: false, totalLines: 1, formatNote: 'UTF-8', isNewFile: false } }).success).toBe(true)   // totalLines 必填（H2）
   })
 })
 describe('ToolCallRecordSchema + MessageSchema.toolCalls', () => {
   it('MessageSchema.safeParse 保留 toolCalls（preload 剥字段修复）', () => {
-    const msg = { /* 既有 MessageSchema 合法最小对象 */ }
-    // 见既有 MessageSchema 测试的合法样例，追加 toolCalls: [ {id:'tc_1', toolName:'x', runtime:'backend', status:'completed'} ]
+    // 合法样例从既有 ipc-response-schema.spec.ts 的 MessageSchema 用例复制（M8——先读该文件取其合法对象形状，替换下面 msg 占位）
+    const msg: Record<string, unknown> = { /* 从 ipc-response-schema.spec.ts 复制合法 MessageSchema 样例（含 id/role/status/content 等必填） */ }
     expect(MessageSchema.safeParse({ ...msg, toolCalls: [{ id: 'tc_1', toolName: 'seed.tool.read', runtime: 'backend', status: 'completed' }] }).success).toBe(true)
   })
   it('attachmentCount 合法/非法', () => {
@@ -448,7 +447,7 @@ describe('ToolCallRecordSchema + MessageSchema.toolCalls', () => {
 ```
 **注意**：`MessageSchema` 合法样例以既有 `ipc-response-schema.spec.ts` 为准（Step 10 前先读该文件确认字段，代码 L2）。
 
-- [ ] **Step 9: 实现 tool-registry.spec.ts（新文件，完整 M1——spec §3.13 要求）**
+- [ ] **Step 10: 实现 tool-registry.spec.ts（新文件，完整 M1——spec §3.13 要求）**
 
 ```typescript
 // tests/unit/tool-registry.spec.ts
@@ -482,11 +481,11 @@ describe('tool-registry', () => {
 })
 ```
 
-- [ ] **Step 10: 跑测试 + typecheck**
+- [ ] **Step 11: 跑测试 + typecheck**
 
 Run: `pnpm -F @cyrene/desktop test -- run tests/unit/tool-policy.spec.ts tests/unit/tool-public-events.spec.ts tests/unit/contracts-tool.spec.ts && pnpm -F @cyrene/desktop typecheck`——期望全绿（若既有 contracts-tool.spec 有 ToolCallRecord 常量断言，需同步补 attachmentCount 不破坏——见 Step 1 增补）。
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
 git add apps/desktop/src/shared/contracts/tool.ts apps/desktop/src/shared/contracts/ipc.ts apps/desktop/src/shared/schemas/ipc-response.ts apps/desktop/src/main/tools/tool-policy.ts apps/desktop/src/main/tools/tool-registry.ts apps/desktop/tests/unit/tool-policy.spec.ts apps/desktop/tests/unit/tool-registry.spec.ts apps/desktop/tests/unit/tool-public-events.spec.ts apps/desktop/tests/unit/contracts-tool.spec.ts
@@ -500,7 +499,9 @@ git commit -m "feat(阶段6批次B Task1): 契约与政策层——PublicToolEve
 **Files:**
 - Create: `apps/desktop/src/main/tools/param-hash.ts`
 - Create: `apps/desktop/src/main/tools/tool-service.ts`
-- Test: `apps/desktop/tests/unit/param-hash.spec.ts`（新）、`apps/desktop/tests/unit/tool-service.spec.ts`（新）
+- Create: `apps/desktop/src/main/tools/tool-executors.ts`（最小 stub，Step 5——Task 2 import 可解析，M1）
+- Create: `apps/desktop/src/main/tools/text-diff.ts`（Step 6，jsdiff 引入，M1）
+- Test: `apps/desktop/tests/unit/param-hash.spec.ts`（新）、`apps/desktop/tests/unit/tool-service.spec.ts`（新）、`apps/desktop/tests/unit/text-diff.spec.ts`（新）
 
 **Interfaces:**
 - Consumes: Task 1 的 `ToolRegistry`/`isPathBlacklisted`/`normalizeToolPath`/`PolicyError`；`PublicToolEvent`/`ToolCallStatus`/`ToolStatusCommand`/`ToolAttachment`；`redactToolArguments`；`AuditEvent`
@@ -562,15 +563,21 @@ export function computeParamHash(arguments_: Record<string, unknown>): string {
 - [ ] **Step 3: 写失败测试——tool-service 决策链核心（tool-service.spec.ts）**
 
 ```typescript
-// tests/unit/tool-service.spec.ts（node 环境；所有 executor/picker/submit 注入 fake）
-import { describe, expect, it, vi } from 'vitest'
-import { createToolService, DesktopToolRequest } from '../../src/main/tools/tool-service'
+// tests/unit/tool-service.spec.ts（node 环境；所有 executor/picker/submit 注入 fake；fixture 目录 beforeEach 创建，H8/新发现5）
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
+import { z } from 'zod'   // 平台测试用（新发现7）
+import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { createToolService, DesktopToolRequest, ToolServiceError, FILE_READ_MAX_BYTES } from '../../src/main/tools/tool-service'   // ToolServiceError/常量 import（H4）
 import { createToolRegistry } from '../../src/main/tools/tool-registry'
 import { ToolCallStatus } from '@shared/contracts/tool'
 
+const FIXTURES = '/tmp/cyrene-fixtures'
+beforeEach(() => { mkdirSync(FIXTURES, { recursive: true }) })
+afterEach(() => { rmSync(FIXTURES, { recursive: true, force: true }) })
+
 function mkReq(over: Partial<DesktopToolRequest> = {}): DesktopToolRequest {
   return { callId: 'call_1', sourceCallId: 'tc_1', toolName: 'desktop.file.read', toolVersion: '1.0',
-    runtime: 'desktop', arguments: { path: '/home/u/notes.md' }, reason: 'read notes', expiresAt: Date.now() + 30_000, ...over }
+    runtime: 'desktop', arguments: { path: `${FIXTURES}/notes.md` }, reason: 'read notes', expiresAt: Date.now() + 30_000, ...over }
 }
 function mkService(over: Record<string, unknown> = {}) {
   const events: any[] = []
@@ -580,7 +587,7 @@ function mkService(over: Record<string, unknown> = {}) {
   const svc = createToolService({
     registry: createToolRegistry(), platform: 'posix', audit: (e: any) => audit.push(e),
     submitStatus, uploadAttachment: vi.fn().mockResolvedValue({ url: 'mock://a/1', mimeType: 'text/plain' }),
-    pushEvent, allowRoots: ['/tmp/cyrene-fixtures'], ...over,
+    pushEvent, allowRoots: [FIXTURES], ...over,
   })
   return { svc, events, audit, submitStatus }
 }
@@ -592,7 +599,13 @@ describe('决策链', () => {
     const last = events.at(-1)
     expect(last.status).toBe('rejected'); expect(last.error?.code).toBe('CAPABILITY_UNAVAILABLE')
   })
-  it('平台不支持 → 同码拒绝（B3）', async () => { /* registry 注入 windows-only 工具 → posix 拒 */ })
+  it('平台不支持 → 同码拒绝（B3；注入 windows-only 工具，H7）', async () => {
+    const registry = createToolRegistry()
+    registry.set('desktop.winonly', { name: 'desktop.winonly', version: '1.0', runtime: 'desktop', title: 'w', description: '', dataFlowNote: '', localRisk: 'safe', permissionMode: 'automatic', supportedPlatforms: ['windows'], inputSchema: z.object({}).strict(), outputSchema: z.record(z.string(), z.unknown()), executeRef: 'file.read', defaultTimeoutMs: 1000, isPathTool: false })
+    const { svc, events } = mkService({ registry })
+    await svc.handleRequest(mkReq({ toolName: 'desktop.winonly', arguments: {} }))
+    expect(events.at(-1).error?.code).toBe('CAPABILITY_UNAVAILABLE')
+  })
   it('参数 schema 拒（未知键 strict / 缺 path）→ INVALID_ARGUMENTS 不弹窗', async () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ arguments: { path: '/home/u/a.txt', extra: 1 } }))
@@ -618,13 +631,14 @@ describe('决策链', () => {
     await svc.handleRequest(mkReq({ arguments: { path: '/tmp/cyrene-fixtures/a.txt' } }))
     expect(events.at(-1).status).toBe('awaiting_permission')
   })
-  it('write 授权前预读 + Diff 随 awaiting 事件下发（L7）', async () => {
-    // fixture 文件写入 /tmp/cyrene-fixtures/w.txt（内容 'old'）→ 请求 content:'new'
+  it('write 授权前预读 + Diff 随 awaiting 事件下发（L7；fixture 前置，H8）', async () => {
+    writeFileSync(`${FIXTURES}/w.txt`, 'old')
     const { svc, events } = mkService()
-    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: '/tmp/cyrene-fixtures/w.txt', content: 'new' } }))
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: 'new' } }))
     const ev = events.at(-1)
     expect(ev.status).toBe('awaiting_permission')
     expect(ev.diff).toBeDefined(); expect(ev.diff.isNewFile).toBe(false)
+    expect(ev.diff.totalLines).toBeGreaterThan(0)   // totalLines（A-20）
   })
   it('wire accepted 在授权判定前发出（M1）', async () => {
     const { svc, submitStatus } = mkService()
@@ -657,12 +671,10 @@ describe('幂等与状态机', () => {
     expect(events.filter(e => e.status === 'awaiting_permission').length).toBe(2)   // tc_2 晋升
   })
   it('终态后更新忽略（单向前进）', async () => {
-    const { svc, events } = mkService()
+    const { svc } = mkService()
     await svc.handleRequest(mkReq())
     await svc.decide('call_1', 'deny')
-    const before = events.length
-    await svc.decide('call_1', 'allow_once')   // 已 rejected → 抛 TOOL_STATE_INVALID
-    await expect(svc.decide('call_1', 'allow_once')).rejects.toMatchObject({ code: 'TOOL_STATE_INVALID' })
+    await expect(svc.decide('call_1', 'allow_once')).rejects.toMatchObject({ code: 'TOOL_STATE_INVALID' })   // 已 rejected → 抛（H6：无裸调用）
   })
   it('expiresAt 超时 → timeout + wire cancelled（cancelSource timeout）', async () => {
     vi.useFakeTimers()
@@ -673,9 +685,9 @@ describe('幂等与状态机', () => {
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
     vi.useRealTimers()
   })
-  it('decide allow_once → running → 执行成功 → completed + wire result；wire 时序 accepted→running→result（A-7）', async () => {
-    const p = '/tmp/cyrene-fixtures/ok.txt'; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, 'hello')
-    const { svc, submitStatus } = mkService()
+  it('decide allow_once → running → 执行成功 → completed + wire result；wire 时序 accepted→running→result（A-7/H5：注入 executorOverride）', async () => {
+    const p = `${FIXTURES}/ok.txt`; writeFileSync(p, 'hello')
+    const { svc, submitStatus } = mkService({ executorOverride: async () => ({ output: { path: p }, summary: 'ok' }) })
     await svc.handleRequest(mkReq({ arguments: { path: p } }))
     await svc.decide('call_1', 'allow_once')
     const order = submitStatus.mock.calls.map(c => c[0].status)
@@ -695,14 +707,13 @@ describe('幂等与状态机', () => {
     expect(events.at(-1).status).toBe('cancelled')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
   })
-  it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1）', async () => {
-    const p = '/tmp/cyrene-fixtures/ok.txt'; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, 'x')
-    const { svc, events } = mkService({ /* executor 注入返回坏结果（outputSchema 为 record —— 用 registry 注入坏 outputSchema 或注入 fake executor） */ })
-    // 定案：mkService 增 executorOverride 选项 → tool-service deps 的 executors 注入 fake（抛 ToolExecError('BAD_OUTPUT') 或返回非法形状）
+  it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1/M3：注入 executorOverride 返回非法输出）', async () => {
+    const p = `${FIXTURES}/ok.txt`; writeFileSync(p, 'x')
+    const { svc, events } = mkService({ executorOverride: async () => ({ output: 42, summary: 'bad' } as never) })   // 非 record → outputSchema 拒
     await svc.handleRequest(mkReq({ arguments: { path: p } }))
     await svc.decide('call_1', 'allow_once')
-    // 断言：fake executor 返回非 record 输出 → failed + INVALID_OUTPUT（executorOverride 未注入时走真实执行器，此用例需注入）
-    expect(['completed', 'failed']).toContain(events.at(-1).status)
+    const rec = svc.getRecord('call_1')
+    expect(rec?.status).toBe('failed'); expect(rec?.error?.code).toBe('INVALID_OUTPUT')
   })
   it('error.message === "" → 归一 undefined（M6/A-16）', async () => {
     const p = '/tmp/cyrene-fixtures/ok.txt'; mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, 'x')
@@ -712,8 +723,16 @@ describe('幂等与状态机', () => {
     const rec = svc.getRecord('call_1')
     expect(rec?.error?.message).toBeUndefined()
   })
-  it('重连：终态 statusSent=false 重发；非终态不动；selected-set 清空（D6B-20/M-7）', async () => {
-    // 场景：submitStatus 首次失败 → statusSent=false → reconnect() → 重发；selectedSet 清空（豁免失效）
+  it('重连：终态 statusSent=false 重发；非终态不动；selected-set 清空（D6B-20/M-7/H7）', async () => {
+    const p = `${FIXTURES}/ok.txt`; writeFileSync(p, 'hello')
+    const submitStatus = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)   // 首次发送失败
+    const { svc, events } = mkService({ submitStatus, executorOverride: async () => ({ output: { path: p }, summary: 'ok' }) })
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))
+    await svc.decide('call_1', 'allow_once')
+    expect(submitStatus.mock.calls.filter(c => c[0].status === 'result').length).toBe(1)   // 首次 result 发送失败（statusSent=false）
+    await svc.reconnect()
+    expect(submitStatus.mock.calls.filter(c => c[0].status === 'result').length).toBe(2)   // 重连重发
+    // selected-set 清空：先 select 豁免 → reconnect → 豁免失效
   })
   it('shutdown：停止接收 + 未决授权按拒绝（B2）', async () => {
     const { svc, events } = mkService()
@@ -722,8 +741,16 @@ describe('幂等与状态机', () => {
     await svc.handleRequest(mkReq({ callId: 'call_9', sourceCallId: 'tc_9' }))
     expect(events.some(e => e.id === 'tc_9' && e.error?.code === 'APP_SHUTTING_DOWN')).toBe(true)
   })
-  it('写路径串行锁：同路径两写串行', async () => {
-    // executorOverride 注入慢执行 → 并发两请求同 path → 执行互不交错（Promise 链）
+  it('写路径串行锁：同路径两写串行（H7：慢 executorOverride + 交错断言）', async () => {
+    const p = `${FIXTURES}/lock.txt`; writeFileSync(p, 'x')
+    let running = 0; let maxConcurrent = 0
+    const { svc } = mkService({ executorOverride: async () => { running++; maxConcurrent = Math.max(maxConcurrent, running); await new Promise(r => setTimeout(r, 20)); running--; return { output: { path: p }, summary: 'ok' } } })
+    await svc.handleRequest(mkReq({ callId: 'call_1', sourceCallId: 'tc_1', arguments: { path: p } }))
+    await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2', arguments: { path: p } }))
+    await svc.decide('call_1', 'allow_once')
+    await svc.decide('call_2', 'allow_once')
+    await new Promise(r => setTimeout(r, 100))
+    expect(maxConcurrent).toBe(1)   // 同路径写串行（per-path 锁）
   })
   it('capture Wayland 授权前拒（A-4）：注入 wayland env → CAPTURE_UNAVAILABLE 不弹窗', async () => {
     // mkService 注入 wayland: true → isWaylandSession 经 deps.isWayland 注入判断
@@ -816,6 +843,8 @@ export const PATH_SUMMARY_MAX = 120
 export class ToolServiceError extends Error {
   constructor(public code: string, message: string) { super(message) }
 }
+// M10 注记：tool-service ↔ tool-executors 存在值导入互引（createExecutors vs 常量/类型）——当前仅函数体内使用不触发 TDZ；
+// 若实现期遇循环 import 告警，把 FILE_READ_MAX_BYTES 等常量下沉到 main/tools/limits.ts（评估后记录取舍）
 
 export function createToolService(deps: ToolServiceDeps): ToolService {
   const records = new Map<string, ToolRecord>()
@@ -897,21 +926,21 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     audit('tool:terminal', rec, { errorCode: code })
     emit(rec)
   }
-  function terminal(rec: ToolRecord, display: 'failed' | 'timeout' | 'cancelled', err?: { code?: string; message?: string }, cancelSource: 'user' | 'timeout' | 'backend' = 'user'): void {
+  function terminal(rec: ToolRecord, display: 'failed' | 'timeout' | 'cancelled' | 'rejected', err?: { code?: string; message?: string }, cancelSource: 'user' | 'timeout' | 'backend' = 'user'): void {   // M2：扩 'rejected'（shutdown 用）
     rec.status = display; rec.error = err; rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
     const timer = timers.get(rec.id); if (timer) { clearTimeout(timer); timers.delete(rec.id) }
     const wire = display === 'timeout' ? 'cancelled' : toWire(display) ?? 'error'
     void wireSend(rec, wire, err ? { error: err } : {})
     audit('tool:terminal', rec, { errorCode: err?.code, cancelSource })
     emit(rec)
-    promoteQueue(rec.desktopCallId)
+    promoteQueue(rec.id)
   }
   function expire(rec: ToolRecord): void { terminal(rec, 'timeout', { code: 'TIMEOUT', message: '请求超时' }, 'timeout') }
   function durationOf(rec: ToolRecord): number | undefined {
     return rec.startedAt ? Math.max(0, Date.now() - Date.parse(rec.startedAt)) : undefined
   }
-  function promoteQueue(callId?: string): void {
-    const i = awaitingQueue.indexOf(callId ?? '')
+  function promoteQueue(callIdOrId?: string): void {
+    const i = awaitingQueue.indexOf(callIdOrId ?? '')   // 队列存 rec.id（sourceCallId）——调用方传 rec.id（L8）
     if (i >= 0) awaitingQueue.splice(i, 1)
     dequeueNext()
   }
@@ -924,11 +953,11 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       rec.status = 'rejected'; rec.finishedAt = new Date().toISOString()
       await wireSend(rec, 'rejected')
       audit('tool:terminal', rec)
-      emit(rec); promoteQueue(rec.desktopCallId)
+      emit(rec); promoteQueue(rec.id)
       return
     }
     await run(rec, deps.registry.get(rec.toolName)!)
-    promoteQueue(rec.desktopCallId)
+    promoteQueue(rec.id)
   }
   async function cancel(callId: string): Promise<void> {
     const id = idOf(callId); const rec = id ? records.get(id) : undefined
@@ -958,7 +987,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     for (const t of timers.values()) clearTimeout(t)
     timers.clear()
   }
-  /** 最近公开记录（tool:list，≤limit 条） */
+  /** 最近公开记录（tool:list，≤limit 条；L2 取舍注记：diff/captureSources/capturePreview 不进 listRecent——tool:list 仅作 hydration 用，capture/diff 交互态由 tool:event 实时推送） */
   function listRecent(limit = 20): PublicToolEvent[] {
     const all = [...records.values()].sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
     return all.slice(0, limit).map((rec) => ({
@@ -979,8 +1008,22 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     serialLocks.set(realPath, next)
     return next
   }
-  // ... // pickSource/confirmUpload（Task 4）
-  return { handleRequest, decide, cancel, listRecent, pickSource, confirmUpload, reconnect, shutdown, getRecord }
+  /** Task 2 顺序 stub（新发现9）：pickSource/confirmUpload 完整实现在 Task 4——本 task 先抛占位（接口可编译） */
+  async function pickSourceStub(_callId: string, _sourceId: string): Promise<void> { throw new ToolServiceError('CAPTURE_STATE_INVALID', 'capture 在 Task 4 落地') }
+  async function confirmUploadStub(_callId: string): Promise<void> { throw new ToolServiceError('CAPTURE_STATE_INVALID', 'capture 在 Task 4 落地') }
+  function realPathOf(rec: ToolRecord): string | undefined {   // L1：由 handleRequest 已 normalize 的路径（决策链缓存）
+    return typeof rec.arguments_['path'] === 'string' ? rec.arguments_['path'] : undefined
+  }
+  function codeOf(e: unknown): string {
+    if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'string') return (e as { code: string }).code
+    return 'EXECUTION_FAILED'
+  }
+  function messageOf(e: unknown): string {
+    if (e instanceof Error) return e.message
+    return String(e ?? '')
+  }
+  // ... // pickSource/confirmUpload（Task 4 以真实实现替换 stub）
+  return { handleRequest, decide, cancel, listRecent, pickSource: pickSourceStub, confirmUpload: confirmUploadStub, reconnect, shutdown, getRecord }
   async function handleRequest(req: DesktopToolRequest): Promise<void> {
     if (shutdownFlag) { reject(req, 'APP_SHUTTING_DOWN', '应用正在退出'); return }
     // 1 注册表+平台
@@ -1089,7 +1132,17 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   }
 ```
 （`preReadForDiff` 抛 `ToolExecError`——Task 2 的 tool-executors stub 定义该类；决策链 handleRequest 中已包 try/catch 转 terminal failed，A-15。）
-**Step 5 说明（本 task 边界）**：`createExecutors`/`realPathOf`/`codeOf`/`messageOf` 本 task 提供最小实现——**新建 `main/tools/tool-executors.ts` 最小 stub（含 `ToolExecError`，execute 按 executeRef 抛 NOT_IMPLEMENTED 或走注入；纳入本 task Files 与 commit，Task 2 的 import 必须可解析，完整 M3/A-15）**；真实执行器 Task 3/4 落地。`preReadForDiff`/`reconnect`/`shutdown`/`listRecent`/`getRecord`/`withPathLock`/`isWaylandSession` 已在本 task Step 4 给出完整实现。text-diff 最小实现并入本 task Step 6（jsdiff 依赖在此引入，D6B-04/19），Task 3 只做执行器。
+- [ ] **Step 5: 建 tool-executors.ts 最小 stub（完整 M3/A-15/M1——Task 2 的 import 必须可解析；头部 Files 补本文件与 text-diff.ts，L500-503 同步）**
+
+```typescript
+// src/main/tools/tool-executors.ts（Task 2 stub——Task 3 实装）
+export class ToolExecError extends Error { constructor(public code: string, message: string) { super(message) } }
+export interface ExecResult { output: Record<string, unknown>; summary: string; attachments?: ToolAttachment[]; attachmentCount?: number; captureSession?: boolean }
+export function createExecutors(_deps: unknown): { execute(rec: unknown, realPath?: string): Promise<ExecResult> } {
+  return { async execute() { throw new ToolExecError('NOT_IMPLEMENTED', 'Task 3 实装') } }
+}
+```
+**说明**：本 task 的 `preReadForDiff`/`reconnect`/`shutdown`/`listRecent`/`getRecord`/`withPathLock`/`isWaylandSession` 已在 Step 4 给出完整实现；text-diff 最小实现并入 Step 6（jsdiff 依赖在此引入，D6B-04/19）；`pickSource/confirmUpload` 本 task 用 stub（Task 4 替换）。
 
 - [ ] **Step 6: 引入 jsdiff + 实现 text-diff.ts（含失败测试先行）**
 
@@ -1129,7 +1182,7 @@ describe('detectTextFormat / normalizeToFormat（D6B-19/L-2 拆行段重拼）',
 // src/main/tools/text-diff.ts
 import { diffLines } from 'diff'
 export interface DiffLine { kind: 'added' | 'removed' | 'unchanged'; text: string }
-export interface TextDiffResult { lines: DiffLine[]; added: number; removed: number; truncated: boolean }
+export interface TextDiffResult { lines: DiffLine[]; added: number; removed: number; truncated: boolean; totalLines: number }   // totalLines（A-20/H2）
 export const MAX_DIFF_LINES = 100
 export function computeTextDiff(oldText: string, newText: string): TextDiffResult {
   const parts = diffLines(oldText, newText)
@@ -1141,7 +1194,7 @@ export function computeTextDiff(oldText: string, newText: string): TextDiffResul
     for (const text of seg) { if (lines.length < MAX_DIFF_LINES) lines.push({ kind, text }) }
   }
   const total = parts.reduce((n, p) => n + (p.count ?? p.value.split('\n').length), 0)
-  return { lines, added, removed, truncated: total > MAX_DIFF_LINES }
+  return { lines, added, removed, truncated: total > MAX_DIFF_LINES, totalLines: total }
 }
 export interface TextFormat { hasBom: boolean; eol: 'crlf' | 'lf' | 'mixed'; endsWithNewline: boolean }
 export function detectTextFormat(text: string): TextFormat {
@@ -1220,7 +1273,7 @@ describe('desktop.file.select', () => {
   })
   it('选中文件 → 元数据结果', async () => {
     const p = join(tmp, 'a.txt'); writeFileSync(p, 'hello')
-    const ex = createExecutors(mkDeps({ pickFile: async () => ({ canceled: false, path: p }) }))
+    const ex = createExecutors(mkDeps({ allowRoots: [tmp], pickFile: async () => ({ canceled: false, path: p }) }))   // H9：mkdtemp 在 /tmp → allowRoots 注入（select 复核与服务层同口径）
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(r.output).toMatchObject({ cancelled: false, path: p, name: 'a.txt', size: 5 })
     expect((r.output as any).hash).toMatch(/^[0-9a-f]{64}$/)
@@ -1313,6 +1366,7 @@ import { atomicWriteFile } from '../credentials/atomic-write'      // A-13：原
 import { computeTextDiff, detectTextFormat, normalizeToFormat } from './text-diff'
 import { normalizeToolPath, isPathBlacklisted } from './tool-policy'
 import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS, ToolRecord, ToolServiceDeps } from './tool-service'
+import type { ToolAttachment } from '@shared/contracts/tool'       // 新发现7：类型 import 补齐
 
 export interface ExecResult { output: Record<string, unknown>; summary: string; attachments?: ToolAttachment[]; attachmentCount?: number }
 export class ToolExecError extends Error { constructor(public code: string, message: string) { super(message) } }
@@ -1325,9 +1379,10 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     })
     const r = await picker({ title: rec.title, filters: [TEXT_FILE_FILTERS] })
     if (r.canceled || !r.path) return { output: { cancelled: true }, summary: '用户取消选择' }
-    // 黑名单复核（M-7/L10）：命中 → 伪装取消
+    // 黑名单复核（M-7/L10/H9）：命中 → 伪装取消；allowRoots 与服务层同口径（/tmp 黑名单经注入放宽）
     const norm = normalizeToolPath(r.path, { platform: deps.platform })
-    if (isPathBlacklisted(norm.realPath)) {
+    const blacklisted = isPathBlacklisted(norm.realPath) && !(deps.allowRoots ?? []).some(root => norm.realPath === root || norm.realPath.startsWith(root + '/'))
+    if (blacklisted) {
       return { output: { cancelled: true, reason: 'PATH_BLOCKLISTED' }, summary: '用户取消选择' }
     }
     const st = fs.statSync(norm.realPath)
@@ -1375,8 +1430,9 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
       const nowHash = createHash('sha256').update(fs.readFileSync(p)).digest('hex')
       if (nowHash !== rec.oldHash) throw new ToolExecError('FILE_CONFLICT', '文件已被修改，未覆盖')
     }
-    // 原子替换（A-13/完整 L2）：复用 atomicWriteFile（fsync + 安全写）；EEXIST 由随机后缀规避（原子写内部换名重试）
-    await atomicWriteFile(p, Buffer.from(normalized, 'utf8'), { safeRoot: undefined })
+    // 原子替换（A-13/完整 L2/H10）：复用 atomicWriteFile——真实签名 (filePath: string, data: string, opts: { safeRoot: string })
+    // data 传字符串（非 Buffer）；safeRoot 传目标父目录（内部 realpath + 包含性复核）
+    await atomicWriteFile(p, normalized, { safeRoot: dirname(p) })
     const outHash = createHash('sha256').update(normalized).digest('hex')
     const diff = exists ? computeTextDiff(oldText, content) : null
     return { output: { path: p, size: Buffer.byteLength(normalized), hash: outHash, bytesWritten: Buffer.byteLength(normalized) },
@@ -1400,7 +1456,7 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
 }
 // selected-set 回调：ToolServiceDeps 增 selectedAdd?: (realPath: string) => void（Task 6 接线 tool-service 内实现）
 ```
-**注**：`ToolServiceDeps` 增 `selectedAdd?: (realPath: string) => void`（Task 2 的 tool-service 在 createExecutors 注入闭包写 selectedSet；本 task 先加字段，Task 6 接线——为避免 Task 2 单测破坏，`selectedAdd` 可选）。
+**注**：`ToolServiceDeps.selectedAdd` 由 Task 2 的 tool-service 在 `createExecutors({ ...deps, selectedAdd: 写闭包 })` 注入（A-14）；**本 task 只消费（`deps.selectedAdd?.()`），不再接线**（M9 修正）。
 
 - [ ] **Step 3: 跑测试 + typecheck**
 
@@ -1492,7 +1548,7 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
     await svc.decide('call_1', 'allow_once')
     await svc.pickSource('call_1', 's1')
-    // 超限 → 事件不携带 previewDataUrl（降级提示）→ confirm 仍被拒（CAPTURE_STATE_INVALID）
+    // 超限 → 降级为缩略图（previewDataUrl 为缩略图值，长度 < 300KiB）→ confirm 可正常通过（L7 修正：降级后 sess.previewDataUrl 已设置，非「仍被拒」）
     expect(events.at(-1)?.capturePreview?.previewDataUrl.length).toBeLessThan(300 * 1024)
   })
 })
@@ -1505,14 +1561,17 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
   interface CaptureSession { sourceId?: string; previewDataUrl?: string; bytes?: Uint8Array; dropped?: number }
   const captureSessions = new Map<string, CaptureSession>()
 
-  // run() 内 capture 分支（A-2）——在「12 outputSchema 校验」之前：
-  //   const result = deps.executorOverride ? ... : await executors.execute(rec, realPathOf(rec))
+  // run() 内 capture 分支（A-2 完整代码）——替换原「executors.execute → outputSchema → completed」直接路径：
+  //   const result = deps.executorOverride ? await deps.executorOverride(rec, realPathOf(rec)) : await executors.execute(rec, realPathOf(rec))
+  //   if (rec.status !== 'running') return
   //   if (rec.toolName === 'desktop.screen.capture' && result.captureSession) {
   //     rec.captureSources = result.output['sources'] as PublicToolEvent['captureSources']
-  //     rec.status = 'running'; emit(rec)   // awaiting_pick 态（captureSources 下发）
+  //     rec.status = 'running'; emit(rec)          // awaiting_pick 态（captureSources 下发）
   //     captureSessions.set(rec.id, { dropped: result.output['dropped'] as number | undefined })
-  //     return   // 等待 pickSource
+  //     return                                     // 等待 pickSource——不 outputSchema、不 completed
   //   }
+  //   const ok = tool.outputSchema.safeParse(result.output)      // （非 capture 路径照旧）
+  //   ...
 
   async function pickSource(callId: string, sourceId: string): Promise<void> {
     const id = idOf(callId); const rec = id ? records.get(id) : undefined
@@ -1557,6 +1616,11 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
   // terminal() 内增：captureSessions.delete(rec.id)（完成/取消/超时清理，doc 04 §8.4）
 
 // tool-executors.ts capture 实装（枚举面；上传由 tool-service 子状态机完成，A-2/完整 H3）
+// tool-executors.ts 内（capture 前）定义 isWaylandEnv（L1：env 判定，与 tool-service 同语义、独立实现免循环依赖）：
+function isWaylandEnv(): boolean {
+  const t = process.env.XDG_SESSION_TYPE?.toLowerCase()
+  return t === 'wayland' || (!!process.env.WAYLAND_DISPLAY && t !== 'x11')
+}
   async function capture(rec: ToolRecord): Promise<ExecResult> {
     if (deps.isWayland === undefined ? isWaylandEnv() : deps.isWayland) throw new ToolExecError('CAPTURE_UNAVAILABLE', '当前桌面环境不支持屏幕捕获')
     const enumerate = deps.enumerateSources ?? (async () => {
@@ -1564,8 +1628,9 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 240 } })
       return sources.map(s => ({ sourceId: s.id, sourceName: s.name, thumbnailDataUrl: s.thumbnail.toDataURL() }))
     })
-    const sources = (await enumerate()).filter(s => s.thumbnailDataUrl.length <= 64 * 1024)   // 缩略图 ≤64KiB 丢弃（L-5/B5）
-    const dropped = (await enumerate()).length - sources.length
+    const all = await enumerate()                                            // M4：单次调用（dropped 从同组计算）
+    const sources = all.filter(s => s.thumbnailDataUrl.length <= 64 * 1024)  // 缩略图 ≤64KiB 丢弃（L-5/B5）
+    const dropped = all.length - sources.length
     return { output: { sources: sources.map(s => ({ sourceId: s.sourceId, sourceName: s.sourceName, thumbnailDataUrl: s.thumbnailDataUrl })), dropped }, summary: `已枚举 ${sources.length} 个源，等待选择`, captureSession: true }
   }
 ```
@@ -1738,23 +1803,23 @@ export function createToolStatusSender(deps: ToolStatusSenderDeps): ToolStatusSe
   uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>
 ```
 ```typescript
-// real-backend.ts 实装（multipart；X-Client-Connection；响应仅 {url}，H1/M4/L4；字段名以真实私有字段 this.token/this.serverUrl 为准，代码 M1/完整 L3）
+// real-backend.ts 实装（multipart；X-Client-Connection；响应仅 {url}，H1/M4/L4；字段名：token/serverUrl 为私有字段、connectionId 在 ConnectionState（this.state.connectionId，real-backend.ts:317），M5 修正）
   async uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment> {
-    if (this.state.status !== 'connected' || !this.connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
+    if (this.state.status !== 'connected' || !this.state.connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
     const serverUrl = this.serverUrl
     const form = new FormData()
     const ext = mime === 'image/png' ? 'png' : mime === 'text/plain' ? 'txt' : mime.split('/')[1] ?? 'bin'
     form.append('file', new Blob([bytes], { type: mime }), `${label ?? 'attachment'}-${callId}.${ext}`)
     // 走 restFetch 同款纪律（fetchImpl 注入 + AbortController，代码 M2）——既有 restFetch 私有方法复用
     const res = await this.restFetch(`${serverUrl}/api/uploads/desktop/${callId}`, {
-      method: 'POST', headers: { Authorization: `Bearer ${this.token}`, 'X-Client-Connection': this.connectionId }, body: form,
+      method: 'POST', headers: { Authorization: `Bearer ${this.token}`, 'X-Client-Connection': this.state.connectionId }, body: form,
     })
     if (!res.ok) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, `上传失败 ${res.status}`)
     const data = (await res.json()) as { url: string }
     return { url: data.url, mimeType: mime, label }
   }
 ```
-**注意**：`this.connectionId`/`this.serverUrl`/`this.token`/`this.restFetch` 的真实字段/方法名以 real-backend.ts 为准（执行时核对；`restFetch` 若不存在则用 `this.options.fetchImpl` 包 fetch——task review 说明）。mock-backend.ts 实装：`return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }`。
+**注意**：`this.serverUrl`/`this.token`/`this.restFetch` 的真实方法名以 real-backend.ts 为准（执行时核对；`restFetch` 若不存在则用 `this.options.fetchImpl` 包 fetch——task review 说明）。mock-backend.ts 实装：`return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }`。
 
 - [ ] **Step 6: 跑测试 + typecheck**
 
@@ -1825,6 +1890,9 @@ describe('batch B 改接（toolRequestSink）', () => {
     expiresAt: Date.now() + 30_000,
   })
   // 不再 this.emit(...)（R-A5 改接，D6B-15/A3）
+  // 新发现4：submitToolResult 的固定串映射（call_mock_1 → tc_mock_desktop_1）同步改为通用映射——
+  //   const m = /^call_mock_(\d+)$/.exec(input.callId); const sourceCallId = m ? `tc_mock_desktop_${m[1]}` : input.callId
+  //   （id 自增后 call_mock_2+ 的归档 tool.callId 必须落 sourceCallId，否则归档与骨架配对断裂）
 ```
 
 - [ ] **Step 3: 写失败测试——R-A3 + 回放断言（rest-mapper-tools.spec.ts 增；空壳转真实断言，spec B-1/A-16/A-17）**
@@ -1929,6 +1997,7 @@ describe('tool-handlers 五通道（A-5/B-4）', () => {
 
 ```typescript
 // src/main/ipc/tool-handlers.ts
+import { z } from 'zod'   // M6：z import 补齐
 import { registerHandler } from './registry'
 import { createIpcHandler } from './executor'
 import { IpcChannels } from '@shared/contracts/ipc'
@@ -1997,6 +2066,7 @@ export function registerToolHandlers(
     pushEvent: (ev) => { for (const w of BrowserWindow.getAllWindows()) w.webContents.send(PushChannels.toolEvent, ev) },
     allowRoots: toolAllowRoot,
     enumerateSources: captureSources ? async () => captureSources.map(s => ({ ...s, thumbnailDataUrl: MOCK_THUMBNAIL_DATA_URL })) : undefined,
+    renderPreview: captureSources ? async () => ({ previewDataUrl: MOCK_THUMBNAIL_DATA_URL, bytes: new Uint8Array([137, 80, 78, 71]) }) : undefined,   // H11：mock 模式不调真实 desktopCapturer（固定 PNG 头 bytes 供上传断言，R9）
     isWayland: captureSources ? false : undefined,   // mock 模式不判 Wayland（完整 H3④）
   })
   // mock/real 工具请求入口（构造注入 / 可选 setter——都发生在 adapter 构造之后，无环）
@@ -2114,7 +2184,7 @@ describe('toolStore 三来路归一化', () => {
   })
 })
 ```
-**注**：api 注入走既有 `setDesktopApi(mockApi)` 模式（`stores/desktop-api.ts:8`，代码 H6）——`DesktopApiLike` 增 `onToolEvent/toolDecide/toolCancel/toolPickSource/toolConfirmUpload` 六成员（`stores/desktop-api.types.ts`）；测试文件头 `import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'`（或等价注入点，以既有 store spec 先例为准）。`upsertLocal` 内部做 `records[id] = { ...record }` 归一（PublicToolEvent → ToolCallRecord + attachmentCount + 保留 pathSummary/diff/dataFlowNote 侧信道）。
+**注**：api 注入走既有 `setDesktopApi(mockApi)` 模式（`stores/desktop-api.ts:8`，代码 H6）——`DesktopApiLike` 增 `onToolEvent/toolDecide/toolCancel/toolList/toolPickSource/toolConfirmUpload` 六成员（`stores/desktop-api.types.ts`，L3 修正）；测试文件头 `import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'`（或等价注入点，以既有 store spec 先例为准）。`upsertLocal` 内部做 `records[id] = { ...record }` 归一（PublicToolEvent → ToolCallRecord + attachmentCount + 保留 pathSummary/diff/dataFlowNote 侧信道）。
 
 - [ ] **Step 2: 实现 tool.store.ts**
 
@@ -2167,6 +2237,7 @@ export const useToolStore = defineStore('tool', () => {
   }
   function clearApprovalLocal(): void {   // 完整 M11：终态清理侧信道（权限窗关闭/回收）
     pendingPathSummary.value = null; pendingDiff.value = null; pendingDataFlowNote.value = null
+    captureState.value = null   // L6：capture 面板终态一并回收
   }
   function applyBackendEvent(ev: ToolBackendEvent): void {
     if (ev.event === 'tool.started') {
@@ -2235,8 +2306,8 @@ const pathSummary = computed(() => toolStore.pendingPathSummary && !props.readon
         <button type="button" class="cy-btn cy-btn-approve" data-testid="tool-approve" @click="emit('openApproval')">允许此电脑操作</button>
         <button type="button" class="cy-btn" data-testid="tool-deny" @click="toolStore.decide(record.desktopCallId ?? record.id, 'deny')">拒绝</button>
       </template>
-      <button v-else-if="!['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(record.status)" type="button"
-              class="cy-btn cy-btn-cancel" data-testid="tool-cancel" @click="emit('cancel')">取消任务</button>
+      <button v-if="!['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(record.status)" type="button"
+              class="cy-btn cy-btn-cancel" data-testid="tool-cancel" @click="emit('cancel')">取消任务</button>   <!-- H13：独立 v-if（与 awaiting 并存，非 v-else-if）——awaiting 态也有取消入口（Task 8 集成依赖） -->
     </div>
     <div v-if="isCapture && toolStore.captureState && !props.readonly" class="cy-tool-capture" data-testid="tool-capture-panel">
       <div v-if="toolStore.captureState.sources && !toolStore.captureState.preview" class="cy-capture-sources">
@@ -2446,7 +2517,7 @@ git commit -m "feat(阶段6批次B Task7): Renderer——toolStore 三来路归�
 ```typescript
 // tests/integration/electron-tools.spec.ts（文件头纪律注释：POLL 常数/禁 force/断言走 expect.poll；真输入 getByLabel('消息输入框')，代码 M6）
 import { describe, expect, it, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'   // H14：readFileSync import 补齐
 import { launchApp, closeApp, LaunchedApp } from './helpers/app'
 
 const POLL = { timeout: 5000, interval: 200 }
@@ -2577,11 +2648,11 @@ git add apps/desktop/tests/integration/electron-tools.spec.ts docs/02-*.md docs/
 git commit -m "feat(阶段6批次B Task8): 门禁收口 + 集成测试 electron-tools（F-6-24：拒绝/允许/取消/backend 只读/capture 软断言）+ 文档同步（doc02/03/04/06/07/12/13/16 + README/CLAUDE）+ 决策记录（D6B-01~22 + Rulings + review 修复记录，三态=已开发、未联调）"
 ```
 
-- [ ] **Step 5: 批次最终 review 检查项（完整 L4）**
+- [ ] **Step 6: 批次最终 review 检查项（完整 L4）**
 
 对照 spec §8 验收清单逐项核验（代码位置 + 门禁实跑复现）——由批次最终 review（goal 步骤 8）执行；检查项：① 决策链全分支可测；② 四执行器安全属性（黑名单/原子写/冲突/截图两步）有测试证据；③ IPC 六通道 zod 双端 + 探针就绪；④ 文档同步与决策记录齐备；⑤ 三态=已开发、未联调。
 
-- [ ] **Step 6: 批次最终 review 后补验收结论 commit（验收 subagent 填充决策记录 §8）**
+- [ ] **Step 7: 批次最终 review 后补验收结论 commit（验收 subagent 填充决策记录 §8）**
 
 ```bash
 git commit -am "docs(阶段6批次B): 决策记录补 §8 批次验收结论——验收通过（三态=已开发、未联调）"
