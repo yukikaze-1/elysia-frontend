@@ -271,17 +271,21 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
     expect(events.some(e => e.captureSources?.length === 1)).toBe(true)
     expect(events.at(-1)?.status).not.toBe('completed')
   })
-  it('乱序：confirm-upload 无 preview → CAPTURE_STATE_INVALID', async () => {
-    const { svc } = mkService()
+  it('乱序：confirm-upload 无 preview → CAPTURE_STATE_INVALID（M2：注入 enumerateSources 触达 awaiting_pick 守卫）', async () => {
+    const { svc } = mkService({ enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
     await svc.decide('call_1', 'allow_once')
-    await expect(svc.confirmUpload('call_1')).rejects.toMatchObject({ code: 'CAPTURE_STATE_INVALID' })
+    await expect(svc.confirmUpload('call_1')).rejects.toMatchObject({ code: 'CAPTURE_STATE_INVALID' })   // 命中「预览未下发」守卫（非 status 分支）
   })
-  it('pick 未知 sourceId → 拒', async () => {
-    const { svc } = mkService()
+  it('pick 未知 sourceId → 拒（M2：真实快照中确认 sourceId∈快照守卫被触达）', async () => {
+    const { svc } = mkService({
+      enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }],
+      renderPreview: async () => ({ previewDataUrl: 'data:image/png;base64,AA==', bytes: new Uint8Array(1) }),   // 放行路径走注入（node 无 desktopCapturer）
+    })
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
     await svc.decide('call_1', 'allow_once')
-    await expect(svc.pickSource('call_1', 'not-in-snapshot')).rejects.toMatchObject({ code: 'CAPTURE_STATE_INVALID' })
+    await expect(svc.pickSource('call_1', 'not-in-snapshot')).rejects.toMatchObject({ code: 'CAPTURE_STATE_INVALID' })   // 命中「sourceId ∉ 快照」守卫
+    await expect(svc.pickSource('call_1', 's1')).resolves.toBeUndefined()   // 快照内放行（守卫非一刀切）
   })
   it('pick → 预览下发 → confirm → completed + wire result（running→result 时序）', async () => {
     const { svc, events, submitStatus } = mkService({
@@ -298,7 +302,7 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
     expect(submitStatus.mock.calls.map(c => c[0].status)).toEqual(['accepted', 'running', 'result'])
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'result' }))
   })
-  it('预览 >256KiB 降级为缩略图（A-18/L-5）', async () => {
+  it('预览 >256KiB 降级为缩略图 + confirm 闭环（A-18/L-5/M3）', async () => {
     const { svc, events } = mkService({
       enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }],
       renderPreview: async () => ({ previewDataUrl: 'data:image/png;base64,' + 'B'.repeat(300 * 1024), bytes: new Uint8Array(1) }),
@@ -306,7 +310,29 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
     await svc.decide('call_1', 'allow_once')
     await svc.pickSource('call_1', 's1')
-    // 超限 → 降级为缩略图（previewDataUrl 为缩略图值，长度 < 300KiB）→ confirm 可正常通过（L7 修正：降级后 sess.previewDataUrl 已设置，非「仍被拒」）
+    // 超限 → 降级为缩略图（previewDataUrl 为缩略图值，长度 < 300KiB）
     expect(events.at(-1)?.capturePreview?.previewDataUrl.length).toBeLessThan(300 * 1024)
+    await expect(svc.confirmUpload('call_1')).resolves.toBeUndefined()   // M3 闭环：降级后 confirm 可正常通过（sess.previewDataUrl 已设置）
+    expect(events.at(-1)?.status).toBe('completed')
+  })
+  it('枚举丢弃提示面世（M4）：dropped>0 → awaiting_pick 事件 resultSummary 含「丢弃」', async () => {
+    const big = 'data:image/png;base64,' + 'A'.repeat(70 * 1024)
+    const { svc, events } = mkService({ enumerateSources: async () => [{ sourceId: 'big', sourceName: '大', thumbnailDataUrl: big }, { sourceId: 'ok', sourceName: '小', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
+    await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
+    await svc.decide('call_1', 'allow_once')
+    const pickEv = events.find(e => e.captureSources)
+    expect(pickEv?.captureSources?.length).toBe(1)
+    expect(pickEv?.resultSummary).toContain('丢弃 1 个')
+  })
+  it('capture 会话停留态超时（M1）：awaiting_pick 停留超 CAPTURE_SESSION_TTL_MS → cancelled + wire cancelled + 会话清理', async () => {
+    vi.useFakeTimers()
+    const { svc, events, submitStatus } = mkService({ enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }] })
+    await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
+    await svc.decide('call_1', 'allow_once')
+    await vi.advanceTimersByTimeAsync(121_000)
+    expect(events.at(-1)?.status).toBe('cancelled')
+    expect(events.at(-1)?.error?.code).toBe('TIMEOUT')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
+    vi.useRealTimers()
   })
 })

@@ -65,6 +65,7 @@ export const TEXT_FILE_FILTERS = { name: '文本文件', extensions: ['txt','md'
 export const PATH_SUMMARY_MAX = 120
 export const THUMBNAIL_DATA_URL_MAX = 64 * 1024      // 缩略图 data URL 上限（A-18/L-5/B5；超出丢弃并提示 dropped）
 export const PREVIEW_DATA_URL_MAX = 256 * 1024       // 全尺寸预览 data URL 上限（A-18/L-5；超限降级为缩略图）
+export const CAPTURE_SESSION_TTL_MS = 120_000        // capture 子状态机停留态超时（M1：awaiting_pick/picked 无执行超时兜底——Renderer 不响应时记录不得永久停留 running）
 
 /** 工具服务结构化错误（IPC 层映射为结构化拒绝） */
 export class ToolServiceError extends Error {
@@ -85,6 +86,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   // capture 子状态机会话（D6B-16/M-5/A-2）：awaiting_pick → picked → awaiting_confirm 钉死（乱序拒 CAPTURE_STATE_INVALID、sourceId ∈ 枚举快照）
   interface CaptureSession { sourceId?: string; previewDataUrl?: string; bytes?: Uint8Array; dropped?: number }
   const captureSessions = new Map<string, CaptureSession>()
+  const captureTimers = new Map<string, ReturnType<typeof setTimeout>>()   // M1：停留态 TTL 定时器（CAPTURE_SESSION_TTL_MS）
 
   /** Wayland 会话判定（D6B-05；deps.isWayland 注入优先，缺省 env 判定，A-4） */
   function isWaylandSession(): boolean {
@@ -168,6 +170,8 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   }
   function terminal(rec: ToolRecord, display: 'failed' | 'timeout' | 'cancelled' | 'rejected', err?: { code?: string; message?: string }, cancelSource: 'user' | 'timeout' | 'backend' = 'user', wireStatus?: ToolWireStatus): void {   // M2：扩 'rejected'（shutdown 用）；wireStatus 显式覆盖（M1：执行超时 wire error{TIMEOUT}）
     captureSessions.delete(rec.id)   // capture 会话清理（完成/取消/超时，doc 04 §8.4）
+    const captureTimer = captureTimers.get(rec.id); if (captureTimer) { clearTimeout(captureTimer); captureTimers.delete(rec.id) }   // M1：停留态 TTL 清除
+    rec.captureSources = undefined; rec.capturePreview = undefined   // L3：终态事件不携带陈旧选择器/预览数据
     rec.status = display; rec.error = err; rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
     const timer = timers.get(rec.id); if (timer) { clearTimeout(timer); timers.delete(rec.id) }
     const wire = wireStatus ?? (display === 'timeout' ? 'cancelled' : toWire(display) ?? 'error')
@@ -267,7 +271,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const finalPreview = previewDataUrl.length > PREVIEW_DATA_URL_MAX ? (thumb ?? previewDataUrl) : previewDataUrl
     sess.previewDataUrl = finalPreview
     rec.capturePreview = { sourceId, previewDataUrl: finalPreview }
-    emit(rec)   // picked（preview 下发 → awaiting_confirm）
+    emit(rec)   // picked（preview 下发 → awaiting_confirm；TTL 定时器保持运行——picked 停留同样守卫，M1）
   }
   /** capture 子状态机 confirmUpload（D6B-16/M-5/A-2）：awaiting_confirm → 上传回填 → 终态清理 */
   async function confirmUpload(callId: string): Promise<void> {
@@ -285,6 +289,8 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     audit('tool:terminal', rec)
     emit(rec)
     captureSessions.delete(rec.id)   // 终态清理（含取消/超时路径经 terminal() 增删——见下）
+    const captureTimer = captureTimers.get(rec.id); if (captureTimer) { clearTimeout(captureTimer); captureTimers.delete(rec.id) }   // M1：TTL 清除
+    rec.captureSources = undefined; rec.capturePreview = undefined   // L3：终态事件不携带陈旧选择器/预览数据
   }
   function realPathOf(rec: ToolRecord): string | undefined {   // L1：读决策链缓存（handleRequest step 5 normalize 产物）
     return rec.realPath
@@ -312,8 +318,15 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       // capture 子状态机入口（A-2/完整 H3④）：枚举完成 → awaiting_pick（captureSources 下发）；不 outputSchema、不 completed
       if (rec.toolName === 'desktop.screen.capture' && result.captureSession) {
         rec.captureSources = result.output['sources'] as PublicToolEvent['captureSources']
+        const dropped = result.output['dropped'] as number | undefined
+        rec.resultSummary = `已枚举 ${rec.captureSources.length} 个源${dropped ? `，丢弃 ${dropped} 个超大缩略图` : ''}，等待选择`   // M4：dropped 提示面世（Renderer 可见）
         rec.status = 'running'; emit(rec)          // awaiting_pick 态（captureSources 下发）
-        captureSessions.set(rec.id, { dropped: result.output['dropped'] as number | undefined })
+        captureSessions.set(rec.id, { dropped })
+        captureTimers.set(rec.id, setTimeout(() => {   // M1：停留态 TTL 兜底（awaiting_pick 与 picked 均守卫；pick/confirm/terminal 清除）
+          if (rec.status === 'running' && captureSessions.has(rec.id)) {
+            terminal(rec, 'cancelled', { code: 'TIMEOUT', message: '截图会话超时' }, 'timeout')
+          }
+        }, CAPTURE_SESSION_TTL_MS))
         return                                     // 等待 pickSource——不 outputSchema、不 completed
       }
       // 12 outputSchema 校验（B1）
