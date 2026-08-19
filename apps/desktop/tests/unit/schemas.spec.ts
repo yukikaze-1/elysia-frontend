@@ -267,3 +267,24 @@ describe('阶段5 批次C：live2d.directive 事件 schema 镜像（C3 契约冻
     expect(parseBackendEvent({ event: 'live2d.directive', eventId: 'e' }).success).toBe(false)
   })
 })
+
+describe('阶段 6 批次 A 工具事件 schema 镜像（Task 3）', () => {
+  it('三新事件合法样例经 parseBackendEvent 通过（envelope 必填）', () => {
+    const req = { eventId: 'c:1', sequence: 1, event: 'tool.request', callId: 'call_1', sourceCallId: 'tc_1', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', expiresAt: '2026-08-20T12:00:00Z' }
+    const started = { eventId: 'c:2', sequence: 2, event: 'tool.started', callId: 'tc_1', toolName: 'get_time', runtime: 'backend' }
+    const completed = { eventId: 'c:3', sequence: 3, event: 'tool.completed', callId: 'tc_1', toolName: 'get_time', runtime: 'backend', success: true, outputSummary: '2026-08-20', durationMs: 12.5 }
+    for (const e of [req, started, completed]) {
+      const r = parseBackendEvent(e)
+      expect(r.success, JSON.stringify(e)).toBe(true)
+    }
+  })
+  it('必填字段缺失拒绝（sourceCallId/expiresAt/toolVersion/success）', () => {
+    expect(parseBackendEvent({ eventId: 'c:1', sequence: 1, event: 'tool.request', callId: 'call_1', toolName: 'x', toolVersion: '1.0', runtime: 'desktop', expiresAt: 't' }).success).toBe(false) // sourceCallId 缺
+    expect(parseBackendEvent({ eventId: 'c:1', sequence: 1, event: 'tool.request', callId: 'call_1', sourceCallId: 'tc_1', toolName: 'x', toolVersion: '1.0', runtime: 'desktop' }).success).toBe(false) // expiresAt 缺
+    expect(parseBackendEvent({ eventId: 'c:3', sequence: 3, event: 'tool.completed', callId: 'tc_1', toolName: 'get_time', runtime: 'backend' }).success).toBe(false) // success 缺
+  })
+  it('tool.request 事件不含安全元数据字段（D6-07）', () => {
+    const r = parseBackendEvent({ eventId: 'c:1', sequence: 1, event: 'tool.request', callId: 'call_1', sourceCallId: 'tc_1', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', expiresAt: 't', arguments: { path: '/etc/passwd' } })
+    expect(r.success).toBe(false) // strict：arguments 未知字段整帧拒——事件模型无该字段
+  })
+})

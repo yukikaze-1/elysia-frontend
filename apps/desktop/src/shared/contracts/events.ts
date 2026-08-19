@@ -1,4 +1,5 @@
 import type { SegmentChannel, SegmentKind, TokenUsage, ConversationTokenUsage } from './message'
+import type { ToolRuntime } from './tool'
 
 /** 事件外壳:所有后端事件共有的标识字段 */
 export interface BackendEventEnvelope {
@@ -133,6 +134,51 @@ export interface Live2DDirectiveEvent extends BackendEventEnvelope {
   durationMs?: number
 }
 
+// —— 阶段 6 批次 A（F-6）：工具双轨领域事件（D6-01~08）——
+// wire 双轨（Desktop tool.request / Backend tool.started+completed）→ 领域单轨事件；
+// 原始 arguments 永不进 Renderer（D6-07，tool.request 事件只含脱敏 inputSummary）。
+
+/** 桌面工具执行请求（脱敏公开事件；原始 arguments 不含，权限/幂等/执行归批次 B） */
+export interface ToolRequestEvent extends BackendEventEnvelope {
+  event: 'tool.request'
+  callId: string            // 桥 callId（call_ 前缀；执行协议关联，D6-03）
+  sourceCallId: string      // 权威键（LLM tool_call_id）
+  toolName: string
+  toolVersion: string       // wire 必填直映（非安全元数据，review C1 修正）
+  runtime: ToolRuntime
+  reason?: string
+  inputSummary?: string     // 本地脱敏摘要（redactToolArguments；原始 arguments 永不进 Renderer）
+  expiresAt: string         // wire 必填（桥 request_timeout 绝对过期；批次 B 权限窗超时兜底，review C2 修正）
+  requestId?: string
+}
+
+/** Backend 工具开始（展示生命周期；callId = sourceCallId 同值） */
+export interface ToolStartedEvent extends BackendEventEnvelope {
+  event: 'tool.started'
+  callId: string
+  toolName: string
+  runtime: ToolRuntime
+  inputSummary?: string
+  generationId?: string
+  conversationId?: string
+}
+
+/** Backend 工具完成（success 区分 completed/failed；outputSummary ≤2000 + truncated 直映） */
+export interface ToolCompletedEvent extends BackendEventEnvelope {
+  event: 'tool.completed'
+  callId: string
+  toolName: string
+  runtime: ToolRuntime
+  success: boolean
+  outputSummary?: string
+  error?: { code?: string; message?: string }   // 从 wire record 提取已知键；缺省 undefined
+  errorType?: string
+  durationMs?: number
+  truncated?: boolean
+  generationId?: string
+  conversationId?: string
+}
+
 /** 后端事件判别联合 */
 export type BackendEvent =
   | GenerationStartedEvent
@@ -157,3 +203,7 @@ export type BackendEvent =
   | AudioSessionCancelledEvent
   | VoiceErrorEvent
   | Live2DDirectiveEvent
+  // —— 阶段 6 批次 A（F-6-03）——
+  | ToolRequestEvent
+  | ToolStartedEvent
+  | ToolCompletedEvent

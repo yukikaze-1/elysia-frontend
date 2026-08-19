@@ -5,6 +5,8 @@ export const SegmentChannelSchema = z.enum(['inner_voice', 'public_reply'])
 export const SegmentKindSchema = z.enum([
   'text', 'markdown', 'image', 'video', 'audio', 'file', 'sticker', 'link'
 ])
+/** 工具 Runtime（三值；与 contracts/tool.ts ToolRuntime 对齐；ModelExecutionLocation 是另一概念） */
+export const ToolRuntimeSchema = z.enum(['backend', 'desktop', 'local_worker'])
 
 export const BackendEventEnvelopeSchema = z.object({
   eventId: z.string().min(1),
@@ -181,6 +183,51 @@ export const Live2DDirectiveEventSchema = BackendEventEnvelopeSchema.extend({
   durationMs: z.number().int().min(0).max(30000).optional()
 }).strict()
 
+// —— 阶段 6 批次 A（F-6-03）：工具双轨领域事件 schema 镜像（spec §3.3；缺镜像 → preload parseBackendEvent 丢弃，P4-B 先例）——
+// 事件判别字段 event 与 wire 帧名一致；tool.request 无安全元数据字段（arguments/riskLevel/... 不在事件模型，strict 整帧拒，D6-07）。
+
+/** 桌面工具执行请求（脱敏公开事件；toolVersion/expiresAt wire 必填直映） */
+export const ToolRequestEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('tool.request'),
+  callId: z.string().min(1),
+  sourceCallId: z.string().min(1),
+  toolName: z.string().min(1),
+  toolVersion: z.string().min(1),
+  runtime: ToolRuntimeSchema,
+  reason: z.string().optional(),
+  inputSummary: z.string().optional(),
+  expiresAt: z.string().min(1),
+  requestId: z.string().optional()
+}).strict()
+/** Backend 工具开始（callId = sourceCallId 同值） */
+export const ToolStartedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('tool.started'),
+  callId: z.string().min(1),
+  toolName: z.string().min(1),
+  runtime: ToolRuntimeSchema,
+  inputSummary: z.string().optional(),
+  generationId: z.string().optional(),
+  conversationId: z.string().optional()
+}).strict()
+/** Backend 工具完成（success 区分 completed/failed；error 从 wire record 提取已知键） */
+export const ToolCompletedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('tool.completed'),
+  callId: z.string().min(1),
+  toolName: z.string().min(1),
+  runtime: ToolRuntimeSchema,
+  success: z.boolean(),
+  outputSummary: z.string().optional(),
+  error: z.object({
+    code: z.string().optional(),
+    message: z.string().optional()
+  }).optional(),
+  errorType: z.string().optional(),
+  durationMs: z.number().optional(),
+  truncated: z.boolean().optional(),
+  generationId: z.string().optional(),
+  conversationId: z.string().optional()
+}).strict()
+
 export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationStartedEventSchema,
   GenerationSegmentStartedEventSchema,
@@ -203,7 +250,10 @@ export const BackendEventSchema = z.discriminatedUnion('event', [
   AudioSessionReadyEventSchema,
   AudioSessionCancelledEventSchema,
   VoiceErrorEventSchema,
-  Live2DDirectiveEventSchema
+  Live2DDirectiveEventSchema,
+  ToolRequestEventSchema,
+  ToolStartedEventSchema,
+  ToolCompletedEventSchema
 ])
 
 export function parseBackendEvent(input: unknown): {
