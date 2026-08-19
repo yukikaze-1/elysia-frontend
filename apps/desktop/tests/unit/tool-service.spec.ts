@@ -28,11 +28,13 @@ function mkService(over: Record<string, unknown> = {}) {
 }
 
 describe('决策链', () => {
-  it('未注册工具 → rejected CAPABILITY_UNAVAILABLE（不弹窗）', async () => {
-    const { svc, events } = mkService()
+  it('未注册工具 → rejected CAPABILITY_UNAVAILABLE（不弹窗 + wire rejected，H1）', async () => {
+    const { svc, events, submitStatus } = mkService()
     await svc.handleRequest(mkReq({ toolName: 'desktop.command.run' }))
     const last = events.at(-1)
     expect(last.status).toBe('rejected'); expect(last.error?.code).toBe('CAPABILITY_UNAVAILABLE')
+    // H1：策略拒也回 wire rejected（spec §3.2 step 13）
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'rejected', error: expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }) }))
   })
   it('平台不支持 → 同码拒绝（B3；注入 windows-only 工具，H7）', async () => {
     const registry = createToolRegistry()
@@ -136,10 +138,47 @@ describe('幂等与状态机', () => {
     expect(audit.some(e => e.type === 'tool:decision' && e.permissionDecision === 'deny')).toBe(true)
   })
   it('cancel → cancelled + wire cancelled + cancelSource user', async () => {
-    const { svc, events, submitStatus } = mkService()
+    const { svc, events, submitStatus, audit } = mkService()
     await svc.handleRequest(mkReq())
     await svc.cancel('call_1')
     expect(events.at(-1).status).toBe('cancelled')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
+    expect(audit.some(e => e.type === 'tool:terminal' && e.cancelSource === 'user')).toBe(true)   // L4③
+  })
+  it('executor 挂起 → 执行超时 → 展示 timeout + wire error{TIMEOUT}（M1）', async () => {
+    vi.useFakeTimers()
+    const p = `${FIXTURES}/hang.txt`; writeFileSync(p, 'x')
+    let release!: () => void
+    const gate = new Promise<void>(r => { release = r })
+    const { svc, events, submitStatus } = mkService({ executorOverride: async () => { await gate; return { output: { path: p }, summary: 'ok' } } })
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))
+    const deciding = svc.decide('call_1', 'allow_once')   // 不 await——executor 挂起
+    await vi.advanceTimersByTimeAsync(0)                  // 让 running wireSend 微任务落定、执行超时 timer 挂起
+    await vi.advanceTimersByTimeAsync(31_000)             // read defaultTimeoutMs=30s
+    expect(events.at(-1).status).toBe('timeout')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'error', error: expect.objectContaining({ code: 'TIMEOUT' }) }))   // M1：wire error{TIMEOUT} 非 cancelled
+    release()
+    await deciding
+    vi.useRealTimers()
+  })
+  it('断线重发携带原附件 URL（M2/D6B-11：URL 复用不重传字节）', async () => {
+    const p = `${FIXTURES}/att.txt`; writeFileSync(p, 'x')
+    const attachments = [{ url: 'mock://a/1', mimeType: 'text/plain', label: 'att' }]
+    // accepted/running 先成功；首次 result 发送失败（statusSent=false）→ 重连重发
+    const submitStatus = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+    const { svc } = mkService({ submitStatus, executorOverride: async () => ({ output: { path: p }, summary: 'ok', attachments }) })
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))
+    await svc.decide('call_1', 'allow_once')
+    expect(submitStatus.mock.calls.filter(c => c[0].status === 'result')).toHaveLength(1)
+    await svc.reconnect()
+    const resultCalls = submitStatus.mock.calls.filter(c => c[0].status === 'result')
+    expect(resultCalls).toHaveLength(2)                    // 重连重发
+    expect(resultCalls[1][0].attachments).toEqual(attachments)   // URL 随重发带上
+  })
+  it('expiresAt 已过期 → 立即 timeout + wire cancelled（L2）', async () => {
+    const { svc, events, submitStatus } = mkService()
+    await svc.handleRequest(mkReq({ expiresAt: Date.now() - 1000 }))
+    expect(events.at(-1).status).toBe('timeout')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
   })
   it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1/M3：注入 executorOverride 返回非法输出）', async () => {
@@ -195,10 +234,25 @@ describe('幂等与状态机', () => {
     expect(events.at(-1).error?.code).toBe('CAPTURE_UNAVAILABLE')
     expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
   })
-  it('select 自动执行（safe/automatic 不弹窗）', async () => {
-    const { svc, events } = mkService({ executorOverride: async () => ({ output: {}, summary: 'ok' }) })
+  it('select 自动执行（safe/automatic 不弹窗；stub 经 pickFile+selectedAdd，A-14）', async () => {
+    const { svc, events } = mkService({ pickFile: async () => ({ canceled: false, path: `${FIXTURES}/sel-ok.txt` }) })
     await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
     expect(events.at(-1).status).toBe('completed')   // 无 awaiting 直接执行
+  })
+  it('重连 selected-set 清空：豁免失效（L4①/D6B-20）', async () => {
+    const p = `${FIXTURES}/sel.txt`; writeFileSync(p, 'x')
+    const { svc, events } = mkService({ pickFile: async () => ({ canceled: false, path: p }) })
+    // 先 select 豁免：文件选择器选中 p → selectedAdd(p) → selected-set 入 p
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.select', arguments: {} }))
+    expect(events.at(-1).status).toBe('completed')
+    // 豁免生效：同路径 read 不弹窗（直跑——stub read 未实装故 failed，但证明未走 awaiting）
+    await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2', arguments: { path: p } }))
+    expect(events.some(e => e.id === 'tc_2' && e.status === 'awaiting_permission')).toBe(false)
+    expect(svc.getRecord('tc_2')?.status).toBe('failed')
+    // reconnect → selected-set 清空 → 豁免失效 → 再读需弹窗
+    await svc.reconnect()
+    await svc.handleRequest(mkReq({ callId: 'call_3', sourceCallId: 'tc_3', arguments: { path: p } }))
+    expect(events.some(e => e.id === 'tc_3' && e.status === 'awaiting_permission')).toBe(true)
   })
   it('审计调用计数：request-received/executing/terminal 各 ≥1', async () => {
     const { svc, audit } = mkService()

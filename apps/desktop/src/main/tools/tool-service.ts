@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
-import { computeParamHash } from './param-hash'
+import { computeParamHash, canonicalJsonStringify } from './param-hash'
 import type { RegisteredTool } from './tool-registry'
 import { isPathBlacklisted, normalizeToolPath } from './tool-policy'
 import { redactToolArguments } from './input-summary'
@@ -42,7 +42,8 @@ export interface ToolRecord {
   dataFlowNote?: string; diff?: PublicToolEvent['diff']; oldHash?: string           // oldHash=写前哈希依据（A-1/M7）
   captureSources?: PublicToolEvent['captureSources']; capturePreview?: PublicToolEvent['capturePreview']
   expiresAt: number; paramHash?: string; arguments_: Record<string, unknown>; toolVersion: string
-  statusSent: boolean; queue: boolean   // queue=在 awaiting 队列中
+  statusSent: boolean; realPath?: string        // L1：决策链 step 5 normalize 缓存（executor/串行锁读取）
+  attachments?: ToolAttachment[]                // M2：完成时缓存（重连重发复用 URL，D6B-11）
 }
 export interface ToolService {
   handleRequest(req: DesktopToolRequest): Promise<void>
@@ -143,17 +144,27 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   function idOf(callId: string): string | undefined { return byCallId.get(callId) ?? callId }
 
   function reject(req: DesktopToolRequest, code: string, message: string): void {
+    const existing = records.get(req.sourceCallId)
+    if (existing) {
+      // M3②：既有记录（awaiting/running 等）不被覆盖——仅补发 rejected 事件 + wire（PARAM_MISMATCH 等策略拒）
+      const ev: ToolRecord = { ...existing, desktopCallId: req.callId, status: 'rejected', error: { code, message }, finishedAt: new Date().toISOString() }
+      void wireSend(ev, 'rejected', { error: { code, message } })
+      audit('tool:terminal', ev, { errorCode: code })
+      emit(ev)
+      return
+    }
     const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, toolName: req.toolName, title: deps.registry.get(req.toolName)?.title ?? req.toolName,
       status: 'rejected', inputSummary: redactToolArguments(req.arguments), expiresAt: req.expiresAt, arguments_: req.arguments,
-      toolVersion: req.toolVersion, statusSent: false, queue: false, error: { code, message }, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
+      toolVersion: req.toolVersion, statusSent: false, error: { code, message }, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
+    void wireSend(rec, 'rejected', { error: { code, message } })   // H1：策略拒也回 wire rejected（spec §3.2 step 13「rejected（deny/策略拒）」）
     audit('tool:terminal', rec, { errorCode: code })
     emit(rec)
   }
-  function terminal(rec: ToolRecord, display: 'failed' | 'timeout' | 'cancelled' | 'rejected', err?: { code?: string; message?: string }, cancelSource: 'user' | 'timeout' | 'backend' = 'user'): void {   // M2：扩 'rejected'（shutdown 用）
+  function terminal(rec: ToolRecord, display: 'failed' | 'timeout' | 'cancelled' | 'rejected', err?: { code?: string; message?: string }, cancelSource: 'user' | 'timeout' | 'backend' = 'user', wireStatus?: ToolWireStatus): void {   // M2：扩 'rejected'（shutdown 用）；wireStatus 显式覆盖（M1：执行超时 wire error{TIMEOUT}）
     rec.status = display; rec.error = err; rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
     const timer = timers.get(rec.id); if (timer) { clearTimeout(timer); timers.delete(rec.id) }
-    const wire = display === 'timeout' ? 'cancelled' : toWire(display) ?? 'error'
+    const wire = wireStatus ?? (display === 'timeout' ? 'cancelled' : toWire(display) ?? 'error')
     void wireSend(rec, wire, err ? { error: err } : {})
     audit('tool:terminal', rec, { errorCode: err?.code, cancelSource })
     emit(rec)
@@ -188,13 +199,13 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     if (!rec || ['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(rec.status)) throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 已终态')
     terminal(rec, 'cancelled', undefined, 'user')
   }
-  /** 断线重连（D6B-11/A-8）：终态且 statusSent=false 重发（附件复用已得 URL，不重传）；selected-set 清空 */
+  /** 断线重连（D6B-11/A-8）：终态且 statusSent=false 重发（附件 URL 随重发带上、字节不重传，M2）；selected-set 清空 */
   async function reconnect(): Promise<void> {
     selectedSet.clear()
     for (const rec of records.values()) {
       if (['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(rec.status) && !rec.statusSent) {
         const wire = toWire(rec.status) ?? 'cancelled'
-        void wireSend(rec, wire)
+        void wireSend(rec, wire, rec.attachments?.length ? { attachments: rec.attachments } : {})
       }
     }
   }
@@ -202,9 +213,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   function shutdown(): void {
     shutdownFlag = true
     for (const rec of records.values()) {
-      if (rec.status === 'awaiting_permission' || rec.status === 'running') {
-        if (rec.status === 'awaiting_permission') terminal(rec, 'rejected', { code: 'APP_SHUTTING_DOWN', message: '应用正在退出' }, 'user')
-      }
+      if (rec.status === 'awaiting_permission') terminal(rec, 'rejected', { code: 'APP_SHUTTING_DOWN', message: '应用正在退出' }, 'user')
     }
     awaitingQueue.length = 0
     for (const t of timers.values()) clearTimeout(t)
@@ -234,8 +243,8 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   /** Task 2 顺序 stub（新发现9）：pickSource/confirmUpload 完整实现在 Task 4——本 task 先抛占位（接口可编译） */
   async function pickSourceStub(_callId: string, _sourceId: string): Promise<void> { throw new ToolServiceError('CAPTURE_STATE_INVALID', 'capture 在 Task 4 落地') }
   async function confirmUploadStub(_callId: string): Promise<void> { throw new ToolServiceError('CAPTURE_STATE_INVALID', 'capture 在 Task 4 落地') }
-  function realPathOf(rec: ToolRecord): string | undefined {   // L1：由 handleRequest 已 normalize 的路径（决策链缓存）
-    return typeof rec.arguments_['path'] === 'string' ? rec.arguments_['path'] : undefined
+  function realPathOf(rec: ToolRecord): string | undefined {   // L1：读决策链缓存（handleRequest step 5 normalize 产物）
+    return rec.realPath
   }
   function codeOf(e: unknown): string {
     if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'string') return (e as { code: string }).code
@@ -250,17 +259,18 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     audit('tool:executing', rec)
     emit(rec)
     await wireSend(rec, 'running')                    // A-7：执行前发 running（上传时序 M4 前置）
-    // 执行超时定时器
-    const timeout = setTimeout(() => { if (rec.status === 'running') { terminal(rec, 'timeout', { code: 'TIMEOUT' }) } }, tool.defaultTimeoutMs)
+    // 执行超时定时器（M1：wire error{TIMEOUT}——与 expiresAt 超时的 wire cancelled 区分）
+    const timeout = setTimeout(() => { if (rec.status === 'running') { terminal(rec, 'timeout', { code: 'TIMEOUT', message: '执行超时' }, 'timeout', 'error') } }, tool.defaultTimeoutMs)
     try {
       const path = realPathOf(rec)
       const exec = (): Promise<ExecResult> => deps.executorOverride ? deps.executorOverride(rec, path) : executors.execute(rec, path)
-      const result = path ? await withPathLock(path, exec) : await exec()   // per-path 串行锁（A-8，H7 交错断言）
+      const result = path ? await withPathLock(path, exec) : await exec()   // per-path 串行锁（A-8，H7 交错断言；锁 key = 缓存 realpath，L1）
       if (rec.status !== 'running') return    // 已终态（取消等）
       // 12 outputSchema 校验（B1）
       const ok = tool.outputSchema.safeParse(result.output)
       if (!ok.success) { terminal(rec, 'failed', { code: 'INVALID_OUTPUT' }); return }
       rec.status = 'completed'; rec.resultSummary = result.summary; rec.attachmentCount = result.attachmentCount
+      rec.attachments = result.attachments   // M2：缓存附件（重连重发复用 URL，D6B-11）
       rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
       // M3/代码 M3：ToolStatusCommand.output 为 string → JSON.stringify
       await wireSend(rec, 'result', { output: JSON.stringify(result.output), attachments: result.attachments })
@@ -299,10 +309,10 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     // 2 参数 schema（strict）
     const parsed = tool.inputSchema.safeParse(req.arguments)
     if (!parsed.success) return reject(req, 'INVALID_ARGUMENTS', '参数不合法')
-    // 3 幂等（doc 04 §13）
+    // 3 幂等（doc 04 §13；M3①：canonicalJsonStringify——JSON.stringify 键序敏感误判）
     const existing = records.get(req.sourceCallId)
     if (existing) {
-      if (JSON.stringify(existing.arguments_) !== JSON.stringify(req.arguments)) return reject(req, 'PARAM_MISMATCH', '同 callId 参数不一致')
+      if (canonicalJsonStringify(existing.arguments_) !== canonicalJsonStringify(req.arguments)) return reject(req, 'PARAM_MISMATCH', '同 callId 参数不一致')
       emit(existing)   // 返回当前状态不重复弹窗
       return
     }
@@ -329,7 +339,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, toolName: req.toolName, title: tool.title,
       status: 'requested', reason: req.reason, inputSummary: redactToolArguments(req.arguments), pathSummary: derivePathSummary(req.arguments),
       dataFlowNote: tool.dataFlowNote, expiresAt: req.expiresAt, paramHash, arguments_: req.arguments, toolVersion: req.toolVersion,
-      statusSent: false, queue: false, startedAt: new Date().toISOString() }
+      statusSent: false, realPath, startedAt: new Date().toISOString() }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
     audit('tool:request-received', rec)
     // 9 wire accepted（步骤 1~6 通过即发——先于预读与授权判定，spec step 9/M1/A-12 一致性）
@@ -337,7 +347,11 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     // 7 write 授权前预读 + Diff（A2/L7；预读失败（FILE_TOO_LARGE/FILE_IS_BINARY）→ terminal failed，A-15）
     if (req.toolName === 'desktop.file.write' && realPath) {
       try { await preReadForDiff(rec, realPath) }
-      catch (e) { terminal(rec, 'failed', { code: codeOf(e), message: messageOf(e) }); return }
+      catch (e) {
+        const raw = messageOf(e)
+        terminal(rec, 'failed', { code: codeOf(e), message: raw === '' ? undefined : raw })   // L3：error.message 空串归一（同 run() A-16/M6 口径）
+        return
+      }
     }
     // 8 授权判定（D6B-03）
     const decision = tool.permissionMode === 'automatic' ? 'auto' : (req.toolName === 'desktop.file.read' && realPath && isExempt(realPath) ? 'auto' : 'prompt')
@@ -345,9 +359,10 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     else {
       rec.status = 'awaiting_permission'; awaitingQueue.push(rec.id)
       if (awaitingQueue.length === 1) emit(rec)
-      // expiresAt 定时器（超时 → timeout + wire cancelled）
+      // expiresAt 定时器（超时 → timeout + wire cancelled）；已过期（remaining<=0）→ 立即 expire（L2）
       const remaining = req.expiresAt - Date.now()
       if (remaining > 0) timers.set(rec.id, setTimeout(() => expire(rec), remaining))
+      else expire(rec)
     }
   }
 
