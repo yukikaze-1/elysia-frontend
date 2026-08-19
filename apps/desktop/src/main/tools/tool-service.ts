@@ -317,9 +317,10 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       if (rec.status !== 'running') return    // 已终态（取消等）
       // capture 子状态机入口（A-2/完整 H3④）：枚举完成 → awaiting_pick（captureSources 下发）；不 outputSchema、不 completed
       if (rec.toolName === 'desktop.screen.capture' && result.captureSession) {
-        rec.captureSources = result.output['sources'] as PublicToolEvent['captureSources']
+        const sources = (result.output['sources'] as PublicToolEvent['captureSources']) ?? []   // CFA：局部常量 + 空兜底（TS18048）
+        rec.captureSources = sources
         const dropped = result.output['dropped'] as number | undefined
-        rec.resultSummary = `已枚举 ${rec.captureSources.length} 个源${dropped ? `，丢弃 ${dropped} 个超大缩略图` : ''}，等待选择`   // M4：dropped 提示面世（Renderer 可见）
+        rec.resultSummary = `已枚举 ${sources.length} 个源${dropped ? `，丢弃 ${dropped} 个超大缩略图` : ''}，等待选择`   // M4：dropped 提示面世（Renderer 可见）
         rec.status = 'running'; emit(rec)          // awaiting_pick 态（captureSources 下发）
         captureSessions.set(rec.id, { dropped })
         captureTimers.set(rec.id, setTimeout(() => {   // M1：停留态 TTL 兜底（awaiting_pick 与 picked 均守卫；pick/confirm/terminal 清除）
