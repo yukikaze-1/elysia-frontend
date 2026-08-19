@@ -8,7 +8,7 @@
 //  - 比对限定当前 WS v2 帧子集(WS_V2_FRAME_TYPES 白名单 32 型);前端缺 → exit 1 + 列出;
 //  - 字段级：后端生成的 ws-v2-*.jsonl 逐条 parseRawFrame，解析结果必须与输入深度相等（防 zod 静默 strip）;
 //  - 从后端 JSON Schema 的字段定义构造 error/rejected ACK 关键可选字段探针。
-//  - 未纳帧(capabilities/delta/message/token_usage/transcription/action/command/wake/tool.request 等)走 warn 白名单,不报错。
+//  - 未纳帧(capabilities/delta/message/token_usage/transcription/command/wake/service_mode_result 等)走 warn 白名单,不报错。
 // 本脚本不进入 CI 主流程;手动或 `check:contract` 运行。
 
 import { readFileSync, existsSync, readdirSync } from 'fs'
