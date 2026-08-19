@@ -368,3 +368,30 @@
 对修订后的 02/11/13/16 与 README/CLAUDE.md、决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
 
 > 说明：本次为阶段 4 真实联调整改的文档同步增量 Review，未重跑完整交叉 Review（P0 最终复验依赖配套后端修订 BE-S4-RUN-P0-01 的真实 Windows Electron 复跑，下一轮）；阶段 4 新功能（A/B）保持「已开发、未联调」。
+
+## 15. 增量 Review：阶段 6 批次 A 工具契约与领域层同步（2026-08-20）
+
+**触发条件：** doc 13 §9——「真实协议变更」：后端 B-6 批新增 Server→Client `tool.started/tool.completed` 两帧 + `tool.request.sourceCallId` 必填、v2 停发 `action`；前端批次 A 收编 4 帧（+action 兼容建模）并落地领域层（`ToolCallRecord`/归档配对）。
+
+### 15.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 02 §10 | 领域模型注记：设计期 `ToolCall` 由批次 A 落地为 `ToolCallRecord`（`id = sourceCallId` 权威键、`desktopCallId?` 桥关联、8 态展示 `ToolCallStatus`）；`arguments` 不进领域事件（Main 侧脱敏为 `inputSummary`）；回传收敛为 `ToolStatusCommand`（wire 六态，Main 组装） |
+| 02 §17 | 事件处理规则表 tool.request/started/completed/status 四行更新为批次 A 已接入（脱敏 emit/领域事件映射/归档配对数据源；权限/执行/状态机归批次 B） |
+| 02 §19 | 对齐表「工具调用字段」行补 `sourceCallId` + 领域类型 `ToolCallRecord`；新增「Backend 工具生命周期」行（`tool.started/completed`，批次 A 已接入）；`action` 退役 + 前端「已知忽略」建模注记 |
+| 04 §2/§4/§11 | 三处注记：sourceCallId 权威键 + ID 双轨（D6-03）；展示 8 态与 wire 六态协议态映射（D6A-05）；Backend Runtime 只展示 + 实时数据源（tool.started/completed）+ 归档配对持久权威 |
+| 06 §3.5 | toolStore 三来路归一化注记更新：批次 A 已落地契约/事件映射/归档配对（store 本体归批次 B） |
+| 12 §9.7 / 16 §9 | 阶段 6 批次 A 已落地（三态=已开发、未联调）；批次 B 仍待 F-06/F-07/F-09/F-10 |
+| 16 changelog | 2026-08-20 批次 A 落地行（提交链 + 门禁计数 + 集成取舍 R-A2） |
+| 决策记录 | `2026-08-20-阶段6批次A-决策记录.md`（D6A-01~09 + 执行期 Rulings R-A1~R-A4 + review 修复记录 + 门禁基线） |
+
+### 15.2 交叉 Review 结论
+
+- 契约变更（3 新帧 + action 建模）已在 doc 02 §19 无条件记录；`action` 按「已知忽略」兼容帧处理（对齐 FE-INT-P1-01 state/typing 先例），不作为工具状态源；
+- 后端 B-6 批 wire 尚未真实端到端联调（批次 A 为代码批，三态=已开发、未联调）——**不触发全量交叉 Review 重跑**，真实联调（批次 C/开发者事后）后再做收口 Review；
+- 信任边界无放宽：原始 `arguments`/安全元数据永不进 Renderer（D6-07）、`tool.status` 仅 Main 组装、批次 A 零新增 Preload/IPC 面。
+
+### 15.3 自动回归
+
+对修订后的 02/04/06/12/13/16 与决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。

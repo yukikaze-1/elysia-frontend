@@ -32,6 +32,8 @@
 
 ## 2. 前端工具注册模型
 
+> **阶段 6 批次 A 注记（2026-08-20）**：领域统一调用记录为 `ToolCallRecord`，**权威键 `id = sourceCallId`（LLM `tool_call_id`）**；`desktopCallId`（桥 `call_*`）只作执行协议关联（ID 双轨，D6-03）。wire 双轨：Desktop 执行握手 `tool.request/tool.status`、Backend 展示生命周期 `tool.started/tool.completed`；前端领域单轨统一。详见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`。
+
 ```typescript
 interface LocalToolDefinition<TInput, TOutput> {
   name: string;
@@ -95,6 +97,8 @@ stateDiagram-v2
 ```
 
 状态只能单向前进。终态 `completed`、`failed`、`rejected`、`cancelled`、`timeout` 不得重新进入执行状态。
+
+> **阶段 6 批次 A 注记（2026-08-20）**：上图 8 态为**前端展示态**（`ToolCallStatus`）；客户端→服务端回传 `tool.status` 是 **wire 六态协议态**（`ToolWireStatus`：accepted/rejected/running/result/error/cancelled），映射：accepted/running→展示 running；result→completed；error→failed；rejected/cancelled 同名；requested/awaiting_permission/timeout 为本地态无 wire 对应。两套语义分离（D6A-05），`tool.status` 只能由 Main 组装（D6-07）。
 
 ## 5. 请求处理顺序
 
@@ -363,6 +367,8 @@ Worker 断开时返回失败，不能自动切换到后端执行并上传用户�
 - 如果后端工具会使用用户上传的数据，上传行为本身仍应在前端明确；
 - 后端工具失败不应被误报为客户端故障；
 - 客户端审计只记录收到的公开事件，不伪造后端内部细节。
+
+> **阶段 6 批次 A 注记（2026-08-20）**：Backend 工具**不发实时 `tool.request`**——后端只在 `generation.completed.tool_calls`（决策后前端不消费该字段，D6-04/05）与归档 `tool_calls` 中体现；实时展示数据源为新增 `tool.started/tool.completed` 两帧（「步骤完成即出卡片」，无实时中间态——后端不提供该数据源）。归档配对（REST 历史 + WS 回放 → `Message.toolCalls`）为历史/回放持久权威；`action{tool_executing/tool_done}` 已停发，前端按「已知忽略」兼容帧建模。
 
 > **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** Backend Runtime 的展示数据源定为新帧 `tool.started/tool.completed`（v2，后端已实发），不再消费泛型 `action`；前端统一领域键 = `sourceCallId`（LLM `tool_call_id`），Desktop 桥 `call_*` 只用于 `tool.request/tool.status` 执行协议。Desktop 终态由前端本地状态机裁决，后端 `tool.completed` 按 `sourceCallId` 与服务端归档确认合并。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
 

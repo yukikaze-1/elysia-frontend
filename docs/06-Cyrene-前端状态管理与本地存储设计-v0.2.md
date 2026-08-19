@@ -84,7 +84,7 @@
 - 当前等待权限的调用 ID；
 - 不拥有实际执行器和完整敏感参数。
 
-> **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** `toolStore` 只存统一 `ToolCallRecord`，权威键 = `sourceCallId`（LLM `tool_call_id`）；三来路归一化——`tool.request`（Desktop 本地状态机）、`tool.started/tool.completed`（Backend 展示 + Desktop 服务端确认，后端已实发）、归档重建（`assistant.tool_calls + role=tool`）。**实时记录为易失视图；归档/REST 回放是历史持久权威**，重连 replay 与历史查看器由归档重建。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`。
+> **阶段 6 决策注记（2026-08-19 定案；2026-08-20 批次 A 落地契约与归档配对，store 本体归批次 B）：** `toolStore` 只存统一 `ToolCallRecord`，权威键 = `sourceCallId`（LLM `tool_call_id`）；三来路归一化——`tool.request`（Desktop 本地状态机）、`tool.started/tool.completed`（Backend 展示 + Desktop 服务端确认）、归档重建（`assistant.tool_calls + role=tool`）。**实时记录为易失视图；归档/REST 回放是历史持久权威**，重连 replay 与历史查看器由归档重建。**批次 A 已落地**：领域契约（`shared/contracts/tool.ts`）、三事件映射（`FrameMapper` 脱敏）、归档配对（`rest-mapper.pairToolCalls` → `Message.toolCalls`，REST 历史 + WS 回放双路径）；toolStore 状态机与卡片渲染归批次 B。完整更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md` 与 `docs/review/2026-08-20-阶段6批次A-决策记录.md`。
 
 ### 3.6 `live2dStore`
 

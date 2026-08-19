@@ -424,7 +424,7 @@ cyrene-integration-input/
 
 **进入条件：** 阶段 1 和阶段 2 通过；F-01～F-10 已确认。
 
-> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push）。实施要求：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。**F-6 批次 A（契约/领域映射 + 归档配对）可立即开；批次 B（Main 工具服务/权限/执行器）仍待 F-06/F-07/F-09/F-10 拍板。**
+> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A 已落地）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push）。实施要求：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**批次 B（Main 工具服务/权限/四执行器/UI）仍待 F-06/F-07/F-09/F-10 拍板。**
 
 主要任务：
 
