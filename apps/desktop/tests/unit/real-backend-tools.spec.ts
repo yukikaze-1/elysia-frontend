@@ -4,7 +4,8 @@
 // 断连/非 2xx/解析失败 → null 降级（reconnect queryStatus 查询分支消费）。
 import { describe, expect, it, vi } from 'vitest'
 import { RealBackend, type WebSocketLike } from '../../src/main/transport/real-backend'
-import { DesktopCallStatusSchema } from '../../src/shared/schemas/ipc-response'
+import { DesktopCallStatusSchema, RepoCallStatusSchema } from '../../src/shared/schemas/ipc-response'
+import { DesktopCallStatusSchema as RestDesktopCallStatusSchema } from '../../src/main/transport/protocol-v2/rest-schemas'
 
 /** 假 socket：记录发送帧，可手动 push 后端帧（message handler 注册后即可 push） */
 class FakeWs {
@@ -59,5 +60,19 @@ describe('批次 C：getToolCallStatus', () => {
     // 断连（disconnect 后 status=disconnected）→ null 降级
     await bBad.disconnect()
     expect(await bBad.getToolCallStatus('call_1')).toBeNull()
+  })
+  it('双源镜像钉测（LOW-1/Task 5 review）：rest-schemas 副本与 ipc-response 副本键集合 + 9 值枚举一致', () => {
+    // check:contract 只钉 rest-schemas 副本与 rest.py 的字段键/必填性，不比枚举值、不比 ipc-response 副本——
+    // real-backend 解析用 ipc-response 副本，漂移会静默 null（fail-closed 无告警）——此钉测防双源漂移。
+    // 注：zod v4 中 .shape 为属性（非方法）；status 字段为 ZodEnum，.options 为枚举值数组；
+    // shared 副本类型标注为 z.ZodType（接口无 shape）——cast 取运行时形状。
+    const sharedShape = (DesktopCallStatusSchema as unknown as { shape: Record<string, unknown> }).shape
+    const restShape = (RestDesktopCallStatusSchema as unknown as { shape: Record<string, unknown> }).shape
+    expect(Object.keys(restShape).sort()).toEqual(Object.keys(sharedShape).sort())
+    // 9 值枚举逐值一致（rest-schemas 内联枚举 vs shared RepoCallStatusSchema）
+    const restStatus = restShape.status as { options?: readonly string[] } | undefined
+    const sharedStatus = sharedShape.status as { options?: readonly string[] } | undefined
+    expect(restStatus?.options ?? []).toEqual(RepoCallStatusSchema.options)
+    expect(sharedStatus?.options ?? []).toEqual(RepoCallStatusSchema.options)
   })
 })
