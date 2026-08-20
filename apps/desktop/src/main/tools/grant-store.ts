@@ -65,7 +65,7 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
 
   function auditGrant(type: string, grant: PermissionGrant, extra: Record<string, unknown> = {}): void {
     deps.audit({ ts: new Date().toISOString(), type, runtime: 'desktop', toolId: grant.id, toolName: grant.toolName,
-      permissionGrantId: grant.id, backendIdentity: grant.backendIdentity, ...extra } as unknown as AuditEvent)
+      permissionGrantId: grant.id, backendIdentity: grant.backendIdentity, ...extra })   // 去强转：AuditEvent 扩展后字段全兼容（Task 3 F-3）
   }
 
   function prune(): void {

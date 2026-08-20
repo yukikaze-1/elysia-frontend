@@ -7,6 +7,7 @@ import { redactToolArguments } from './input-summary'
 import { createExecutors, ToolExecError, type ExecResult } from './tool-executors'
 import { computeTextDiff, detectTextFormat } from './text-diff'
 import type { PublicToolEvent, ToolAttachment, ToolCallStatus } from '@shared/contracts/tool'
+import { GRANT_TTL_OPTIONS_MS } from '@shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单（grantDirectory F-3 双校验）
 import type { ToolStatusCommand, ToolWireStatus } from '@shared/contracts/backend'
 import type { AuditEvent } from '../diagnostics/audit'
 
@@ -33,6 +34,10 @@ export interface ToolServiceDeps {
   isWayland?: boolean               // 注入（测试用）；缺省 isWaylandSession() env 判定（A-4）
   executorOverride?: (rec: ToolRecord, realPath?: string) => Promise<ExecResult>   // 测试注入（B-1/M12）
   selectedAdd?: (realPath: string) => void   // selected-set 写闭包（A-14：tool-service 注入；executor 可选调用）
+  // —— 批次 C（D6C-04/05）：目录授权 ——
+  grants?: import('./grant-store').GrantStore      // 批次 C（D6C-04）：grant 仓库（缺省 → 无 grant 面）
+  pickDirectory?: (opts: { title: string }) => Promise<{ canceled: boolean; path?: string }>   // D6C-05 创建流注入
+  backendIdentity?: () => string | undefined       // F-2：当前连接指纹（grant 创建时绑定；index.ts 懒绑定闭包）
 }
 export interface ToolRecord {
   id: string; desktopCallId?: string; toolName: string; title: string
@@ -52,6 +57,7 @@ export interface ToolService {
   listRecent(limit?: number): PublicToolEvent[]
   pickSource(callId: string, sourceId: string): Promise<void>
   confirmUpload(callId: string): Promise<void>
+  grantDirectory(callId: string, ttlMs: number): Promise<void>   // 批次 C（D6C-05）：目录授权创建流
   reconnect(): Promise<void>
   shutdown(): void
   getRecord(callId: string): ToolRecord | undefined
@@ -66,6 +72,7 @@ export const PATH_SUMMARY_MAX = 120
 export const THUMBNAIL_DATA_URL_MAX = 64 * 1024      // 缩略图 data URL 上限（A-18/L-5/B5；超出丢弃并提示 dropped）
 export const PREVIEW_DATA_URL_MAX = 256 * 1024       // 全尺寸预览 data URL 上限（A-18/L-5；超限降级为缩略图）
 export const CAPTURE_SESSION_TTL_MS = 120_000        // capture 子状态机停留态超时（M1：awaiting_pick/picked 无执行超时兜底——Renderer 不响应时记录不得永久停留 running）
+export const MAX_RECORDS = 200   // L-1（D6C-09a）：records 容量上限（超出逐最旧终态；awaiting/running 永不逐出）
 
 /** 工具服务结构化错误（IPC 层映射为结构化拒绝） */
 export class ToolServiceError extends Error {
@@ -135,8 +142,8 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     return t !== undefined && Date.now() - t <= (deps.selectedExemptTtlMs ?? SELECT_EXEMPT_TTL_MS)
   }
   function audit(type: string, rec: ToolRecord, extra: Record<string, unknown> = {}): void {
-    deps.audit({ ts: new Date().toISOString(), type, runtime: 'desktop', toolId: rec.id, callId: rec.desktopCallId,
-      status: rec.status, summary: rec.inputSummary, ...extra } as unknown as AuditEvent)
+    deps.audit({ ts: new Date().toISOString(), type, runtime: 'desktop', toolId: rec.id, toolName: rec.toolName,   // F-3：toolName 字段化（审批历史按工具过滤数据源）
+      callId: rec.desktopCallId, status: rec.status, summary: rec.inputSummary, ...extra })   // 去强转：AuditEvent 扩展后字段全兼容（F-3）
   }
   function dequeueNext(): void {
     while (awaitingQueue.length > 0) {
@@ -195,6 +202,19 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     if (i >= 0) awaitingQueue.splice(i, 1)
     dequeueNext()
   }
+  /** L-1 容量驱逐（D6C-09a）：records 超 MAX_RECORDS 时逐最旧终态（awaiting/running 永不逐出）；
+   * 终态记录的 expiresAt 定时器已清（terminal/decide 先例），此处再清属双保险 */
+  function evictIfNeeded(): void {
+    if (records.size <= MAX_RECORDS) return
+    const terminal = [...records.values()].filter((r) => ['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(r.status))
+      .sort((a, b) => (a.startedAt ?? '').localeCompare(b.startedAt ?? ''))   // 最旧优先
+    for (const rec of terminal) {
+      if (records.size <= MAX_RECORDS) break
+      records.delete(rec.id)
+      if (rec.desktopCallId) byCallId.delete(rec.desktopCallId)
+      const t = timers.get(rec.id); if (t) { clearTimeout(t); timers.delete(rec.id) }
+    }
+  }
   async function decide(callId: string, decision: 'allow_once' | 'deny'): Promise<void> {
     const id = idOf(callId); const rec = id ? records.get(id) : undefined
     if (!rec || rec.status !== 'awaiting_permission') throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 不在等待授权态')
@@ -235,10 +255,14 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     for (const t of timers.values()) clearTimeout(t)
     timers.clear()
   }
-  /** 最近公开记录（tool:list，≤limit 条；L2 取舍注记：diff/captureSources/capturePreview 不进 listRecent——tool:list 仅作 hydration 用，capture/diff 交互态由 tool:event 实时推送） */
+  /** 最近公开记录（tool:list，F-2 includeNonTerminalAlways：非终态全量 + 终态补足到 limit——L-2 水合数据源；
+   * L2 取舍注记：diff/captureSources/capturePreview 不进 listRecent——tool:list 仅作 hydration 用，capture/diff 交互态由 tool:event 实时推送） */
   function listRecent(limit = 20): PublicToolEvent[] {
     const all = [...records.values()].sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
-    return all.slice(0, limit).map((rec) => ({
+    const TERMINAL = ['completed', 'failed', 'rejected', 'cancelled', 'timeout']
+    const nonTerminal = all.filter((r) => !TERMINAL.includes(r.status))
+    const terminal = all.filter((r) => TERMINAL.includes(r.status)).slice(0, Math.max(0, limit - nonTerminal.length))
+    return [...nonTerminal, ...terminal].map((rec) => ({
       id: rec.id, desktopCallId: rec.desktopCallId, toolName: rec.toolName, title: rec.title, runtime: 'desktop' as const,
       status: rec.status, reason: rec.reason, inputSummary: rec.inputSummary, pathSummary: rec.pathSummary,
       resultSummary: rec.resultSummary, error: rec.error, truncated: rec.truncated, durationMs: rec.durationMs,
@@ -293,10 +317,34 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
     await wireSend(rec, 'result', { attachments: [attachment] })
     audit('tool:terminal', rec)
+    rec.captureSources = undefined; rec.capturePreview = undefined   // L-7：终态 emit 前清（前移——对齐 terminal() 先例；emit 后清会让 completed 事件携带陈旧选择器/预览数据）
     emit(rec)
     captureSessions.delete(rec.id)   // 终态清理（含取消/超时路径经 terminal() 增删——见下）
     const captureTimer = captureTimers.get(rec.id); if (captureTimer) { clearTimeout(captureTimer); captureTimers.delete(rec.id) }   // M1：TTL 清除
-    rec.captureSources = undefined; rec.capturePreview = undefined   // L3：终态事件不携带陈旧选择器/预览数据
+  }
+  /** 目录授权创建流（D6C-05/§3.3 定案）：awaiting → pickDirectory → add grant → F-1 复核命中 → run。
+   * 守卫链：F-14 grants 缺省 → TOOL_STATE_INVALID / 状态复核 / 工具二值 / realPath / F-3 ttl 白名单双校验 /
+   * N-4 断连不创建 / 取消不创建 / N-1 dialog 后状态复核 / V-5 dialog 后身份复核 / F-1 picked 不覆盖目标不执行 /
+   * F-6 expiresAt 定时器清理 / F-16 run 抛错仍 promoteQueue */
+  async function grantDirectory(callId: string, ttlMs: number): Promise<void> {
+    if (!deps.grants) throw new ToolServiceError('TOOL_STATE_INVALID', '目录授权不可用')   // F-14
+    const id = idOf(callId); const rec = id ? records.get(id) : undefined
+    if (!rec || rec.status !== 'awaiting_permission') throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 不在等待授权态')
+    const tool = deps.registry.get(rec.toolName)!
+    if (rec.toolName !== 'desktop.file.read' && rec.toolName !== 'desktop.file.write') throw new ToolServiceError('TOOL_STATE_INVALID', '该工具不支持目录授权')   // 用 rec.toolName 判别兼收窄（add 需要工具名二值 union）
+    if (!rec.realPath) throw new ToolServiceError('PATH_UNSAFE', '目标路径不可用')
+    if (!(GRANT_TTL_OPTIONS_MS as readonly number[]).includes(ttlMs)) throw new ToolServiceError('INVALID_ARGUMENTS', 'ttl 不在授权选项内')   // F-3 双保险（显式收窄，无 as never）
+    const identity = deps.backendIdentity?.()   // N-4
+    if (!identity) return   // 断连 → 不创建（保持 awaiting；fail-closed）
+    const picked = deps.pickDirectory ? await deps.pickDirectory({ title: '选择授权目录' }) : { canceled: true }
+    if (picked.canceled || !picked.path) return   // 取消 → 保持 awaiting
+    if (rec.status !== 'awaiting_permission') return   // N-1：dialog 期间已终态 → 不建不 run
+    if (deps.backendIdentity?.() !== identity) return   // V-5：dialog 期间连接切换 → 不创建
+    const grant = deps.grants.add({ toolName: rec.toolName, scope: { directory: picked.path }, backendIdentity: identity, expiresAt: Date.now() + ttlMs, source: 'directory' })   // add 内含黑名单复核 + N-6 幂等 + V-1 归一化
+    if (!(rec.realPath && deps.grants.matches(rec.toolName, rec.realPath))) return   // F-1：picked 不覆盖目标 → grant 已建不执行
+    audit('tool:decision', rec, { permissionDecision: 'allow_scoped', permissionGrantId: grant.id })
+    const t = timers.get(rec.id); if (t) { clearTimeout(t); timers.delete(rec.id) }   // F-6
+    try { await run(rec, tool) } finally { promoteQueue(rec.id) }   // F-16
   }
   function realPathOf(rec: ToolRecord): string | undefined {   // L1：读决策链缓存（handleRequest step 5 normalize 产物）
     return rec.realPath
@@ -310,6 +358,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     return String(e ?? '')
   }
   async function run(rec: ToolRecord, tool: RegisteredTool): Promise<void> {
+    if (rec.status !== 'requested' && rec.status !== 'awaiting_permission') return   // N-1/L-3：已终态记录整体拒绝（防定时器过期后复活）
     rec.status = 'running'; rec.startedAt ??= new Date().toISOString()
     audit('tool:executing', rec)
     emit(rec)
@@ -412,6 +461,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       dataFlowNote: tool.dataFlowNote, expiresAt: req.expiresAt, paramHash, arguments_: req.arguments, toolVersion: req.toolVersion,
       statusSent: false, realPath, startedAt: new Date().toISOString() }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
+    evictIfNeeded()   // L-1（D6C-09a）：超 MAX_RECORDS 逐最旧终态（新记录 requested 非终态不逐出）
     audit('tool:request-received', rec)
     // 9 wire accepted（步骤 1~6 通过即发——先于预读与授权判定，spec step 9/M1/A-12 一致性）
     await wireSend(rec, 'accepted')
@@ -424,10 +474,17 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
         return
       }
     }
-    // 8 授权判定（D6B-03）
-    const decision = tool.permissionMode === 'automatic' ? 'auto' : (req.toolName === 'desktop.file.read' && realPath && isExempt(realPath) ? 'auto' : 'prompt')
-    if (decision === 'auto') { await run(rec, tool) }
-    else {
+    // 8 授权判定（D6C-04/F-8）：grant 匹配优先于 selected-set 豁免；capture 恒强确认；黑名单优先（step 5 已拒）
+    const grant = (req.toolName === 'desktop.file.read' || req.toolName === 'desktop.file.write') && realPath
+      ? deps.grants?.matches(req.toolName, realPath) : undefined
+    const decision = tool.permissionMode === 'automatic' ? 'auto'
+      : grant ? 'auto'
+      : (req.toolName === 'desktop.file.read' && realPath && isExempt(realPath)) ? 'auto'
+      : 'prompt'
+    if (decision === 'auto') {
+      if (grant) audit('tool:decision', rec, { permissionDecision: 'allow_scoped', permissionGrantId: grant.id, riskLevel: tool.localRisk })   // N-7：grant 命中审计（豁免命中不审计 allow_scoped）
+      await run(rec, tool)
+    } else {
       rec.status = 'awaiting_permission'; awaitingQueue.push(rec.id)
       if (awaitingQueue.length === 1) emit(rec)
       // expiresAt 定时器（超时 → timeout + wire cancelled）；已过期（remaining<=0）→ 立即 expire（L2）
@@ -437,5 +494,5 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     }
   }
 
-  return { handleRequest, decide, cancel, listRecent, pickSource, confirmUpload, reconnect, shutdown, getRecord }
+  return { handleRequest, decide, cancel, listRecent, pickSource, confirmUpload, reconnect, shutdown, getRecord, grantDirectory }
 }

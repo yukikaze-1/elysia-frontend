@@ -15,10 +15,14 @@ export interface AuditEvent {
   summary?: string
   // —— 阶段 6 批次 B（Task 5）：工具审计扩展可选字段（auditToolEvent 写入；缺省不出现不破坏既有） ——
   riskLevel?: 'safe' | 'medium' | 'high'
-  permissionDecision?: 'allow_once' | 'deny'
+  permissionDecision?: 'allow_once' | 'deny' | 'allow_scoped'   // 批次 C（D6C-04）：'allow_scoped'（目录授权命中）
   startedAt?: string
   errorCode?: string
   cancelSource?: 'user' | 'timeout' | 'backend'
+  // —— 阶段 6 批次 C（Task 3，F-3 完整性）：审批历史按工具/授权过滤数据源 ——
+  permissionGrantId?: string   // 目录授权 grant.id（tool:decision allow_scoped / grant:* 携带）
+  toolName?: string            // 工具名（审计事件字段化，回读按工具过滤）
+  backendIdentity?: string     // 授权时连接指纹（grant 匹配绑定）
 }
 export interface Auditor { audit(event: AuditEvent): Promise<void>; close(): Promise<void> }
 
