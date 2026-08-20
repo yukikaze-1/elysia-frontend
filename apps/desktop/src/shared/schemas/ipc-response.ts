@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -305,6 +305,29 @@ export function normalizePerformanceMode(v: string): PerformanceMode {
   return (['auto', 'quality', 'balanced', 'low_power'] as const).includes(v as PerformanceMode) ? (v as PerformanceMode) : 'auto'
 }
 
+// —— 阶段 6 批次 C：目录授权 grant 子树（D6C-02/03）——
+// 子 schema 不注 z.ZodType（保留 .default()/可选形状，ipc-response.ts:248-249 纪律）。
+// PermissionGrantSchema 内层 .strict()：单条畸形 → 整文件 settings corrupt 重建（与 voice/live2d 同款风险，
+// 装载期逐条校验剔除——spec §3.2 N-8）。
+export const PermissionGrantSchema = z.object({
+  id: z.string().min(1),
+  toolName: z.enum(['desktop.file.read', 'desktop.file.write']),
+  scope: z.object({ directory: z.string().min(1) }).strict(),
+  backendIdentity: z.string().min(1),
+  expiresAt: z.number().int().positive(),
+  createdAt: z.string().min(1),
+  source: z.literal('directory'),
+  revokeSource: z.enum(['user', 'expired']).optional(),
+  revokedAt: z.string().optional(),
+}).strict()
+// grants 字段级 .default([])：顶层 .default() 仅对 input===undefined 生效（SettingsStateSchema 缺 tools 段路径），
+// 字段级 default 使「空 tools 对象（{}）→ 空 grants」也通过（对齐 settings-tools.spec「顶层有 default」断言，
+// 防空对象误判 corrupt 全量重置）。patch 路径仍无 default（ToolsSettingsPatchSchema，IP-1）。
+export const ToolsSettingsSchema = z.object({ grants: z.array(PermissionGrantSchema).default([]) }).default({ grants: [] })
+// IP-1：patch 子 schema 无 default（zod 4 中 .default() 包装后无 .partial() 方法，必须独立新建）
+export const ToolsSettingsPatchSchema = z.object({ grants: z.array(PermissionGrantSchema).optional() })
+export const DEFAULT_TOOLS: ToolsSettings = { grants: [] }
+
 /** 默认 Live2D 设置（D5A-10/D5B-08）：缺省启用 + 未选择模型（null → 默认首个可用）+ 全量默认 10 字段 */
 export const DEFAULT_LIVE2D: Live2DSettings = {
   enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0,
@@ -313,22 +336,25 @@ export const DEFAULT_LIVE2D: Live2DSettings = {
 }
 export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
   version: z.literal(1), voice: VoiceSettingsSchema, dictation: DictationSettingsSchema,
-  live2d: Live2DSettingsSchema.default(DEFAULT_LIVE2D)
+  live2d: Live2DSettingsSchema.default(DEFAULT_LIVE2D),
+  tools: ToolsSettingsSchema // 阶段 6 批次 C（D6C-02）：目录授权子树（自带 .default({grants:[]})——旧文件无 tools 段兼容，不 corrupt）
 })
 /** 局部更新（settings:save 入参；patch 后 merge 才落盘，未提交字段保持现值） */
 export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
   voice: VoiceSettingsSchema.partial().optional(),
   dictation: DictationSettingsSchema.partial().optional(),
-  live2d: Live2DSettingsPatchSchema.optional() // IP-1：patch 路径用无默认子 schema，防单字段 patch clobber 已持久化非默认字段
+  live2d: Live2DSettingsPatchSchema.optional(), // IP-1：patch 路径用无默认子 schema，防单字段 patch clobber 已持久化非默认字段
+  tools: ToolsSettingsPatchSchema.optional() // IP-1：patch 子 schema 无 default，防单字段 patch 注入默认 grants
 })
 
 /** 默认设置（M-7 修复）：enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/insertMode；micDeviceId/sttProfileId 缺省 undefined；
- *  阶段 5 批次 A：live2d 引用 DEFAULT_LIVE2D（enabled:true/modelId:null） */
+ *  阶段 5 批次 A：live2d 引用 DEFAULT_LIVE2D（enabled:true/modelId:null）；阶段 6 批次 C：tools 引用 DEFAULT_TOOLS（空 grants） */
 export const DEFAULT_SETTINGS: SettingsState = {
   version: 1,
   voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
   dictation: { insertMode: 'append' },
-  live2d: DEFAULT_LIVE2D
+  live2d: DEFAULT_LIVE2D,
+  tools: DEFAULT_TOOLS
 }
 
 // —— 阶段 5 批次 A：Live2D 模型摘要出参 schema（严格镜像 contracts/live2d.ts，D5A-07；preload 与 Main handler 共用）——

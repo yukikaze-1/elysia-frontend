@@ -16,7 +16,8 @@ describe('语音/设置领域契约 schema（阶段4批次B）', () => {
         enabled: true, modelId: null, scale: 1, offsetX: 0, offsetY: 0,
         mouseTracking: true, autoMotions: true, lipSync: true,
         performanceMode: 'auto', reduceMotion: false
-      } // 阶段 5 批次 A（D5A-10）/ 批次 B（B5，10 字段全量）
+      }, // 阶段 5 批次 A（D5A-10）/ 批次 B（B5，10 字段全量）
+      tools: { grants: [] } // 阶段 6 批次 C（D6C-02）：tools 空子树
     })
   })
 

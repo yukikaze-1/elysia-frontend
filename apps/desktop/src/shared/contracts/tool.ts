@@ -62,3 +62,25 @@ export interface ToolAttachment {
   mimeType: string
   label?: string
 }
+
+// —— 阶段 6 批次 C（D6C-03）：目录授权 grant（settings.tools.grants 持久化）——
+/** 目录授权 grant：一次授权 = 用户在权限窗对「某目录 + 某工具」的持续同意（TTL 内不再逐次弹窗）。
+ * 持久化于 settings.tools.grants（Main settings-service 经 SettingsStateSchema 装载/落盘）；
+ * revokeSource/revokedAt 置位后保留（灰显历史），不再参与匹配。 */
+export interface PermissionGrant {
+  id: string                    // 'grant-' + crypto.randomUUID()（无状态跨重启唯一，不需持久化计数器）
+  toolName: 'desktop.file.read' | 'desktop.file.write'
+  scope: { directory: string }  // realpath 规范化目录（匹配基准）
+  backendIdentity: string       // 授权时连接指纹 = new URL(serverUrl).origin（F-2：切换端点不再匹配）
+  expiresAt: number             // epoch ms
+  createdAt: string             // ISO
+  source: 'directory'
+  revokeSource?: 'user' | 'expired'
+  revokedAt?: string            // 置位后不再匹配（灰显保留）
+}
+export interface ToolsSettings { grants: PermissionGrant[] }
+/** TTL 白名单（1h/24h/7d/30d，校验权威 Main；schema union + tool-service 双校验，F-3/F-18） */
+export const GRANT_TTL_OPTIONS_MS = [3600_000, 86_400_000, 604_800_000, 2_592_000_000] as const
+export type GrantTtlMs = (typeof GRANT_TTL_OPTIONS_MS)[number]
+/** 默认 24h（仅供 UI 默认选中；Main 不接受缺省 ttlMs） */
+export const GRANT_DEFAULT_TTL_MS: GrantTtlMs = 86_400_000

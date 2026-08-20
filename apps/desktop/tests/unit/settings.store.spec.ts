@@ -39,6 +39,7 @@ function state(over: Partial<SettingsState> = {}): SettingsState {
     voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
     dictation: { insertMode: 'append' },
     live2d: { ...DEFAULT_LIVE2D },
+    tools: { grants: [] }, // 阶段 6 批次 C（D6C-02）：tools 空子树
     ...over
   }
 }
