@@ -181,8 +181,9 @@ describe('阶段 6 批次 C 目录授权与审批历史', () => {
     await sendMessage(page)         // 第二次 → 同目录 grant 命中 → 自动执行（无权限窗）
     await expect.poll(() => lastToolStatus(launched.app), POLL)
       .toEqual(expect.objectContaining({ status: 'result', callId: 'call_mock_2' }))   // 第二次确已自动执行（wire result）
-    expect(await page.getByTestId('tool-approval').count()).toBe(0)     // 无权限窗
-    expect(await probeStatus(page)).toBe('completed')                   // 卡片「执行完成」
+    // P2（Task 8 review）：直接断言 poll 化——CDP evaluate 与 Electron IPC 非同通道无 FIFO 保证，renderer 消费窗口 poll 兜底
+    await expect.poll(() => page.getByTestId('tool-approval').count(), POLL).toBe(0)     // 无权限窗
+    await expect.poll(() => probeStatus(page), POLL).toBe('completed')                   // 卡片「执行完成」
     await closeApp(launched)
   })
 
