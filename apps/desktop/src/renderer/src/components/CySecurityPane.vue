@@ -13,16 +13,29 @@ const toolStore = useToolStore()
 const grants = ref<PermissionGrant[]>([])
 const history = ref<HistoryEntry[]>([])
 const toolFilter = ref('all')
+const resultFilter = ref('all')   // LOW-4（Task 7 review）：审批历史结果筛选（spec §3.4——全部/允许/拒绝/执行成功/执行失败/已取消）
 const search = ref('')
 
 const filtered = computed(() => {
   const q = search.value.trim()
   return history.value.filter((h) => {
     if (toolFilter.value !== 'all' && h.toolName !== toolFilter.value) return false
+    if (resultFilter.value !== 'all' && !matchResult(h, resultFilter.value)) return false
     if (!q) return true
     return (h.summary ?? '').includes(q) || (h.callId ?? '').includes(q)
   })
 })
+/** 结果筛选映射（LOW-4）：permissionDecision/status 组合 → 结果语义（spec §3.4 结果枚举） */
+function matchResult(h: { permissionDecision?: string; status?: string }, f: string): boolean {
+  switch (f) {
+    case 'allow': return h.permissionDecision === 'allow_once' || h.permissionDecision === 'allow_scoped'
+    case 'deny': return h.permissionDecision === 'deny'
+    case 'success': return h.status === 'completed' || h.status === 'succeeded'
+    case 'failed': return h.status === 'failed'
+    case 'cancelled': return h.status === 'cancelled' || h.status === 'timeout' || h.status === 'rejected'
+    default: return true
+  }
+}
 
 onMounted(async () => {
   grants.value = await toolStore.listGrants()
@@ -79,11 +92,19 @@ function fmtTs(ts: string): string {
           <option value="desktop.file.write">写入</option>
           <option value="desktop.screen.capture">截图</option>
         </select>
+        <select v-model="resultFilter" class="cy-security-filter" data-testid="history-result-filter">
+          <option value="all">全部结果</option>
+          <option value="allow">允许</option>
+          <option value="deny">拒绝</option>
+          <option value="success">执行成功</option>
+          <option value="failed">执行失败</option>
+          <option value="cancelled">已取消</option>
+        </select>
         <input v-model="search" class="cy-security-search" data-testid="history-search" placeholder="搜索摘要/ID" />
       </div>
       <p v-if="!filtered.length" class="cy-security-empty" data-testid="history-empty">暂无审批历史。桌面工具执行记录将在此显示。</p>
       <ul v-else class="cy-security-history" data-testid="history-list">
-        <li v-for="h in filtered" :key="h.ts + h.callId" class="cy-security-history-item">
+        <li v-for="(h, i) in filtered" :key="h.ts + h.callId + (h.toolId ?? '') + (h.permissionGrantId ?? '') + i" class="cy-security-history-item">
           <span class="cy-security-history-ts">{{ fmtTs(h.ts) }}</span>
           <span class="cy-security-history-name">{{ h.toolName ?? h.type }}</span>
           <span class="cy-security-history-status">{{ h.status ?? '' }}</span>

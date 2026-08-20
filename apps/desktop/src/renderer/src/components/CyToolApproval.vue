@@ -54,6 +54,11 @@ onUnmounted(() => { document.removeEventListener('keydown', onKeydown) })
 watch(() => open.value, (v) => {
   if (v) {
     trigger.value = document.activeElement as HTMLElement
+    // MED-1（Task 7 review）：跨请求状态复位——常驻挂载下 deny/allow/Esc 关闭不复位 openGrantPicker，
+    // 下一请求（如 capture）重开面板会残留 grant 子面板/陈旧 TTL/错误文案
+    openGrantPicker.value = false
+    grantError.value = ''
+    ttlMs.value = GRANT_DEFAULT_TTL_MS   // F-18：每次打开回默认 24h
     nextTick(() => denyBtn.value?.focus())
   }
 })
@@ -98,8 +103,9 @@ function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value
         <button v-if="isGrantable" type="button" class="cy-btn cy-btn-grant" data-testid="approval-grant-dir"
           :disabled="granting" @click="openGrantPicker = true">允许指定目录</button>
       </div>
-      <!-- 批次 C：grant 选择子面板（F-18：TTL 白名单 select，默认 24h；确认 → store.grantDirectory(callId, ttlMs)） -->
-      <div v-if="openGrantPicker" class="cy-approval-grant-box" data-testid="approval-grant-box">
+      <!-- 批次 C：grant 选择子面板（F-18：TTL 白名单 select，默认 24h；确认 → store.grantDirectory(callId, ttlMs)）
+           MED-1 双门：isGrantable && openGrantPicker——非可授权工具（capture）即使状态残留也不显示授权 UI -->
+      <div v-if="isGrantable && openGrantPicker" class="cy-approval-grant-box" data-testid="approval-grant-box">
         <label class="cy-approval-grant-label" for="grant-ttl">有效期</label>
         <select id="grant-ttl" data-testid="grant-ttl-select" :value="String(ttlMs)" @change="onTtlChange">
           <option v-for="t in GRANT_TTL_OPTIONS_MS" :key="t" :value="String(t)">{{ ttlLabel(t) }}</option>

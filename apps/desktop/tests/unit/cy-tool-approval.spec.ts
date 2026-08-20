@@ -68,7 +68,20 @@ describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7�
     expect(cap.find('[data-testid="tool-approval"]').exists()).toBe(true)
     expect(cap.find('[data-testid="approval-grant-dir"]').exists()).toBe(false)
   })
-  it('TTL select 默认 24h + 确认 → grantDirectory(callId, ttlMs)（F-18）', async () => {
+  it('MED-1（Task 7 review）：grant 子面板跨请求状态泄漏回归——打开 grant 面板后 deny → capture awaiting 重开面板无 grant-box', async () => {
+    const s = useToolStore()
+    s.upsertLocal(awaitingRead())
+    const w = mount(CyToolApproval, { props: { open: true } })
+    await w.find('[data-testid="approval-grant-dir"]').trigger('click')
+    expect(w.find('[data-testid="approval-grant-box"]').exists()).toBe(true)   // 子面板打开
+    await w.find('[data-testid="approval-deny"]').trigger('click')   // deny 关闭（不复位路径——watch(open) 复位承接）
+    // 切换 capture awaiting → 重开面板
+    s.upsertLocal({ ...awaiting('tc_1'), status: 'rejected' })
+    s.upsertLocal({ ...awaiting('tc_cap'), toolName: 'desktop.screen.capture' })
+    const w2 = mount(CyToolApproval, { props: { open: true } })
+    expect(w2.find('[data-testid="approval-grant-box"]').exists()).toBe(false)   // 双门：isGrantable && openGrantPicker——capture 不显示授权 UI
+  })
+  it('TTL select 默认 24h + 确认 → grantDirectory(callId, ttlMs)（F-18；LOW-2：用户选择不被覆盖——选 1h → 确认收 1h）', async () => {
     const s = useToolStore()
     s.upsertLocal(awaitingRead())
     const spy = vi.spyOn(s, 'grantDirectory').mockResolvedValue(undefined)
@@ -77,6 +90,13 @@ describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7�
     expect((w.find('[data-testid="grant-ttl-select"]').element as HTMLSelectElement).value).toBe(String(GRANT_DEFAULT_TTL_MS))   // 默认 24h
     await w.find('[data-testid="approval-grant-confirm"]').trigger('click')
     expect(spy).toHaveBeenCalledWith('call_1', 86_400_000)   // GRANT_DEFAULT_TTL_MS
+    // LOW-2（Task 7 review）：用户选择不被 :value 绑定覆盖——选 1h → 确认收到 1h
+    spy.mockClear()
+    const w2 = mount(CyToolApproval, { props: { open: true } })
+    await w2.find('[data-testid="approval-grant-dir"]').trigger('click')
+    await w2.find('[data-testid="grant-ttl-select"]').setValue(String(3600_000))
+    await w2.find('[data-testid="approval-grant-confirm"]').trigger('click')
+    expect(spy).toHaveBeenCalledWith('call_1', 3600_000)   // 1h（3600_000 ∈ GRANT_TTL_OPTIONS_MS）
   })
   it('提交期间禁用（L-8 防抖）', async () => {
     const s = useToolStore()

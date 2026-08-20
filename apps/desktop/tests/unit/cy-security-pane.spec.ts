@@ -65,18 +65,30 @@ describe('CySecurityPane 三分区（授权管理/审批历史/命令模板空�
     await flushPromises()
     expect(w.find('[data-testid="grants-empty"]').text()).toContain('暂无长期授权')
   })
-  it('审批历史：条目渲染 + 工具过滤 + 搜索', async () => {
-    api.toolListHistory.mockResolvedValue([HIST_ENTRY, { ...HIST_ENTRY, toolName: 'desktop.file.write', ts: '2026-08-20T11:00:00Z' }])
+  it('审批历史：条目渲染 + 工具过滤 + 结果筛选 + 搜索（LOW-4）', async () => {
+    api.toolListHistory.mockResolvedValue([
+      HIST_ENTRY,   // { status:'completed', permissionDecision:'allow_scoped' }
+      { ...HIST_ENTRY, toolName: 'desktop.file.write', ts: '2026-08-20T11:00:00Z' },
+      { ...HIST_ENTRY, toolName: 'desktop.file.read', ts: '2026-08-20T12:00:00Z', status: 'failed', permissionDecision: undefined },
+    ])
     const w = mount(CySecurityPane, { global: { plugins: [pinia] } })
     await flushPromises()
-    expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(2)
+    expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(3)
     await w.find('[data-testid="history-tool-filter"]').setValue('desktop.file.write')
     await flushPromises()
     expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(1)
     await w.find('[data-testid="history-tool-filter"]').setValue('all')
+    // LOW-4 结果筛选：failed → 仅 failed 条；success → completed/succeeded 条
+    await w.find('[data-testid="history-result-filter"]').setValue('failed')
+    await flushPromises()
+    expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(1)
+    await w.find('[data-testid="history-result-filter"]').setValue('success')
+    await flushPromises()
+    expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(2)   // completed ×2
+    await w.find('[data-testid="history-result-filter"]').setValue('all')
     await w.find('[data-testid="history-search"]').setValue('脱敏')
     await flushPromises()
-    expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(2)   // summary 均含「脱敏」
+    expect(w.findAll('[data-testid="history-list"] li')).toHaveLength(3)   // summary 均含「脱敏」
   })
   it('allow_scoped 条目「撤销此授权」→ revokeGrant(permissionGrantId)', async () => {
     const w = mount(CySecurityPane, { global: { plugins: [pinia] } })

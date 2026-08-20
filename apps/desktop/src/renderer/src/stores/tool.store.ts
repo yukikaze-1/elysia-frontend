@@ -101,10 +101,10 @@ export const useToolStore = defineStore('tool', () => {
   }
   function clearForGeneration(): void { liveOrder.value = liveOrder.value.filter(id => !TERMINAL.includes(records.value[id]?.status ?? 'completed')) }  // A9
   // L-2/F-15（批次 C）：先 await toolList 水合完毕再订阅 onToolEvent（防旧快照覆盖新事件；水合快照 = Main 权威快照）。
-  // 水合失败 fail-open（不阻塞启动）；toolList 未接线时同样降级（?. 防御）。
+  // 水合失败 fail-open（不阻塞启动）；toolList 为 DesktopApiLike 必填键（LOW-1：无 ?. 防御——测试 mock 须镜像全契约）。
   async function init(): Promise<void> {
     if (unsubscribeEvent) return
-    const list = (await api.toolList?.().catch(() => [])) ?? []
+    const list = await api.toolList().catch(() => [])
     for (const ev of list) if (!TERMINAL.includes(ev.status)) upsertLocal(ev)   // 非终态必水合（终态可选；upsertLocal 幂等）
     unsubscribeEvent = api.onToolEvent((ev) => upsertLocal(ev))
   }

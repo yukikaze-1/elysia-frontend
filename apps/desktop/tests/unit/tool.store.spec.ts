@@ -125,12 +125,20 @@ describe('toolStore 三来路归一化', () => {
 })
 
 describe('toolStore 批次 C（Task 7：L-2 水合 / F-23 四方法 / F-7 diff 同步）', () => {
-  it('L-2 水合：init 先 await toolList 再订阅事件（F-15 定序）——水合记录归位', async () => {
+  it('L-2 水合：init 先 await toolList 再订阅事件（F-15 定序——MED-2 修复：可控 promise 钉「水合完成前不订阅」）', async () => {
     const listEv = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.read', title: '读取文件', runtime: 'desktop' as const, status: 'awaiting_permission' as const, occurredAt: 'x' }
-    setDesktopApi({ toolList: vi.fn().mockResolvedValue([listEv]), onToolEvent: vi.fn().mockReturnValue(() => {}) } as unknown as DesktopApiLike)
+    let resolveList!: (v: typeof listEv[]) => void
+    const listPromise = new Promise<typeof listEv[]>((r) => { resolveList = r })
+    const onEvent = vi.fn().mockReturnValue(() => {})
+    setDesktopApi({ toolList: vi.fn().mockReturnValue(listPromise), onToolEvent: onEvent } as unknown as DesktopApiLike)
     const store = useToolStore()
-    await store.init()
-    expect(store.records['tc_1']).toMatchObject({ status: 'awaiting_permission' })
+    const p = store.init()
+    await Promise.resolve()   // 让 init 推进到 toolList await（挂起）
+    expect(onEvent).not.toHaveBeenCalled()   // F-15：水合完成前不得订阅（错误实现「先订阅后水合」此处红）
+    resolveList([listEv])
+    await p
+    expect(onEvent).toHaveBeenCalledTimes(1)   // 水合完成后订阅
+    expect(store.records['tc_1']).toMatchObject({ status: 'awaiting_permission' })   // 快照归位
   })
   it('批次 C：grantDirectory/listGrants/revokeGrant/listHistory 调 api（F-23 命名映射）', async () => {
     const api2 = { toolGrantDirectory: vi.fn(), toolListGrants: vi.fn().mockResolvedValue([]), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn().mockResolvedValue([]) } as unknown as DesktopApiLike
@@ -147,7 +155,8 @@ describe('toolStore 批次 C（Task 7：L-2 水合 / F-23 四方法 / F-7 diff �
   })
   it('F-7：upsertLocal 同步写 record.diff（终态不清——grant 命中只读 Diff 数据源）', async () => {
     const ev = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.write', title: '写入', runtime: 'desktop' as const, status: 'completed' as const, diff: { lines: [{ kind: 'added' as const, text: 'x\n' }], added: 1, removed: 0, truncated: false, totalLines: 1, formatNote: 'f', isNewFile: false }, occurredAt: 'x' }
-    setDesktopApi({ onToolEvent: vi.fn().mockReturnValue(() => {}) } as unknown as DesktopApiLike)
+    // LOW-1（Task 7 review）：mock 镜像全契约——DesktopApiLike 全必填，toolList 补键（init 无 ?. 防御）
+    setDesktopApi({ toolList: vi.fn().mockResolvedValue([]), onToolEvent: vi.fn().mockReturnValue(() => {}) } as unknown as DesktopApiLike)
     const store = useToolStore()
     await store.init()
     store.upsertLocal(ev)
