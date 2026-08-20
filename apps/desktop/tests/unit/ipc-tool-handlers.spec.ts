@@ -11,7 +11,7 @@ import { PermissionDecisionSchema, ToolCancelSchema, ToolPickSourceSchema, ToolC
 // F-10：registerToolHandlers deps 新必填字段（grants/history/auditDir）由 setupRegister 统一补齐（既有 2 处 per-it 字面量不再散落）
 const tools = {
   decide: vi.fn(), cancel: vi.fn(), listRecent: vi.fn().mockReturnValue([]), pickSource: vi.fn(), confirmUpload: vi.fn(),
-  grantDirectory: vi.fn(),   // 批次 C（D6C-12）：目录授权创建流
+  grantDirectory: vi.fn().mockResolvedValue(true),   // 批次 C（D6C-12）：目录授权创建流（FINAL-LOW：executed 回传）
 }
 // V-28：fake.list 返回含 revokedAt 的既有 grant——handler 先查存在性（未知 vs 已撤销 no-op 幂等成功 的区分机制）
 const fakeGrantStore = {
@@ -54,6 +54,7 @@ describe('tool-handlers 九通道（A-5/B-4/D6C-12）', () => {
     const ok = await byChannel.get(IpcChannels.toolGrantDirectory)!({ callId: 'c', ttlMs: 86_400_000 })
     expect(ok).toMatchObject({ ok: true })
     expect(tools.grantDirectory).toHaveBeenCalledWith('c', 86_400_000)
+    expect(ok).toMatchObject({ ok: true, data: { executed: true } })   // FINAL-LOW：executed 回传
   })
   it('批次 C：toolGrantRevoke 未知 id → GRANT_NOT_FOUND；已撤销 → no-op 成功（V-28）', async () => {
     // fake.list 返回 [{ id: 'grant-1', ..., revokedAt: 'x' }]——handler 先查存在性（V-28 区分机制）

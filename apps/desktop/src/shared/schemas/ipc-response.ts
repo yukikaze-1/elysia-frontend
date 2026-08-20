@@ -324,6 +324,8 @@ export const PermissionGrantSchema = z.object({
 // —— 阶段 6 批次 C：grant IPC schemas（D6C-12/F-3；请求侧 zod 双端——Renderer 与 Main 共用）——
 export const GrantTtlOptionsSchema = z.union([z.literal(3600_000), z.literal(86_400_000), z.literal(604_800_000), z.literal(2_592_000_000)])   // F-3：ttl 白名单（镜像 GRANT_TTL_OPTIONS_MS）
 export const GrantDirectorySchema = z.object({ callId: z.string().min(1), ttlMs: GrantTtlOptionsSchema }).strict()
+/** FINAL-LOW：grantDirectory 响应——executed=false 表示 grant 已建但请求目标不在授权目录内（F-1 miss，UI 提示不关窗） */
+export const GrantDirectoryResponseSchema = z.object({ executed: z.boolean() }).strict()
 export const GrantListResponseSchema = z.array(PermissionGrantSchema)
 export const GrantRevokeSchema = z.object({ id: z.string().min(1) }).strict()
 /** 审批历史条目 schema（D6C-08，镜像 contracts/tool.ts `HistoryEntry`——ts/type 必填 + 11 可选公开字段，strict） */

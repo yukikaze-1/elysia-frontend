@@ -131,7 +131,7 @@ declare global {
       toolPickSource(callId: string, sourceId: string): Promise<void>
       toolConfirmUpload(callId: string): Promise<void>
       // —— 阶段 6 批次 C 目录授权/审批历史面（Task 6，D6C-12）——
-      toolGrantDirectory(input: { callId: string; ttlMs: number }): Promise<void>
+      toolGrantDirectory(input: { callId: string; ttlMs: number }): Promise<{ executed: boolean }>
       toolListGrants(): Promise<PermissionGrant[]>
       toolRevokeGrant(id: string): Promise<void>
       toolListHistory(limit?: number): Promise<HistoryEntry[]>

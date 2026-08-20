@@ -58,7 +58,7 @@ export interface ToolService {
   listRecent(limit?: number): PublicToolEvent[]
   pickSource(callId: string, sourceId: string): Promise<void>
   confirmUpload(callId: string): Promise<void>
-  grantDirectory(callId: string, ttlMs: number): Promise<void>   // 批次 C（D6C-05）：目录授权创建流
+  grantDirectory(callId: string, ttlMs: number): Promise<boolean>   // 批次 C（D6C-05）：目录授权创建流；返回 executed（F-1 miss → false 供 UI 反馈）
   reconnect(): Promise<void>
   shutdown(): void
   getRecord(callId: string): ToolRecord | undefined
@@ -339,7 +339,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
    * 守卫链：F-14 grants 缺省 → TOOL_STATE_INVALID / 状态复核 / 工具二值 / realPath / F-3 ttl 白名单双校验 /
    * N-4 断连不创建 / 取消不创建 / N-1 dialog 后状态复核 / V-5 dialog 后身份复核 / F-1 picked 不覆盖目标不执行 /
    * F-6 expiresAt 定时器清理 / F-16 run 抛错仍 promoteQueue */
-  async function grantDirectory(callId: string, ttlMs: number): Promise<void> {
+  async function grantDirectory(callId: string, ttlMs: number): Promise<boolean> {   // FINAL-LOW：返回 executed——F-1 miss（grant 已建未执行）供 UI 反馈
     if (!deps.grants) throw new ToolServiceError('TOOL_STATE_INVALID', '目录授权不可用')   // F-14
     const id = idOf(callId); const rec = id ? records.get(id) : undefined
     if (!rec || rec.status !== 'awaiting_permission') throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 不在等待授权态')
@@ -348,16 +348,17 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     if (!rec.realPath) throw new ToolServiceError('PATH_UNSAFE', '目标路径不可用')
     if (!(GRANT_TTL_OPTIONS_MS as readonly number[]).includes(ttlMs)) throw new ToolServiceError('INVALID_ARGUMENTS', 'ttl 不在授权选项内')   // F-3 双保险（显式收窄，无 as never）
     const identity = deps.backendIdentity?.()   // N-4
-    if (!identity) return   // 断连 → 不创建（保持 awaiting；fail-closed）
+    if (!identity) return false   // 断连 → 不创建（保持 awaiting；fail-closed）
     const picked = deps.pickDirectory ? await deps.pickDirectory({ title: '选择授权目录' }) : { canceled: true }
-    if (picked.canceled || !picked.path) return   // 取消 → 保持 awaiting
-    if (rec.status !== 'awaiting_permission') return   // N-1：dialog 期间已终态 → 不建不 run
-    if (deps.backendIdentity?.() !== identity) return   // V-5：dialog 期间连接切换 → 不创建
+    if (picked.canceled || !picked.path) return false   // 取消 → 保持 awaiting
+    if (rec.status !== 'awaiting_permission') return false   // N-1：dialog 期间已终态 → 不建不 run
+    if (deps.backendIdentity?.() !== identity) return false   // V-5：dialog 期间连接切换 → 不创建
     const grant = deps.grants.add({ toolName: rec.toolName, scope: { directory: picked.path }, backendIdentity: identity, expiresAt: Date.now() + ttlMs, source: 'directory' })   // add 内含黑名单复核 + N-6 幂等 + V-1 归一化
-    if (!(rec.realPath && deps.grants.matches(rec.toolName, rec.realPath))) return   // F-1：picked 不覆盖目标 → grant 已建不执行
+    if (!(rec.realPath && deps.grants.matches(rec.toolName, rec.realPath))) return false   // F-1：picked 不覆盖目标 → grant 已建不执行（executed=false 供 UI 提示）
     audit('tool:decision', rec, { permissionDecision: 'allow_scoped', permissionGrantId: grant.id })
     const t = timers.get(rec.id); if (t) { clearTimeout(t); timers.delete(rec.id) }   // F-6
     try { await run(rec, tool) } finally { promoteQueue(rec.id) }   // F-16
+    return true
   }
   function realPathOf(rec: ToolRecord): string | undefined {   // L1：读决策链缓存（handleRequest step 5 normalize 产物）
     return rec.realPath

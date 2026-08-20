@@ -9,7 +9,7 @@ import { createIpcHandler } from './executor'
 import { IpcChannels } from '@shared/contracts/ipc'
 import {
   PermissionDecisionSchema, ToolCancelSchema, ToolPickSourceSchema, ToolConfirmUploadSchema, ToolListResponseSchema,
-  GrantDirectorySchema, GrantListResponseSchema, GrantRevokeSchema, HistoryResponseSchema, ToolHistoryQuerySchema
+  GrantDirectorySchema, GrantDirectoryResponseSchema, GrantListResponseSchema, GrantRevokeSchema, HistoryResponseSchema, ToolHistoryQuerySchema
 } from '@shared/schemas/ipc-response'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import type { ToolService } from '../tools/tool-service'
@@ -37,8 +37,9 @@ export function registerToolHandlers(
   register(IpcChannels.toolPickSource, createIpcHandler(ToolPickSourceSchema, z.undefined(), async (input) => { await deps.tools.pickSource(input.callId, input.sourceId) }, { sanitize: deps.sanitize }), 1)
   register(IpcChannels.toolConfirmUpload, createIpcHandler(ToolConfirmUploadSchema, z.undefined(), async (input) => { await deps.tools.confirmUpload(input.callId) }, { sanitize: deps.sanitize }), 1)
   // —— 批次 C（D6C-12）：目录授权 + 审批历史四通道 ——
-  register(IpcChannels.toolGrantDirectory, createIpcHandler(GrantDirectorySchema, z.undefined(), async (input) => {
-    await deps.tools.grantDirectory(input.callId, input.ttlMs)
+  register(IpcChannels.toolGrantDirectory, createIpcHandler(GrantDirectorySchema, GrantDirectoryResponseSchema, async (input) => {
+    const executed = await deps.tools.grantDirectory(input.callId, input.ttlMs)   // FINAL-LOW：executed 回传（F-1 miss → false 供 UI 提示）
+    return { executed }
   }, { sanitize: deps.sanitize }), 1)
   register(IpcChannels.toolGrants, createIpcHandler(z.object({}).strict(), GrantListResponseSchema, async () => deps.grants.list(), { sanitize: deps.sanitize }), 1)
   register(IpcChannels.toolGrantRevoke, createIpcHandler(GrantRevokeSchema, z.undefined(), async (input) => {

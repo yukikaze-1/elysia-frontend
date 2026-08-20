@@ -141,11 +141,12 @@ describe('toolStore 批次 C（Task 7：L-2 水合 / F-23 四方法 / F-7 diff �
     expect(store.records['tc_1']).toMatchObject({ status: 'awaiting_permission' })   // 快照归位
   })
   it('批次 C：grantDirectory/listGrants/revokeGrant/listHistory 调 api（F-23 命名映射）', async () => {
-    const api2 = { toolGrantDirectory: vi.fn(), toolListGrants: vi.fn().mockResolvedValue([]), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn().mockResolvedValue([]) } as unknown as DesktopApiLike
+    const api2 = { toolGrantDirectory: vi.fn().mockResolvedValue({ executed: true }), toolListGrants: vi.fn().mockResolvedValue([]), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn().mockResolvedValue([]) } as unknown as DesktopApiLike
     setDesktopApi(api2)
     const store = useToolStore()
     await store.grantDirectory('call_1', 86_400_000)
     expect(api2.toolGrantDirectory).toHaveBeenCalledWith({ callId: 'call_1', ttlMs: 86_400_000 })
+    expect(await store.grantDirectory('call_1', 86_400_000)).toBe(true)   // FINAL-LOW：executed 透传
     await store.listGrants()
     expect(api2.toolListGrants).toHaveBeenCalled()
     await store.revokeGrant('g1')

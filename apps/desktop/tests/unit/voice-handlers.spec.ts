@@ -263,6 +263,16 @@ describe('settings load/save 全链路（registerSettingsHandlers 接线）', ()
     if (!res.ok) expect(res.error.code).toBe('SCHEMA_VALIDATION_FAILED')
     expect(settings.save).not.toHaveBeenCalled()
   })
+  it('批次 C（FINAL-MED）：settings:save 带 tools.grants patch → GRANT_WRITE_DENIED 且不调 svc（GrantStore 唯一写者）', async () => {
+    const settings = { load: vi.fn(), save: vi.fn() }
+    const { invoke } = await registerOnce(makeVoiceAdapter(), settings)
+    // expiresAt 用「合法但远超 30d 白名单上限」的时间戳（约 +100 年，< zod int MAX_SAFE_INTEGER 上限故过 schema）——
+    // 平行写面若放行即成事实永久 grant（「无永久 grant」保证旁路）
+    const res = await invoke(IpcChannels.settingsSave, { tools: { grants: [{ id: 'g1', toolName: 'desktop.file.write', scope: { directory: '/home/u' }, backendIdentity: 'http://h', expiresAt: Date.now() + 100 * 365 * 86_400_000, createdAt: 'x', source: 'directory' }] } })
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.error.code).toBe('GRANT_WRITE_DENIED')   // 平行写面关闭——防绕过「无永久 grant」保证
+    expect(settings.save).not.toHaveBeenCalled()
+  })
 })
 
 describe('麦克风权限纯决策 + 接线（D-P7，Important-5）', () => {

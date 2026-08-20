@@ -88,12 +88,16 @@ describe('grant-store', () => {
     expect(store.matches('desktop.file.read', '/home/u/docs2/a.txt')).toBeUndefined()
     expect(store.matches('desktop.file.write', '/home/u/docs/a.txt')).toBeUndefined()
   })
-  it('matches：Windows 大小写不敏感（F-13/V-20——平台门控：win32 toLowerCase、posix 直比）', () => {
+  it('matches：Windows 大小写不敏感 + 反斜杠分隔符（F-13/V-20/FINAL-HIGH——真实 Windows 路径形状）', () => {
     // V-20 修复：不再恒 toLowerCase（posix 上大小写不同的真实目录不得互相命中）——matches 按 deps.platform 选择比较器
+    // FINAL-HIGH 修复：Windows canonical 路径为反斜杠（path.win32.resolve/realpathSync.native 产物）——分隔符按平台取，
+    //   硬编码 '/' 使 C:\...\a.txt.startsWith(C:\... + '/') 恒 false（子目录匹配全断）
     const win = mkStore([], 'http://h', 'windows')
-    win.store.add({ toolName: 'desktop.file.read', scope: { directory: '/HOME/U/DOCS' }, backendIdentity: 'http://h', expiresAt: now + 1000, source: 'directory' })
-    expect(win.store.matches('desktop.file.read', '/home/u/docs/a.txt')).toBeDefined()   // win32 大小写不敏感命中
-    expect(win.store.matches('desktop.file.read', '/home/u/DOCS2/a.txt')).toBeUndefined()
+    win.store.add({ toolName: 'desktop.file.read', scope: { directory: 'C:\\Users\\Me\\Docs' }, backendIdentity: 'http://h', expiresAt: now + 1000, source: 'directory' })
+    expect(win.store.matches('desktop.file.read', 'c:\\users\\me\\docs\\a.txt')).toBeDefined()   // win32 大小写不敏感 + 反斜杠子目录命中
+    expect(win.store.matches('desktop.file.read', 'c:\\users\\me\\docs')).toBeDefined()          // 等于目录命中
+    expect(win.store.matches('desktop.file.read', 'c:\\users\\me\\docs2\\a.txt')).toBeUndefined()   // 段边界不误配
+    expect(win.store.matches('desktop.file.read', 'C:\\Users\\Me\\Docs2\\a.txt')).toBeUndefined()
     const posix = mkStore([], 'http://h', 'posix')
     posix.store.add({ toolName: 'desktop.file.read', scope: { directory: '/HOME/U/DOCS' }, backendIdentity: 'http://h', expiresAt: now + 1000, source: 'directory' })
     expect(posix.store.matches('desktop.file.read', '/home/u/docs/a.txt')).toBeUndefined()   // posix 大小写敏感：不命中（防授权面越界）

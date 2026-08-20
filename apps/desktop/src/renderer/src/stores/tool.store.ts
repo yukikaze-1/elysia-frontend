@@ -111,8 +111,9 @@ export const useToolStore = defineStore('tool', () => {
   // 批次 C 四方法（F-23 命名映射：store grantDirectory/listGrants/revokeGrant/listHistory ↔
   // preload toolGrantDirectory/toolListGrants/toolRevokeGrant/toolListHistory ↔ IpcChannels
   // toolGrantDirectory/toolGrants/toolGrantRevoke/toolHistory）：
-  async function grantDirectory(callId: string, ttlMs: number): Promise<void> {
-    await api.toolGrantDirectory({ callId, ttlMs })
+  async function grantDirectory(callId: string, ttlMs: number): Promise<boolean> {   // FINAL-LOW：executed 透传（F-1 miss → false 供 UI 提示）
+    const r = await api.toolGrantDirectory({ callId, ttlMs })
+    return r.executed
   }
   async function listGrants(): Promise<PermissionGrant[]> {
     return api.toolListGrants()

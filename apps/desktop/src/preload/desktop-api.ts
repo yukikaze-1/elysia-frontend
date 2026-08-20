@@ -70,6 +70,7 @@ import {
   ConversationSchema,
   EndpointResponseSchema,
   FileValidationResultSchema,
+  GrantDirectoryResponseSchema,
   GrantListResponseSchema,
   HistoryResponseSchema,
   Live2DModelSummarySchema,
@@ -410,8 +411,8 @@ async function toolConfirmUpload(callId: string): Promise<void> {
 }
 
 // —— 阶段 6 批次 C（Task 6，D6C-12）：目录授权 + 审批历史四 invoke 通道（批次 B 工具面延续；invokeWithArgs + unwrap 惯例）——
-async function toolGrantDirectory(input: { callId: string; ttlMs: number }): Promise<void> {
-  await unwrap(await invokeWithArgs<void>(IpcChannels.toolGrantDirectory, input), z.undefined())
+async function toolGrantDirectory(input: { callId: string; ttlMs: number }): Promise<{ executed: boolean }> {
+  return unwrap(await invokeWithArgs<{ executed: boolean }>(IpcChannels.toolGrantDirectory, input), GrantDirectoryResponseSchema)
 }
 async function toolListGrants(): Promise<PermissionGrant[]> {
   // arity 1：恒带 {} 载荷（与 toolList/modelsListProfiles 同款惯例）

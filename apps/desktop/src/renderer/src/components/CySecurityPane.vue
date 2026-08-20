@@ -38,8 +38,13 @@ function matchResult(h: { permissionDecision?: string; status?: string }, f: str
 }
 
 onMounted(async () => {
-  grants.value = await toolStore.listGrants()
-  history.value = await toolStore.listHistory(200)
+  // FINAL-LOW：IPC 失败兜底——授权管理/审批历史分区 fail-open 空态（不阻塞设置页；unhandled rejection 消除）
+  try {
+    grants.value = await toolStore.listGrants()
+  } catch { grants.value = [] }
+  try {
+    history.value = await toolStore.listHistory(200)
+  } catch { history.value = [] }
 })
 
 /** 活动 grant 判定：未撤销且未过期（历史条目「撤销此授权」跳转依据，F-21） */

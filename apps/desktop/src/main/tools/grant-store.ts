@@ -40,6 +40,8 @@ function isValidGrantShape(g: unknown): g is PermissionGrant {
     && typeof x.backendIdentity === 'string' && x.backendIdentity.length > 0
     && typeof x.expiresAt === 'number' && Number.isFinite(x.expiresAt) && x.expiresAt > 0
     && typeof x.createdAt === 'string'
+    && x.source === 'directory'   // FINAL-LOW：与 PermissionGrantSchema literal 对齐——缺 source 的 grant 不装载（否则 tool:grants 响应校验整体拒、设置页授权管理击穿）
+    && (x.revokeSource === undefined || x.revokeSource === 'user' || x.revokeSource === 'expired')   // 二值枚举对齐
 }
 
 export function createGrantStore(deps: GrantStoreDeps): GrantStore {
@@ -115,10 +117,12 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
     prune()
     const identity = deps.backendIdentity()   // F-2：断连 undefined → 恒不匹配（fail-safe）
     if (identity === undefined) return undefined
-    // V-20：平台门控比较（对齐 tool-policy.ts:36 先例）——win32 toLowerCase、posix 直比（防 posix 大小写不同目录互相命中）
+    // V-20/FINAL-HIGH：平台门控比较（对齐 tool-policy.ts:36 先例）——win32 toLowerCase + 反斜杠分隔符、
+    // posix 直比 + 正斜杠（防 posix 大小写不同目录互相命中；Windows canonical 路径为反斜杠，硬编码 '/' 恒不命中）
+    const sep = deps.platform === 'windows' ? '\\' : '/'
     const eq = deps.platform === 'windows'
-      ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase() || a.toLowerCase().startsWith(b.toLowerCase() + '/')
-      : (a: string, b: string) => a === b || a.startsWith(b + '/')
+      ? (a: string, b: string) => { const la = a.toLowerCase(); const lb = b.toLowerCase(); return la === lb || la.startsWith(lb + sep) }
+      : (a: string, b: string) => a === b || a.startsWith(b + sep)
     return grants.find((g) => !g.revokedAt && g.expiresAt > now() && g.toolName === toolName
       && g.backendIdentity === identity
       && eq(realPath, g.scope.directory))   // 目录段边界（等于或以目录+分隔符开头）

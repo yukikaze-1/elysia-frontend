@@ -84,7 +84,7 @@ describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7�
   it('TTL select 默认 24h + 确认 → grantDirectory(callId, ttlMs)（F-18；LOW-2：用户选择不被覆盖——选 1h → 确认收 1h）', async () => {
     const s = useToolStore()
     s.upsertLocal(awaitingRead())
-    const spy = vi.spyOn(s, 'grantDirectory').mockResolvedValue(undefined)
+    const spy = vi.spyOn(s, 'grantDirectory').mockResolvedValue(true)
     const w = mount(CyToolApproval, { props: { open: true } })
     await w.find('[data-testid="approval-grant-dir"]').trigger('click')
     expect((w.find('[data-testid="grant-ttl-select"]').element as HTMLSelectElement).value).toBe(String(GRANT_DEFAULT_TTL_MS))   // 默认 24h
@@ -98,6 +98,18 @@ describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7�
     await w2.find('[data-testid="approval-grant-confirm"]').trigger('click')
     expect(spy).toHaveBeenCalledWith('call_1', 3600_000)   // 1h（3600_000 ∈ GRANT_TTL_OPTIONS_MS）
   })
+  it('FINAL-LOW（F-1 miss 反馈）：grantDirectory 返回 false → 提示「授权已创建，但当前请求目标不在授权目录内」不关窗', async () => {
+    const s = useToolStore()
+    s.upsertLocal(awaitingRead())
+    vi.spyOn(s, 'grantDirectory').mockResolvedValue(false)   // F-1 miss：grant 已建未执行
+    const w = mount(CyToolApproval, { props: { open: true } })
+    await w.find('[data-testid="approval-grant-dir"]').trigger('click')
+    await w.find('[data-testid="approval-grant-confirm"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="tool-approval"]').exists()).toBe(true)   // 不关窗
+    expect(w.find('.cy-approval-grant-error').text()).toContain('不在授权目录内')   // 提示可见
+    expect(w.find('[data-testid="approval-grant-box"]').exists()).toBe(true)   // 面板保持
+  })
   it('提交期间禁用（L-8 防抖）', async () => {
     const s = useToolStore()
     s.upsertLocal(awaitingRead())
@@ -107,7 +119,7 @@ describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7�
     await w.find('[data-testid="approval-grant-dir"]').trigger('click')
     await w.find('[data-testid="approval-grant-confirm"]').trigger('click')
     expect((w.find('[data-testid="approval-grant-confirm"]').attributes() as Record<string, string | undefined>).disabled).toBeDefined()   // pending 时禁用
-    resolveGrant()
+    resolveGrant(true)   // FINAL-LOW：executed=true（否则走 F-1 miss 提示分支不关窗）
     await nextTick()
     await nextTick()   // 第二个 nextTick：granting=false 的渲染 flush 在 promise 续延之后入队，需再冲刷一次
     // 完成恢复：成功后面板关闭——确认按钮随面板移除（不再存在禁用态；emit('close') 既有语义）

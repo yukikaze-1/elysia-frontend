@@ -18,7 +18,8 @@ const emit = defineEmits<{ close: [] }>()
 // 批次 C（D6C-05）：第三入口「允许指定目录」仅 read/write awaiting 显示
 const isGrantable = computed(() => !!current.value && (current.value.toolName === 'desktop.file.read' || current.value.toolName === 'desktop.file.write'))
 const openGrantPicker = ref(false)
-const granting = ref(false)                    // L-8：提交期间禁用（防抖）
+const granting = ref(false)                    // L-8：grant 提交期间禁用（防抖）
+const submitting = ref(false)                  // FINAL-LOW（L-8 收口）：allow/deny 提交期间禁用（防双击二次 decide）
 const ttlMs = ref<number>(GRANT_DEFAULT_TTL_MS)  // F-18：TTL select 默认 24h
 const grantError = ref('')
 function ttlLabel(t: number): string {
@@ -31,13 +32,18 @@ function ttlLabel(t: number): string {
 function onTtlChange(e: Event): void {
   ttlMs.value = Number((e.target as HTMLSelectElement).value)
 }
-// 确认授权 → store.grantDirectory(callId, ttlMs) → 成功关闭（emit('close')）；失败保持 open + 错误提示
+// 确认授权 → store.grantDirectory(callId, ttlMs) → executed=true 关闭（emit('close')）；executed=false（F-1 miss：grant 已建但
+// 请求目标不在授权目录内）→ 窗内提示不关窗；失败保持 open + 错误提示
 async function confirmGrant(): Promise<void> {
   if (!current.value) return
   granting.value = true
   grantError.value = ''
   try {
-    await toolStore.grantDirectory(current.value.desktopCallId ?? current.value.id, ttlMs.value)
+    const executed = await toolStore.grantDirectory(current.value.desktopCallId ?? current.value.id, ttlMs.value)
+    if (!executed) {   // FINAL-LOW：F-1 miss 反馈——用户可见解释，非静默关窗
+      grantError.value = '授权已创建，但当前请求目标不在授权目录内——请改用「允许一次」或选择包含目标的目录'
+      return
+    }
     openGrantPicker.value = false
     returnToTrigger()
     emit('close')
@@ -77,8 +83,23 @@ function trapTab(e: KeyboardEvent): void {
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
 }
 function returnToTrigger() { trigger.value?.focus?.(); toolStore.clearApprovalLocal?.() }
-function allow() { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'allow_once'); returnToTrigger(); emit('close') }
-function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny'); returnToTrigger(); emit('close') }
+// FINAL-LOW（L-8 收口）：allow/deny 提交期禁用 + rejection 收敛——IPC 往返窗口内双击二次 decide → TOOL_STATE_INVALID 噪音消除
+async function allow() {
+  if (submitting.value) return
+  submitting.value = true
+  try { await toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'allow_once') }
+  catch { /* 结构化错误已由 Main 上提；面板即将关闭（returnToTrigger）——无 unhandled rejection */ }
+  submitting.value = false
+  returnToTrigger(); emit('close')
+}
+async function deny() {
+  if (submitting.value) return
+  submitting.value = true
+  try { await toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny') }
+  catch { /* 同上 */ }
+  submitting.value = false
+  returnToTrigger(); emit('close')
+}
 </script>
 
 <template>
@@ -97,8 +118,8 @@ function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value
         <pre class="cy-diff-body"><template v-for="(l, i) in toolStore.pendingDiff.diff.lines" :key="i"><span :class="'cy-diff-' + l.kind">{{ l.kind === 'added' ? '+' : l.kind === 'removed' ? '-' : ' ' }}{{ l.text }}</span></template></pre>
       </div>
       <div class="cy-approval-actions">
-        <button ref="denyBtn" type="button" class="cy-btn" data-testid="approval-deny" @click="deny">拒绝</button>
-        <button type="button" class="cy-btn cy-btn-approve" data-testid="approval-allow" @click="allow">允许一次</button>
+        <button ref="denyBtn" type="button" class="cy-btn" data-testid="approval-deny" :disabled="submitting" @click="deny">拒绝</button>
+        <button type="button" class="cy-btn cy-btn-approve" data-testid="approval-allow" :disabled="submitting" @click="allow">允许一次</button>
         <!-- 批次 C（D6C-05）：第三入口「允许指定目录」——仅 read/write awaiting 显示（L-8：提交期间禁用防抖） -->
         <button v-if="isGrantable" type="button" class="cy-btn cy-btn-grant" data-testid="approval-grant-dir"
           :disabled="granting" @click="openGrantPicker = true">允许指定目录</button>
