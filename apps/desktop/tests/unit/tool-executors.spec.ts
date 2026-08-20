@@ -152,6 +152,15 @@ describe('desktop.file.write', () => {
     await expect(ex.execute(rec('desktop.file.write', { path: p, content: 'x'.repeat(2 * 1024 * 1024 + 1) }), p))
       .rejects.toMatchObject({ code: 'CONTENT_TOO_LARGE' })
   })
+  it('D6C-10 新文件写 TOCTOU 守卫：授权时不存在（rec.diff.isNewFile）→ 执行前被创建 → FILE_CONFLICT（原文件不变）', async () => {
+    const p = join(tmp, 'new-toc.txt')
+    const ex = createExecutors(mkDeps())
+    const r = rec('desktop.file.write', { path: p, content: 'v2' })
+    r.diff = { lines: [], added: 0, removed: 0, truncated: false, totalLines: 0, formatNote: '新建文件', isNewFile: true }   // 授权时不存在
+    writeFileSync(p, 'v3')   // 执行前被创建
+    await expect(ex.execute(r, p)).rejects.toMatchObject({ code: 'FILE_CONFLICT' })
+    expect(readFileSync(p, 'utf8')).toBe('v3')   // 原文件不变
+  })
 })
 describe('desktop.screen.capture（枚举面）', () => {
   it('枚举源保留 thumbnailDataUrl（完整 H3：PublicToolEventSchema 要求）', async () => {

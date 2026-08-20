@@ -3,6 +3,7 @@ import { diffLines } from 'diff'
 export interface DiffLine { kind: 'added' | 'removed' | 'unchanged'; text: string }
 export interface TextDiffResult { lines: DiffLine[]; added: number; removed: number; truncated: boolean; totalLines: number }   // totalLines（A-20/H2）
 export const MAX_DIFF_LINES = 100
+export const MAX_DIFF_LINE_BYTES = 2000   // L-6（D6C-09f）：单行 text 超限截断（防 2MiB 单行经 awaiting 事件压垮 Renderer）
 
 export function computeTextDiff(oldText: string, newText: string): TextDiffResult {
   const parts = diffLines(oldText, newText)
@@ -12,7 +13,13 @@ export function computeTextDiff(oldText: string, newText: string): TextDiffResul
     const kind = p.added ? 'added' : p.removed ? 'removed' : 'unchanged'
     if (kind !== 'unchanged') { if (p.added) added += p.count ?? 0; else removed += p.count ?? 0 }
     const seg = p.value.split(/(?<=\n)/)
-    for (const text of seg) { if (lines.length < MAX_DIFF_LINES) lines.push({ kind, text }) }
+    for (const text of seg) {
+      if (lines.length >= MAX_DIFF_LINES) break
+      const clipped = Buffer.byteLength(text, 'utf8') > MAX_DIFF_LINE_BYTES
+        ? text.slice(0, MAX_DIFF_LINE_BYTES) + '…（已截断）'
+        : text
+      lines.push({ kind, text: clipped })
+    }
   }
   const total = parts.reduce((n, p) => n + (p.count ?? p.value.split('\n').length), 0)
   return { lines, added, removed, truncated: total > MAX_DIFF_LINES, totalLines: total }

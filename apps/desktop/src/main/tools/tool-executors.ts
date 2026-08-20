@@ -66,6 +66,8 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     const content = String(rec.arguments_['content'])
     if (Buffer.byteLength(content, 'utf8') > MAX_WRITE_CONTENT_BYTES) throw new ToolExecError('CONTENT_TOO_LARGE', '内容超过 2 MiB 上限')
     const exists = fs.existsSync(p)
+    // D6C-10（facts 修正）：授权时文件不存在（preReadForDiff 置 isNewFile）、执行前被创建 → 拒绝覆盖（原文件保持）
+    if (exists && rec.diff?.isNewFile) throw new ToolExecError('FILE_CONFLICT', '文件已被创建，未覆盖')
     let oldText = ''
     if (exists) {
       const buf = fs.readFileSync(p)

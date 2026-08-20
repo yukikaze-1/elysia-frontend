@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'http'
 import { WebSocketServer } from 'ws'
 import { AddressInfo } from 'net'
@@ -560,6 +560,24 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
     expect(events.some((e) => e.event === 'tool.request')).toBe(false)   // D6B-08：不再 emit 给 renderer
     await b.disconnect()
     toolWss.close(); toolServer.close()
+  })
+
+  it('L-4：case tool.request mapper 抛错 → logger.warn + 丢帧不崩溃 + onToolRequest 不触发', async () => {
+    const logger = { warn: vi.fn() }
+    const onToolRequest = vi.fn()
+    const b = new RealBackend(makeOpts({ logger }))
+    b.onToolRequest = onToolRequest
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' })   // fakeWs 同步推 session + server_info → resolve（既有 connect 夹具形态）
+    // 注入非法 tool.request 帧（expiresAt 非 ISO 串——契约外值经 raw 层放行到 mapper 提炼，直调 handleFrame 注入）；
+    // mapper 提炼阶段抛错（mock 注入，D6C-09d 守卫目标）→ 包在 try/catch 内 → warn + 丢帧不崩溃
+    const mapper = (b as unknown as { mapper: { mapFrame: (frame: never) => unknown } }).mapper
+    const spy = vi.spyOn(mapper, 'mapFrame').mockImplementation(() => { throw new Error('mapper fail') })
+    b['handleFrame'](JSON.stringify({ type: 'tool.request', callId: 'call_bad', toolName: 'desktop.file.read', toolVersion: '1.0',
+      runtime: 'desktop', sourceCallId: 'tc_bad', arguments: { path: '/x' }, riskLevel: 'medium',
+      permissionRequired: true, approvalAuthority: 'client', paramHash: 'h', expiresAt: 'not-a-date' }))
+    spy.mockRestore()
+    expect(onToolRequest).not.toHaveBeenCalled()   // 帧被丢弃
+    expect(logger.warn).toHaveBeenCalledWith('tool.request:parse-failed', expect.objectContaining({ message: expect.any(String) }))
   })
 
   it('submitToolResult → wire 发送 tool.status 帧（六态 + runtime str + paramHash 原样）', async () => {

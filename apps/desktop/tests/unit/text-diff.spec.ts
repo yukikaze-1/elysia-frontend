@@ -12,6 +12,13 @@ describe('computeTextDiff', () => {
     const d = computeTextDiff(old_, old_ + '\nx')
     expect(d.truncated).toBe(true)
   })
+  it('L-6：单行超 MAX_DIFF_LINE_BYTES 截断 + 标记（D6C-09f）', () => {
+    const long = 'x'.repeat(3000) + '\n'
+    const r = computeTextDiff('', long)
+    const longest = Math.max(...r.lines.map((l) => l.text.length))
+    expect(longest).toBeLessThanOrEqual(2000 + '…（已截断）'.length)
+    expect(r.lines.some((l) => l.text.includes('（已截断）'))).toBe(true)
+  })
 })
 describe('detectTextFormat / normalizeToFormat（D6B-19/L-2 拆行段重拼）', () => {
   it('CRLF 检测与往返无损', () => {

@@ -67,6 +67,8 @@ export interface RealBackendOptions {
   onProtocolWarning?: (warning: ProtocolWarning) => void
   onSessionReplay?: (conversationId: string, messages: Message[]) => void
   onError?: (error: CyreneError) => void
+  /** 帧解析/提炼失败告警（L-4/D6C-09d；测试注入 spy 断言；缺省静默） */
+  logger?: { warn(msg: string, extra?: Record<string, unknown>): void }
   /** 连接状态变化回调(状态机任意迁移触发;2C 用于 IPC 状态推送) */
   onConnectionStateChange?: (state: ConnectionState) => void
   /** TTS 音频 sink 提供器(Task 6 装配 MediaService);返回 undefined 表示当前无 sink(不落盘、告警 TTS_MEDIA_SINK_MISSING) */
@@ -275,13 +277,18 @@ export class RealBackend implements BackendAdapter {
         // 批次 B（Task 6，D6B-08）：显式 case——mapper 校验+脱敏产出仍保留（批次 A 单测依赖 mapFrame 校验），
         // 但不再 emit（Renderer 不经领域事件收桌面工具请求），改路由 tool-service（onToolRequest；index.ts 装配后注入）。
         // arguments/paramHash 只在 Main 流转（D6-07：公开事件不带原始参数）。
-        const ev = this.mapper?.mapFrame(frame)   // H3：mapToolRequest 为 private——走 mapFrame 公开入口（产物 ToolRequestEvent）
-        if (!ev) return
-        this.onToolRequest?.({
-          callId: frame.callId, sourceCallId: frame.sourceCallId, toolName: frame.toolName,
-          toolVersion: frame.toolVersion, runtime: 'desktop', arguments: frame.arguments, reason: frame.reason,
-          expiresAt: Date.parse(frame.expiresAt), paramHash: frame.paramHash,
-        })
+        // 批次 C（L-4，D6C-09d）：解析/提炼失败 → warn + 丢弃该帧不崩溃（不 catch 后继续 emit——失败即协议异常）
+        try {
+          const ev = this.mapper?.mapFrame(frame)   // H3：mapToolRequest 为 private——走 mapFrame 公开入口（产物 ToolRequestEvent）
+          if (!ev) return
+          this.onToolRequest?.({
+            callId: frame.callId, sourceCallId: frame.sourceCallId, toolName: frame.toolName,
+            toolVersion: frame.toolVersion, runtime: 'desktop', arguments: frame.arguments, reason: frame.reason,
+            expiresAt: Date.parse(frame.expiresAt), paramHash: frame.paramHash,
+          })
+        } catch (e) {
+          this.options.logger?.warn('tool.request:parse-failed', { message: (e as Error).message })
+        }
         return
       }
       default: {
