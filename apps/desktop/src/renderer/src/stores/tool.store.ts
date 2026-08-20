@@ -17,7 +17,7 @@
 // （M2 fix：按 callId 匹配，B 终态不清 A 的侧信道；captureState 仅同工具终态清，L6）。
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { PublicToolEvent, ToolCallRecord, ToolCallStatus } from '@shared/contracts/tool'
+import type { HistoryEntry, PermissionGrant, PublicToolEvent, ToolCallRecord, ToolCallStatus } from '@shared/contracts/tool'
 import type { BackendEvent } from '@shared/contracts/events'
 import { api } from './desktop-api'   // 既有 api 单例（代码 H6）
 
@@ -58,6 +58,8 @@ export const useToolStore = defineStore('tool', () => {
       status: ev.status, reason: ev.reason, inputSummary: ev.inputSummary, outputSummary: ev.resultSummary,
       error: ev.error, truncated: ev.truncated, durationMs: ev.durationMs, startedAt: ev.startedAt, finishedAt: ev.finishedAt,
       attachmentCount: ev.attachmentCount }
+    // F-7（批次 C）：diff 同步写入记录（终态不清——只读 Diff 卡数据源；pendingDiff 侧信道仍保留给权限窗）
+    if (ev.diff) rec.diff = ev.diff
     upsertRecord(ev.id, rec)
     const cid = ev.desktopCallId ?? ev.id
     // L2（fix round 1）：侧信道写入受终态单向守卫——迟到 awaiting 事件（记录已终态，upsertRecord 已拒）不写侧信道
@@ -98,8 +100,28 @@ export const useToolStore = defineStore('tool', () => {
     // tool.request 防御性忽略（批次 B 起 desktop 请求不再经 chat:event，D6B-08）
   }
   function clearForGeneration(): void { liveOrder.value = liveOrder.value.filter(id => !TERMINAL.includes(records.value[id]?.status ?? 'completed')) }  // A9
-  function init(): void {
-    if (!unsubscribeEvent) unsubscribeEvent = api.onToolEvent((ev) => upsertLocal(ev))
+  // L-2/F-15（批次 C）：先 await toolList 水合完毕再订阅 onToolEvent（防旧快照覆盖新事件；水合快照 = Main 权威快照）。
+  // 水合失败 fail-open（不阻塞启动）；toolList 未接线时同样降级（?. 防御）。
+  async function init(): Promise<void> {
+    if (unsubscribeEvent) return
+    const list = (await api.toolList?.().catch(() => [])) ?? []
+    for (const ev of list) if (!TERMINAL.includes(ev.status)) upsertLocal(ev)   // 非终态必水合（终态可选；upsertLocal 幂等）
+    unsubscribeEvent = api.onToolEvent((ev) => upsertLocal(ev))
+  }
+  // 批次 C 四方法（F-23 命名映射：store grantDirectory/listGrants/revokeGrant/listHistory ↔
+  // preload toolGrantDirectory/toolListGrants/toolRevokeGrant/toolListHistory ↔ IpcChannels
+  // toolGrantDirectory/toolGrants/toolGrantRevoke/toolHistory）：
+  async function grantDirectory(callId: string, ttlMs: number): Promise<void> {
+    await api.toolGrantDirectory({ callId, ttlMs })
+  }
+  async function listGrants(): Promise<PermissionGrant[]> {
+    return api.toolListGrants()
+  }
+  async function revokeGrant(id: string): Promise<void> {
+    await api.toolRevokeGrant(id)
+  }
+  async function listHistory(limit?: number): Promise<HistoryEntry[]> {
+    return api.toolListHistory(limit)
   }
   async function decide(callId: string, decision: 'allow_once' | 'deny'): Promise<void> { await api.toolDecide({ callId, decision }) }
   async function cancel(callId: string): Promise<void> { await api.toolCancel(callId) }
@@ -107,5 +129,6 @@ export const useToolStore = defineStore('tool', () => {
   async function confirmUpload(callId: string): Promise<void> { await api.toolConfirmUpload(callId) }
   function liveRecords(): ToolCallRecord[] { return liveOrder.value.map(id => records.value[id]).filter(Boolean) }
   return { records, liveOrder, captureState, pendingPathSummary, pendingDiff, pendingDataFlowNote, waitingForApproval,
-    init, applyBackendEvent, upsertLocal, clearForGeneration, clearApprovalLocal, decide, cancel, pickSource, confirmUpload, liveRecords }
+    init, applyBackendEvent, upsertLocal, clearForGeneration, clearApprovalLocal, decide, cancel, pickSource, confirmUpload, liveRecords,
+    grantDirectory, listGrants, revokeGrant, listHistory }
 })

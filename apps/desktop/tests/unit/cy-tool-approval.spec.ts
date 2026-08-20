@@ -12,6 +12,7 @@ import { useToolStore } from '../../src/renderer/src/stores/tool.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
 import type { PublicToolEvent } from '@shared/contracts/tool'
+import { GRANT_DEFAULT_TTL_MS } from '@shared/contracts/tool'
 
 const mockApi = {
   onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(),
@@ -48,5 +49,48 @@ describe('CyToolApproval（fix round 1 M1：打开时初始焦点在拒绝按钮
     await nextTick()
     expect(wrapper.find('[data-testid="tool-approval"]').exists()).toBe(false)
     wrapper.unmount()
+  })
+})
+
+describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7，D6C-05/F-18/L-8）', () => {
+  function awaitingRead(extra: Partial<PublicToolEvent> = {}): PublicToolEvent {
+    return { ...awaiting('tc_1'), toolName: 'desktop.file.read', desktopCallId: 'call_1', ...extra }
+  }
+  it('「允许指定目录」仅 read/write awaiting 显示（D6C-05）', async () => {
+    const s = useToolStore()
+    s.upsertLocal(awaitingRead())
+    const read = mount(CyToolApproval, { props: { open: true } })
+    expect(read.find('[data-testid="approval-grant-dir"]').exists()).toBe(true)
+    // 同测试内切换：read 终态化后注入 capture awaiting → current 变为 capture，第三入口不显示
+    s.upsertLocal({ ...awaiting('tc_1'), status: 'completed' })
+    s.upsertLocal({ ...awaiting('tc_cap'), toolName: 'desktop.screen.capture' })
+    const cap = mount(CyToolApproval, { props: { open: true } })
+    expect(cap.find('[data-testid="tool-approval"]').exists()).toBe(true)
+    expect(cap.find('[data-testid="approval-grant-dir"]').exists()).toBe(false)
+  })
+  it('TTL select 默认 24h + 确认 → grantDirectory(callId, ttlMs)（F-18）', async () => {
+    const s = useToolStore()
+    s.upsertLocal(awaitingRead())
+    const spy = vi.spyOn(s, 'grantDirectory').mockResolvedValue(undefined)
+    const w = mount(CyToolApproval, { props: { open: true } })
+    await w.find('[data-testid="approval-grant-dir"]').trigger('click')
+    expect((w.find('[data-testid="grant-ttl-select"]').element as HTMLSelectElement).value).toBe(String(GRANT_DEFAULT_TTL_MS))   // 默认 24h
+    await w.find('[data-testid="approval-grant-confirm"]').trigger('click')
+    expect(spy).toHaveBeenCalledWith('call_1', 86_400_000)   // GRANT_DEFAULT_TTL_MS
+  })
+  it('提交期间禁用（L-8 防抖）', async () => {
+    const s = useToolStore()
+    s.upsertLocal(awaitingRead())
+    let resolveGrant!: (value?: unknown) => void
+    vi.spyOn(s, 'grantDirectory').mockImplementation(() => new Promise((r) => { resolveGrant = r }) as never)
+    const w = mount(CyToolApproval, { props: { open: true } })
+    await w.find('[data-testid="approval-grant-dir"]').trigger('click')
+    await w.find('[data-testid="approval-grant-confirm"]').trigger('click')
+    expect((w.find('[data-testid="approval-grant-confirm"]').attributes() as Record<string, string | undefined>).disabled).toBeDefined()   // pending 时禁用
+    resolveGrant()
+    await nextTick()
+    await nextTick()   // 第二个 nextTick：granting=false 的渲染 flush 在 promise 续延之后入队，需再冲刷一次
+    // 完成恢复：成功后面板关闭——确认按钮随面板移除（不再存在禁用态；emit('close') 既有语义）
+    expect(w.find('[data-testid="approval-grant-confirm"]').exists()).toBe(false)
   })
 })

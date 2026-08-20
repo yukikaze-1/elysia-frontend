@@ -40,6 +40,12 @@ const pathSummary = computed(() => {
     <p v-if="record.error?.message" class="cy-tool-error">{{ record.error.message }}</p>
     <p v-if="record.attachmentCount" class="cy-tool-attachments">含 {{ record.attachmentCount }} 个附件</p>
     <p v-if="record.startedAt" class="cy-tool-time">{{ record.startedAt.slice(0, 19).replace('T', ' ') }}<template v-if="record.finishedAt"> → {{ record.finishedAt.slice(0, 19).replace('T', ' ') }}</template></p>
+    <!-- 批次 C（F-4）：grant 命中自动执行路径的完成记录携带 diff（F-7 契约 ToolCallRecord.diff，终态不清）→
+         只读 Diff 信息条（无确认按钮——approval-diff 仅权限窗） -->
+    <div v-if="record.diff && !isBackend" class="cy-tool-diff-readonly" data-testid="tool-diff-readonly">
+      <span class="cy-tool-diff-note">{{ record.diff.formatNote }}</span>
+      <pre class="cy-diff-body" data-testid="tool-diff-body"><template v-for="(l, i) in record.diff.lines" :key="i"><span :class="`cy-diff-${l.kind}`">{{ l.text }}</span></template></pre>
+    </div>
     <div v-if="!isBackend" class="cy-tool-actions">
       <template v-if="awaiting">
         <button type="button" class="cy-btn cy-btn-approve" data-testid="tool-approve" @click="emit('openApproval')">允许此电脑操作</button>
@@ -81,4 +87,9 @@ const pathSummary = computed(() => {
 .cy-capture-source img { width: 120px; height: 90px; object-fit: cover; display: block; }
 .cy-capture-preview img { max-width: 100%; border-radius: 6px; }
 .cy-capture-preview { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.cy-tool-diff-readonly { margin-top: 6px; }
+.cy-tool-diff-note { color: var(--cy-text-muted); font-size: 11px; }
+.cy-diff-body { background: var(--cy-bg); padding: 4px; border-radius: 6px; max-height: 160px; overflow: auto; margin: 2px 0 0; font-size: 11px; white-space: pre-wrap; }
+.cy-diff-added { color: var(--cy-diff-add, #18794e); }
+.cy-diff-removed { color: var(--cy-diff-del, #cd2b3a); }
 </style>

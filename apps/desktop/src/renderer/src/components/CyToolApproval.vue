@@ -4,6 +4,7 @@
      先例）。由卡片「允许此电脑操作」触发打开（props.open，非自动弹出——四问必答流，doc 03 §10）。 -->
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { GRANT_DEFAULT_TTL_MS, GRANT_TTL_OPTIONS_MS } from '@shared/contracts/tool'
 import { useToolStore } from '../stores/tool.store'
 
 const toolStore = useToolStore()
@@ -14,6 +15,38 @@ const current = computed(() => toolStore.liveOrder.map(id => toolStore.records[i
 const props = defineProps<{ open: boolean }>()   // 卡片「允许此电脑操作」触发打开（非自动弹出——四问必答流，doc 03 §10）
 const open = computed(() => props.open && !!current.value)
 const emit = defineEmits<{ close: [] }>()
+// 批次 C（D6C-05）：第三入口「允许指定目录」仅 read/write awaiting 显示
+const isGrantable = computed(() => !!current.value && (current.value.toolName === 'desktop.file.read' || current.value.toolName === 'desktop.file.write'))
+const openGrantPicker = ref(false)
+const granting = ref(false)                    // L-8：提交期间禁用（防抖）
+const ttlMs = ref<number>(GRANT_DEFAULT_TTL_MS)  // F-18：TTL select 默认 24h
+const grantError = ref('')
+function ttlLabel(t: number): string {
+  if (t === 3600_000) return '1 小时'
+  if (t === 86_400_000) return '24 小时'
+  if (t === 604_800_000) return '7 天'
+  if (t === 2_592_000_000) return '30 天'
+  return String(t)
+}
+function onTtlChange(e: Event): void {
+  ttlMs.value = Number((e.target as HTMLSelectElement).value)
+}
+// 确认授权 → store.grantDirectory(callId, ttlMs) → 成功关闭（emit('close')）；失败保持 open + 错误提示
+async function confirmGrant(): Promise<void> {
+  if (!current.value) return
+  granting.value = true
+  grantError.value = ''
+  try {
+    await toolStore.grantDirectory(current.value.desktopCallId ?? current.value.id, ttlMs.value)
+    openGrantPicker.value = false
+    returnToTrigger()
+    emit('close')
+  } catch (e) {
+    grantError.value = e instanceof Error ? e.message : '授权失败，请重试'
+  } finally {
+    granting.value = false
+  }
+}
 onMounted(() => { document.addEventListener('keydown', onKeydown) })
 onUnmounted(() => { document.removeEventListener('keydown', onKeydown) })
 // M1（fix round 1）：组件在 CyLiveToolCards 内常驻挂载（:open 切换无 v-if）——onMounted 只执行一次且此时
@@ -61,6 +94,19 @@ function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value
       <div class="cy-approval-actions">
         <button ref="denyBtn" type="button" class="cy-btn" data-testid="approval-deny" @click="deny">拒绝</button>
         <button type="button" class="cy-btn cy-btn-approve" data-testid="approval-allow" @click="allow">允许一次</button>
+        <!-- 批次 C（D6C-05）：第三入口「允许指定目录」——仅 read/write awaiting 显示（L-8：提交期间禁用防抖） -->
+        <button v-if="isGrantable" type="button" class="cy-btn cy-btn-grant" data-testid="approval-grant-dir"
+          :disabled="granting" @click="openGrantPicker = true">允许指定目录</button>
+      </div>
+      <!-- 批次 C：grant 选择子面板（F-18：TTL 白名单 select，默认 24h；确认 → store.grantDirectory(callId, ttlMs)） -->
+      <div v-if="openGrantPicker" class="cy-approval-grant-box" data-testid="approval-grant-box">
+        <label class="cy-approval-grant-label" for="grant-ttl">有效期</label>
+        <select id="grant-ttl" data-testid="grant-ttl-select" :value="String(ttlMs)" @change="onTtlChange">
+          <option v-for="t in GRANT_TTL_OPTIONS_MS" :key="t" :value="String(t)">{{ ttlLabel(t) }}</option>
+        </select>
+        <button type="button" class="cy-btn cy-btn-approve" data-testid="approval-grant-confirm" :disabled="granting" @click="confirmGrant">确认授权</button>
+        <button type="button" class="cy-btn" data-testid="approval-grant-cancel" :disabled="granting" @click="openGrantPicker = false">取消</button>
+        <p v-if="grantError" class="cy-approval-grant-error" role="alert">{{ grantError }}</p>
       </div>
     </div>
   </div>
@@ -75,6 +121,11 @@ function deny() { toolStore.decide(current.value!.desktopCallId ?? current.value
 .cy-approval-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
 .cy-btn { padding: 6px 16px; border: 1px solid var(--cy-border); border-radius: 6px; background: var(--cy-bg); cursor: pointer; }
 .cy-btn-approve { border-color: var(--cy-accent, #1a66ff); color: var(--cy-accent, #1a66ff); }
+.cy-btn-grant { border-color: var(--cy-accent-weak, rgba(0,120,255,.45)); color: var(--cy-accent, #1a66ff); }
+.cy-btn:disabled { opacity: .5; cursor: not-allowed; }
+.cy-approval-grant-box { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cy-border); }
+.cy-approval-grant-label { color: var(--cy-text-muted); font-size: 12px; }
+.cy-approval-grant-error { flex-basis: 100%; margin: 2px 0 0; color: var(--cy-danger, #d33); font-size: 12px; }
 .cy-diff-note { color: var(--cy-text-muted); margin: 6px 0; }
 .cy-diff-body { background: var(--cy-bg-sub); padding: 6px; border-radius: 6px; max-height: 240px; overflow: auto; margin: 0; font-size: 12px; white-space: pre-wrap; }
 .cy-diff-added { color: var(--cy-diff-add, #18794e); }

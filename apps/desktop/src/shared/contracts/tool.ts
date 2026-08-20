@@ -26,6 +26,9 @@ export interface ToolCallRecord {
   startedAt?: string
   finishedAt?: string
   attachmentCount?: number          // 附件数（A10）
+  /** F-7（批次 C）：工具事件照常携带的 diff（grant 命中自动执行路径）——终态不清，只读 Diff 卡数据源
+   * （权限窗仍走 pendingDiff 侧信道） */
+  diff?: PublicToolEvent['diff']
 }
 
 /** 差异行（diff 展示，D6B-11） */

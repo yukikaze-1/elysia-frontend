@@ -7,6 +7,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CyModelServicesPane from './CyModelServicesPane.vue'
 import CyVoicePane from './CyVoicePane.vue'
 import CyLive2DPane from './CyLive2DPane.vue'
+import CySecurityPane from './CySecurityPane.vue'
 import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
 import { useVoiceStore } from '../stores/voice.store'
 
@@ -98,6 +99,7 @@ onBeforeUnmount(() => { triggerElement = null })
           <CyModelServicesPane v-if="activeNav === 'model'" />
           <CyVoicePane v-else-if="activeNav === 'voice'" />
           <CyLive2DPane v-else-if="activeNav === 'character'" />
+          <CySecurityPane v-else-if="activeNav === 'security'" />
           <div v-else class="cy-settings-placeholder" role="status">
             <strong>{{ currentNavLabel }}功能页</strong>
             <span>占位：{{ currentNavNote }} 落地</span>

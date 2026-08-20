@@ -123,3 +123,34 @@ describe('toolStore 三来路归一化', () => {
     expect(s.pendingDataFlowNote).toBeNull()
   })
 })
+
+describe('toolStore 批次 C（Task 7：L-2 水合 / F-23 四方法 / F-7 diff 同步）', () => {
+  it('L-2 水合：init 先 await toolList 再订阅事件（F-15 定序）——水合记录归位', async () => {
+    const listEv = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.read', title: '读取文件', runtime: 'desktop' as const, status: 'awaiting_permission' as const, occurredAt: 'x' }
+    setDesktopApi({ toolList: vi.fn().mockResolvedValue([listEv]), onToolEvent: vi.fn().mockReturnValue(() => {}) } as unknown as DesktopApiLike)
+    const store = useToolStore()
+    await store.init()
+    expect(store.records['tc_1']).toMatchObject({ status: 'awaiting_permission' })
+  })
+  it('批次 C：grantDirectory/listGrants/revokeGrant/listHistory 调 api（F-23 命名映射）', async () => {
+    const api2 = { toolGrantDirectory: vi.fn(), toolListGrants: vi.fn().mockResolvedValue([]), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn().mockResolvedValue([]) } as unknown as DesktopApiLike
+    setDesktopApi(api2)
+    const store = useToolStore()
+    await store.grantDirectory('call_1', 86_400_000)
+    expect(api2.toolGrantDirectory).toHaveBeenCalledWith({ callId: 'call_1', ttlMs: 86_400_000 })
+    await store.listGrants()
+    expect(api2.toolListGrants).toHaveBeenCalled()
+    await store.revokeGrant('g1')
+    expect(api2.toolRevokeGrant).toHaveBeenCalledWith('g1')
+    await store.listHistory(50)
+    expect(api2.toolListHistory).toHaveBeenCalledWith(50)
+  })
+  it('F-7：upsertLocal 同步写 record.diff（终态不清——grant 命中只读 Diff 数据源）', async () => {
+    const ev = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.write', title: '写入', runtime: 'desktop' as const, status: 'completed' as const, diff: { lines: [{ kind: 'added' as const, text: 'x\n' }], added: 1, removed: 0, truncated: false, totalLines: 1, formatNote: 'f', isNewFile: false }, occurredAt: 'x' }
+    setDesktopApi({ onToolEvent: vi.fn().mockReturnValue(() => {}) } as unknown as DesktopApiLike)
+    const store = useToolStore()
+    await store.init()
+    store.upsertLocal(ev)
+    expect(store.records['tc_1']?.diff).toEqual(ev.diff)   // 终态记录保留 diff（只读 Diff 卡数据源）
+  })
+})
