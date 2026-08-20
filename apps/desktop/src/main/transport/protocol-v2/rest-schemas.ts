@@ -186,3 +186,16 @@ export function parseRestTtsVoices(input: unknown): { success: true; data: z.inf
 export function parseRestTtsPreview(input: unknown): { success: true; data: z.infer<typeof TtsPreviewResultWireSchema> } | { success: false } {
   return TtsPreviewResultWireSchema.safeParse(input)
 }
+
+// —— 阶段 6 批次 C（D6C-11/BE-043，V-12）：GET /api/tools/calls/{callId} 响应 wire schema——
+// check:contract REST 段以 Node ESM（--experimental-strip-types）直接 import 本文件，mod[path[0]]
+// 解析目标必须是本模块自包含定义：shared/schemas/ipc-response.ts 含别名/无扩展名相对导入，
+// Node 加载器不可解析 → 不能值复导出，按 rest-schemas.ts 惯例（Rest*WireSchema）在此定义镜像副本，
+// 与 ipc-response.ts 的 DesktopCallStatusSchema 同形（严格镜像 frontend_contract/contract.raw.ts:1586-1610，
+// 两处修改需同步）。repo 9 值枚举，非 ToolWireStatus 六态（result→succeeded、error→failed 为后端固定翻译）。
+export const DesktopCallStatusSchema = z.object({
+  callId: z.string(), toolName: z.string(), toolVersion: z.string(), runtime: z.string(), paramHash: z.string(),
+  status: z.enum(['pending', 'accepted', 'running', 'succeeded', 'failed', 'rejected', 'cancelled', 'expired', 'offline']),
+  createdAt: z.string(), expiresAt: z.string(),
+  result: z.record(z.string(), z.unknown()).optional(), error: z.record(z.string(), z.unknown()).optional(),
+}).strict()

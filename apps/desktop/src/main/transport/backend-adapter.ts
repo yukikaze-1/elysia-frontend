@@ -120,6 +120,8 @@ export interface BackendAdapter {
   audioCancel(input: AudioCancelInput): Promise<void>
 
   submitToolResult(input: ToolStatusCommand): Promise<void>
+  /** 批次 C（D6C-11）：查询桌面调用服务端状态（GET /api/tools/calls/{callId}，BE-043）；缺端点/断连/非 2xx → null 降级 */
+  getToolCallStatus(callId: string): Promise<import('@shared/contracts/backend').DesktopCallStatus | null>
   /** 工具附件上传（阶段 6 批次 B Task 5：先 POST /api/uploads/desktop/{callId}（X-Client-Connection 持有者校验）
    *  拿 url 再回填 tool.status attachments，H1——响应仅 {url}，mimeType/label 本地回填） */
   uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>

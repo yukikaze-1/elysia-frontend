@@ -15,6 +15,7 @@ import type {
   MessageContextQuery,
   MessagePage,
   ModelProfileTestResult,
+  DesktopCallStatus,
   ToolStatusCommand
 } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
@@ -814,6 +815,12 @@ export class MockBackend implements BackendAdapter {
   /** 阶段 6 批次 B（Task 5）：工具附件上传 mock 占位 URL（不落盘；url 确定性可断言，real 响应仅 {url} 语义对齐） */
   async uploadToolAttachment(callId: string, _bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment> {
     return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }
+  }
+
+  /** 批次 C（D6C-11/R6）：查询桌面调用服务端状态——mock 无端点，恒 null（记录取舍；
+   *  装配不注入 queryStatus → tool-service reconnect 不查，F-20） */
+  async getToolCallStatus(_callId: string): Promise<DesktopCallStatus | null> {
+    return null
   }
 
   /** 释放定时器(测试清理用) */

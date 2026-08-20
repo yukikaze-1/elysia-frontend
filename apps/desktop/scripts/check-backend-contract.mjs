@@ -169,7 +169,9 @@ const REST_TARGET_MODELS = {
   ProviderTestResult: ['ProviderTestResultWireSchema'],
   TtsVoiceEntry: ['TtsVoiceEntryWireSchema'],
   TtsVoicesResponse: ['TtsVoicesResponseWireSchema'],
-  TtsPreviewResult: ['TtsPreviewResultWireSchema']
+  TtsPreviewResult: ['TtsPreviewResultWireSchema'],
+  // 阶段 6 批次 C（D6C-11，BE-043）：GET /api/tools/calls/{callId} 响应（复导出保证 mod['DesktopCallStatusSchema'] 命中 rest-schemas.ts，V-12）
+  DesktopCallStatus: ['DesktopCallStatusSchema']
 }
 const REST_SCHEMAS = new URL('../src/main/transport/protocol-v2/rest-schemas.ts', import.meta.url)
 

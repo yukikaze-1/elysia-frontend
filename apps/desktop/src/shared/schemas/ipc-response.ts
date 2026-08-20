@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, DesktopCallStatus, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -370,3 +370,13 @@ export const Live2DModelSummarySchema: z.ZodType<Live2DModelSummary> = z.object(
   integrityState: z.enum(['unverified', 'verified', 'failed'])
 })
 export const Live2DListResponseSchema = z.array(Live2DModelSummarySchema)
+
+// —— 阶段 6 批次 C：GET tools/calls 响应 schema（D6C-11，镜像 frontend_contract/contract.raw.ts:1586-1610；
+//    repo 9 值枚举，非 ToolWireStatus 六态——result→succeeded、error→failed 为后端固定翻译；
+//    注：rest-schemas.ts 含同形 Node 自包含镜像副本（check:contract 加载约束），两处修改需同步）——
+export const RepoCallStatusSchema = z.enum(['pending', 'accepted', 'running', 'succeeded', 'failed', 'rejected', 'cancelled', 'expired', 'offline'])
+export const DesktopCallStatusSchema: z.ZodType<DesktopCallStatus> = z.object({
+  callId: z.string(), toolName: z.string(), toolVersion: z.string(), runtime: z.string(), paramHash: z.string(),
+  status: RepoCallStatusSchema, createdAt: z.string(), expiresAt: z.string(),
+  result: z.record(z.string(), z.unknown()).optional(), error: z.record(z.string(), z.unknown()).optional(),
+}).strict()

@@ -15,6 +15,7 @@ import type {
   GetConversationQuery,
   MessageContextQuery,
   MessagePage,
+  DesktopCallStatus,
   ModelProfileTestResult,
   ToolStatusCommand
 } from '@shared/contracts/backend'
@@ -41,6 +42,7 @@ import type {
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper, compareBySortKey, pairToolCalls } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
+import { DesktopCallStatusSchema } from '@shared/schemas/ipc-response'   // 批次 C（D6C-11）：GET tools/calls 响应解析
 import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
 import { VOICE_ERROR_CODES } from '@shared/contracts'
@@ -1158,6 +1160,17 @@ export class RealBackend implements BackendAdapter {
       output: input.output, error: input.error, attachments: input.attachments, executionSummary: input.executionSummary,
     }
     ws.send(JSON.stringify(frame))
+  }
+
+  /** 批次 C（D6C-11/BE-043）：查询桌面调用服务端状态（GET /api/tools/calls/{callId}，restFetch 缺省 GET）。
+   *  断连/非 2xx/解析失败 → null 降级（tool-service reconnect 查询分支消费；任何失败不阻断） */
+  async getToolCallStatus(callId: string): Promise<DesktopCallStatus | null> {
+    if (!this.serverUrl || this.state.status === 'disconnected') return null
+    try {
+      const res = await this.restFetch(`/api/tools/calls/${encodeURIComponent(callId)}`)
+      const parsed = DesktopCallStatusSchema.safeParse(await res.json())
+      return parsed.success ? parsed.data : null
+    } catch { return null }   // 降级：任何失败不阻断
   }
 
   /** 工具附件上传（阶段 6 批次 B Task 5）：multipart POST /api/uploads/desktop/{callId}，

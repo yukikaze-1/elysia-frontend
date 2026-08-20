@@ -147,3 +147,13 @@ export interface ToolStatusCommand {
   attachments?: ToolAttachment[]
   executionSummary?: string
 }
+
+// —— 阶段 6 批次 C（D6C-11，契约 F-2）：GET /api/tools/calls/{callId} 响应——repo 9 值枚举（非 ToolWireStatus 六态！）——
+/** repo 状态枚举（wire `tool.status` 六态翻译固定：result→succeeded、error→failed、rejected/cancelled 同名、
+ *  accepted/running 同名；pending/expired/offline 仅服务端——镜像 frontend_contract/contract.raw.ts:1586-1610） */
+export type RepoCallStatus = 'pending' | 'accepted' | 'running' | 'succeeded' | 'failed' | 'rejected' | 'cancelled' | 'expired' | 'offline'
+export interface DesktopCallStatus {
+  callId: string; toolName: string; toolVersion: string; runtime: string; paramHash: string
+  status: RepoCallStatus; createdAt: string; expiresAt: string
+  result?: Record<string, unknown>; error?: Record<string, unknown>
+}

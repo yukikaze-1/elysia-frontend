@@ -603,3 +603,37 @@ describe('批次 C：grant 目录授权', () => {
     expect(recs).toHaveLength(25)   // 无终态可补足 → 仅非终态
   })
 })
+
+// —— 批次 C（D6C-11/F-4）：reconnect queryStatus 三分支测试放 tool-service.spec（spec §3.8 归属，
+//    复用 mkService/mkReq/FIXTURES；F-1：queryStatus 字段本批次首次加入 ToolServiceDeps）——
+describe('批次 C：reconnect queryStatus 三分支（D6C-11）', () => {
+  it('expired → terminal(timeout) + wire cancelled；cancelled/rejected → terminal(cancelled)；succeeded/null → 保持 awaiting（禁止自动执行）', async () => {
+    const mk = (status: string | null) => mkService({
+      queryStatus: async () => (status === null ? null : { callId: 'call_r', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', paramHash: 'h', status: status as never, createdAt: 'x', expiresAt: 'y' }),
+      grants: mkGrantStore({ matches: () => undefined }),
+    })
+    // 建立 awaiting 记录后调 reconnect()：
+    const { svc: sExp } = mk('expired')
+    await sExp.handleRequest(mkReq({ callId: 'call_r1', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'r1.txt') } }))
+    await sExp.reconnect()
+    expect(sExp.getRecord('call_r1')?.status).toBe('timeout')
+    const { svc: sCan } = mk('cancelled')
+    await sCan.handleRequest(mkReq({ callId: 'call_r2', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'r2.txt') } }))
+    await sCan.reconnect()
+    expect(sCan.getRecord('call_r2')?.status).toBe('cancelled')
+    const { svc: sOk } = mk('succeeded')
+    await sOk.handleRequest(mkReq({ callId: 'call_r3', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'r3.txt') } }))
+    await sOk.reconnect()
+    expect(sOk.getRecord('call_r3')?.status).toBe('awaiting_permission')   // succeeded → 保持本地态（禁止自动执行，doc 02 §16.2）
+    const { svc: sNull } = mk(null)
+    await sNull.handleRequest(mkReq({ callId: 'call_r4', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'r4.txt') } }))
+    await sNull.reconnect()
+    expect(sNull.getRecord('call_r4')?.status).toBe('awaiting_permission')   // null → 保持
+  })
+  it('queryStatus 未注入（undefined）→ reconnect 不查询（mock 装配路径）', async () => {
+    const { svc } = mkService({ grants: mkGrantStore({ matches: () => undefined }) })   // 无 queryStatus
+    await svc.handleRequest(mkReq({ callId: 'call_r5', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'r5.txt') } }))
+    await svc.reconnect()
+    expect(svc.getRecord('call_r5')?.status).toBe('awaiting_permission')   // 不查不动作
+  })
+})

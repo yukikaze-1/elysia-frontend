@@ -8,7 +8,7 @@ import { createExecutors, ToolExecError, type ExecResult } from './tool-executor
 import { computeTextDiff, detectTextFormat } from './text-diff'
 import type { PublicToolEvent, ToolAttachment, ToolCallStatus } from '@shared/contracts/tool'
 import { GRANT_TTL_OPTIONS_MS } from '@shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单（grantDirectory F-3 双校验）
-import type { ToolStatusCommand, ToolWireStatus } from '@shared/contracts/backend'
+import type { ToolStatusCommand, ToolWireStatus, DesktopCallStatus } from '@shared/contracts/backend'
 import type { AuditEvent } from '../diagnostics/audit'
 
 export interface DesktopToolRequest {
@@ -38,6 +38,7 @@ export interface ToolServiceDeps {
   grants?: import('./grant-store').GrantStore      // 批次 C（D6C-04）：grant 仓库（缺省 → 无 grant 面）
   pickDirectory?: (opts: { title: string }) => Promise<{ canceled: boolean; path?: string }>   // D6C-05 创建流注入
   backendIdentity?: () => string | undefined       // F-2：当前连接指纹（grant 创建时绑定；index.ts 懒绑定闭包）
+  queryStatus?: (callId: string) => Promise<DesktopCallStatus | null>   // 批次 C（D6C-11，本 task 首次加入）：GET tools/calls 查询（注入才查；mock 不注入 → 不查，F-20）
 }
 export interface ToolRecord {
   id: string; desktopCallId?: string; toolName: string; title: string
@@ -243,6 +244,17 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       if (['completed', 'failed', 'rejected', 'cancelled', 'timeout'].includes(rec.status) && !rec.statusSent) {
         const wire = toWire(rec.status) ?? 'cancelled'
         void wireSend(rec, wire, rec.attachments?.length ? { attachments: rec.attachments } : {})
+      }
+    }
+    // 批次 C（D6C-11）：awaiting 记录查询服务端状态（注入 queryStatus 才查；mock 不注入 → 不查）
+    if (deps.queryStatus) {
+      for (const rec of records.values()) {
+        if (rec.status !== 'awaiting_permission' || !rec.desktopCallId) continue
+        const st = await deps.queryStatus(rec.desktopCallId).catch(() => null)
+        if (!st) continue   // null/失败 → 保持本地态（禁止自动执行，doc 02 §16.2）
+        if (st.status === 'expired') { terminal(rec, 'timeout', { code: 'EXPIRED', message: '服务端已过期' }, 'timeout', 'cancelled'); continue }
+        if (st.status === 'cancelled' || st.status === 'rejected') { terminal(rec, 'cancelled', undefined, 'backend', 'cancelled'); continue }
+        // succeeded/failed/pending/accepted/running/offline → 保持本地态
       }
     }
   }
