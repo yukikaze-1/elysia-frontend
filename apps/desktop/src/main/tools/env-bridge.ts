@@ -35,3 +35,11 @@ export function parseMockCaptureSourcesEnv(value: string | undefined): Array<{ s
     return out
   } catch { return undefined }
 }
+
+/** CYRENE_MOCK_GRANT_DIRECTORY env → string：mock 模式授权目录（批次 C F-9——单个 JSON 字符串路径，
+ *  非 JSON 数组；undefined/空串/非法 JSON/非非空字符串 → undefined（不注入）。
+ *  仅 mock 模式集成测试使用（装配侧 useMock 门控 M-2——真实模式误设不注入）。 */
+export function parseMockGrantDirectoryEnv(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  try { const p = JSON.parse(value); return typeof p === 'string' && p.length > 0 ? p : undefined } catch { return undefined }
+}

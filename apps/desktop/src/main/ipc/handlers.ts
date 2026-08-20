@@ -23,6 +23,8 @@ import { registerLive2dHandlers } from './live2d-handlers'
 import { registerToolHandlers } from './tool-handlers'
 import type { Live2DModelRegistry } from '../live2d/model-registry'
 import type { ToolService } from '../tools/tool-service'
+import type { GrantStore } from '../tools/grant-store'
+import { readAuditEvents } from '../tools/tool-history'
 import { createIpcHandler } from './executor'
 import { registerHandler } from './registry'
 import { appInfoSchema } from './channels'
@@ -36,6 +38,8 @@ export function registerHandlers(deps: {
   voice: { adapter: BackendAdapter; media: MediaService }
   live2d: { registry: Live2DModelRegistry }
   tools: ToolService
+  grants: GrantStore                 // 批次 C（D6C-12）：目录授权仓库（tool 四新通道数据源）
+  auditDir: string                   // 批次 C（D6C-12）：审计目录（toolHistory 回读）
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -51,5 +55,5 @@ export function registerHandlers(deps: {
   registerSettingsHandlers({ settings: deps.settings.svc, sanitize, logger: deps.logger })
   registerVoiceHandlers({ adapter: deps.voice.adapter, media: deps.voice.media, sanitize, logger: deps.logger })
   registerLive2dHandlers({ registry: deps.live2d.registry, sanitize, logger: deps.logger })
-  registerToolHandlers({ tools: deps.tools, sanitize })
+  registerToolHandlers({ tools: deps.tools, sanitize, grants: deps.grants, history: readAuditEvents, auditDir: deps.auditDir })
 }

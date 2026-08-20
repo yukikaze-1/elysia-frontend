@@ -320,6 +320,21 @@ export const PermissionGrantSchema = z.object({
   revokeSource: z.enum(['user', 'expired']).optional(),
   revokedAt: z.string().optional(),
 }).strict()
+
+// —— 阶段 6 批次 C：grant IPC schemas（D6C-12/F-3；请求侧 zod 双端——Renderer 与 Main 共用）——
+export const GrantTtlOptionsSchema = z.union([z.literal(3600_000), z.literal(86_400_000), z.literal(604_800_000), z.literal(2_592_000_000)])   // F-3：ttl 白名单（镜像 GRANT_TTL_OPTIONS_MS）
+export const GrantDirectorySchema = z.object({ callId: z.string().min(1), ttlMs: GrantTtlOptionsSchema }).strict()
+export const GrantListResponseSchema = z.array(PermissionGrantSchema)
+export const GrantRevokeSchema = z.object({ id: z.string().min(1) }).strict()
+/** 审批历史条目 schema（D6C-08，镜像 contracts/tool.ts `HistoryEntry`——ts/type 必填 + 12 可选公开字段，strict） */
+export const HistoryEntrySchema = z.object({
+  ts: z.string(), type: z.string(), callId: z.string().optional(), toolId: z.string().optional(),
+  status: z.string().optional(), permissionDecision: z.string().optional(), permissionGrantId: z.string().optional(),
+  backendIdentity: z.string().optional(), riskLevel: z.string().optional(), cancelSource: z.string().optional(),
+  errorCode: z.string().optional(), summary: z.string().optional(), toolName: z.string().optional(),
+}).strict()
+export const HistoryResponseSchema = z.array(HistoryEntrySchema)
+export const ToolHistoryQuerySchema = z.object({ limit: z.number().int().positive().max(200).optional() }).strict()   // 上限对齐 HISTORY_MAX
 // grants 字段级 .default([])：顶层 .default() 仅对 input===undefined 生效（SettingsStateSchema 缺 tools 段路径），
 // 字段级 default 使「空 tools 对象（{}）→ 空 grants」也通过（对齐 settings-tools.spec「顶层有 default」断言，
 // 防空对象误判 corrupt 全量重置）。patch 路径仍无 default（ToolsSettingsPatchSchema，IP-1）。

@@ -15,7 +15,7 @@ import type { PublicToolEvent } from '@shared/contracts/tool'
 
 const mockApi = {
   onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(),
-  toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn()
+  toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn()
 } as unknown as DesktopApiLike
 
 beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi) })

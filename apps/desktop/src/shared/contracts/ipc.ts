@@ -57,7 +57,11 @@ export const IpcChannels = {
   toolCancel: 'tool:cancel',                              // 阶段 6 批次 B：取消工具调用（invoke）
   toolList: 'tool:list',                                  // 阶段 6 批次 B：工具公开事件清单（invoke）
   toolPickSource: 'tool:pick-source',                     // 阶段 6 批次 B：屏幕捕获源选择（invoke）
-  toolConfirmUpload: 'tool:confirm-upload'                // 阶段 6 批次 B：捕获预览确认上传（invoke）
+  toolConfirmUpload: 'tool:confirm-upload',               // 阶段 6 批次 B：捕获预览确认上传（invoke）
+  toolGrantDirectory: 'tool:grant-directory',             // 阶段 6 批次 C（D6C-12）：目录授权创建（invoke）
+  toolGrants: 'tool:grants',                              // 阶段 6 批次 C（D6C-12）：授权清单（invoke）
+  toolGrantRevoke: 'tool:grant-revoke',                   // 阶段 6 批次 C（D6C-12）：撤销授权（invoke）
+  toolHistory: 'tool:history'                             // 阶段 6 批次 C（D6C-12）：审批历史回读（invoke）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 

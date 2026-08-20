@@ -24,6 +24,7 @@ import type {
   DictationStartInput,
   DictationStopInput,
   FileValidationResult,
+  HistoryEntry,
   Live2DModelSummary,
   Message,
   MessageContextQuery,
@@ -34,6 +35,7 @@ import type {
   ModelServiceType,
   Page,
   PageQuery,
+  PermissionGrant,
   PersistSessionInput,
   PersistSessionResult,
   RealtimeVoiceControlInput,
@@ -131,4 +133,9 @@ export interface DesktopApiLike {
   toolList(): Promise<PublicToolEvent[]>
   toolPickSource(callId: string, sourceId: string): Promise<void>
   toolConfirmUpload(callId: string): Promise<void>
+  // —— 阶段 6 批次 C 目录授权/审批历史面（Task 6，D6C-12；Renderer 消费为 Task 7）——
+  toolGrantDirectory(input: { callId: string; ttlMs: number }): Promise<void>
+  toolListGrants(): Promise<PermissionGrant[]>
+  toolRevokeGrant(id: string): Promise<void>
+  toolListHistory(limit?: number): Promise<HistoryEntry[]>
 }

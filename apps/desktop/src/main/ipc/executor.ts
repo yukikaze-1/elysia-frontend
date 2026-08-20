@@ -4,6 +4,7 @@ import { type IpcResult } from '@shared/contracts'
 import { CyreneError } from '@shared/errors'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import type { Logger } from '../diagnostics/logger'
+import { ToolServiceError } from '../tools/tool-service'   // 批次 C（Task 6，F-17）：工具域结构化错误上提（tool-service ↔ ipc 单向，无环）
 
 function truncateCodepoints(s: string, max: number): string {
   let count = 0
@@ -54,6 +55,12 @@ export function createIpcHandler<TReq, TRes>(
         if (typeof details.retryAfterMs === 'number') error.retryAfterMs = details.retryAfterMs
         if (typeof details.idempotencyDurable === 'boolean') error.idempotencyDurable = details.idempotencyDurable
         return { ok: false, error }
+      }
+      // 批次 C（Task 6，F-17/V-28）：ToolServiceError 结构化上提——工具域错误码（GRANT_NOT_FOUND/TOOL_STATE_INVALID/
+      // PATH_UNSAFE 等）须穿透 IPC 供 Renderer 展示；非 CyreneError 子类故单独分支；message 同款脱敏截断。
+      if (e instanceof ToolServiceError) {
+        const msg = e.message.length > 65536 ? '<message-too-long>' : truncateCodepoints(options.sanitize(e.message), 500)
+        return { ok: false, error: { code: e.code, message: msg } }
       }
       return { ok: false, error: { code: 'UNKNOWN', message: '内部错误' } }
     }

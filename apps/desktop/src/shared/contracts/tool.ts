@@ -84,3 +84,21 @@ export const GRANT_TTL_OPTIONS_MS = [3600_000, 86_400_000, 604_800_000, 2_592_00
 export type GrantTtlMs = (typeof GRANT_TTL_OPTIONS_MS)[number]
 /** 默认 24h（仅供 UI 默认选中；Main 不接受缺省 ttlMs） */
 export const GRANT_DEFAULT_TTL_MS: GrantTtlMs = 86_400_000
+
+/** 审批历史条目（D6C-08，Task 6 类型镜像）：audit JSONL `tool:*`/`grant:*` 事件回读形状——
+ * IPC toolHistory 响应（Main tool-history.ts 组装，仅公开字段；无原文/Token/敏感路径）。 */
+export interface HistoryEntry {
+  ts: string
+  type: string
+  callId?: string
+  toolId?: string
+  status?: string
+  permissionDecision?: string
+  permissionGrantId?: string
+  backendIdentity?: string
+  riskLevel?: string
+  cancelSource?: string
+  errorCode?: string
+  summary?: string
+  toolName?: string   // 契约 F-5：AuditEvent 扩展后回读携带
+}

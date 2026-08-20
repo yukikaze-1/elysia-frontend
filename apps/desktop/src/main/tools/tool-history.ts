@@ -4,18 +4,13 @@
 // Task 6 handler 可直接 return（ipcMain.handle 接受同步返回值）或 await（对数组 await 为 no-op），两向兼容。
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { HistoryEntry } from '@shared/contracts/tool'   // Task 6 类型镜像：契约类型上移 shared，preload/renderer 共用
+export type { HistoryEntry }
 
 export const HISTORY_DAYS = 7        // F-4：天数边界（readdir 按文件名倒序取最近 N 天）
 export const HISTORY_MAX = 200       // 合并结果总量上限（逐文件流式读满即停）
 
 const AUDIT_DATE_RE = /^audit-(\d{4})-(\d{2})-(\d{2})\.jsonl$/
-
-export interface HistoryEntry {
-  ts: string; type: string; callId?: string; toolId?: string; status?: string
-  permissionDecision?: string; permissionGrantId?: string; backendIdentity?: string
-  riskLevel?: string; cancelSource?: string; errorCode?: string; summary?: string
-  toolName?: string   // 契约 F-5：AuditEvent 扩展后回读携带
-}
 
 export function readAuditEvents(dir: string, opts: { limit?: number; days?: number } = {}, logger?: { warn(msg: string, extra?: Record<string, unknown>): void }): HistoryEntry[] {
   const limit = Math.min(opts.limit ?? HISTORY_MAX, HISTORY_MAX)

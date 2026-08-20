@@ -23,6 +23,7 @@ import type {
   DictationStartInput,
   DictationStopInput,
   FileValidationResult,
+  HistoryEntry,
   Live2DModelSummary,
   Message,
   MessageContextQuery,
@@ -33,6 +34,7 @@ import type {
   ModelServiceType,
   Page,
   PageQuery,
+  PermissionGrant,
   PersistSessionInput,
   PersistSessionResult,
   PublicToolEvent,
@@ -68,6 +70,8 @@ import {
   ConversationSchema,
   EndpointResponseSchema,
   FileValidationResultSchema,
+  GrantListResponseSchema,
+  HistoryResponseSchema,
   Live2DModelSummarySchema,
   MessagePageSchema,
   MessageSchema,
@@ -405,6 +409,21 @@ async function toolConfirmUpload(callId: string): Promise<void> {
   unwrap(await invokeWithArgs<void>(IpcChannels.toolConfirmUpload, { callId }), z.undefined())
 }
 
+// —— 阶段 6 批次 C（Task 6，D6C-12）：目录授权 + 审批历史四 invoke 通道（批次 B 工具面延续；invokeWithArgs + unwrap 惯例）——
+async function toolGrantDirectory(input: { callId: string; ttlMs: number }): Promise<void> {
+  await unwrap(await invokeWithArgs<void>(IpcChannels.toolGrantDirectory, input), z.undefined())
+}
+async function toolListGrants(): Promise<PermissionGrant[]> {
+  // arity 1：恒带 {} 载荷（与 toolList/modelsListProfiles 同款惯例）
+  return unwrap(await invokeWithArgs<PermissionGrant[]>(IpcChannels.toolGrants, {}), GrantListResponseSchema)
+}
+async function toolRevokeGrant(id: string): Promise<void> {
+  await unwrap(await invokeWithArgs<void>(IpcChannels.toolGrantRevoke, { id }), z.undefined())
+}
+async function toolListHistory(limit?: number): Promise<HistoryEntry[]> {
+  return unwrap(await invokeWithArgs<HistoryEntry[]>(IpcChannels.toolHistory, limit === undefined ? {} : { limit }), HistoryResponseSchema)
+}
+
 /**
  * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
  * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
@@ -544,13 +563,18 @@ export const desktopApi = {
   settingsSave,
   // —— 阶段 5 批次 A Live2D 面 ——
   listLive2dModels,
-  // —— 阶段 6 批次 B 工具面 ——
+  // —— 阶段 6 批次 B/C 工具面 ——
   onToolEvent,
   toolDecide,
   toolCancel,
   toolList,
   toolPickSource,
-  toolConfirmUpload
+  toolConfirmUpload,
+  // —— 批次 C（D6C-12）：目录授权 + 审批历史 ——
+  toolGrantDirectory,
+  toolListGrants,
+  toolRevokeGrant,
+  toolListHistory
 }
 
 export type DesktopApi = typeof desktopApi

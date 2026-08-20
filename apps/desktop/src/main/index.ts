@@ -36,7 +36,9 @@ import { Live2DModelRegistry } from './live2d/model-registry'
 import { createToolStatusSender } from './tools/tool-status-sender'
 import { createToolService, type ToolService } from './tools/tool-service'
 import { createToolRegistry } from './tools/tool-registry'
-import { MOCK_THUMBNAIL_DATA_URL, parseMockCaptureSourcesEnv, parseMockToolAllowRootEnv } from './tools/env-bridge'
+import { createGrantStore } from './tools/grant-store'   // 批次 C（D6C-03/06）：目录授权仓库
+import { isPathBlacklisted, normalizeToolPath } from './tools/tool-policy'   // 批次 C（F-4）：grant 目录归一 + 黑名单复核
+import { MOCK_THUMBNAIL_DATA_URL, parseMockCaptureSourcesEnv, parseMockGrantDirectoryEnv, parseMockToolAllowRootEnv } from './tools/env-bridge'
 
 let diagnostics: Diagnostics | undefined
 
@@ -202,15 +204,41 @@ async function main(): Promise<void> {
               : undefined
           })
         })()
+    // —— 阶段 6 批次 C（V-4 HIGH 定案）：SettingsService 上移——批次 C 需在 createToolService 之前装配（GrantStore 构造依赖 settings）——
+    // settings 不依赖 toolSvc（无环）；load 为 eager（save 在内存态上 merge，未装载即 save 会以默认值覆盖已有落盘值）。
+    const settingsSvc = new SettingsService({ dir: dirs.config, safeRoot, logger: diagnostics.logger })
+    await settingsSvc.load() // fail-open：损坏/版本不匹配隔离备份 + 回默认，不阻塞启动
+    // F-4：platform 显式变量（原 toolSvc 内联字面量上提——grantStore normalizeDirectory 与 toolSvc 共用同一平台判定）
+    const platform: 'posix' | 'windows' = process.platform === 'win32' ? 'windows' : 'posix'
+    // —— 批次 C（V-3/F-5）：backendIdentity 同源闭包（GrantStore 与 tool-service 两处注入同一实例）——
+    // real：connConfig 端点 origin（懒求值——connConfig 声明于下方，闭包仅 grant 创建时调用，创建顺序无关无 TDZ）；
+    // mock：固定常量 'mock://local'（F-5——非 origin 语义，new URL('mock://local').origin 是 'null'）；
+    // env CYRENE_MOCK_GRANT_BACKEND_IDENTITY 闭包内每次调用实时读取（V-2 惰性——集成测试中途翻转可观测）
+    const backendIdentity = useMock
+      ? () => (process.env.CYRENE_MOCK_GRANT_BACKEND_IDENTITY ?? 'mock://local')
+      : () => { const u = connConfig.getEndpoint(); return u ? u.origin : undefined }
     // —— 阶段 6 批次 B（Task 6）：Desktop 工具服务装配（Main 权限/执行边界；adapter 构造之后、registerHandlers 之前）——
     // env 桥（**mock 模式专用门控 M-2（批次最终 review）**——真实模式误设 CYRENE_MOCK_* 不注入：
     // 防真实 capture 返回 mock 占位/Wayland 门禁被关/真实模式放行黑名单根；对齐 mockMouthLevel 的 useMock 先例 index.ts:278）
     const toolAllowRoot = useMock ? parseMockToolAllowRootEnv(process.env.CYRENE_MOCK_TOOL_ALLOW_ROOT) : undefined
     const captureSources = useMock ? parseMockCaptureSourcesEnv(process.env.CYRENE_MOCK_CAPTURE_SOURCES) : undefined
+    // 批次 C（D6C-12/F-9）：mock 授权目录 env 桥（单个 JSON 字符串路径；useMock 门控——真实模式误设不注入）
+    const grantDirectoryPath = useMock ? parseMockGrantDirectoryEnv(process.env.CYRENE_MOCK_GRANT_DIRECTORY) : undefined
+    // —— 批次 C（D6C-03/06）：GrantStore 装配（settings.tools.grants 读写 + grant:* 审计 + 黑名单复核）——
+    // settingsSvc 已 eager load（V-4 上移）；normalizeDirectory 目录存在性靠 dialog 只返回存在目录，非法/失败抛 PATH_UNSAFE
+    const grantStore = createGrantStore({
+      settings: settingsSvc,
+      audit,
+      normalizeDirectory: (raw) => normalizeToolPath(raw, { platform }).realPath,
+      isBlacklisted: (real) => isPathBlacklisted(real) && !(toolAllowRoot ?? []).some((r) => real === r || real.startsWith(r + '/')),   // F-3：调用方放宽形态（tool-service.ts:403 同款）
+      backendIdentity,
+      platform,   // V-20：matches 平台门控（win32 toLowerCase / posix 直比）
+      logger: diagnostics.logger,
+    })
     const statusSender = createToolStatusSender({ adapter, audit })
     const toolSvc = createToolService({
       registry: createToolRegistry(),
-      platform: process.platform === 'win32' ? 'windows' : 'posix',
+      platform,
       audit,
       submitStatus: async (cmd) => { const ok = await statusSender.send(cmd); if (!ok) throw new Error('send failed') },
       uploadAttachment: (callId, bytes, mime, label) => statusSender.uploadToolAttachment(callId, bytes, mime, label),
@@ -223,6 +251,16 @@ async function main(): Promise<void> {
             isWayland: false,   // mock 模式不判 Wayland（完整 H3④）
           }
         : {}),
+      // —— 批次 C（D6C-05/12）：目录授权注入 ——
+      grants: grantStore,
+      backendIdentity,
+      pickDirectory: grantDirectoryPath !== undefined
+        ? async () => ({ canceled: false, path: grantDirectoryPath })   // mock：固定授权目录（F-9）
+        : async (opts) => {
+            const r = await dialog.showOpenDialog({ properties: ['openDirectory'], title: opts.title })   // Main 默认：原生目录选择器
+            return { canceled: r.canceled, path: r.filePaths[0] }
+          },
+      queryStatus: useMock ? undefined : (callId) => adapter.getToolCallStatus(callId),   // D6C-11（LOW-2 承接）：real 才注入——reconnect 三分支闭环；mock 不注入 → 不查（F-20）
     })
     toolBridge.svc = toolSvc
     // 工具请求入口（mock 构造注入 / real 可选 setter——都在 adapter 构造之后，无环）
@@ -264,10 +302,7 @@ async function main(): Promise<void> {
       getActiveConversationId: () => chatBridge.svc?.getConnectionState().activeConversationId
     })
     await sessionStore.load() // 损坏隔离，不阻塞启动
-    // 阶段 4 批次 B SettingsService（前端自有设置持久化，spec §5.1；存 dirs.config/settings.json）：
-    // 必须在 registerHandlers 之前装配并 eager load——save 在内存态上 merge，未装载即 save 会以默认值覆盖已有落盘值。
-    const settingsSvc = new SettingsService({ dir: dirs.config, safeRoot, logger: diagnostics.logger })
-    await settingsSvc.load() // fail-open：损坏/版本不匹配隔离备份 + 回默认，不阻塞启动
+    // 阶段 4 批次 B SettingsService：已上移至 createToolService 之前（批次 C V-4 装配顺序——GrantStore 构造依赖，见上）
     const chatSvc = createChatService({
       adapter,
       send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },   // P3:webContents 守卫(窗口未建不崩)
@@ -295,7 +330,7 @@ async function main(): Promise<void> {
     // 阶段 5 批次 A Live2D 模型注册表（spec D5A-07）：扫 dirs.models，manifest+integrity 两级可用性 + fail-closed verify。
     // 纯磁盘只读，无生命周期（懒加载 integrity），registerHandlers 前装配即可。
     const live2dRegistry = new Live2DModelRegistry({ modelsDir: dirs.models })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
