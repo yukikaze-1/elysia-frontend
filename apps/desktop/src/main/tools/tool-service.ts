@@ -177,6 +177,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       status: 'rejected', inputSummary: redactToolArguments(req.arguments), expiresAt: req.expiresAt, arguments_: req.arguments,
       toolVersion: req.toolVersion, statusSent: false, error: { code, message }, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
+    evictIfNeeded()   // LOW-5（review）：reject 新记录也是终态（rejected）——策略拒洪泛不使 records 无上限增长
     void wireSend(rec, 'rejected', { error: { code, message } })   // H1：策略拒也回 wire rejected（spec §3.2 step 13「rejected（deny/策略拒）」）
     audit('tool:terminal', rec, { errorCode: code })
     emit(rec)

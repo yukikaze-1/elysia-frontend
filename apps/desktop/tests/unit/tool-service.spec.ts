@@ -392,9 +392,10 @@ describe('批次 C：grant 目录授权', () => {
     expect(events.some((e) => e.status === 'running')).toBe(true)   // V-15：mkService 返回 { svc, events, ... }——events 为独立数组，svc 无 _events
     expect(events.some((e) => e.diff !== undefined)).toBe(true)
   })
-  it('step 8：grant 匹配优先于 selected-set 豁免（F-8 一致）——真双命中 → allow_scoped（V-9 修复：isExempt 是 selectedSet 查表，须经真实 select 执行器写入）', async () => {
+  it('step 8：grant 匹配优先于 selected-set 豁免（F-8 一致）——真双命中 → allow_scoped（MED-1 修复：select target 预创建使 selectedAdd 真实触发）', async () => {
     const audit = vi.fn()
     const target = join(FIXTURES, 'a.txt')
+    writeFileSync(target, 'x')   // MED-1：select 执行器 stat 需要目标存在（spec:281/287 先例）——否则 ENOENT → selectedAdd 永不触发、isExempt 恒 false
     const g = { id: 'grant-2', toolName: 'desktop.file.read', scope: { directory: FIXTURES }, backendIdentity: 'http://h', expiresAt: Date.now() + 1000, createdAt: 'x', source: 'directory' as const }
     // 先真实 select（automatic → auto → 真实 select 执行器 → selectedAdd 写入 selectedSet——mkService 默认 allowRoots: [FIXTURES] 放行 /tmp）
     const { svc } = mkService({
@@ -402,9 +403,18 @@ describe('批次 C：grant 目录授权', () => {
       grants: mkGrantStore({ matches: () => g }),
     })
     await svc.handleRequest(mkReq({ callId: 'call_sel', sourceCallId: 'tc_sel', toolName: 'desktop.file.select', arguments: {} }))   // N-1：独立 sourceCallId——selectedSet 现含 target
-    // 再发 read（同路径）：isExempt(target) true 且 grant 命中 → 双命中 → 审计 allow_scoped（grant 优先）
+    // 再发 read（同路径）：isExempt(target) true 且 grant 命中 → 真双命中 → 审计 allow_scoped（grant 优先）
     await svc.handleRequest(mkReq({ callId: 'call_2', sourceCallId: 'tc_2', toolName: 'desktop.file.read', arguments: { path: target } }))
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ permissionDecision: 'allow_scoped', permissionGrantId: 'grant-2' }))
+    // 反侧（MED-1 建议 b）：同路径 exempt 命中但无 grant → auto 执行但审计无 allow_scoped（豁免命中不审计——批次 B 基线语义）
+    audit.mockClear()
+    const { svc: svc2 } = mkService({
+      audit, pickFile: async () => ({ canceled: false, path: target }),
+      grants: mkGrantStore({ matches: () => undefined }),
+    })
+    await svc2.handleRequest(mkReq({ callId: 'call_sel2', sourceCallId: 'tc_sel2', toolName: 'desktop.file.select', arguments: {} }))   // selectedSet 含 target
+    await svc2.handleRequest(mkReq({ callId: 'call_3', sourceCallId: 'tc_3', toolName: 'desktop.file.read', arguments: { path: target } }))
+    expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ permissionDecision: 'allow_scoped' }))   // 仅豁免命中 → 无 allow_scoped 审计
   })
   it('step 8：grant 未命中 → 原 prompt 逻辑（awaiting + 权限窗）', async () => {
     const { svc } = mkService({ grants: mkGrantStore({ matches: () => undefined }) })
@@ -445,13 +455,15 @@ describe('批次 C：grant 目录授权', () => {
     expect(svc.getRecord('call_5')?.status).toBe('awaiting_permission')
     expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'tool:decision' }))
   })
-  it('grantDirectory：F-1 picked 目录 ≠ 请求目标 → grant 已建但不执行、保持 awaiting', async () => {
+  it('grantDirectory：F-1 picked 目录 ≠ 请求目标 → grant 已建但不执行、保持 awaiting（LOW-2：add spy 钉「已建」）', async () => {
     const exec = vi.fn()
+    const add = vi.fn(() => g)
     const other = mkdtempSync(join(tmpdir(), 'cy-other-'))
     const g = { id: 'grant-4', toolName: 'desktop.file.read', scope: { directory: other }, backendIdentity: 'http://h', expiresAt: Date.now() + 1000, createdAt: 'x', source: 'directory' as const }
-    const { svc } = mkService({ executorOverride: exec, backendIdentity: () => 'http://h', pickDirectory: async () => ({ canceled: false, path: other }), grants: mkGrantStore({ add: () => g, matches: () => undefined }) })
+    const { svc } = mkService({ executorOverride: exec, backendIdentity: () => 'http://h', pickDirectory: async () => ({ canceled: false, path: other }), grants: mkGrantStore({ add, matches: () => undefined }) })
     await svc.handleRequest(mkReq({ callId: 'call_6', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'a.txt') } }))
     await svc.grantDirectory('call_6', GRANT_TTL_OPTIONS_MS[1])
+    expect(add).toHaveBeenCalled()   // grant 已建（F-1 语义：授权目录已落，仅本次请求不执行）
     expect(exec).not.toHaveBeenCalled()
     expect(svc.getRecord('call_6')?.status).toBe('awaiting_permission')
   })
@@ -478,14 +490,24 @@ describe('批次 C：grant 目录授权', () => {
     await svc2.grantDirectory('call_10', GRANT_TTL_OPTIONS_MS[1])
     expect(add2).not.toHaveBeenCalled()
   })
-  it('grantDirectory：F-6 定时器清理 + N-1 dialog 挂起期间 expire → 不执行仅一次终态（F-6 符合性）', async () => {
+  it('grantDirectory：黑名单目录拒（LOW-1——add 抛 PATH_BLOCKLISTED 传播 + 不执行）', async () => {
+    const exec = vi.fn()
+    const add = vi.fn(() => { throw new ToolServiceError('PATH_BLOCKLISTED', '目录在黑名单中，无法授权') })
+    const { svc } = mkService({ executorOverride: exec, backendIdentity: () => 'http://h', pickDirectory: async () => ({ canceled: false, path: '/etc' }), grants: mkGrantStore({ add, matches: () => undefined }) })
+    await svc.handleRequest(mkReq({ callId: 'call_bl2', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'a.txt') } }))
+    await expect(svc.grantDirectory('call_bl2', GRANT_TTL_OPTIONS_MS[1])).rejects.toMatchObject({ code: 'PATH_BLOCKLISTED' })
+    expect(exec).not.toHaveBeenCalled()   // 不执行
+    expect(svc.getRecord('call_bl2')?.status).toBe('awaiting_permission')   // 保持 awaiting
+  })
+  it('grantDirectory：F-6 定时器清理 + N-1 dialog 挂起期间 expire → 不执行仅一次终态 + grant 不建（LOW-3：add spy 钉「不建」）', async () => {
     const audit = vi.fn()
     let resolvePick!: (v: { canceled: boolean; path?: string }) => void
     const pick = new Promise<{ canceled: boolean; path?: string }>((r) => { resolvePick = r })
     const g = { id: 'grant-5', toolName: 'desktop.file.read', scope: { directory: FIXTURES }, backendIdentity: 'http://h', expiresAt: Date.now() + 1000, createdAt: 'x', source: 'directory' as const }
+    const add = vi.fn(() => g)
     // N-2 修复：matches 恒 undefined（grant 无需在 handleRequest 命中——否则记录即 auto 执行、awaiting 定时器永不设置）；
     //   add mock 保留（grantDirectory 授权流经 add → 但 dialog 后 status 复核（N-1）在 matches 前已返回，matches 不被授权流使用）
-    const { svc, events } = mkService({ audit, backendIdentity: () => 'http://h', pickDirectory: () => pick, grants: mkGrantStore({ add: () => g, matches: () => undefined }) })
+    const { svc, events } = mkService({ audit, backendIdentity: () => 'http://h', pickDirectory: () => pick, grants: mkGrantStore({ add, matches: () => undefined }) })
     await svc.handleRequest(mkReq({ callId: 'call_n1', sourceCallId: 'tc_n1', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'a.txt') }, expiresAt: Date.now() + 50 }))   // 短 TTL
     const p = svc.grantDirectory('call_n1', GRANT_TTL_OPTIONS_MS[1])   // dialog 挂起
     await new Promise((r) => setTimeout(r, 100))   // 等 expiresAt 定时器触发（expire → timeout 终态）
@@ -493,6 +515,7 @@ describe('批次 C：grant 目录授权', () => {
     await p
     const rec = svc.getRecord('call_n1')!
     expect(['timeout', 'cancelled']).toContain(rec.status)   // 已终态（不复活）
+    expect(add).not.toHaveBeenCalled()   // LOW-3：N-1「grant 不建」语义钉住（dialog 后 status 复核在 add 前返回）
     // 仅一次终态：events 中终态事件（cancelled/timeout）只出现一次（V-15：events 为 mkService 返回的独立数组）
     const term = events.filter((e) => ['cancelled', 'timeout', 'completed', 'failed', 'rejected'].includes(e.status ?? ''))
     expect(term).toHaveLength(1)
@@ -540,16 +563,17 @@ describe('批次 C：grant 目录授权', () => {
     expect(recs.filter((r) => r.status === 'awaiting_permission')).toHaveLength(3)   // awaiting 永不逐出
     expect(recs.length).toBeLessThanOrEqual(200 + 3)   // 终态被逐至 ~200，awaiting 保留
   })
-  it('L-3 run 入口守卫：已终态记录直接拒绝（N-1——终态复活防护，F-6 修复：真实触达守卫）', async () => {
+  it('L-3 run 入口守卫：已终态记录直接拒绝（N-1——终态复活防护，F-6 修复：真实触达守卫；LOW-4：直接断言守卫拒绝而非 .catch 吞掉）', async () => {
     const exec = vi.fn().mockResolvedValue({ output: { cancelled: true }, summary: 'x' })
     const g = { id: 'grant-l3', toolName: 'desktop.file.read', scope: { directory: FIXTURES }, backendIdentity: 'http://h', expiresAt: Date.now() + 1000, createdAt: 'x', source: 'directory' as const }
     // N-2 修复：matches 恒 undefined（记录先停 awaiting + expiresAt 定时器设置——grant 命中会即 auto 执行，timeout 永不发生）
-    const { svc } = mkService({ executorOverride: exec, grants: mkGrantStore({ add: () => g, matches: () => undefined }) })
+    // LOW-4：注入 backendIdentity（否则 N-4 断连早退会吸收守卫缺失——守卫被移除时用例仍绿）；断言 rejects TOOL_STATE_INVALID 钉住入口守卫
+    const { svc } = mkService({ executorOverride: exec, backendIdentity: () => 'http://h', grants: mkGrantStore({ add: () => g, matches: () => undefined }) })
     await svc.handleRequest(mkReq({ callId: 'call_11', sourceCallId: 'tc_11', toolName: 'desktop.file.read', arguments: { path: join(FIXTURES, 'a.txt') }, expiresAt: Date.now() + 50 }))   // 短 TTL
     await new Promise((r) => setTimeout(r, 100))   // expire → timeout 终态
     expect(svc.getRecord('call_11')?.status).toBe('timeout')
-    // grantDirectory 路径（F-1 复核前有 dialog 后 status 复核 + run 入口守卫双层防护）——已终态不复活
-    await svc.grantDirectory('call_11', GRANT_TTL_OPTIONS_MS[1]).catch(() => {})
+    // grantDirectory 入口守卫（rec.status !== 'awaiting_permission' → TOOL_STATE_INVALID）——已终态直接拒绝（不进入 pickDirectory/add/run）
+    await expect(svc.grantDirectory('call_11', GRANT_TTL_OPTIONS_MS[1])).rejects.toMatchObject({ code: 'TOOL_STATE_INVALID' })
     expect(exec).not.toHaveBeenCalled()
     expect(svc.getRecord('call_11')?.status).toBe('timeout')   // 不被覆写为 running
   })
