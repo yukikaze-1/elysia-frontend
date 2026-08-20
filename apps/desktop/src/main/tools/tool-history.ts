@@ -17,7 +17,7 @@ export interface HistoryEntry {
   toolName?: string   // 契约 F-5：AuditEvent 扩展后回读携带
 }
 
-export function readAuditEvents(dir: string, opts: { limit?: number; days?: number } = {}): HistoryEntry[] {
+export function readAuditEvents(dir: string, opts: { limit?: number; days?: number } = {}, logger?: { warn(msg: string, extra?: Record<string, unknown>): void }): HistoryEntry[] {
   const limit = Math.min(opts.limit ?? HISTORY_MAX, HISTORY_MAX)
   const days = opts.days ?? HISTORY_DAYS
   let files: string[]
@@ -36,7 +36,10 @@ export function readAuditEvents(dir: string, opts: { limit?: number; days?: numb
       if (entries.length >= limit) break
       if (!line.trim()) continue
       let raw: Record<string, unknown>
-      try { raw = JSON.parse(line) as Record<string, unknown> } catch { continue }   // 损坏行跳过不崩溃
+      try { raw = JSON.parse(line) as Record<string, unknown> } catch {
+        logger?.warn('history:broken-line', { file })   // spec §3.4：损坏行跳过不崩溃（logger.warn）
+        continue
+      }
       if (typeof raw.type !== 'string' || !(raw.type.startsWith('tool:') || raw.type.startsWith('grant:'))) continue
       entries.push({
         ts: typeof raw.ts === 'string' ? raw.ts : '', type: raw.type,
