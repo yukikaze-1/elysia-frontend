@@ -105,6 +105,8 @@
 
 **落地形状（阶段 4 批次 B）：** `settingsStore` 持有 `SettingsState{version:1, voice, dictation}`（`shared/contracts/voice.ts`）——`voice{enabled, realtimeEnabled, autoReadReply, showCaptions, consentBackendStt, micDeviceId?}` + `dictation{sttProfileId?, insertMode: 'append'|'replace_selection'}`；`hydrate()` 启动装载（失败 fail-open 用默认）、`setVoice`/`setDictation` 本地改 + **500ms 防抖** `api.settingsSave` 持久化（`saveError`/`saved` 供 UI）；`applyDictationInsert(text)` 按 `insertMode` 追加草稿末尾或替换当前选区（D-P4）。持久化落 Main `dirs.config/settings.json`（§8.1），**不是后端契约**（backend 无对应端点）。
 
+> **阶段 6 批次 C 注记（2026-08-21）**：`SettingsState` 增 **`tools: { grants: PermissionGrant[] }`** 子树（契约见 `shared/contracts/tool.ts`；`ToolsSettingsSchema.default({ grants: [] })`，**version 保持 1**——新增可选字段带 default，旧文件无 `tools` → 空 grants，向后兼容不触发损坏重建；`ToolsSettingsPatchSchema` 无默认子 schema（IP-1 先例，防单字段 patch clobber）；`SettingsService.save` 子树 merge 不 clobber voice/live2d）。**GrantStore 边界**：grants 属 **Main 专属**（`main/tools/grant-store.ts`：list/add/revoke/prune/matches + 装载期逐条校验 + 审计 `grant:*` 事件 + save 失败 fail-open（内存生效 + 审计 + 日志））；**settingsStore 不消费 tools 子树**——授权管理 UI 以 `tool:grants`（Main 直读）为权威刷新源（`settings:load` 为 invoke 非推送，grant 变更后设置页组件本地刷新，F-12），与渲染面现状一致。
+
 ### 3.8 `modelServiceStore`
 
 - LLM、STT、TTS 三类 Profile 的公开配置；
@@ -324,6 +326,8 @@ interface PersistedSettingsV2 {
 
 安全策略由 Main 单独持久化，包含沙盒目录、规范化路径黑名单、域名黑名单、权限审批历史和有效授权。Renderer 只获得公开摘要和撤销接口。
 
+> **迁移注记（2026-08-21，阶段 6 批次 C）：** `SettingsState` 增 `tools: { grants: PermissionGrant[] }` 子树（`ToolsSettingsSchema.default({grants: []})`，**version 保持 1**——旧文件无 `tools` 字段走 default 填充空 grants，不触发 `.corrupt` 重建，无迁移脚本）。**GrantStore 边界注记**：grants 读写归 Main `grant-store.ts`（`settings.tools.grants` 是唯一持久化面）；目录授权属**本机受信面**——settings.json 被篡改（形状合法）可注入非黑名单敏感目录 grant，防护 = 黑名单 step 5 恒先拒（`/etc` 注入无效）+ schema strict 只允 read/write + 装载期逐条校验剔除畸形条目（`settings:grant-invalid` 日志）+ 形状失败 corrupt 隔离回默认（grant 全清 fail-safe），「无永久 grant」保证仅在创建流成立（装载期不复查 expiresAt 上限）为接受风险（doc 07 注记 N-8）。Renderer 经 `tool:grants`（只读）+ `tool:grant-revoke`（撤销）交互，settingsStore 不消费 tools（`tool:grants` 为授权管理权威刷新源，F-12）。
+
 ### 8.2 安全凭据
 
 Token 和刷新凭据通过 Main 使用系统安全存储；Renderer 只获得：
@@ -440,6 +444,11 @@ Demo 可以按复杂度选择：
 - 不依赖用户手工清理才能避免无限增长。
 
 ## 14. 验收标准
+
+> **阶段 6 批次 C 注记（2026-08-21）**：settings.tools grants 子树 + GrantStore 边界已落地（见 §3.7/§8.1 注记）——grants 持久化归 Main `settings.json` `tools` 子树（`ToolsSettingsSchema.default({grants: []})`，version 1 向后兼容，无迁移脚本）；授权管理以 `tool:grants`/`tool:grant-revoke` 为交互面，settingsStore 不消费 tools（`tool:grants` 权威刷新源）。
+
+- [x] settings.tools grants 子树落地：`SettingsService.save` 子树 merge 不 clobber voice/live2d，version 1 向后兼容（2026-08-21，批次 C）
+- [x] GrantStore 边界落地：grants 读写归 Main（`grant-store.ts`），Renderer 只经 `tool:grants`/`tool:grant-revoke` 交互，settingsStore 不消费 tools（2026-08-21，批次 C）
 
 - [ ] 各 Store 的事实来源明确；
 - [ ] 同一消息不会在多个 Store 中保存不同副本；

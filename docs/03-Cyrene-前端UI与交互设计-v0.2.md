@@ -339,6 +339,8 @@ Backend 工具若要求用户审批，入口必须写明“批准服务器操作
 
 > **阶段 6 批次 B 注记（2026-08-20）**：工具卡片**双区渲染**已落地——**实时区 `CyLiveToolCards`**（聊天消息列表与输入区之间，数据驱动 `toolStore` 当前会话记录，上限 3 条；`generation.started` 清空，但只清终态记录——`awaiting_permission`/`running` 保留，权限窗不消失）+ **归档区**（`CyMessageBubble` assistant 分支 `.cy-response-cluster` 内按 `message.toolCalls` 渲染只读卡片，历史/回放持久权威，数据源为消息本体不复制到 toolStore）。状态文案落地细节：`requested` 与 `awaiting_permission` 合并显示「等待授权」；桌面卡片 `awaiting_permission` 才显示授权入口（「允许此电脑操作」+ 拒绝按钮，对等权重），非终态显示「取消任务」；backend 卡片零按钮零授权入口（只读）；原始 JSON 仅开发模式脱敏展示（`import.meta.env.DEV` 守卫）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
 
+> **阶段 6 批次 C 注记（2026-08-21）**：写操作经**目录 grant 命中自动执行**时（无确认窗），卡片**只读展示 Diff**（`rec.diff` 在决策链 step 7 恒计算、随 `tool:event` 照常下发：行级「写入内容差异」+「写入内容摘要」（结果行数/字节），**无确认按钮**）——doc 04 §8.3 Diff 可见性要求以只读信息形态保留（F-4）。
+
 ## 10. 权限确认交互
 
 权限窗口必须先回答四个问题：
@@ -366,6 +368,8 @@ P0 操作：
 - 用户关闭窗口后按允许处理。
 
 > **阶段 6 批次 B 注记（2026-08-20）**：权限窗已落地为 `CyToolApproval`——宿主 `CyChatView` 尾部（权限窗只出现在聊天流，`CySettingsView` 不挂），`v-if="toolStore.waitingForApproval"` 显示当前等待记录（tool-service `awaiting_permission` 队列 FIFO 串行弹窗，一次一个）；四问落地：① 做什么（title + description + inputSummary）② 操作哪个资源（**`pathSummary` 展示目标路径**——inputSummary 的 path 键被脱敏为 `<redacted>` 不能用于展示，H-1）③ 为什么（reason 或回退文案）④ 哪些数据发后端（registry `dataFlowNote` 静态文案）。落地要点：**允许一次与拒绝对等权重**、无倒计时自动允许、**关闭窗口 = 拒绝**（doc 07 §10）、写文件附加「取消任务」；**初始焦点在拒绝按钮（安全默认）+ Tab 陷阱 + Esc=拒绝 + 回焦 triggerElement**（CyHistoryViewer 先例）；写文件展示 **Diff 面板（Main 计算后随 `PublicToolEvent.diff` 下发，renderer 不引 jsdiff）+ 新建/覆盖标注 + 格式元信息条（D6B-19 如实标注「将按原文件格式写入：UTF-8 / LF / 末尾换行将补齐」）+ 首 100 行截断提示**；截图**三步交互**：授权确认（权限窗）→ 源选择（缩略图 grid，`captureSources`）→ 预览 + 上传确认（`capturePreview` + `tool:confirm-upload`）。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
+
+> **阶段 6 批次 C 注记（2026-08-21）**：`CyToolApproval` 增**第三操作入口「允许指定目录」**（`data-testid="approval-grant-dir"`，仅 `record.toolName ∈ desktop.file.read/write` 且 `status==='awaiting_permission'` 时显示，与允许一次/拒绝对等权重，doc 04 §7.3「允许指定范围」落地）——点击展开**有效期选择**（`select` 1 小时/24 小时/7 天/30 天，默认 24h；选项消费 `shared/contracts/tool.ts` 的 `GRANT_TTL_OPTIONS_MS`/`GRANT_DEFAULT_TTL_MS` 同一常量）→「确认授权」→ `toolStore.grantDirectory(callId, ttlMs)`（提交期间按钮禁用防双击，L-8）→ 当前请求经 grant 匹配**自动执行**（窗口关闭、卡片转 running）；取消目录选择器/授权失败 → 请求保持 awaiting 态不误判。**写 grant 命中时无确认窗但卡片只读展示 Diff**（F-4，见 §9 注记）。
 
 ## 11. Live2D 区域
 
@@ -410,6 +414,13 @@ P0 操作：
 至少包含沙盒目录、路径黑名单、域名黑名单、权限审批历史、已授权目录、已授权命令模板、授权来源/范围/有效期、撤销操作和当前 Desktop 能力。
 
 黑名单优先级高于沙盒和历史授权。已授权命令必须展示为受控模板及参数范围，不能用模糊的“允许 Shell”开关表示。
+
+> **阶段 6 批次 C 落地（2026-08-21）**：NAV `security` 从占位改真页 **`CySecurityPane`**——**三分区布局**（内部滚动不溢出，CyLive2DPane 布局纪律）：
+> ① **授权管理**（`tool:grants` 直读）：活动 grants 卡片列表（工具名/目录展示摘要（全路径来自 tool:grants——F-7：授权目录非秘密、设置页可见、TTL 有限）/后端（serverUrl origin）/有效期 + 「撤销」按钮 `data-testid="grant-revoke"`；已撤销/已过期**灰显无按钮**（revokeSource 标注）；空态「暂无长期授权。在工具权限确认时选择「允许指定目录」可添加。授权存储在本机，可随时撤销。」）；
+> ② **审批历史**（`tool:history` 只读，`HISTORY_MAX=200`）：按工具（全部/read/write/capture）+ 结果（全部/允许/拒绝/执行成功/执行失败/已取消）过滤 + 搜索框（匹配 summary/toolId）；每项 ts（本地时间）/toolId/toolName/status 徽标/permissionDecision/summary（脱敏，`grant:created` 摘要不含目录路径）/errorCode；`permissionDecision='allow_scoped'` 条目「撤销此授权」**跳转撤销**按钮（permissionGrantId → `tool:grants` 查活动 → 有则 `tool:grant-revoke`）；全部只读不渲染原始参数；空态「暂无审批历史。桌面工具执行记录将在此显示。」；
+> ③ **命令模板空态**（**F-08 关闭**）：「未启用受控命令执行。桌面工具仅包括文件选择/读取/写入与屏幕捕获，不支持任意命令执行。」——无列表无注册入口。
+>
+> **沙盒/黑名单 UI 明确不落地**（D6B-14 常量化注记：仅黑名单零预授权、`PATH_BLACKLIST_DEFAULTS` 为内置常量不进 settings.json、无管理 UI）。
 
 ### 12.6 开发与诊断
 

@@ -424,3 +424,36 @@
 ### 16.3 自动回归
 
 对修订后的 02/03/04/06/07/12/13/16 与决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+## 17. 增量 Review：阶段 6 批次 C 目录授权 + 设置页授权管理同步（2026-08-21）
+
+**触发条件：** doc 13 §9——「修改安全策略或权限模型」与「阶段门槛或验收脚本发生变化」：批次 C 落地 allow_scoped 目录授权（GrantStore / 决策链 step 8 grant 匹配 / 后端身份绑定 / 有效期 / 撤销）、设置页「安全与权限」子页（授权管理 / 审批历史 / 命令模板空态 F-08 关闭）、settings.tools grants 子树、L-1~L-8 收口与 GET /api/tools/calls/{callId} 前端实现。
+
+### 17.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 02 §10.3/§16.2 | repo 状态枚举 9 值表述修正（**非前端 8 态展示态超集**——`result→succeeded`/`error→failed` 后端固定翻译，`requested/awaiting_permission/timeout` 本地态无 repo 对应，`expired` 表达 timeout）；GET tools/calls 前端实现注记（real 已实现 + mock 恒 `null` 降级 + reconnect queryStatus 三分支映射 + 联调复核）；`DesktopCallStatusSchema` 经 rest-schemas.ts 自包含导出（V-12，check:contract REST 段 15→16） |
+| 03 §9/§10/§12.5 | CyToolApproval 第三入口「允许指定目录」+ TTL select（1h/24h/7d/30d 默认 24h，消费 `GRANT_TTL_OPTIONS_MS` 同一常量，F-10 一致）；写 grant 命中只读 Diff 卡（F-4）；CySecurityPane 三分区布局（授权管理 / 审批历史 / 命令模板空态）——沙盒/黑名单 UI 明确不落地 |
+| 04 §7.2/§7.3/§7.4/§8.3/§14 | 授权范围落地（目录授权+有效期+撤销+后端身份绑定 serverUrl origin）；§7.3 「允许指定目录」入口 + 目录选择器 + 黑名单目录不可授权；§7.4 `PermissionGrant` 形状改写对照（字段对照表 + 「参数限制」降级为「目录范围约束」决策记录）+ 授权记录（settings.tools.grants + grant:* 生命周期审计 `grant:created/revoked/expired`）+ 决策链 step 8 grant 匹配（grant 优先于豁免 F-8、黑名单优先、capture 恒确认）；§8.3 补注（grant 命中自动执行 Diff 只读随 tool:event 下发、无确认按钮，F-19）+ 新文件写 TOCTOU 守卫；§14 审批历史查看器落地（audit JSONL 回读 + 过滤/搜索/跳转撤销 F-21）+ AuditEvent 扩展（`permissionGrantId`/`toolName`/`backendIdentity` + `permissionDecision` 增 `allow_scoped`） |
+| 06 §3.7/§8.1/§14 | settings.tools grants 子树（`ToolsSettingsSchema.default({grants:[]})` version 1 向后兼容、patch 无默认子 schema IP-1、save merge 不 clobber）+ GrantStore 边界注记（settingsStore 不消费 tools，`tool:grants` 权威刷新源 F-12；settings.json 篡改即全量失守 N-8） |
+| 07 §9 | 目录授权安全（后端身份绑定——切换端点 grant 失效 F-2 / `tool:grants` 全路径暴露面 F-7 / backendIdentity（origin）进入 audit JSONL/tool:history 暴露注记 V-4 / 黑名单优先 step 8 / 目录段边界 / 有效期强制（ttl 白名单双校验）/ 历史脱敏 F-5 / settings.json 篡改即全量失守 N-8 / renderer 可撤销 grant 接受档 F-8） |
+| 11 §1/§4/§5/§6 | 「安全与权限」子树改写为授权管理（grants）/审批历史/命令模板空态——沙盒/黑名单 UI 明确不落地（D6B-14 常量化注记） |
+| 12 §4/§9.7 | **F-08 关闭**（命令模板空态确认，受控命令不进入 Demo，§4.6 勾选 `[x]`）；§9.7 批次 C 状态注记（三态=已开发、未联调，真实联调归开发者批次后） |
+| 16 §9 + changelog | F-6 批次 C 状态行 + 任务勾选（授权管理/目录授权/IPC 四通道/L 收口+GET tools/calls）+ 2026-08-21 changelog 行（实测 1847 单测（142 files）+ 111 集成（17 files），最终以 CLAUDE.md 主会话统一为准） |
+| 决策记录 | `docs/review/2026-08-20-阶段6批次C-决策记录.md`（D6C-01~13 + 预检拍板 + Rulings + 门禁 + 验收结论） |
+| README / CLAUDE.md | 阶段 6 批次 C 落地状态一句话 + 三态标记（已开发、未联调）+ 计数（以主会话最终更新为准） |
+
+### 17.2 交叉 Review 结论
+
+- **wire 契约不变**：批次 C 不改 raw wire（`rawSchemasFingerprint()` 不变 → 13 组 manifest 不刷新）；check:contract 增量仅 REST 段 `DesktopCallStatus` 入 `REST_TARGET_MODELS`（15→16，V-14）；
+- **权限模型收敛**：`PermissionGrant` 落地形状（`{id, toolName, scope:{directory}, backendIdentity, expiresAt:number, source, revokeSource?}`）取代设计期 `subject/subjectId/toolNames[]/argumentConstraints?` 形状——「参数限制」降级为「目录范围约束」（grant 不约束 write content 参数），字段对照表入 doc 04 §7.4；决策优先级「有效范围授权」档由决策链 step 8 grant 匹配实现（黑名单 step 5 恒先拒、grant 匹配优先于 selected-set 豁免（双命中 → 审计 allow_scoped）、capture 恒确认、撤销/过期只影响后续匹配 F-13）；
+- **后端身份绑定（F-2，HIGH 修复）**：grant 绑定授权时连接指纹（`new URL(serverUrl).origin`），切换端点 → 不匹配 fail-safe 落 prompt（doc 04 §7.2「后端身份」硬性要求本批落实，不留联调待定）；token 变更不失效为已知语义（契约 F-4）；
+- **三态 = 已开发、未联调**（真实 Windows Electron 联调 + GET tools/calls 真实链路验证归开发者批次后）——**不触发全量交叉 Review 重跑**，联调通过后做收口 Review；
+- **信任边界无放宽**：grant 创建/撤销/匹配全在 Main；`tool:grant-directory` 只送 `{callId, ttlMs}`（目录选择在 Main，黑名单目录不可授权）；`tool:history` 只读脱敏（summary 已 `redactSensitiveValues`，不渲染原始参数）；`grant:created` 审计不含目录绝对路径（F-5，目录仅存 settings.tools.grants 与 `tool:grants`）；renderer 可任意撤销 grant 为已记录接受风险（F-8，M-8 同档，仅骚扰级无权限提升）；settings.json 篡改即全量失守为已记录接受（N-8，防护 = 黑名单 step 5 恒先拒 + strict 枚举只允 read/write + 装载期逐条校验 + corrupt 隔离回默认）。
+
+### 17.3 自动回归
+
+对修订后的 02/03/04/06/07/11/12/13/16 与 README/CLAUDE.md、决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+> 说明：本次为阶段 6 批次 C 落地的文档同步增量 Review，未重跑完整交叉 Review（真实 Windows Electron 联调、后端 GET /api/tools/calls 真实链路验证仍待开发者批次后）；批次 C 代码批三态 = 已开发、未联调。

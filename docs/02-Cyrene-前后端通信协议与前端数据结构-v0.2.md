@@ -4,9 +4,11 @@
 **文档状态：** 已按后端交接包（frontend-handoff-v2 **批次 7 时点**）填写 §19 对齐表 / 待真实事件联调确认；**注意：后端 local main 已领先至批次 8a/8b/8c（`frontend_contract` 单源），批次 7 交接包已归档仅参考**——新旧差异与真实后端契约审计见 `docs/18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md`
 **适用范围：** Electron 客户端与现有 Agent 后端  
 **文档日期：** 2026-08-03
-**最后复核日期：** 2026-08-16
+**最后复核日期：** 2026-08-21
 
 > 本文定义前端需要的稳定语义，不宣称现有后端已经使用相同 URL 或字段名。接入时由 `BackendAdapter` 把现有后端协议映射为本文的前端领域事件。
+
+> **阶段 6 批次 C 同步（2026-08-21）：** §10.3 修正 `GET /api/tools/calls/{callId}` repo 状态枚举表述（**repo 9 值枚举非前端展示 8 态超集**——`result→succeeded`/`error→failed` 为后端固定翻译，`requested/awaiting_permission/timeout` 为本地态无 repo 对应）；§16.2 补 GET tools/calls 前端实现注记（real 已实现 + mock 降级 + reconnect 三分支映射，联调复核；`DesktopCallStatusSchema` 经 rest-schemas.ts 自包含导出，check:contract REST 段 15→16）。
 
 > **阶段 4 批次 B（2026-08-16）同步：** §13.1 音频传输（BINARY 上行 + TTS base64 JSON 帧）、§13.2 直接语音、§13.3 输入法转写、§13.4 TTS 播放与 §19 语音行已按实际实现更新（领域契约以 `shared/contracts/voice.ts` / `events.ts` 为准）。语音链路为 Mock 驱动，标「**已开发、未联调**」；真实 Windows Electron（REAL）联调为验收方。`voice.error` 语音族错误路由（D-P15）、`dictation.start.sttProfileId`（D-P14）、后端 STT 一次性同意（D-P16）为本批新增口径。
 
@@ -527,7 +529,7 @@ interface ToolResult {
 - 四个 P0 Desktop 工具已注册（`desktop.file.select/read/write` + `desktop.screen.capture`，`runtime="desktop"`、`approvalAuthority="client"`）；**`desktop.command.run` 未注册**——与本项目范围一致；
 - Server→Client 请求 wire `tool.request{callId, toolName, toolVersion, runtime, arguments, reason?, riskLevel(safe/medium/high), permissionRequired, approvalAuthority, paramHash, expiresAt, requestId?}`；`paramHash` = 规范化 `arguments` 的 SHA-256，**Electron 回传时不得篡改**（不一致后端即拒绝）；
 - Client→Server 回传 `tool.status{callId, status(accepted/rejected/running/result/error/cancelled), toolName, toolVersion, runtime, paramHash, output?, error?, attachments?, executionSummary?}`；`result`/`error`/`rejected`/`cancelled` 为终态，`accepted`/`running` 仅推进状态；桌面附件先 `POST /api/uploads/desktop/{callId}` 上传（带 `X-Client-Connection` 头）再回填 `attachments[]`；
-- 状态查询 `GET /api/tools/calls/{callId}` → `DesktopCallStatus`，repo 枚举比前端 `ToolCall.status` 多 `expired/offline`（服务端半终态）；`timeout` 语义后端以 `expired` 表达；
+- 状态查询 `GET /api/tools/calls/{callId}` → `DesktopCallStatus`——**repo 9 值枚举** `pending/accepted/running/succeeded/failed/rejected/cancelled/expired/offline`，**不是前端 `ToolCall.status` 8 态展示态的超集**（`result→succeeded`、`error→failed` 为后端固定翻译；前端 `requested/awaiting_permission/timeout` 为本地态，无 repo 对应；`expired` 表达 `timeout` 语义）；`DesktopCallStatusSchema`（`.strict()` 镜像 `frontend_contract/contract.raw.ts`）+ `DesktopCallStatus` 类型经 `main/transport/protocol-v2/rest-schemas.ts` **自包含导出**（check:contract REST 段解析目标，REST 段 15→16）。**前端实现注记（阶段 6 批次 C，2026-08-21）**：`RealBackend.getToolCallStatus(callId)` 已实现（GET + Bearer + `safeParse`；缺省端点/连接断开/非 2xx/解析失败 → `null` 降级）；`MockBackend.getToolCallStatus` 恒 `null`（无端点，取舍记录）；tool-service `reconnect()` 对 awaiting 记录经注入 `queryStatus` 回调查询（mock 装配不注入 → 不查），映射定案：`expired→timeout`、`cancelled/rejected→cancelled`、其余/`null→保持本地态`（禁止自动执行）；真实链路联调验证归开发者批次后；
 - 注册表 `GET /api/tools` → `ToolRegistryResponse{tools: ToolMetadata[], desktopAvailable}`，Electron 据此校验「只接受已注册工具和版本」；
 - **后端审批** `tool_approval`（v1 后端工具）仅 v2 连接带 enrich 字段；Desktop 工具不走 `tool_approval`，由 Electron 本地授权（§10.2 语义不变）。
 
@@ -893,6 +895,8 @@ idle → connecting → connected
 - generation 在途/终态状态可经 `GET /api/sessions/{id}/generations` / `GET /api/generations/{gid}` 查询；
 - 待授权工具调用重连后先经 `GET /api/tools/calls/{callId}` 查询状态，禁止自动执行；重连**不自动重投**执行请求（防重复副作用），仅可查/可重传 result；
 - Main 进程重启后不恢复未经用户重新确认的高风险操作。
+
+> **阶段 6 批次 C 注记（2026-08-21）**：`GET /api/tools/calls/{callId}` 前端实现已落地——real 侧 `RealBackend.getToolCallStatus`（`DesktopCallStatusSchema` 解析，repo 9 值枚举与 `rest-schemas.ts` 导出见 §10.3；缺省端点/连接断开/非 2xx/解析失败 → `null` 降级）、mock 侧恒 `null`（无端点）、tool-service `reconnect()` 对 `awaiting_permission` 记录经注入 `queryStatus` 回调查询（mock 装配不注入 → 不查）；映射定案：`expired→timeout`、`cancelled/rejected→cancelled`、其余/`null` → **保持本地状态**（禁止自动执行，纪律延续「重连不自动重投」）；真实链路联调验证归开发者批次后。
 
 ## 17. 前端事件处理规则
 
