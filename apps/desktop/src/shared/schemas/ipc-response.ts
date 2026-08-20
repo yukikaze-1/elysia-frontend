@@ -326,7 +326,7 @@ export const GrantTtlOptionsSchema = z.union([z.literal(3600_000), z.literal(86_
 export const GrantDirectorySchema = z.object({ callId: z.string().min(1), ttlMs: GrantTtlOptionsSchema }).strict()
 export const GrantListResponseSchema = z.array(PermissionGrantSchema)
 export const GrantRevokeSchema = z.object({ id: z.string().min(1) }).strict()
-/** 审批历史条目 schema（D6C-08，镜像 contracts/tool.ts `HistoryEntry`——ts/type 必填 + 12 可选公开字段，strict） */
+/** 审批历史条目 schema（D6C-08，镜像 contracts/tool.ts `HistoryEntry`——ts/type 必填 + 11 可选公开字段，strict） */
 export const HistoryEntrySchema = z.object({
   ts: z.string(), type: z.string(), callId: z.string().optional(), toolId: z.string().optional(),
   status: z.string().optional(), permissionDecision: z.string().optional(), permissionGrantId: z.string().optional(),

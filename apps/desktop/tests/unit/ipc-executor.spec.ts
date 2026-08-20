@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { createIpcHandler } from '../../src/main/ipc/executor'
 import { CyreneError, CyreneErrorCode } from '../../src/shared/errors'
+import { ToolServiceError } from '../../src/main/tools/tool-service'   // 批次 C（Task 6 review LOW-3）：工具域结构化错误上提直测
 
 const sanitize = (m: string): string => m.replace(/\/home\/alice/g, '~')
 const noopSanitize = (m: string): string => m
@@ -73,5 +74,20 @@ describe('createIpcHandler', () => {
     const handler = createIpcHandler(z.undefined(), z.unknown(), fn, { sanitize: (s: string) => s })
     const res = await handler(undefined)
     if (!res.ok) expect(res.error.backendCode).toBe('BAD_FRAME')
+  })
+  it('批次 C（Task 6 review LOW-3）：fn 抛 ToolServiceError → code 原样上提 + message 经 sanitize（GRANT_NOT_FOUND/TOOL_STATE_INVALID 穿透）', async () => {
+    const h = createIpcHandler(z.undefined(), z.undefined(), () => { throw new ToolServiceError('GRANT_NOT_FOUND', 'grant 不存在') }, { sanitize: noopSanitize })
+    const res = await h(undefined)
+    expect(res.ok).toBe(false)
+    if (!res.ok) {
+      expect(res.error.code).toBe('GRANT_NOT_FOUND')   // 工具域错误码原样上提（F-17/V-28——非 CyreneError 时不再落 UNKNOWN）
+      expect(res.error.message).toBe('grant 不存在')
+    }
+    const h2 = createIpcHandler(z.undefined(), z.undefined(), () => { throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 不在等待授权态') }, { sanitize })
+    const res2 = await h2(undefined)
+    if (!res2.ok) {
+      expect(res2.error.code).toBe('TOOL_STATE_INVALID')
+      expect(res2.error.message).toBe('callId 不在等待授权态')   // 无敏感路径字样（sanitize 无命中）
+    }
   })
 })
