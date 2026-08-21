@@ -4,8 +4,8 @@
 // ② dev-mode-set（§9 明列：app.evaluate 读 BrowserWindow webContents.isDevToolsOpened() 轮询 true→false——
 //    符合性 M-4：恢复断言而非静默降级；detach 窗口 xvfb 可创建）+ 审计 dev:mode-changed
 // ③ clear-logs（state.lastCleanup 回显 + 审计 diagnostics:logs-cleared——计划 review MED-3 后半布线要求）
-// ④ export（harness 落 dirs.temp 固定名 + manifest F-C1 五字段（exportedAt/appName/appVersion/packaged/mode）
-//    + 黑名单 0 命中（复用 verify:sensitive 黑名单核心——第 8 条类别级规则排除，结构哈希非秘密命中面）
+// ④ export（harness 落 dirs.temp 固定名 + manifest F-C1 五字段（exportedAt / appName / appVersion /
+//    packaged / mode）+ 黑名单核心 0 命中（复用 verify:sensitive 黑名单核心——第 8 条类别级规则排除，结构哈希非秘密命中面）
 //    + truncated 标志 + 段级 sha 与顶层同值 + 审计 diagnostics:exported）
 import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import { readFileSync } from 'fs'
