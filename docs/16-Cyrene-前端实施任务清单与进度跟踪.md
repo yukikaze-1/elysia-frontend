@@ -359,6 +359,7 @@
 
 > **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A/B 已落地）：** 工具双轨统筹决策与前后端更新点见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；**后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push**——push 后前端 pull 再动 `check:contract` manifest）。核心口径：wire 双轨（Desktop `tool.request/tool.status`；Backend 新增 `tool.started/tool.completed`）→ 前端领域单轨 `ToolCallRecord`；权威键 = LLM `tool_call_id`（`sourceCallId`）；实时 `toolStore` 易失、归档（assistant `tool_calls` + role=tool 结果）为历史/回放持久权威；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。旧后端 `action` 帧按「已知忽略」兼容帧过渡，不作工具状态源。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**F-6 批次 B（Main 工具注册表/服务/四执行器/状态发送/审计 + Preload IPC 面 + toolStore/卡片/权限窗/聊天接线/Live2D `waiting_permission` + mock 改接 + 集成测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**——F-06/F-07/F-09/F-10 预检拍板落地，见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`；**批次 C 前置**：真实 Windows Electron 联调（三态升「已真实联调」）+ allow_scoped 授权 UI/有效期 + 设置页授权管理/命令模板空态（F-08 待确认）+ `GET /api/tools/calls/{callId}` 状态查询 + action 移除评估 + 跨页/跨会话配对复核。
 
+> **阶段 6 真实联调通过注记（2026-08-21）**：真实 Windows Electron + 后端 `03a6e882` 完成清单 §1–§7 全路径（backend 只读卡片 / select·read·write·capture / 权限·黑名单·Diff·冲突 / 目录授权·撤销·历史 / 重连·幂等·超时 / 审计脱敏 / Live2D waiting_permission / 8.3 语音三项真实人声）；收口修复 `corsEnabled:false` 与实时卡会话隔离均真机复验；可选项 1.5/2.8/4.5 按 DEFERRED 记录。验收记录 `docs/review/2026-08-21-阶段6-真实联调验收.md`；**阶段 6 三态升「已真实联调」**（阶段 2/3/4/5 保持）。
 > **批次 C 状态注记（2026-08-21）**：**F-6 批次 C（allow_scoped 目录授权 + 设置页「安全与权限」子页（授权管理/审批历史/命令模板空态）+ settings.tools grants 子树 + L-1~L-8 收口 + GET /api/tools/calls/{callId} real/mock + 装配顺序 V-4）已落地并全量验证（三态=已开发、未联调）**；**F-08 关闭**（命令模板空态确认，受控命令不进入 Demo）；L-5/M-1/M-3 留档（paramHash 浮点评估无代码改动 / M-1 确认 / M-3 否决）+ 新文件写 TOCTOU 守卫；评估结论记录（action 保留至阶段 8 / 跨页配对不适用（历史基于 audit 事件）/ M-8 保留 in-Renderer / renderer 可撤销 grant 接受 F-8）；决策记录 `docs/review/2026-08-20-阶段6批次C-决策记录.md`；**真实 Windows Electron 联调由开发者批次后执行，联调清单见 `docs/review/2026-08-21-阶段6-工具与权限-真实联调清单.md`**（通过后三态升「已真实联调」）。
 
 ### 任务清单
@@ -382,16 +383,16 @@
 
 ### 验收门槛
 
-- [ ] Backend 工具只展示，不会在客户端误执行
-- [ ] Desktop 工具只通过 Main 与本地注册表执行
-- [ ] 四个 Desktop P0 工具 ID 完成真实后端闭环（Mock 阶段标“已开发、未联调”）
-- [ ] 未注册、未知 Runtime、版本不兼容与非法参数均安全失败
-- [ ] 黑名单优先于沙盒与历史授权
-- [ ] 相同 `callId` 不重复弹窗或产生副作用
-- [ ] 用户拒绝/关闭/超时后不执行；文件冲突不覆盖；截图不静默采集或上传
-- [ ] `tool.request.sourceCallId` 必填且与 `tool.started/completed.callId`、归档 `tool_call_id` 同值；缺 `sourceCallId` 或回传安全元数据不一致按协议错误拒绝
-- [ ] 命令执行未确认时不注册；启用时也不能接收任意 Shell 字符串
-- [ ] 审计与日志不含完整敏感内容
+- [x] Backend 工具只展示，不会在客户端误执行（真实联调 1.1/7.5 通过）
+- [x] Desktop 工具只通过 Main 与本地注册表执行（真实联调 2/3/4 通过）
+- [x] 四个 Desktop P0 工具 ID 完成真实后端闭环（真实联调通过：select/read/write/capture 全部走真实后端）
+- [x] 未注册、未知 Runtime、版本不兼容与非法参数均安全失败（代码门禁 + 真机黑名单/参数拒）
+- [x] 黑名单优先于沙盒与历史授权（真实联调 2.7/3.5/5.4 通过）
+- [x] 相同 `callId` 不重复弹窗或产生副作用（真实联调 6.2/6.3 通过）
+- [x] 用户拒绝/关闭/超时后不执行；文件冲突不覆盖；截图不静默采集或上传（真实联调 2.6/3.3/3.4/4.2/4.4/6.4/6.5 通过）
+- [x] `tool.request.sourceCallId` 必填且与 `tool.started/completed.callId`、归档 `tool_call_id` 同值；缺 `sourceCallId` 或回传安全元数据不一致按协议错误拒绝（真实联调 1.3/1.4 通过）
+- [x] 命令执行未确认时不注册；启用时也不能接收任意 Shell 字符串（F-08 关闭）
+- [x] 审计与日志不含完整敏感内容（真实联调 7.3 扫描通过）
 
 ---
 
@@ -517,3 +518,4 @@
 | 2026-08-21 | **阶段 6 批次 C（allow_scoped 目录授权 + 设置页授权管理 + 命令模板空态 + 复核项收口）已落地并全量验证（三态=已开发、未联调）**：settings.tools grants 子树（`PermissionGrant` 契约含 backendIdentity、`ToolsSettingsSchema.default({grants:[]})` version 保持 1、`SettingsService.save` 子树 merge）+ GrantStore（list/add/revoke/prune/matches + `grant:*` 审计（summary 无目录路径含 backendIdentity，F-5）+ 黑名单复核 + realpath 归一 + 段边界 + 身份匹配 + 幂等 N-6 + 装载期校验 N-8）+ tool-service 决策链 step 8 grant 匹配（grant 优先于豁免、黑名单优先、capture 恒确认、写命中只读 Diff F-4）+ 「允许指定目录」创建流（CyToolApproval 第三入口 + TTL select + `pickDirectory` 注入 + ttl 白名单双校验 F-3 + 断连不创建 + run 入口守卫）+ CySecurityPane 三分区（授权管理/审批历史（`tool:history` audit JSONL 回读、过滤搜索、跳转撤销 F-21）/命令模板空态 **F-08 关闭**）+ IPC 四通道（grant-directory/grants/grant-revoke/history）zod 双端 + L-1~L-8 收口（records 驱逐/init 水合先水合后订阅 F-15/run 入口守卫/tool.request try-catch/diff 截断 L-6/confirmUpload 顺序 L-7/decide.catch L-8）+ M-1 确认/M-3 否决 + 新文件写 TOCTOU 守卫 + GET /api/tools/calls/{callId} real 实现（`DesktopCallStatusSchema` repo 9 值 + rest-schemas.ts 导出 V-12，check:contract REST 段 15→16）+ mock 恒 `null` 降级 + reconnect queryStatus 三分支 + 装配顺序 V-4（settingsSvc 先于 toolSvc）；门禁：**1847 单测（142 files）**（实测）+ **111 集成（17 files）**（实测，electron-tools 增 7 用例）+ typecheck/lint/build + check:contract（WS 32/32 + 8 未纳 warn + REST 15/16，**manifest 未刷新**）全绿——**计数最终值以 CLAUDE.md 主会话统一为准**；决策记录 `docs/review/2026-08-20-阶段6批次C-决策记录.md`；**批次后前置**：真实 Windows Electron 联调（三态升「已真实联调」） | 已开发、未联调（批次 C 代码批完成，联调归开发者批次后） |
 | 2026-08-21 | **阶段 6 真实联调条件复核 + 联调清单落盘（文档批次）**：前端 HEAD `1cc1d28` 独立复跑门禁全绿（1849 单测（142 files）/ 111 集成（17 files）/ typecheck / lint / build / check:contract WS 32/32 + 8 未纳 warn + REST 16/16）；后端 origin 已同步 `03a6e882` 并启动（/health /ready 200，四个 desktop 工具注册），真实后端 v2 冒烟收到 `tool.started→tool.completed{get_time}` 且 action=0；**联调条件 = 代码侧已具备，环境侧仅差前端 push（当前领先 origin 20）→ Windows pull + pnpm install（新增 jsdiff）+ build + REAL 启动**；联调清单 `docs/review/2026-08-21-阶段6-工具与权限-真实联调清单.md`（0 环境动作 + 1~8 十组用例 + 已知预期行为 + 三态升迁规则） | 已开发、未联调（代码侧联调条件已具备，待开发者 push 后真机执行） |
 | 2026-08-21 | **阶段 6 真实联调收口修复（代码批，已落地待真机复验）**：① 回退 `cyrene` scheme `corsEnabled:false`（联调期曾临时打开；违反阶段 5 D-4 安全结论，handler 的 renderer-root/media 分支无 ACAO 白名单），单测恢复断言，联调清单 0.4 明确必须 preview/prod 同源启动；② 实时工具卡片会话隔离——`DesktopToolRequest/ToolRecord/PublicToolEvent` 增 `conversationId`，real/mock 从 `activeConversationId` 注入，toolStore 增 `setActiveConversationId` + `visibleLiveOrder` 过滤（未归属/活动会话未知兼容显示），`waitingForApproval`/`liveRecords` 只统计当前会话，bootstrap 在 connection state push 时同步；③ 验收记录矛盾与 60s 口径校正（后端 bridge 实为 120s，`desktop_calls.expires_at=created+120s`；剩余真机顺序改 preview 模式）；门禁：**1867 单测（143 files）/ 111 集成（17 files）** + typecheck/lint/build + check:contract（WS 35/35 + 5 未纳 warn + REST 16/16）全绿 | 已开发、未联调（真机待复验：4.3 同源媒体 + 会话隔离 + 8.3 语音） |
+| 2026-08-21 | **阶段 6 真实联调通过，三态升「已真实联调」**：真实 Windows Electron（当前 `2cf6de7`）+ 后端 `03a6e882` 完成清单 §1–§7（backend 只读卡片 / select·read·write·capture / 权限·黑名单·Diff·冲突 / 目录授权·撤销·历史 / 重连·幂等·超时 / 审计脱敏 / Live2D waiting_permission）；收口修复 `corsEnabled:false` 与实时工具卡会话隔离真机复验通过（截图归档 1728×1080 正常加载；A→B→A 切换卡片正确隐藏/恢复）；8.3 语音三项真实人声补齐（普通录音 commit + 用户消息 + AI 回复 / realtime turn 自动提交 + AI 回复 completed / 输入法转写 final 写草稿无消息）；可选项 1.5/2.8/4.5 DEFERRED；验收见 `docs/review/2026-08-21-阶段6-真实联调验收.md` | 已真实联调（阶段 6 通过，阶段 2/3/4/5 保持） |
