@@ -3,9 +3,14 @@
 // （{ts,type,preview} ring + 100ms 节流 push + devMode 门控 + 回调体异常隔离）。
 // deps 注入式（F-08）：adapter 构造期订阅、dispose 退订——测试经捕获 tap 回调驱动事件流。
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+// Task 3/4 静态 import electron（shell/dialog 默认实现）——注入替代路径单测均不触达真实 electron
+vi.mock('electron', () => ({
+  shell: { openPath: vi.fn(async () => '') },
+  dialog: { showSaveDialog: vi.fn() },
+}))
 import { createDiagnosticsService } from '../../src/main/diagnostics/diagnostics-service'
 import type { DiagnosticsService } from '../../src/main/diagnostics/diagnostics-service'
 import type { BackendAdapter, BackendEventHandler } from '../../src/main/transport/backend-adapter'
@@ -39,12 +44,21 @@ interface Ctx {
   advance: (ms: number) => void
 }
 
-/** 夹具工厂：固定时钟（测试确定性）+ 可注入 sanitize/mock 目录 */
-function makeCtx(opts: { dirs?: { logs: string; audit: string; temp: string }; sanitize?: (s: string) => string } = {}): Ctx {
+/** 夹具工厂：固定时钟（测试确定性）+ 可注入 sanitize/mock 目录/openPath */
+function makeCtx(opts: {
+  dirs?: { logs: string; audit: string; temp: string }
+  sanitize?: (s: string) => string
+  openPath?: (dir: string) => Promise<string>
+} = {}): Ctx {
   const adapter = makeAdapter()
   const logger: Logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }
   const auditor = { audit: vi.fn(async () => {}), close: vi.fn(async () => {}) } as unknown as Auditor
-  const logWriter: FileWriter = { append: vi.fn(), flush: vi.fn(async () => {}), close: vi.fn(async () => {}) }
+  const logWriter: FileWriter = {
+    append: vi.fn(),
+    flush: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    clear: vi.fn(async () => ({ removedFiles: 0, freedBytes: 0 })),
+  }
   const onDevEvent = vi.fn()
   const onDevModeChange = vi.fn()
   let t = 10_000
@@ -56,6 +70,7 @@ function makeCtx(opts: { dirs?: { logs: string; audit: string; temp: string }; s
     sanitize: opts.sanitize ?? ((s) => (s === '/home/u/.config/Cyrene/logs' ? '~/.../logs' : '<path>')),
     adapter: adapter.adapter,
     getConnectionSummary: () => ({}),
+    openPath: opts.openPath,
     onDevEvent,
     onDevModeChange,
     now: () => t,
@@ -235,5 +250,122 @@ describe('ring 容量与 dispose', () => {
     expect(adapter.unsub).toHaveBeenCalledTimes(1)
     adapter.tap(deltaEvent('after-dispose'))
     expect(onDevEvent).not.toHaveBeenCalled()
+  })
+})
+
+// —— 阶段 7 批次 A（Task 4）：服务级方法（openLogDir/clearLogs/exportPackage——完整性 MED 红-绿）——
+describe('openLogDir（deps.openPath 注入面）', () => {
+  it('调用 deps.openPath 且传 dirs.logs（原样 Main 内部路径，不经 sanitize）', async () => {
+    const openPath = vi.fn(async (_dir: string) => '')
+    const { svc } = makeCtx({ openPath })
+    await svc.openLogDir()
+    expect(openPath).toHaveBeenCalledTimes(1)
+    expect(openPath.mock.calls[0]?.[0]).toBe('/home/u/.config/Cyrene/logs')
+  })
+})
+
+describe('clearLogs（logWriter.clear + 审计 + lastCleanup 回显）', () => {
+  it('调 logWriter.clear 一次；审计 diagnostics:logs-cleared（ts 必填）；state.lastCleanup 回显', async () => {
+    const { svc, auditor, logWriter } = makeCtx()
+    ;(logWriter.clear as ReturnType<typeof vi.fn>).mockResolvedValue({ removedFiles: 2, freedBytes: 12345 })
+    await svc.clearLogs()
+    expect(logWriter.clear).toHaveBeenCalledTimes(1)
+    expect(svc.getState().lastCleanup).toEqual({ removedFiles: 2, freedBytes: 12345 })
+    expect(auditor.audit).toHaveBeenCalledTimes(1)
+    const evt = (auditor.audit as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { type: string; ts: string; summary: string }
+    expect(evt.type).toBe('diagnostics:logs-cleared')
+    expect(typeof evt.ts).toBe('string')
+    expect(evt.ts.length).toBeGreaterThan(0) // ts 必填（AuditEvent 形状以 audit.ts 为准）
+    expect(evt.summary).toContain('2')
+    expect(evt.summary).toContain('12345')
+  })
+})
+
+describe('exportPackage（harness 落 temp：黑名单 0 命中 + truncated 标志 + 审计）', () => {
+  function makeExportDirs(): { root: string; logs: string; audit: string; temp: string } {
+    const root = mkdtempSync(join(tmpdir(), 'cy-export-'))
+    const logs = join(root, 'logs')
+    const audit = join(root, 'audit')
+    const temp = join(root, 'temp')
+    mkdirSync(logs, { recursive: true })
+    mkdirSync(audit, { recursive: true })
+    mkdirSync(temp, { recursive: true })
+    return { root, logs, audit, temp }
+  }
+
+  it('落 dirs.temp/cyrene-diagnose-test.json；内容黑名单 0 命中；manifest/双段 sha；审计 diagnostics:exported', async () => {
+    vi.stubEnv('CYRENE_TEST_HARNESS', '1')
+    const d = makeExportDirs()
+    try {
+      writeFileSync(join(d.logs, 'app.log'), 'line1\nBearer sk-1234567890abc\n{"msg":"key=sk-abcdef0123456789"}\n', { mode: 0o600 })
+      writeFileSync(join(d.logs, 'app.log.1'), 'old-rotation\n', { mode: 0o600 })
+      writeFileSync(join(d.audit, 'audit-2026-08-21.jsonl'), '{"ts":"2026-08-21T00:00:00Z","type":"tool:done","summary":"Bearer abc12345"}\n', { mode: 0o600 })
+      const { svc, auditor } = makeCtx({ dirs: { logs: d.logs, audit: d.audit, temp: d.temp }, sanitize: (s) => s })
+      const r = await svc.exportPackage()
+      expect(r.cancelled).toBe(false)
+      if (r.cancelled) return
+      expect(r.displayPath).toBe(join(d.temp, 'cyrene-diagnose-test.json')) // displayPath = 实际路径（R2-7 不 sanitize）
+      expect(r.truncatedLog).toBe(false)
+      expect(r.truncatedAudit).toBe(false)
+      const content = readFileSync(r.displayPath, 'utf8')
+      expect(content).not.toContain('sk-1234567890abc')
+      expect(content).not.toContain('sk-abcdef0123456789')
+      expect(content).not.toContain('Bearer abc12345')
+      expect(content).toContain('Bearer [REDACTED]')
+      const doc = JSON.parse(content) as { schemaVersion: number; manifest: { schemaVersion: number; truncated: boolean; logSha256: string; auditSha256: string; droppedLines: number }; logFiles: Array<{ name: string; lines: string[] }>; audit: string[]; logSha256: string; auditSha256: string }
+      expect(doc.schemaVersion).toBe(1)
+      expect(doc.manifest.schemaVersion).toBe(1)
+      expect(doc.manifest.truncated).toBe(false)
+      expect(doc.manifest.droppedLines).toBe(0)
+      expect(/^[0-9a-f]{64}$/.test(doc.logSha256)).toBe(true)
+      expect(doc.logSha256).toBe(doc.manifest.logSha256)
+      expect(doc.logFiles.map((f) => f.name).sort()).toEqual(['app.log', 'app.log.1'])
+      expect(doc.audit.length).toBe(1)
+      // 审计 diagnostics:exported（ts 必填、无路径——summary 只含大小/截断）
+      expect(auditor.audit).toHaveBeenCalledTimes(1)
+      const evt = (auditor.audit as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as { type: string; ts: string; summary: string; displayPath?: string }
+      expect(evt.type).toBe('diagnostics:exported')
+      expect(typeof evt.ts).toBe('string')
+      expect(evt.ts.length).toBeGreaterThan(0)
+      expect(evt.displayPath).toBeUndefined() // 审核事件不含路径
+      expect(JSON.stringify(evt)).not.toContain(d.temp)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(d.root, { recursive: true, force: true })
+    }
+  })
+
+  it('日志文件 >3 个（D7A-08 上限）：只取 mtime 最新 3 组 + truncatedLog=true；4 号文件不入 payload', async () => {
+    vi.stubEnv('CYRENE_TEST_HARNESS', '1')
+    const d = makeExportDirs()
+    try {
+      // mtime 排序：app.log.3 最旧被排除（newest 3 = app.log/.1/.2）
+      writeFileSync(join(d.logs, 'app.log'), 'current\n', { mode: 0o600 })
+      writeFileSync(join(d.logs, 'app.log.1'), 'rot1\n', { mode: 0o600 })
+      writeFileSync(join(d.logs, 'app.log.2'), 'rot2\n', { mode: 0o600 })
+      writeFileSync(join(d.logs, 'app.log.3'), 'rot3-oldest\n', { mode: 0o600 })
+      const base = new Date('2026-08-20T00:00:00Z').getTime()
+      await import('fs/promises').then((m) =>
+        Promise.all([
+          m.utimes(join(d.logs, 'app.log.3'), base, base),
+          m.utimes(join(d.logs, 'app.log.2'), base + 60_000, base + 60_000),
+          m.utimes(join(d.logs, 'app.log.1'), base + 120_000, base + 120_000),
+          m.utimes(join(d.logs, 'app.log'), base + 180_000, base + 180_000),
+        ]),
+      )
+      const { svc } = makeCtx({ dirs: { logs: d.logs, audit: d.audit, temp: d.temp }, sanitize: (s) => s })
+      const r = await svc.exportPackage()
+      expect(r.cancelled).toBe(false)
+      if (r.cancelled) return
+      expect(r.truncatedLog).toBe(true)
+      const doc = JSON.parse(readFileSync(r.displayPath, 'utf8')) as { manifest: { truncatedLog: boolean; truncated: boolean }; logFiles: Array<{ name: string }> }
+      expect(doc.manifest.truncatedLog).toBe(true)
+      expect(doc.manifest.truncated).toBe(true)
+      expect(doc.logFiles.map((f) => f.name).sort()).toEqual(['app.log', 'app.log.1', 'app.log.2'])
+      expect(doc.logFiles.some((f) => f.name === 'app.log.3')).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(d.root, { recursive: true, force: true })
+    }
   })
 })

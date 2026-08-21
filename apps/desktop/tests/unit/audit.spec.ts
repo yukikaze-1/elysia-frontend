@@ -4,7 +4,7 @@ import type { FileWriter } from '../../src/main/diagnostics/file-writer'
 
 function fakeWriter(): { writer: FileWriter; lines: string[] } {
   const lines: string[] = []
-  return { writer: { append: vi.fn(async (l: string) => { lines.push(l) }), flush: vi.fn(async () => {}), close: vi.fn(async () => {}) }, lines }
+  return { writer: { append: vi.fn(async (l: string) => { lines.push(l) }), flush: vi.fn(async () => {}), close: vi.fn(async () => {}), clear: vi.fn(async () => ({ removedFiles: 0, freedBytes: 0 })) }, lines }
 }
 
 describe('auditFilesToDelete（30 天清理纯函数）', () => {

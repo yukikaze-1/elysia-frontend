@@ -18,6 +18,8 @@ export interface FileWriter {
   append(line: string): Promise<void>
   flush(): Promise<void>
   close(): Promise<void>
+  /** 清空：主文件截断归零（fd 保持打开）+ 轮转历史移除（rotate 模式）。返回移除文件数与释放字节数。 */
+  clear(): Promise<{ removedFiles: number; freedBytes: number }>
 }
 
 export function rotateTargets(current: string, maxFiles: number): { moves: Array<{ from: string; to: string }>; drop: string | null } {
@@ -121,6 +123,35 @@ export function createFileWriter(opts: FileWriterOptions): FileWriter {
       if (timer) { clearInterval(timer); timer = null }
       await this.flush()
       if (fd) { const f = fd; fd = null; await f.close().catch(() => {}) }
+    },
+    async clear(): Promise<{ removedFiles: number; freedBytes: number }> {
+      // ① 快照 clear 调用时点的批次整批丢弃——不落盘（若放回队列会于 truncate 后被下次 flush 复活）；
+      //    此后并发 append 落入新批次（clear 与 append 同串行队列——调后写行不随本次清空丢失）
+      batch = []
+      let removedFiles = 0
+      let freedBytes = 0
+      const run = async (): Promise<void> => {
+        // ② 截断主文件后关 fd 复位（truncate 保留 fd 的陈旧文件偏移，继续写会产生 NUL 空洞；
+        //    与 maybeRotate 的 close+reopen 同型：下次 ensureOpen 经 EEXIST 走 O_APPEND 句柄，位置恒在 EOF）
+        if (fd) {
+          const f = fd
+          const st = await f.stat()
+          freedBytes = st.size
+          await f.truncate(0)
+          fd = null
+          await f.close().catch(() => {})
+        }
+        if (opts.mode === 'rotate') {
+          // ③ 轮转历史全量移除（rotateTargets 的 drop 路径同口径——尽力而为，ENOENT/不可删忽略计数仅记成功项）
+          for (let i = 1; i < (opts.maxFiles ?? 3); i++) {
+            try { await unlink(join(opts.dir, `${opts.baseName}.log.${i}`)); removedFiles++ } catch { /* 不存在/不可删 */ }
+          }
+        }
+      }
+      // 入既有 flushing 串行队列（与 append/flush/close/定时 flush 同队列——不绕过；队列前缀任务先完成后才清空）
+      flushing = flushing.then(run, run)
+      await flushing
+      return { removedFiles, freedBytes }
     }
   }
 }

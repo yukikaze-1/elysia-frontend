@@ -8,7 +8,8 @@ function fakeWriter(): { writer: FileWriter; lines: string[] } {
   const writer: FileWriter = {
     append: vi.fn(async (l: string) => { lines.push(l) }),
     flush: vi.fn(async () => {}),
-    close: vi.fn(async () => {})
+    close: vi.fn(async () => {}),
+    clear: vi.fn(async () => ({ removedFiles: 0, freedBytes: 0 }))
   }
   return { writer, lines }
 }

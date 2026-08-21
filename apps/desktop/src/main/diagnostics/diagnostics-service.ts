@@ -5,14 +5,23 @@
 // 装配注入（F-08 定案）：adapter 经 deps 传入、service 构造期即 subscribe（无 attachAdapter 方法）；
 // devTap 回调体 try/catch 异常隔离（R2-3/安全 LOW①——real emit 无兜底，devTap 抛错即断聊天事件流）。
 import { readdirSync, statSync } from 'fs'
-import { join } from 'path'
+import { readdir, readFile, realpath, stat } from 'fs/promises'
+import { dirname, join } from 'path'
+import { dialog, shell } from 'electron'
+import type { BrowserWindow } from 'electron'
+import { atomicWriteFile } from '../credentials/atomic-write'
+import { auditFilesToDelete } from './audit'
+import { buildExportPayload, readTailLines, tailLinesAligned } from './export-payload'
+import type { ExportLogFile } from './export-payload'
 import type { Auditor } from './audit'
 import type { FileWriter } from './file-writer'
 import type { Logger } from './logger'
 import type { MessageSanitizer } from './sanitize'
 import { redactSensitiveValues } from './redact'
+import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type { BackendAdapter } from '../transport/backend-adapter'
 import type { BackendEvent } from '@shared/contracts/events'
+import type { DiagnosticsExportResult } from '@shared/contracts/diagnostics'
 import { DIAGNOSTICS_PREVIEW_MAX, type DiagnosticsDevEvent, type DiagnosticsState } from '@shared/contracts/diagnostics'
 
 /** dev-event ring 容量（D7A-15：ring 200 FIFO——Main 侧全量保留；推送层另有 100ms 节流） */
@@ -36,12 +45,27 @@ const PREVIEW_FIELDS = [
   'expression', 'motion',
 ] as const
 
+/** 导出：日志每文件尾读取上限（D7A-08：5MiB/文件，行对齐） */
+const EXPORT_LOG_TAIL_MAX = 5 * 1024 * 1024
+/** 导出：审计段总上限（D7A-08：超 15MiB 截尾保最新端） */
+const EXPORT_AUDIT_TAIL_MAX = 15 * 1024 * 1024
+/** 导出：日志文件数上限（D7A-08：≤3 旋转文件——app.log+.1+.2） */
+const EXPORT_LOG_FILES_MAX = 3
+/** 导出（harness 落盘文件名——集成/冒烟断言点） */
+const EXPORT_HARNESS_FILE = 'cyrene-diagnose-test.json'
+/** 审计日期文件名（30 天窗口过滤——与 audit.ts AUDIT_DATE_RE 同形；此层直读全量不用 readAuditEvents 的过滤） */
+const AUDIT_NAME_RE = /^audit-\d{4}-\d{2}-\d{2}\.jsonl$/
+
 export interface DiagnosticsService {
   getState(): DiagnosticsState
   setDevMode(enabled: boolean): void
   dispose(): void
-  // Task 4 补齐（FileWriter.clear 就位后——避免 NOT_IMPLEMENTED 桩）：
-  // openLogDir(): void / clearLogs(): Promise<void> / exportPackage(): Promise<DiagnosticsExportResult>
+  /** 打开日志目录（系统文件管理器）——deps.openPath 注入（默认 shell.openPath） */
+  openLogDir(): Promise<void>
+  /** 清空日志（logWriter.clear + 审计 diagnostics:logs-cleared + lastCleanup 回显） */
+  clearLogs(): Promise<void>
+  /** 脱敏诊断导出（收集/组包/落盘/审计——harness 落 temp，正常态经保存对话框） */
+  exportPackage(): Promise<DiagnosticsExportResult>
 }
 
 /** 日志目录文件清单 + 总大小（sync——getState 为同步接口；目录缺失/权限异常 → 空清单兜底，不阻塞展示面） */
@@ -64,6 +88,62 @@ function readLogDirInfo(dir: string): { logSizeBytes: number; logFiles: Diagnost
   }
 }
 
+/** 导出日志收集：*.log 按 mtime 取最新 ≤3 文件，每文件 readTailLines 5MiB（行对齐）；
+ *  truncated = 文件数超上限 或 任一选中文件超 5MiB（尾读丢失旧内容）。读取失败（竞态已删）跳过不阻塞。 */
+async function collectLogFiles(deps: { logs: string; logger: Logger }): Promise<{ files: ExportLogFile[]; truncated: boolean }> {
+  let names: string[]
+  try { names = await readdir(deps.logs) } catch { return { files: [], truncated: false } }
+  const withStat = await Promise.all(
+    names
+      .filter((n) => LOG_FILE_NAME_RE.test(n))
+      .map(async (n) => {
+        try { const s = await stat(join(deps.logs, n)); return { name: n, mtimeMs: s.mtimeMs, sizeBytes: s.size } }
+        catch { return undefined }
+      }),
+  )
+  const all = withStat.filter((f): f is { name: string; mtimeMs: number; sizeBytes: number } => f !== undefined)
+  const truncatedCount = all.length > EXPORT_LOG_FILES_MAX
+  // 最新 3 个轮转文件（mtime 降序取 3）→ payload 内按文件名升序（app.log → .1 → .2 可读序）
+  const selected = all
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, EXPORT_LOG_FILES_MAX)
+    .sort((a, b) => (a.name > b.name ? 1 : -1))
+  const files: ExportLogFile[] = []
+  let maxTailExceeded = false
+  for (const f of selected) {
+    if (f.sizeBytes > EXPORT_LOG_TAIL_MAX) maxTailExceeded = true // 尾读只覆盖尾 5MiB → 旧内容不入包
+    try {
+      files.push({ name: f.name, lines: await readTailLines(join(deps.logs, f.name), EXPORT_LOG_TAIL_MAX) })
+    } catch (err) {
+      deps.logger.warn('diagnostics:export-skip-file', { name: f.name, message: err instanceof Error ? err.message : String(err) })
+    }
+  }
+  return { files, truncated: truncatedCount || maxTailExceeded }
+}
+
+/** 导出审计收集：直读 audit-*.jsonl 30 天窗口内全量（不用 readAuditEvents——导出必须含全部审计类型），
+ *  总长超 15MiB 截尾保最新端（truncatedAudit）。 */
+async function collectAuditLines(auditDir: string, today: Date, logger: Logger): Promise<{ lines: string[]; truncatedAudit: boolean }> {
+  let names: string[]
+  try { names = await readdir(auditDir) } catch { return { lines: [], truncatedAudit: false } }
+  const dateNames = names.filter((n) => AUDIT_NAME_RE.test(n))
+  const toDelete = new Set(auditFilesToDelete(dateNames, AUDIT_RETENTION_DAYS, today))
+  const keep = dateNames.filter((n) => !toDelete.has(n)).sort() // 文件名序 = 日期序（chrono）
+  const allLines: string[] = []
+  for (const n of keep) {
+    try {
+      const text = await readFile(join(auditDir, n), 'utf8')
+      const ls = text.split('\n')
+      if (ls.length > 0 && ls[ls.length - 1] === '') ls.pop()
+      allLines.push(...ls)
+    } catch (err) {
+      logger.warn('diagnostics:export-skip-audit', { name: n, message: err instanceof Error ? err.message : String(err) })
+    }
+  }
+  const t = tailLinesAligned(allLines, EXPORT_AUDIT_TAIL_MAX)
+  return { lines: t.lines, truncatedAudit: t.dropped }
+}
+
 export function createDiagnosticsService(deps: {
   dirs: { logs: string; audit: string; temp: string }
   logger: Logger
@@ -71,7 +151,8 @@ export function createDiagnosticsService(deps: {
   logWriter: FileWriter
   sanitize: MessageSanitizer
   adapter: BackendAdapter            // 事件源（spec §6.3 deps 注入式——装配时序：index.ts 先 adapter 后 service；无 attachAdapter 方法——符合性 F-08 定案）
-  openPath?: (dir: string) => Promise<string>   // 默认 shell.openPath；测试注入（Task 4 openLogDir 消费）
+  openPath?: (dir: string) => Promise<string>   // 默认 shell.openPath；测试注入（openLogDir 消费）
+  getMainWindow?: () => BrowserWindow | undefined  // 导出保存对话框父窗（Task 5 接线；缺省/undefined → 无父对话框）
   getConnectionSummary: () => { origin?: string; status?: string; protocolVersion?: string }
   onDevEvent?: (ev: DiagnosticsDevEvent) => void        // push 出口（Task 5 接线 webContents.send）
   onDevModeChange?: (enabled: boolean) => void          // 副作用出口（Task 5 接线 openDevTools/closeDevTools——spec §6.4）
@@ -80,7 +161,7 @@ export function createDiagnosticsService(deps: {
   let devMode = false // D7A-05：会话态（Main 内存；不写 settings.json——重启恢复禁用）
   let dropped = 0 // 推送节流丢弃计数（ring 全量保留；随 state.eventDropped 返回）
   let lastPushAt = -Infinity
-  const lastCleanup: DiagnosticsState['lastCleanup'] = null // Task 4 clearLogs 结果回显（届时改 let 并赋值）
+  let lastCleanup: DiagnosticsState['lastCleanup'] = null // 清日志结果（clearLogs 赋值；Task 4）
   const ring: DiagnosticsDevEvent[] = []
   const now = deps.now ?? (() => Date.now())
   const sanitize = deps.sanitize
@@ -126,16 +207,18 @@ export function createDiagnosticsService(deps: {
 
   const unsubscribe = deps.adapter.subscribe(devTap) // 构造期订阅（F-08：事件源经 deps 注入；dispose 退订）
 
+  /** 审计 fail-open（C1 同口：审计失败不改变操作结果——fire-and-forget + 失败仅日志） */
+  const auditFailOpen = (event: Parameters<Auditor['audit']>[0]): void => {
+    void deps.auditor.audit(event).catch((err) =>
+      deps.logger.warn('diagnostics:audit-write-failed', { message: err instanceof Error ? err.message : String(err) }))
+  }
+
   const setDevMode = (enabled: boolean): void => {
     if (enabled === devMode) return // 幂等：同值 no-op 不重复审计（spec §6.2 错误面）
     devMode = enabled
     deps.onDevModeChange?.(enabled) // 副作用出口（Task 5 接线 openDevTools/closeDevTools）
-    // 审计 dev:mode-changed（ts 必填——AuditEvent 形状以 audit.ts 为准；fail-open：fire-and-forget + 失败仅日志）
-    void deps.auditor.audit({
-      ts: new Date(now()).toISOString(),
-      type: 'dev:mode-changed',
-      summary: `开发者模式已${enabled ? '开启' : '关闭'}`,
-    }).catch((err) => deps.logger.warn('diagnostics:audit-write-failed', { message: err instanceof Error ? err.message : String(err) }))
+    // 审计 dev:mode-changed（ts 必填——AuditEvent 形状以 audit.ts 为准；fail-open）
+    auditFailOpen({ ts: new Date(now()).toISOString(), type: 'dev:mode-changed', summary: `开发者模式已${enabled ? '开启' : '关闭'}` })
   }
 
   return {
@@ -154,6 +237,82 @@ export function createDiagnosticsService(deps: {
       }
     },
     setDevMode,
+    async openLogDir(): Promise<void> {
+      // 默认 shell.openPath（Main 侧系统文件管理器）；测试注入 deps.openPath
+      const open = deps.openPath ?? ((dir: string) => shell.openPath(dir))
+      const msg = await open(deps.dirs.logs)
+      if (msg && msg.length > 0) deps.logger.warn('diagnostics:open-logs-failed', { message: msg })
+    },
+    async clearLogs(): Promise<void> {
+      const r = await deps.logWriter.clear() // 串行队列语义在 FileWriter 内（clear 与 append 不绕过）
+      lastCleanup = { removedFiles: r.removedFiles, freedBytes: r.freedBytes }
+      auditFailOpen({
+        ts: new Date(now()).toISOString(),
+        type: 'diagnostics:logs-cleared',
+        summary: `日志已清理（移除 ${r.removedFiles} 个轮转文件，释放 ${r.freedBytes} 字节）`,
+      })
+    },
+    async exportPackage(): Promise<DiagnosticsExportResult> {
+      try {
+        // ① 收集：日志尾读（≤3 文件 × 5MiB 行对齐）+ 审计直读（30 天窗口全量，超 15MiB 截尾保最新端）
+        const logs = await collectLogFiles({ logs: deps.dirs.logs, logger: deps.logger })
+        const auditColl = await collectAuditLines(deps.dirs.audit, new Date(now()), deps.logger)
+        // ② 组包（逐行二次脱敏在 build 内——D7A-09）
+        const payload = buildExportPayload(
+          {
+            manifest: { schemaVersion: 1, generatedAt: new Date(now()).toISOString() },
+            summary: deps.getConnectionSummary(),
+            logFiles: logs.files,
+            auditLines: auditColl.lines,
+            truncatedLog: logs.truncated,
+            truncatedAudit: auditColl.truncatedAudit,
+          },
+          { sanitize },
+        )
+        const json = JSON.stringify(payload, null, 2)
+        // ③ 落盘：harness（CYRENE_TEST_HARNESS=1）→ dirs.temp 固定名；正常 → 保存对话框（win 可缺省无父）
+        let targetPath: string
+        if (process.env.CYRENE_TEST_HARNESS === '1') {
+          targetPath = join(deps.dirs.temp, EXPORT_HARNESS_FILE)
+        } else {
+          const win = deps.getMainWindow?.()
+          const opts = {
+            defaultPath: `cyrene-diagnose-${stampFileName(new Date(now()))}.json`,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          }
+          const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+          if (r.canceled || !r.filePath) return { cancelled: true }
+          targetPath = r.filePath
+        }
+        const sizeBytes = Buffer.byteLength(json, 'utf8')
+        // 原子写（凭据同族先例）：safeRoot = 目标父目录自身（对话框任意用户目录也满足父目录包含性——准确性 H-4）
+        await atomicWriteFile(targetPath, json, { safeRoot: await realpath(dirname(targetPath)) })
+        // ④ 审计 diagnostics:exported（ts 必填、无路径——披露只含大小/截断；fail-open）
+        auditFailOpen({
+          ts: new Date(now()).toISOString(),
+          type: 'diagnostics:exported',
+          summary: `诊断包已导出（${sizeBytes} 字节${payload.manifest.truncated ? '，部分数据截断' : ''}）`,
+        })
+        // ⑤ 结果回显：displayPath 为实际路径（R2-7 不 sanitize——用户对话框自选路径；sanitize 仅 displayDir 形态）
+        return {
+          cancelled: false,
+          displayPath: targetPath,
+          sizeBytes,
+          truncatedLog: payload.manifest.truncatedLog,
+          truncatedAudit: payload.manifest.truncatedAudit,
+        }
+      } catch (err) {
+        // fail-closed：writeFile/收集异常 → CyreneError（不产出半成品文件）
+        deps.logger.error('diagnostics:export-failed', { message: err instanceof Error ? err.message : String(err) })
+        throw new CyreneError(CyreneErrorCode.UNKNOWN, '诊断导出失败', err)
+      }
+    },
     dispose: () => { unsubscribe() },
   }
+}
+
+/** 对话框默认文件名时间戳：YYYYMMDD-HHmmss（本地时间） */
+function stampFileName(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
