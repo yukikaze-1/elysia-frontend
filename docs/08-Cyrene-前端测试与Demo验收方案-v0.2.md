@@ -383,6 +383,18 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 - 开发者模式下的脱敏；
 - 生产构建开发者模式/DevTools 默认关闭、显式开启门槛和远程调试端口始终关闭检查。
 
+**阶段 7 批次 A 矩阵补充（2026-08-22，对应 spec §8 核对表，Mock 驱动标「已开发、未联调」）：**
+
+| 面 | 门禁层 | 证据 |
+|---|---|---|
+| Markdown/XSS 与危险链接 | **真实 Chromium 集成**（markdown-xss.spec.ts）= 安全门禁层（单元层 happy-dom 仅行为记录——DOMPurify 官方 README 明确 happy-dom 非可信消毒 oracle，用例保留/断言不弱化/`it.fails` canary） | 载荷集：`<img src=x onerror>` / `[x](javascript:alert(1))` / `[x]( data:text/html,…)` / `[x](java\tscript:…)`（TAB 内嵌）/ `<svg onload>` / `<style>body{display:none}</style>` / `<iframe srcdoc>` / `<div style=url(javascript:…)>`——`window.__xssFired` 哨兵未置位、无 `on*`/`style=` 属性、`a[href^="javascript:"]`/`a[href^="data:"]` 计数 0（含前导空白变体）、无 iframe/object/embed/svg/style 元素、页面 URL 不变（点击不导航） |
+| 导航/窗口/CSP/媒体 | 集成负方向扩展（navigation 正方向为基线） | `will-navigate` 对 `javascript:`/`data:` deny、`setWindowOpenHandler` 非 http(s) 拒绝、media 无签名/错签名拒绝（protocol-media-handler 既有补断言面）、dev meta 与 prod 响应头关键指令对照（均为补断言无实现变更预期） |
+| IPC 非法通道/超大参数/类型混淆 | 集成（ipc-security 扩展）+ 单测（ipc-limit 核对表） | 白名单 67→73（含 PushChannels 归属断言）、未知通道 invoke reject、>4MiB 结构拒、类型混淆抽样；无界字段 maxLength 补全核对表（title 200/搜索 512/消息 content 64KiB/语音 commit 10KiB/attachment 路径 1024/rename 200——D7A-13）+ 既有 4MiB/1MiB/2048/4097 引用断言（含 openExternal>2048 拒） |
+| 路径/重放/授权后参数 | 核对表式断言（引用既有实现 + 无回退哨兵） | safe-open Windows 变体/UNC/ADS、paramHash canonical、callId 幂等、queryStatus 三分支（阶段 0/1 与 6 既有实现证据） |
+| 敏感信息泄漏扫描 | **verify:sensitive 常驻门禁**（`pnpm -F @cyrene/desktop verify:sensitive`；CI 与 typecheck/lint 同 job） | `git ls-files` 全树、黑名单 8 规则、排除 third_party/+vendored live2d 两树 + 扫描器自排除、行级 allowlist fail-loud 锚定；导出二次脱敏由 buildExportPayload 单测钉住（黑名单零命中 + 关键值 `[REDACTED]`） |
+| Fuses | verify:artifact 静态阶段（不启动 Electron）| `getCurrentFuseWire` 读回 RunAsNode/EnableNodeOptionsEnvironmentVariable/EnableNodeCliInspectArguments 三项 = DISABLE（48 字节枚举），失败 exit 1（fail-closed）；`--smoke` 经 flip-back 临时副本启动（产物本体保持 flipped）；OnlyLoadAppFromAsar/EmbeddedAsarIntegrityValidation 保持现状（阶段 8 评估） |
+| 开发者模式 | 集成（diagnostics-ipc.spec.ts）+ 单测（diagnostics-service/cy-diagnostics-pane） | `dev-mode-set(true)` → `webContents.isDevToolsOpened()` 轮询为 true（恢复断言而非静默降级）；set(false) → false；二次确认文案；会话态（重启恢复禁用，无持久化断言）；诊断展示零正文（preview 白名单/Store 摘要仅计数） |
+
 ## 9. 性能与稳定性
 
 建议建立基线，不将数值视为尚未实测的承诺：

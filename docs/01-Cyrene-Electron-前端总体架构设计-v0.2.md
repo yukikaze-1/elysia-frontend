@@ -239,6 +239,8 @@ interface BackendAdapter {
 
 现有后端如果使用不同 API，只修改适配器实现和字段映射。
 
+> **阶段 7 批次 A（2026-08-22）接口语义升级：** `subscribe(handler)` 由**单处理器槽**升级为**多处理器 Set**——每次调用把 handler 加入集合（重复订阅去重，再次订阅返回新的取消函数但不重复注册），返回的取消函数将该 handler 移出集合；事件到达时按注册顺序调用全部处理器，单处理器抛错以 try/catch 包裹为 warn 记录（不外抛、不阻断其他处理器）。real/mock 双实现对齐（Mock 原为单槽，并列订阅会覆盖既有聊天订阅导致断流）；`BackendAdapter` 为后端事件的唯一数据源，诊断/开发 tap（阶段 7 批次 A `diagnostics:dev-event`）作为并列消费者经 `subscribe` 挂载，不引入第二事件入口。
+
 ### 6.2 Desktop API
 
 ```typescript

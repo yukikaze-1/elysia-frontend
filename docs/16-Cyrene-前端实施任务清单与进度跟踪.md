@@ -163,7 +163,7 @@
 | [~] | H-06 | 测试账号/会话/文件/可公开截图数据（交接包 `traces/` 提供脱敏测试会话/消息；测试账号/Token 待真实环境） | 2 |
 | [ ] | H-07 | Demo 演示脚本、P0/P1 范围与成功标准 | 0 |
 | [ ] | H-08 | 性能基线机器与 CPU/内存/GPU 允许范围 | 7 |
-| [~] | H-09 | 日志/开发者模式策略已定默认（轮转 5MB×3、审计 30 天、开发者模式恒关、诊断导出 = 阶段 7 安全收敛/Demo P0 范围）；正式确认待产品 | 7 |
+| [x] | H-09 | 日志/开发者模式策略已确认（2026-08-21 用户拍板）：轮转 5MB×3、审计 30 天、**开发者模式默认关 + 设置页二次确认开关（会话态，重启恢复禁用）**、远程调试恒关、诊断导出 = 阶段 7 安全收敛/Demo P0 范围 | 7 |
 
 ---
 
@@ -206,7 +206,7 @@
 |---|---|---|
 | App 身份 / userData | `app.setName('Cyrene')` → userData=`~/.config/Cyrene`；App ID 保持 `com.cyrene.desktop` | doc 12 H-03（App ID/图标/版权仍待正式确认） |
 | 沙盒目录（F-06） | `userData/sandbox`，随应用数据走、0700、卸载即清理；黑名单默认值与授权级别阶段 6 细化 | 后端 security §3.2 明确路径校验属 Electron 职责 |
-| 开发者模式（H-09） | **不进 P0 Demo**：生产构建恒关 DevTools、远程调试恒关、无开启路径；日志/审计脱敏仍做 | doc 07 §12、验收门槛第 6 条 |
+| 开发者模式（H-09） | **2026-08-21 用户拍板修订**（修订本 2026-08-08「不进 P0 Demo：恒关、无开启路径」前置决策）：生产默认关 DevTools + 远程调试恒关 + 已保存凭据不可读回**保持**；**开发者模式改为设置页开关 + 二次确认**（会话态，重启恢复禁用；D7A-04/05）——进入 Demo，演示诊断能力；无 DevTools 菜单旁路，F12 门单一 | doc 07 §12、doc 11 §8.2、doc 16 §2.8（166） |
 | 凭据存储（E-03 前端落地） | Electron 侧 `safeStorage`；**不可用即拒存**（`credentialStatus=unavailable` + 提示解锁钥匙串），绝不静默明文降级 | doc 07 §11「优先使用系统安全存储」 |
 | 日志/审计/诊断 | 运行日志轮转 5MB×3 份；审计保留 30 天；诊断导出 = 阶段 7 安全收敛（Demo P0 范围，导出前二次脱敏；阶段 1 块 B 只立 JSONL 机制） | doc 07 §11/§12、doc 11 设置中心 |
 
@@ -229,7 +229,7 @@
 - [x] Token/密钥只显示状态，不能从 Renderer 读回（块 B 凭据 IPC：`credentials:get-status/set/clear` 统一返回 `{status,key}`，preload 只解包 `.status`、无明文读取通道；key 白名单单一来源 `shared/contracts/credentials.ts`）——2026-08-10
 - [x] 外部链接通过受控接口打开（块 C 集成测试：window.open/location 外部 → shell.openExternal + deny 不导航）——2026-08-10
 - [~] Windows 与目标 Ubuntu 开发环境各启动一次（**Ubuntu(Wayland)已冒烟通过**：Playwright `_electron` 启动构建产物，`getAppInfo` 返回 `{Cyrene, 0.1.0, linux}`、七目录 0700、四栏 UI 渲染；Windows 待验证）
-- [x] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭（`devToolsAllowed = !isPackaged` 恒关 + `Menu.setApplicationMenu(null)` 无加速键路径；远程调试门 main() 顶部同步拒绝显式端口/裸开关/pipe，`=0` 仅测试 harness 放行；verify:artifact 负路径冒烟验证拒绝生效）——2026-08-09
+- [x] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭（`devToolsAllowed = !isPackaged` 恒关 + `Menu.setApplicationMenu(null)` 无加速键路径；远程调试门 main() 顶部同步拒绝显式端口/裸开关/pipe，`=0` 仅测试 harness 放行；verify:artifact 负路径冒烟验证拒绝生效）——2026-08-09；**【阶段 7 批次 A 修订（2026-08-22，D7A-04/05）**：开发者模式打开策略变更——设置页「开发与诊断」二次确认开关（会话态、重启恢复禁用、不写 settings.json），webPreferences 改 `devTools: true`（开关为唯一开启路径），F12 门 = `config.devToolsAllowed || isDevMode()`（getter 注入，main-window.ts）；远程调试恒关不变（rejectForbiddenDebugSwitches 不动）；「无开启路径」结论已被 2026-08-21 用户拍板修订（见 §4.0）】
 
 ---
 
@@ -400,26 +400,28 @@
 
 **进入条件：** 阶段 3～6 的 Demo 范围功能完成。
 
+> **阶段 7 批次 A（安全收敛）状态注记（2026-08-22）：** **F-7 批次 A（DOMPurify Markdown 净化 + IPC 攻击面核对 + 路径/重放断言面 + verify:sensitive 敏感扫描门禁 + 「开发与诊断」设置页（日志管理/开发者模式/连接诊断/脱敏诊断导出）+ Electron Fuses 三项关闭 + doc 07 §17 发布安全门槛 20 项核对）已落地并全量验证（三态=已开发、未联调）**——真实 Windows Electron（REAL）联调由开发者批次后执行（通过后升「已真实联调」）；门禁计数实测值以 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md` 与验收记录为准（Task 8a 实测后主会话回填）；决策与执行记录见 `docs/review/2026-08-22-阶段7批次A-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-22-phase7-batcha-security-convergence-*`；提交链 `02853c1`→…→`141484c`（Task 1~7；Task 8 拆 8a 集成/8b 文档两路）。
+
 ### 任务清单
 
-- [ ] Markdown/XSS、危险链接、CSP、导航与媒体来源测试
-- [ ] IPC 攻击面、超大输入与来源窗口校验
-- [ ] 路径穿越、符号链接、重放与授权后参数变化测试
-- [ ] Token、模型密钥、聊天正文、Inner Voice、录音与本地数据泄漏扫描
-- [ ] 直接语音字幕与文字草稿隔离测试
-- [ ] 网络中断、Renderer 崩溃、缓存损坏与 GPU 上下文恢复
-- [ ] 长会话、长流式、历史资源列表与 Live2D 性能测试
-- [ ] 日志轮转、缓存上限、临时附件与录音清理
-- [ ] 集中修复 Blocker、Critical 与主要回归问题
+- [x] Markdown/XSS、危险链接、CSP、导航与媒体来源测试（7A：`renderMarkdown` 引入 DOMPurify 3.4.14（显式 ALLOWED_* 配置、无 USE_PROFILES）+ markdown-xss 集成（真实 Chromium 安全门禁层：载荷集 `<img onerror>`/`javascript:`/`data:`/TAB 内嵌/`<svg>`/`<style>`/`<iframe srcdoc>`/style-attr——`window.__xssFired` 哨兵 + DOM 结构断言（无 `on*`/`style=`/iframe/object/embed/svg、`a[href^="javascript:"]∨"data:"]`=0）+ `will-navigate`/`setWindowOpenHandler`/媒体签名/CSP 对照断言扩展；单测层 happy-dom 仅行为记录（7 用例转 `it.fails` canary——集成层建立后翻转））
+- [x] IPC 攻击面、超大输入与来源窗口校验（7A：ipc-limit 核对表——无界字段 maxLength 补全（title 200/搜索 512/消息 content 64KiB/语音 commit 10KiB/attachment 路径 1024/rename title 200，D7A-13）+ 既有 4MiB/1MiB/2048/4097 引用断言（含 openExternal>2048 拒）+ ipc-security 集成扩展：未知通道 reject/超大对象/类型混淆 + 白名单 67→73）
+- [x] 路径穿越、符号链接、重放与授权后参数变化测试（7A：引用既有阶段 6/0-1 实现证据 + 核对表式哨兵——safe-open Windows 变体/UNC/ADS、paramHash canonical、callId 幂等、queryStatus 三分支，验证「引用 + 无回退」；不重写实现）
+- [x] Token、模型密钥、聊天正文、Inner Voice、录音与本地数据泄漏扫描（7A：`verify:sensitive` 常驻门禁（`git ls-files` 全树、黑名单 8 规则含 40+ base64、third_party/+vendored live2d 两树+扫描器自排除、行级 allowlist fail-loud 锚定）+ 诊断导出逐行二次脱敏 + buildExportPayload 单测黑名单零命中）
+- [x] 直接语音字幕与文字草稿隔离测试（阶段 4 批次 B 已覆盖——R-S4 系列：字幕不写入草稿/取消不改变草稿；7A 未变更）
+- [ ] 网络中断、Renderer 崩溃、缓存损坏与 GPU 上下文恢复（→ 7B）
+- [ ] 长会话、长流式、历史资源列表与 Live2D 性能测试（→ 7C）
+- [~] 日志轮转、缓存上限、临时附件与录音清理（7A 已落地日志目录管理/打开/清理（轮转 5MB×3 + 审计 30 天）+ 日志段/审计段导出上限；缓存上限/临时附件/录音清理归 7B/7D）
+- [ ] 集中修复 Blocker、Critical 与主要回归问题（→ 7D）
 
 ### 验收门槛
 
-- [ ] Blocker / Critical 为 0；安全发布清单通过
-- [ ] 200 条混合消息、100 个多分段回复、500 项历史资源操作正常
-- [ ] 长时间运行无明显持续内存增长
-- [ ] Live2D 关闭后 CPU/GPU 使用明显下降
-- [ ] 日志与诊断导出通过敏感信息扫描
-- [ ] 主链路异常可恢复或安全失败
+- [~] Blocker / Critical 为 0；安全发布清单通过（**7A 已产出 20 项核对表**——`docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`，第 11 项（Endpoint SSRF 面=后端职责）与第 18 项（发布包完整性=阶段 8 签名联动）为证据缺口并记录影响面；Blocker/Critical 收口归 7D 全流程）
+- [ ] 200 条混合消息、100 个多分段回复、500 项历史资源操作正常（→ 7C）
+- [ ] 长时间运行无明显持续内存增长（→ 7C）
+- [ ] Live2D 关闭后 CPU/GPU 使用明显下降（→ 7C）
+- [x] 日志与诊断导出通过敏感信息扫描（7A：verify:sensitive + 导出二次脱敏 + 黑名单零命中单测；**已开发、未联调**）
+- [ ] 主链路异常可恢复或安全失败（→ 7B）
 
 ---
 
@@ -520,3 +522,4 @@
 | 2026-08-21 | **阶段 6 真实联调收口修复（代码批，已落地待真机复验）**：① 回退 `cyrene` scheme `corsEnabled:false`（联调期曾临时打开；违反阶段 5 D-4 安全结论，handler 的 renderer-root/media 分支无 ACAO 白名单），单测恢复断言，联调清单 0.4 明确必须 preview/prod 同源启动；② 实时工具卡片会话隔离——`DesktopToolRequest/ToolRecord/PublicToolEvent` 增 `conversationId`，real/mock 从 `activeConversationId` 注入，toolStore 增 `setActiveConversationId` + `visibleLiveOrder` 过滤（未归属/活动会话未知兼容显示），`waitingForApproval`/`liveRecords` 只统计当前会话，bootstrap 在 connection state push 时同步；③ 验收记录矛盾与 60s 口径校正（后端 bridge 实为 120s，`desktop_calls.expires_at=created+120s`；剩余真机顺序改 preview 模式）；门禁：**1867 单测（143 files）/ 111 集成（17 files）** + typecheck/lint/build + check:contract（WS 35/35 + 5 未纳 warn + REST 16/16）全绿 | 已开发、未联调（真机待复验：4.3 同源媒体 + 会话隔离 + 8.3 语音） |
 | 2026-08-21 | **阶段 6 真实联调通过，三态升「已真实联调」**：真实 Windows Electron（当前 `2cf6de7`）+ 后端 `03a6e882` 完成清单 §1–§7（backend 只读卡片 / select·read·write·capture / 权限·黑名单·Diff·冲突 / 目录授权·撤销·历史 / 重连·幂等·超时 / 审计脱敏 / Live2D waiting_permission）；收口修复 `corsEnabled:false` 与实时工具卡会话隔离真机复验通过（截图归档 1728×1080 正常加载；A→B→A 切换卡片正确隐藏/恢复）；8.3 语音三项真实人声补齐（普通录音 commit + 用户消息 + AI 回复 / realtime turn 自动提交 + AI 回复 completed / 输入法转写 final 写草稿无消息）；可选项 1.5/2.8/4.5 DEFERRED；验收见 `docs/review/2026-08-21-阶段6-真实联调验收.md` | 已真实联调（阶段 6 通过，阶段 2/3/4/5 保持） |
 | 2026-08-21 | **阶段 6 补测 2.8 大文件附件 PASS**：`stage6-large.txt` 150000 字节 → 权限窗 → completed，`attachmentCount=1`、摘要截断；后端 `call_109cb69f712d` succeeded + `/uploads/desktop/call_109cb69f712d.txt` 落盘 150000。发现并修复后端 text/plain 415（`core/input/tools_routes.py` 白名单补 text/plain/application/json，新增 service 用例） | 已真实联调（2.8 PASS，1.5/4.5 仍 DEFERRED） |
+| 2026-08-22 | **阶段 7 批次 A（安全收敛）已落地并全量验证（三态=已开发、未联调）**：① Markdown DOM 级净化——`renderMarkdown` 引入 DOMPurify 3.4.14（显式 ALLOWED_TAGS/ALLOWED_ATTR、`ALLOWED_URI_REGEXP` 回溯安全形态、无 USE_PROFILES（互斥铁证）），移除 scoped 消毒器（decodeEntities/sanitizeHtml/DANGEROUS_TAGS/NAMED_ENTITIES），行为变更点记录（img src data: 经 DATA_URI_TAGS 保留、任务列表 input 剥离）；② IPC 攻击面——ipc-limit 核对表（无界字段 maxLength 补全 D7A-13 + 既有上界引用断言）+ ipc-security 集成扩展（未知通道/超大对象/类型混淆 + 白名单 67→73）；③ 路径/重放/授权后参数断言面（引用既有实现证据 + 无回退哨兵）；④ verify:sensitive 敏感扫描常驻门禁（黑名单 8 规则、third_party/+vendored live2d 两树 + 扫描器自排除、行级 allowlist fail-loud 锚定）；⑤ 「开发与诊断」设置页 CyDiagnosticsPane 四分区（日志管理/开发者模式（二次确认 + 会话态不持久化 + F12 门单一 + 远程调试恒关）/连接诊断（只读读 connectionStore）/脱敏诊断导出（单 JSON + 段级 sha256 + 二次脱敏 + harness 落 temp））+ diagnostics 通道 5 invoke + 1 push（`diagnostics:dev-event`，preload 订阅）+ `BackendAdapter.subscribe` 多槽升级（real/mock 对齐）+ FileWriter.clear、`buildExportPayload` 纯函数、mock env 桥 `CYRENE_MOCK_REPLY_FIXTURE`；⑥ Electron Fuses 三项关闭（electron-builder.yml `electronFuses` 三键 + @electron/fuses 2.1.3 精确锁定）+ verify:artifact 静态读回断言（48 字节 DISABLE×3，fail-closed）+ smoke flip-back 临时副本方案（产物本体保持 flipped）；⑦ doc 07 §17 发布安全门槛 20 项逐条核对（`docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`——第 11 项（Endpoint SSRF 面=后端职责）与第 18 项（来源完整性=阶段 8 签名联动）为证据缺口）；⑧ 文档同步（doc 01/07/08/11/12/13/16/17 + README + spec §5.1）+ 决策记录（D7A-01~15 + 用户拍板 4 项 + 委托裁决 + review 记录）。**用户拍板（2026-08-21）**：DOMPurify 引入 / 诊断导出单 JSON / Fuses 7A 落地 / 开发者模式设置页开关+二次确认（修订 doc 12 H-09 与 doc 16 §4.0——原「恒关、无开启路径」→「默认关 + 二次确认开关（会话态）」）。**门禁计数（单测/集成/files、check:contract、verify:sensitive/verify:artifact 实测值）以 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`、验收记录与 CLAUDE.md 统一更新为准**（Task 8a 实测后主会话回填）；真实 Windows Electron（REAL）联调由开发者批次后执行，通过后升「已真实联调」；spec/plan 见 `docs/superpowers/specs|plans/2026-08-22-phase7-batcha-security-convergence-*`，决策见 `docs/review/2026-08-22-阶段7批次A-决策记录.md` | 已开发、未联调（批次 A 代码批完成，联调归开发者批次后） |

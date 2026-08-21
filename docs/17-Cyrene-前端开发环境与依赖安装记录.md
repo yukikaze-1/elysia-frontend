@@ -244,7 +244,7 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 
 `pnpm verify:artifact` = `node apps/desktop/scripts/verify-artifact.cjs`（根 package 转发到子包；阶段 1 块 A 落地，对应 doc 16 §4 任务 ④ 与 doc 09 §5 命令语义）。
 
-- **默认只做静态检查**：out/ 三产物（main/preload/renderer index.html）存在、index.html 保留 CSP meta 且无 `unsafe-eval`（dev http 兜底，prod 由响应头 AND 收紧）、`.env`/`AGENT_ACCESS_TOKEN` 赋值/`Bearer ` 长 token 模式扫描（best-effort，非完整扫描器）、package.json version 可读；
+- **默认只做静态检查**：out/ 三产物（main/preload/renderer index.html）存在、index.html 保留 CSP meta 且无 `unsafe-eval`（dev http 兜底，prod 由响应头 AND 收紧）、`.env`/`AGENT_ACCESS_TOKEN` 赋值/`Bearer ` 长 token 模式扫描（best-effort，非完整扫描器）、package.json version 可读；**阶段 7 批次 A 追加产物二进制 Fuses 读回断言**（三项 DISABLE，失败 exit 1——见 §17）；
 - **`--smoke` 追加启动冒烟**（Playwright `_electron`）：优先启动未分发包（Linux→`dist/linux-unpacked/`，按 productName 候选名 `Cyrene`/`cyrene` 挑选真实二进制；win/darwin 同理），缺失回退 out/ 未打包直启；断言协议 `cyrene:`、`cyrene://` 响应头严格 CSP（`frame-src 'none'`/无 `unsafe-eval`/`unsafe-inline`）、Vue `#app` 挂载 + `.cy-app` grid 样式（防 CSP 拦样式假绿）、`getAppInfo`、普通浏览器 `desktopApi` undefined（信任边界）、打包调试门负路径（`--remote-debugging-port=9222` → failStart 退出）；Linux 需 `DISPLAY` 或 `WAYLAND_DISPLAY`，否则判失败不假绿；
 - **冒烟 env**：`delete ELECTRON_RUN_AS_NODE/ELECTRON_ENABLE_LOGGING/ELECTRON_RENDERER_URL/NODE_OPTIONS`（残留 dev env 会把回退冒烟劫持到 http）+ `CYRENE_TEST_HARNESS=1`（调试门放行 `=0` 控制通道，见 P-10）；
 - 无 `--smoke` 时输出 `（仅静态检查：未传 --smoke…）`；任一检查失败退出码 1。
@@ -286,3 +286,16 @@ cd /home/yomu/elysia-frontend && DISPLAY=:0 node .playwright-mcp/smoke-electron.
 - `sandbox: true` 的 preload 产物应只剩 `require("electron")`——任何第三方 `require(...)` 都要检查是否被外部化；
 - 用 `grep -o 'require("[^"]*")' out/preload/index.js` 快速核验 preload 外部化列表；
 - 定位 electron 包不要用 `node_modules/<pkg>` 相对路径，先 `node -e "console.log(require.resolve('electron'))"` 看实际解析位置；测试 helper 同理。
+
+## 17. 敏感信息扫描 verify:sensitive 与 Fuses 产物验证（2026-08-22 追加）
+
+**`pnpm -F @cyrene/desktop verify:sensitive`**（阶段 7 批次 A，2026-08-22 起可用；node 入口、零额外依赖；根无 shim，与 `check:contract` 同款 `-F` 形式）= `node apps/desktop/scripts/verify-sensitive.mjs`：
+
+- 扫描对象：`git ls-files` 全部跟踪文件（`out/`/`dist/`/`.playwright-mcp/` 未跟踪，天然不扫）；
+- 黑名单 8 规则：Bearer token / JWT（二段 `{20,}`）/ `sk-` API key / `AKIA` AWS key / `AGENT_ACCESS_TOKEN=` / `ACCOUNT_TOKEN=` 赋值形态 / `-----BEGIN ... PRIVATE KEY-----` / **40+ 长 base64**（复用 redact RULES 四条第 4 条原文）；任意命中 exit 1；
+- 排除目录：`third_party/`（CubismSdkForWeb-5-r.5——291 个跟踪文件含 228KB asm.js base64 必然误报且非本仓代码）+ `apps/desktop/src/renderer/public/live2d/` + `apps/desktop/src/renderer/src/live2d/framework/`（vendored live2d 两树，与 eslint.config.mjs 同款 vendor 忽略）；**扫描器自身三文件自排除**（`verify-sensitive.mjs`/`verify-sensitive-core.mjs`/`verify-sensitive.spec.ts`——黑名单字面量与触发器必然命中且非秘密；自排除为恒定盲区，任何变更须过 review，已注释）；
+- 行级 allowlist：「路径 → 锚定段 → 理由（「已人工核对无真实秘密」）」三重 fail-loud——path 不在跟踪清单/落在排除段/锚定段零命中均报错（防行号漂移使 allowlist 静默失效）；类别级条目（规则 8 的 `base64-long-string` 文件级 40+ 长串放行）**限规则域**——仅豁免该规则，规则 1-7 不被通用条目弱化（MED-1 收口）；
+- 实测基线（提交树）：黑名单 8 规则、570 扫 / 368 排除 / 1591 放行，exit 0；**纪律：改 allowlist/触发器后必须「git add 后复跑 exit 0 再 commit」**（Task 7 HIGH-1 教训——未提交时自扫描命中扫描器自身与单测触发器）；
+- 注意：规则 1（`Bearer\s+…`）对散文「Bearer + 词」天然高误报（`+` 在字符类内）——新内容命中会 fail（fail-loud 是特性不是缺陷；精修新条目时务必核对真实内容）。
+
+**Fuses 产物验证（verify:artifact 扩展，同批）：** `pnpm verify:artifact` 静态阶段对打包产物二进制执行 `getCurrentFuseWire` 读回——`RunAsNode`/`EnableNodeOptionsEnvironmentVariable`/`EnableNodeCliInspectArguments` 三项必须 = DISABLE（48 字节枚举），任何一项未关闭 exit 1（fail-closed）。配置在 electron-builder.yml `electronFuses`（pack 时由 electron-builder 26.15.3 内置 `@electron/fuses@^1.8.0` 翻转写 wire；读回脚本经 `await import('@electron/fuses')`（2.1.3，ESM-only——`require` 会 ERR_REQUIRE_ESM）——写/读双版本并存为已知且已实测兼容（V1 sentinel 同源）；`getCurrentFuseWire` 对不支持的二进制抛错 → 本检查直接 fail，不静默跳过。**`--smoke` 与 Fuses 的冲突（已知定案）**：Playwright `_electron.launch` 硬依赖 `--inspect=0` 的「Debugger listening on」行，三项关闭下直接启动 flipped 产物必挂→smoke 前先复制包含 `resources/` 的整目录临时副本并 `flipFuses` 三项回 true（产物本体保持 flipped，读回断言证明最终态）；**smoke 失败的原因若是点开负路径（flipExe 对 fused 产物触发 Playwright 崩溃）则属预期保护路径**（负路径的捕获型拒绝由应用层门——`rejectForbiddenDebugSwitches`——守，fuse 层证明由读回断言守）。

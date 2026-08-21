@@ -81,14 +81,14 @@ allowRunningInsecureContent: false
 - 禁止任意导航；
 - 外部链接校验后由系统浏览器打开；
 - 不开启远程调试端口；
-- DevTools 在开发构建默认启用；发布构建默认关闭，只有用户显式开启开发者模式、二次确认并重启后才可按产品策略启用；
+- DevTools 在开发构建默认启用；发布构建默认关闭，用户可经设置页显式开启开发者模式（二次确认）后启用——会话态，重启恢复禁用（阶段 7 批次 A D7A-04/05 修订，见 §16/§17）；
 - 任何构建都不得开放远程调试端口；
 - 权限请求默认拒绝，按功能显式放行。
 
 **已落地基线（阶段 1 块 A，2026-08-09）：**
 
 - 打包/构建产物 Renderer 经 `cyrene://` 受限自定义协议加载（只读服务渲染根，fail-closed），替代 `file://` 路径映射；加载/协议注册统一谓词 `shouldUseViteDevServer = 未打包 && 有合法 ELECTRON_RENDERER_URL`——dev（electron-vite dev，含 `--mode test`）走 Vite http；**打包恒走 `cyrene://`，残留 dev env 无法劫持**；test/production 构建与 `--mode development` 直启同样走 `cyrene://`（协议注册与加载谓词同源，缺 handler 即 404 空白窗）；
-- **远程调试门**：`main()` 顶部同步扫 `process.argv` + `commandLine` + `NODE_OPTIONS`，**打包（isPackaged）**命中即 failStart 退出（先于浏览器进程初始化，CDP 端口在 whenReady 前已绑定）——拒绝 `--remote-debugging-port`（显式端口/裸开关）、`--inspect`（显式端口/裸开关）、`--inspect-brk/-node/-brk-node/-wait/-wait-node`、`--remote-debugging-fd`（恒拒）、`--remote-debugging-pipe`（非 harness 拒）；**`--remote-debugging-port=0`/`--inspect=0` 默认也拒**，仅测试 harness env 标记 `CYRENE_TEST_HARNESS=1`（verify:artifact 冒烟注入）放行随机端口；`NODE_OPTIONS=--inspect` 系为纯 env 通道（argv/commandLine 均不含），另查恒拒（`--inspect-brk` 在 Node 引导期暂停、进程内无法拦截，为已知固有限制，阶段 8 Fuses 评估）；
+- **远程调试门**：`main()` 顶部同步扫 `process.argv` + `commandLine` + `NODE_OPTIONS`，**打包（isPackaged）**命中即 failStart 退出（先于浏览器进程初始化，CDP 端口在 whenReady 前已绑定）——拒绝 `--remote-debugging-port`（显式端口/裸开关）、`--inspect`（显式端口/裸开关）、`--inspect-brk/-node/-brk-node/-wait/-wait-node`、`--remote-debugging-fd`（恒拒）、`--remote-debugging-pipe`（非 harness 拒）；**`--remote-debugging-port=0`/`--inspect=0` 默认也拒**，仅测试 harness env 标记 `CYRENE_TEST_HARNESS=1`（verify:artifact 冒烟注入）放行随机端口；`NODE_OPTIONS=--inspect` 系为纯 env 通道（argv/commandLine 均不含），另查恒拒（`--inspect-brk` 在 Node 引导期暂停、进程内无法拦截，为已知固有限制）；**阶段 7 批次 A 已落地 Fuses 收口**（2026-08-22）：`EnableNodeOptionsEnvironmentVariable=false` 从产物级关闭 `NODE_OPTIONS` 注入面、`EnableNodeCliInspectArguments=false` 关闭 `--inspect` 系参数面（`RunAsNode=false` 另关闭 node 子进程执行面），阶段 8 仅剩产物复核（读回断言见 verify:artifact 与 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md` 第 19 项）；
 - 非打包（dev/preview/`--mode development` 直启）不触发该门（决策 D-5 限生产，见 doc 16 §4.0）。
 
 ## 5. 内容安全策略
@@ -359,6 +359,8 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 - 恶意或损坏附件；
 - Local Worker 冒充、断开和超大结果。
 
+> **阶段 7 批次 A（2026-08-22）已核对：** 本表各面于本批逐一对应核对（结论见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`）——XSS/危险链接（DOMPurify + 真实 Chromium markdown-xss 集成，第 6 项）、IPC 非法通道/超大参数/类型混淆（ipc-security 集成扩展 + ipc-limit 单测核对表，第 5 项）、路径遍历/符号链接/UNC/重放/参数篡改（阶段 6 既有实现 + 本批引用式断言，第 8/16 项）、Token/与敏感内容泄漏（verify:sensitive 常驻门禁 + 导出二次脱敏，第 9 项）、生产 DevTools 默认态/显式开启门槛/远程调试恒关（本批修订，第 15/17 项）、Fuses（构建产物读回，第 19 项）。**自定义模型 Endpoint 的 SSRF/DNS/重定向/私网面为后端职责**（出站请求由后端执行，前端无实现面——第 11 项「证据缺口」，见核对文档）。
+
 ## 17. 发布安全门槛
 
 - [ ] Renderer 无 Node.js 直接能力；
@@ -377,7 +379,9 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 - [ ] 麦克风和实时语音具备持续可见状态及安全清理，直接语音字幕不会污染文字草稿；
 - [ ] 开发者模式中的应用诊断保持脱敏；DevTools 的当前页面可见性风险已告知且不能读回已保存凭据；
 - [ ] 重放不会重复产生副作用；
-- [ ] 生产包默认关闭开发者模式和 DevTools，远程调试端口始终关闭；显式启用时应用诊断仍脱敏；
+- [ ] 生产包默认关闭开发者模式和 DevTools，远程调试端口始终关闭；显式启用（设置页二次确认）时应用诊断仍脱敏，重启恢复禁用；
 - [ ] 发布包来源和完整性可验证；
 - [ ] Electron Fuses 已按实际功能 Review，并从打包产物验证；
 - [ ] 高风险已知问题已记录并获得明确接受。
+
+> **阶段 7 批次 A（2026-08-22）核对/修订注记：** 第 6/15/19/20 项由本批补齐（DOMPurify + markdown-xss 集成、开发者模式设置页开关与脱敏诊断、Fuses 三项关闭 + 产物读回断言、本批已知限制见 spec §10 与决策记录 §7）；第 17 项口径随 D7A-04/05 修订（生产默认关保持、增加二次确认开启路径与重启恢复禁用；远程调试恒关不变）；第 11 项（自定义 Endpoint SSRF 面）为后端职责——前端无实现面，记为「证据缺口」，详见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`（20 项逐条证据与状态）。

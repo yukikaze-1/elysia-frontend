@@ -136,11 +136,11 @@ renderMarkdown(text):
 
 契约（仿 check:contract/verify:artifact 先例）：
 - `pnpm -F @cyrene/desktop verify:sensitive`（package.json script；node 入口，无额外依赖）
-- 扫描对象：`git ls-files` 全部跟踪文件（排除 `.playwright-mcp/` 产物目录——若跟踪则显式 allowlist）
-- 黑名单（D7A-14）：`Bearer\s+[A-Za-z0-9._~+\/-]+=*` / `eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+` / `sk-[A-Za-z0-9]{10,}` / `AKIA[0-9A-Z]{16}` / `AGENT_ACCESS_TOKEN\s*=\s*\S+` / `ACCOUNT_TOKEN\s*=\s*\S+` / `-----BEGIN [A-Z ]*PRIVATE KEY-----`
-- **排除目录**（D7A-14）：`third_party/` 整体排除（vendor——291 个跟踪文件含 228KB asm.js base64，必然误报；排除注释写明理由）、`out/`/`dist/`（未跟踪，不扫）；其余命中走行级 allowlist
-- allowlist：内嵌表，每行 `path → 正则模式或锚定段 → 理由`（预期：tests/fixtures 脱敏样例、leak-test 类夹具、docs 中说明性示例——首跑按实际命中精修，**allowlist 条目必须注明来源与「已人工核对无真实秘密」**）；**fail-loud 锚定**：锚定模式（路径+匹配段）不命中任何行时脚本报错（防行号漂移使 allowlist 静默失效——安全 LOW③采纳）
-- 输出：违规清单（path:line + 命中类型），有任何违规 exit 1；全绿 exit 0 + 摘要
+- 扫描对象：`git ls-files` 全部跟踪文件（`.playwright-mcp/`、`out/`、`dist/` 未跟踪——`git ls-files` 天然不扫）
+- 黑名单（D7A-14，**落地 8 条——Task 7 LOW-2 同步**）：① `Bearer\s+[A-Za-z0-9._~+\/-]+=*`；② `eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+`；③ `sk-[A-Za-z0-9]{10,}`；④ `AKIA[0-9A-Z]{16}`（③④ 拆分无 `\b`，与 redact 合并条形态差异以本清单为准）；⑤ `AGENT_ACCESS_TOKEN\s*=\s*\S+`；⑥ `ACCOUNT_TOKEN\s*=\s*\S+`；⑦ `-----BEGIN [A-Z ]*PRIVATE KEY-----`；⑧ **40+ 长 base64**：`(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{40,}={0,2}(?![A-Za-z0-9+/])`（复用 redact RULES 第 4 条；对全仓类别性命中——180 文件/1539 行逐类人工核对为公开非秘密——经类别级 allowlist 放行）
+- **排除目录**（D7A-14 + 落地中同级扩展）：`third_party/` 整体排除（vendor——291 个跟踪文件含 228KB asm.js base64，必然误报；排除注释写明理由）；**vendor 同级扩展两树**：`apps/desktop/src/renderer/public/live2d/`（Core asm.js base64 vendored 副本）与 `apps/desktop/src/renderer/src/live2d/framework/`（vendored Framework 源码——与 eslint.config.mjs 同款 vendor 忽略）；**扫描器自身自排除**（`verify-sensitive.mjs`/`verify-sensitive-core.mjs`/`verify-sensitive.spec.ts`——黑名单字面量与单测触发器必然命中且非秘密；自排除为恒定盲区，任何变更须过 review，已注释）；其余命中走行级 allowlist
+- allowlist：内嵌表，每行 `path → 规则或锚定段 → 理由`（预期：tests/fixtures 脱敏样例、leak-test 类夹具、docs 中说明性示例——首跑按实际命中精修，**allowlist 条目必须注明来源与「已人工核对无真实秘密」**）；**fail-loud 锚定**：锚定模式（路径+匹配段）不命中任何行时脚本报错（防行号漂移使 allowlist 静默失效——安全 LOW③采纳）；**规则域语义（MED-1 收口）**：类别级条目（文件级、无锚定段的 40+ 长串放行）仅豁免 `base64-long-string` 规则——规则 1-7 的真实 token 形态不被通用条目弱化（今日 3 行重叠由精确条目兜底）
+- 输出：违规清单（path:line + 命中类型 + 规则名），有任何违规 exit 1；全绿 exit 0 + 摘要
 - 加入 CI：`.github/workflows/*` 现有 job 中加一步（与 typecheck/lint 同 job）
 
 ### 5.2 导出 payload 敏感断言（单测）

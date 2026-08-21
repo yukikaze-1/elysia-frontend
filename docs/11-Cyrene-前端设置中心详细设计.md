@@ -368,6 +368,13 @@ interface AuthorizedCommandTemplate {
 
 Renderer DevTools 是更高风险能力：它天然可以检查当前已渲染 DOM、Renderer 内存和用户正在填写的临时表单，因此不能承诺 DevTools 看不到当前消息或刚输入但尚未提交的密钥。开启前必须明确告知该边界；已保存凭据仍不得通过 API 读回，远程调试端口始终关闭，关闭开发者模式或重启后恢复默认禁用状态。
 
+> **阶段 7 批次 A（2026-08-22）落地同步（Mock 驱动，标「已开发、未联调」）：** §8 全节落地为「开发与诊断」设置页（CyDiagnosticsPane，四分区）——
+> - **日志管理**：日志目录（sanitize 后展示形态，绝对路径不上行）/当前大小/保留期限（轮转 5MB×3 份 + 审计 30 天）/文件列表；打开目录（`diagnostics:open-log-dir`）与清理（`diagnostics:clear-logs`——flush → `ftruncate(0)` → 取消链接轮转历史，结果经 state `lastCleanup` 回显、审计 `diagnostics:logs-cleared`）；
+> - **开发者模式**：设置页开关 + 二次确认（确认文案：「DevTools 可查看当前页面 DOM 与正在输入的内容；已保存凭据不可读回；远程调试端口始终关闭；重启后自动关闭」）；**会话态不持久化**（Main 内存，不写 settings.json——重启恢复禁用；D7A-05）；F12 门 = `config.devToolsAllowed || devMode`，生产菜单无 devtools 角色；远程调试恒关不变、已保存凭据不可读回不变；展示项为脱敏协议事件（ring 200、条目仅 `{ts, type, preview}` 白名单、preview 先 redact+sanitize 双净化再截断 ≤200 含尾标、推送 100ms 节流 + dropped 计数）/工具 Schema 与能力（复用 tool:list）/Store 状态摘要（仅计数/枚举，无消息正文）/详细前端日志（链接日志目录）/Renderer DevTools；
+> - **连接诊断**：只读展示（status/serverUrl/protocolVersion/serverVersion/lastError），直接读 connectionStore，无新 IPC；
+> - **脱敏诊断导出**：单 JSON 文件（`diagnostics:export`，schemaVersion + manifest + summary + 日志段（每轮转文件尾 5MiB 行对齐，≤3 文件）+ 审计段（最近 30 天直读 `audit-*.jsonl` 全量，超 15MiB 截尾保留最新端）+ 段级 sha256）；导出前逐行二次脱敏（redact + sanitize，>1MiB 超长行整行丢弃并计数）；`showSaveDialog`（harness 落 `dirs.temp` 可自动断言）；审计 `diagnostics:exported`（summary 无路径）。
+> - **与 §8.2 列表差异（D7A-06 定案）**：「后端 Adapter 映射结果」由脱敏事件条目的领域事件名（`type` = BackendEvent 判别字段 `event`）承担展示（raw→domain 映射在 Adapter 侧完成，dev 面只展示 domain 名，原始帧内容永不进 Renderer）；「Live2D 帧耗时」**延 7C**（未导出可读统计则不扩展 API，本批显示「不可用」）。
+
 ## 9. 保存和错误处理
 
 - 设置按分类保存，不因某一项失败回滚无关分类；

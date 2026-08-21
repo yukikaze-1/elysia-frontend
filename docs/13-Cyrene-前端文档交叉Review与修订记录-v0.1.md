@@ -457,3 +457,36 @@
 对修订后的 02/03/04/06/07/11/12/13/16 与 README/CLAUDE.md、决策记录执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
 
 > 说明：本次为阶段 6 批次 C 落地的文档同步增量 Review，未重跑完整交叉 Review（真实 Windows Electron 联调、后端 GET /api/tools/calls 真实链路验证仍待开发者批次后）；批次 C 代码批三态 = 已开发、未联调。
+
+## 18. 增量 Review：阶段 7 批次 A 安全收敛落地同步（2026-08-22）
+
+**触发条件：** doc 13 §9——「修改安全策略或权限模型」与「阶段门槛或验收脚本发生变化」：批次 A 落地 Markdown DOM 级净化（DOMPurify）、IPC 攻击面核对与安全测试集、verify:sensitive 敏感扫描常驻门禁、「开发与诊断」设置页（日志管理/开发者模式/连接诊断/脱敏诊断导出）、Electron Fuses 三项关闭与产物读回验证、`BackendAdapter.subscribe` 多槽语义升级。**同步时机：批次落地后的文档同步轮**（本章节）——全量 cross-review 按 doc 13 §9 延至真实联调后收口（四维 spec review 不替代）。
+
+### 18.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 01 §6.1 | `BackendAdapter.subscribe` 多槽语义升级注记（单槽 → 多处理器 Set、重复订阅去重、取消函数不变、单处理器异常 try/catch 隔离、real/mock 双实现对齐、adapter 为后端事件唯一数据源、devTap 为并列消费者） |
+| 07 §4/§16/§17 | §4 基线句（84）「二次确认并重启后才可启用」→「二次确认后可启用（会话态，重启恢复禁用）」；§4 注记（91）「阶段 8 Fuses 评估」措辞随 7A 提前（fuses 已落地，阶段 8 为产物复核）；§16 标注「阶段 7 批次 A 已核对」；§17 第 17 项口径修订（默认关 + 二次确认开启路径 + 重启恢复禁用；远程调试恒关不变）+ 核对注记（6/15/19/20 补齐、11 为证据缺口） |
+| 08 §8 | 测试矩阵补充注记（markdown-xss 集成（真实 Chromium 安全门禁层）/diagnostics-ipc 集成/verify:sensitive 门禁/fuse 读回断言，对应 §8 各面） |
+| 11 §8 | 落地注记（四分区实现态、会话态不持久化、二次确认文案、Adapter 映射由事件条目领域名承担、Live2D 帧耗时延 7C、导出二次脱敏） |
+| 12 §4.8 | H-09 行（182）「正式确认待产品」→「已确认（默认关+二次确认开关）」——引语归属 doc 16 §2.8:166（一致 N-4） |
+| 16 §2.8/§4.0/§4/§10 + changelog | H-09 行升 [x] 并改写行本体（「恒关」→「默认关 + 设置页二次确认开关（会话态）」）；§4.0 决策表开发者模式行修订并注记「2026-08-21 用户拍板修订」（修订 2026-08-08 前置决策）；§4 生产恒关落地项行注记修订；§10 阶段 7 状态注记 + 任务清单勾选/验收门槛标注（7B/7C/7D 归属）；2026-08-22 changelog 行（门禁计数以验收记录为准，主会话回填） |
+| 17 / README | verify:sensitive 命令说明（doc 17 新节 + README 命令表）；fuse/打包相关命令注记（verify:artifact 静态读回 + smoke flip-back、electron-builder.yml `electronFuses` 三键） |
+| spec §5.1（设计文档） | verify:sensitive 黑名单修正为 8 规则（第 8 条 40+ base64）+ 排除清单同步（third_party/ + vendored live2d 两树 + 扫描器自身自排除 + 类别级 allowlist 仅豁免 base64-long-string 的规则域语义）——Task 7 LOW-2 |
+| 决策记录 | `docs/review/2026-08-22-阶段7批次A-决策记录.md`（D7A-01~15 + 用户拍板 + 委托裁决 + review 记录 + 提交链） |
+| 安全发布清单核对 | `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`（doc 07 §17 20 项逐条证据/状态，第 11/18 项证据缺口 + 影响面） |
+| README / CLAUDE.md | 阶段 7 批次 A 状态一句话 + 三态标记（已开发、未联调）；门禁计数以主会话批次收口统一更新为准 |
+
+### 18.2 交叉 Review 结论
+
+- **安全策略变化（需重点说明）**：开发者模式由「生产恒关、无开启路径」（2026-08-08 阶段 1 前置决策）修订为「默认关 + 设置页二次确认开关（会话态，重启恢复禁用）」——用户 2026-08-21 拍板（D7A-04/05）；无 DevTools 菜单旁路（生产菜单无 devtools 角色）、F12 门单一（`config.devToolsAllowed || isDevMode()`）、远程调试恒关不变（rejectForbiddenDebugSwitches 不动）、已保存凭据不可读回不变；「二次确认可被 renderer invoke 直调绕过」为接受档（与 M-8 同档——不新增能力，防误触非防攻击；D7A-04 二道防线说明）。
+- **信任边界无放宽**：诊断面全部元数据零正文——协议事件条目仅 `{ts, type, preview}` 白名单（preview 先 redact+sanitize 双净化再截断 ≤200 含尾标、禁 text/正文/arguments）、Store 摘要仅计数/枚举、导出 summary 无正文、导出路径不回传绝对路径（displayDir/displayPath 分别 sanitize/用户自选回显）；诊断导出前逐行二次脱敏（>1MiB 超长行整行丢弃并计数）；rawType 删除（BackendEvent 判别字段为 `event`，real 兼容帧静默消费，无数据源）。
+- **行为变更点**：① `BackendAdapter.subscribe` 单槽 → 多处理器 Set（接口语义升级——doc 01 §6.1 已同步；mock 防并列订阅覆盖既有聊天订阅；devTap 回调异常隔离 try/catch + logger.warn）；② Markdown 净化替换（移除 decodeEntities/sanitizeHtml/DANGEROUS_TAGS/NAMED_ENTITIES；img src `data:` 经 DOMPurify DATA_URI_TAGS 保留、任务列表 input 剥离——记录为已知行为）；③ `devTools: true` webPreferences（开关为唯一开启路径；verify:artifact 旧「生产无 DevTools」断言面核实无此断言，变更处全部列出）；④ Fuses 三项关闭（RunAsNode/EnableNodeOptionsEnvironmentVariable/EnableNodeCliInspectArguments=false——`--inspect` 系参数面产物级收口，NODE_OPTIONS 注入面关闭，与 rejectForbiddenDebugSwitches 双保险；OnlyLoadAppFromAsar/EmbeddedAsarIntegrityValidation 保持现状归阶段 8）。
+- **已知限制与记录**：happy-dom 非可信消毒 oracle（单元层仅行为记录，安全门禁全归真实 Chromium 集成层）；verify:sensitive 自排除盲区（扫描器三文件恒定盲区，变更须过 review——已注释）；类别级 allowlist 仅豁免 base64-long-string 规则（规则域限定——规则 1-7 不被通用条目弱化）；第三方 vendor（third_party/+vendored live2d 两树）整体排除（必然误报且非本仓代码）；flip-back smoke 副本（产物本体保持 flipped，读回断言证明最终态）。
+- **三态 = 已开发、未联调**（真实 Windows Electron 联调归开发者批次后）——**不触发全量交叉 Review 重跑**，联调通过后做收口 Review。
+- **门禁**：verify:sensitive 提交树 exit 0（黑名单 8 规则、570 扫/368 排除/1591 放行——以提交树实测为准）+ verify:artifact 静态读回 DISABLE×3 + `--smoke`（xvfb，flip-back 副本）+ check:contract（wire 未变）+ 全量单测/集成；**计数最终值以主会话批次收口（CLAUDE.md）为准**。
+
+### 18.3 自动回归
+
+对修订后的 01/07/08/11/12/13/16/17 与 README、spec §5.1、决策记录、安全发布清单核对执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
