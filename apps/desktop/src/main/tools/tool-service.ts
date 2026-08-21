@@ -15,6 +15,7 @@ export interface DesktopToolRequest {
   callId: string; sourceCallId: string; toolName: string; toolVersion: string
   runtime: 'desktop'; arguments: Record<string, unknown>
   reason?: string; expiresAt: number; paramHash?: string
+  conversationId?: string   // 归属会话（real-backend 从 activeConversationId 注入；mock 从 activeConversationId 注入）
 }
 export interface FilePickerOptions { title: string; filters: { name: string; extensions: string[] }[] }
 export interface CaptureSourceInfo { sourceId: string; sourceName: string; thumbnailDataUrl: string }
@@ -41,7 +42,7 @@ export interface ToolServiceDeps {
   queryStatus?: (callId: string) => Promise<DesktopCallStatus | null>   // 批次 C（D6C-11，本 task 首次加入）：GET tools/calls 查询（注入才查；mock 不注入 → 不查，F-20）
 }
 export interface ToolRecord {
-  id: string; desktopCallId?: string; toolName: string; title: string
+  id: string; desktopCallId?: string; conversationId?: string; toolName: string; title: string
   status: ToolCallStatus; reason?: string; inputSummary?: string; pathSummary?: string
   resultSummary?: string; error?: { code?: string; message?: string }; truncated?: boolean
   durationMs?: number; startedAt?: string; finishedAt?: string; attachmentCount?: number
@@ -105,7 +106,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
 
   function emit(rec: ToolRecord, extra: Partial<PublicToolEvent> = {}): void {
     deps.pushEvent({
-      id: rec.id, desktopCallId: rec.desktopCallId, toolName: rec.toolName, title: rec.title,
+      id: rec.id, desktopCallId: rec.desktopCallId, conversationId: rec.conversationId, toolName: rec.toolName, title: rec.title,
       runtime: 'desktop', status: rec.status, reason: rec.reason, inputSummary: rec.inputSummary,
       pathSummary: rec.pathSummary, resultSummary: rec.resultSummary, error: rec.error,
       truncated: rec.truncated, durationMs: rec.durationMs, startedAt: rec.startedAt, finishedAt: rec.finishedAt,
@@ -168,13 +169,13 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
         const timer = timers.get(existing.id); if (timer) { clearTimeout(timer); timers.delete(existing.id) }
         promoteQueue(existing.id)
       }
-      const ev: ToolRecord = { ...existing, desktopCallId: req.callId }
+      const ev: ToolRecord = { ...existing, desktopCallId: req.callId, conversationId: existing.conversationId ?? req.conversationId }
       void wireSend(ev, 'rejected', { error: { code, message } })
       audit('tool:terminal', ev, { errorCode: code })
       emit(ev)
       return
     }
-    const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, toolName: req.toolName, title: deps.registry.get(req.toolName)?.title ?? req.toolName,
+    const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, conversationId: req.conversationId, toolName: req.toolName, title: deps.registry.get(req.toolName)?.title ?? req.toolName,
       status: 'rejected', inputSummary: redactToolArguments(req.arguments), expiresAt: req.expiresAt, arguments_: req.arguments,
       toolVersion: req.toolVersion, statusSent: false, error: { code, message }, startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
@@ -470,7 +471,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     // 6 Wayland 门禁（capture 授权前，A1）
     if (req.toolName === 'desktop.screen.capture' && isWaylandSession()) return reject(req, 'CAPTURE_UNAVAILABLE', '当前桌面环境不支持屏幕捕获')
     // 记录创建
-    const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, toolName: req.toolName, title: tool.title,
+    const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, conversationId: req.conversationId, toolName: req.toolName, title: tool.title,
       status: 'requested', reason: req.reason, inputSummary: redactToolArguments(req.arguments), pathSummary: derivePathSummary(req.arguments),
       dataFlowNote: tool.dataFlowNote, expiresAt: req.expiresAt, paramHash, arguments_: req.arguments, toolVersion: req.toolVersion,
       statusSent: false, realPath, startedAt: new Date().toISOString() }

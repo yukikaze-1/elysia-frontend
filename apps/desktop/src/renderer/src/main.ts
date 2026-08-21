@@ -61,6 +61,7 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
       getToolState: () => {
         records: Record<string, import('@shared/contracts/tool').ToolCallRecord>
         liveOrder: string[]
+        activeConversationId: string | undefined
         waitingForApproval: boolean
         pendingPathSummary: { callId: string; pathSummary: string } | null
       }
@@ -84,8 +85,8 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
       const s = useLive2dStore()
       return { kind: s.mouthSourceKind, moved: s.mouthMoved, settled: s.mouthSettled }
     },
-    getToolState: () => { const s = useToolStore(); return { records: s.records, liveOrder: s.liveOrder, waitingForApproval: s.waitingForApproval, pendingPathSummary: s.pendingPathSummary } },
-    getPermissionPending: () => { const s = useToolStore(); return s.liveOrder.map(id => s.records[id]).find(r => r?.status === 'awaiting_permission') ?? null }
+    getToolState: () => { const s = useToolStore(); return { records: s.records, liveOrder: s.liveOrder, activeConversationId: s.activeConversationId, waitingForApproval: s.waitingForApproval, pendingPathSummary: s.pendingPathSummary } },
+    getPermissionPending: () => { const s = useToolStore(); return s.liveRecords().find(r => r?.status === 'awaiting_permission') ?? null }
   }
 }
 

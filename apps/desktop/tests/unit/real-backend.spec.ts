@@ -600,6 +600,7 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
     const toolPort = (toolServer.address() as AddressInfo).port
     toolWss.on('connection', (ws) => {
       ws.send(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-tool' }))
+      ws.send(JSON.stringify({ type: 'session', conversationId: 'conv-tool', messages: [] }))
       ws.send(JSON.stringify({ type: 'tool.request', callId: 'call_real_1', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', sourceCallId: 'tc_real_1', arguments: { path: '/tmp/x.txt' }, reason: 'r', riskLevel: 'medium', permissionRequired: true, approvalAuthority: 'client', paramHash: 'a'.repeat(64), expiresAt: '2026-08-20T00:00:00.000Z', requestId: 'req-1' }))
     })
     const events: BackendEvent[] = []
@@ -610,7 +611,7 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
     await b.connect({ serverUrl: `http://127.0.0.1:${toolPort}`, token: 'sk-test' })
     await new Promise((r) => setTimeout(r, 50))   // 帧处理异步
     expect(requests).toHaveLength(1)
-    expect(requests[0]).toMatchObject({ callId: 'call_real_1', sourceCallId: 'tc_real_1', toolName: 'desktop.file.read', runtime: 'desktop', arguments: { path: '/tmp/x.txt' }, paramHash: 'a'.repeat(64) })
+    expect(requests[0]).toMatchObject({ callId: 'call_real_1', sourceCallId: 'tc_real_1', toolName: 'desktop.file.read', runtime: 'desktop', arguments: { path: '/tmp/x.txt' }, paramHash: 'a'.repeat(64), conversationId: 'conv-tool' })
     expect((requests[0] as { expiresAt: number }).expiresAt).toBe(Date.parse('2026-08-20T00:00:00.000Z'))
     expect(events.some((e) => e.event === 'tool.request')).toBe(false)   // D6B-08：不再 emit 给 renderer
     await b.disconnect()

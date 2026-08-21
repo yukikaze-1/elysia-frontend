@@ -23,6 +23,28 @@ describe('toolStore 三来路归一化', () => {
     expect(s.records['tc_1'].status).toBe('awaiting_permission')
     expect(s.liveOrder).toContain('tc_1'); expect(s.waitingForApproval).toBe(true)
   })
+  it('实时区按活动会话过滤（真实联调收口：切换会话不显示他会话终态卡片）', () => {
+    const s = useToolStore()
+    s.upsertLocal({ ...mkLocal('completed', 'tc_a'), conversationId: 'conv-a' })
+    s.upsertLocal({ ...mkLocal('completed', 'tc_b'), conversationId: 'conv-b' })
+    // 活动会话未知 → 兼容显示（防 connection state 晚到闪没）
+    expect(s.liveRecords().map(r => r.id)).toEqual(['tc_a', 'tc_b'])
+    s.setActiveConversationId('conv-a')
+    expect(s.liveRecords().map(r => r.id)).toEqual(['tc_a'])
+    s.setActiveConversationId('conv-b')
+    expect(s.liveRecords().map(r => r.id)).toEqual(['tc_b'])
+    s.setActiveConversationId(undefined)
+    expect(s.liveRecords().map(r => r.id)).toEqual(['tc_a', 'tc_b'])
+  })
+  it('waitingForApproval 只统计当前活动会话的 awaiting 记录', () => {
+    const s = useToolStore()
+    s.upsertLocal({ ...mkLocal('awaiting_permission', 'tc_a'), conversationId: 'conv-a' })
+    s.upsertLocal({ ...mkLocal('awaiting_permission', 'tc_b'), conversationId: 'conv-b' })
+    s.setActiveConversationId('conv-a')
+    expect(s.waitingForApproval).toBe(true)
+    s.upsertLocal({ ...mkLocal('completed', 'tc_a'), conversationId: 'conv-a' })
+    expect(s.waitingForApproval).toBe(false)   // conv-b 的 awaiting 不计入当前会话
+  })
   it('backend 事件 → 只读记录（D6B-21：本地已存在不覆盖；判别键 event，代码 H5）', () => {
     const s = useToolStore(); s.upsertLocal(mkLocal('completed'))
     s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_1', toolName: 'desktop.file.read', runtime: 'backend', success: false } as unknown as ToolBackendEvent)

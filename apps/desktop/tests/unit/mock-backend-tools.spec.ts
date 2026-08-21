@@ -81,7 +81,7 @@ describe('批次 B 改接（toolRequestSink）', () => {
     await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'r1' })
     await new Promise((r) => setTimeout(r, 50))
     expect(sink.length).toBe(1)
-    expect(sink[0]).toMatchObject({ callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: 'desktop.file.read', runtime: 'desktop' })
+    expect(sink[0]).toMatchObject({ callId: 'call_mock_1', sourceCallId: 'tc_mock_desktop_1', toolName: 'desktop.file.read', runtime: 'desktop', conversationId: 'conv-1001' })
     expect(sink[0].paramHash).toBeUndefined()
     expect(events.some((e) => e.event === 'tool.request')).toBe(false)   // 不再直发 chat:event（判别键 event，代码 M7）
     // 第二次发射 id 自增（A3）

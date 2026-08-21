@@ -903,6 +903,7 @@ export class MockBackend implements BackendAdapter {
               toolName: r.toolName, toolVersion: DESKTOP_TOOL_VERSION, runtime: 'desktop',
               arguments: r.arguments ?? {}, reason: r.reason,
               expiresAt: Date.now() + 30_000,
+              conversationId: this.activeConversationId,
             })
           }
         }

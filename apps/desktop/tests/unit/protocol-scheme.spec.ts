@@ -15,7 +15,7 @@ describe('cyrene protocol privileges', () => {
     registerSchemesAsPrivileged.mockClear()
   })
 
-  it('enables Chromium CORS processing so the handler origin allowlist can decide dev fetches', () => {
+  it('保持 corsEnabled=false（阶段 5 D-4：放开后非受信 origin 可读 cyrene:// 资源）', () => {
     registerCyreneScheme()
 
     expect(registerSchemesAsPrivileged).toHaveBeenCalledWith([
@@ -23,7 +23,7 @@ describe('cyrene protocol privileges', () => {
         scheme: 'cyrene',
         privileges: expect.objectContaining({
           supportFetchAPI: true,
-          corsEnabled: true,
+          corsEnabled: false,
           bypassCSP: false
         })
       })

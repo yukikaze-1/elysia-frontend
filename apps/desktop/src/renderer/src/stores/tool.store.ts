@@ -32,9 +32,19 @@ export const useToolStore = defineStore('tool', () => {
   const pendingPathSummary = ref<{ callId: string; pathSummary: string } | null>(null)
   const pendingDiff = ref<{ callId: string; diff: NonNullable<PublicToolEvent['diff']> } | null>(null)          // A-3：权限窗写 Diff 数据源
   const pendingDataFlowNote = ref<{ callId: string; dataFlowNote: string } | null>(null)                        // A-3：四问④数据源
+  const activeConversationId = ref<string | undefined>(undefined)   // 实时区会话隔离（真实联调收口：切换会话不显示他会话终态卡片）
   let unsubscribeEvent: (() => void) | undefined
 
-  const waitingForApproval = computed(() => liveOrder.value.some(id => records.value[id]?.status === 'awaiting_permission'))
+  /** 可见 liveOrder：未归属记录恒显示（mock/兼容）；活动会话未知时已归属记录也显示
+   *  （防 connection state 晚于首个工具事件时闪没）；活动会话已知后只显示归属匹配记录。 */
+  const visibleLiveOrder = computed(() => liveOrder.value.filter((id) => {
+    const rec = records.value[id]
+    if (!rec) return false
+    return rec.conversationId === undefined
+      || activeConversationId.value === undefined
+      || rec.conversationId === activeConversationId.value
+  }))
+  const waitingForApproval = computed(() => visibleLiveOrder.value.some(id => records.value[id]?.status === 'awaiting_permission'))
 
   function upsertRecord(id: string, rec: ToolCallRecord): boolean {
     const existing = records.value[id]
@@ -58,7 +68,7 @@ export const useToolStore = defineStore('tool', () => {
     if (evict.size) liveOrder.value = liveOrder.value.filter((oid) => !evict.has(oid))
   }
   function upsertLocal(ev: PublicToolEvent): void {
-    const rec: ToolCallRecord = { id: ev.id, desktopCallId: ev.desktopCallId, toolName: ev.toolName, runtime: 'desktop',
+    const rec: ToolCallRecord = { id: ev.id, desktopCallId: ev.desktopCallId, conversationId: ev.conversationId, toolName: ev.toolName, runtime: 'desktop',
       status: ev.status, reason: ev.reason, inputSummary: ev.inputSummary, outputSummary: ev.resultSummary,
       error: ev.error, truncated: ev.truncated, durationMs: ev.durationMs, startedAt: ev.startedAt, finishedAt: ev.finishedAt,
       attachmentCount: ev.attachmentCount }
@@ -103,6 +113,8 @@ export const useToolStore = defineStore('tool', () => {
     // tool.request 防御性忽略（批次 B 起 desktop 请求不再经 chat:event，D6B-08）
   }
   function clearForGeneration(): void { liveOrder.value = liveOrder.value.filter(id => !TERMINAL.includes(records.value[id]?.status ?? 'completed')) }  // A9
+  /** 实时区会话隔离：bootstrap 在 connection state push 时同步活动会话（undefined = 未归属兼容态） */
+  function setActiveConversationId(id: string | undefined): void { activeConversationId.value = id }
   // L-2/F-15（批次 C）：先 await toolList 水合完毕再订阅 onToolEvent（防旧快照覆盖新事件；水合快照 = Main 权威快照）。
   // 水合失败 fail-open（不阻塞启动）；toolList 为 DesktopApiLike 必填键（LOW-1：无 ?. 防御——测试 mock 须镜像全契约）。
   async function init(): Promise<void> {
@@ -131,8 +143,8 @@ export const useToolStore = defineStore('tool', () => {
   async function cancel(callId: string): Promise<void> { await api.toolCancel(callId) }
   async function pickSource(callId: string, sourceId: string): Promise<void> { await api.toolPickSource(callId, sourceId) }
   async function confirmUpload(callId: string): Promise<void> { await api.toolConfirmUpload(callId) }
-  function liveRecords(): ToolCallRecord[] { return liveOrder.value.map(id => records.value[id]).filter(Boolean) }
-  return { records, liveOrder, captureState, pendingPathSummary, pendingDiff, pendingDataFlowNote, waitingForApproval,
-    init, applyBackendEvent, upsertLocal, clearForGeneration, clearApprovalLocal, decide, cancel, pickSource, confirmUpload, liveRecords,
+  function liveRecords(): ToolCallRecord[] { return visibleLiveOrder.value.map(id => records.value[id]).filter(Boolean) }
+  return { records, liveOrder, activeConversationId, captureState, pendingPathSummary, pendingDiff, pendingDataFlowNote, waitingForApproval,
+    init, applyBackendEvent, upsertLocal, clearForGeneration, setActiveConversationId, clearApprovalLocal, decide, cancel, pickSource, confirmUpload, liveRecords,
     grantDirectory, listGrants, revokeGrant, listHistory }
 })

@@ -299,6 +299,7 @@ export class RealBackend implements BackendAdapter {
             callId: frame.callId, sourceCallId: frame.sourceCallId, toolName: frame.toolName,
             toolVersion: frame.toolVersion, runtime: 'desktop', arguments: frame.arguments, reason: frame.reason,
             expiresAt: Date.parse(frame.expiresAt), paramHash: frame.paramHash,
+            conversationId: this.state.activeConversationId,
           })
         } catch (e) {
           this.options.logger?.warn('tool.request:parse-failed', { message: (e as Error).message })

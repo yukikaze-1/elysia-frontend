@@ -38,6 +38,7 @@ export interface DiffLine { kind: 'added' | 'removed' | 'unchanged'; text: strin
 export interface PublicToolEvent {
   id: string                        // sourceCallId（权威键）
   desktopCallId?: string            // 桥 callId
+  conversationId?: string           // 归属会话（实时区会话隔离；未归属按兼容显示）
   toolName: string
   title: string                     // 注册表友好名（Renderer 无注册表）
   runtime: 'desktop'

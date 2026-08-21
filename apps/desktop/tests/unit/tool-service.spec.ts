@@ -14,6 +14,7 @@ interface ToolEv {
   error?: { code?: string; message?: string }
   id?: string
   desktopCallId?: string   // 批次 C（N-3）：F-16 队列晋升按 desktopCallId 过滤
+  conversationId?: string  // 阶段 6 联调收口：会话隔离贯通
   diff?: { isNewFile?: boolean; totalLines?: number }
   captureSources?: unknown[]
   capturePreview?: { previewDataUrl: string }
@@ -55,6 +56,11 @@ function mkGrantStore(store: { [K in keyof import('../../src/main/tools/grant-st
 }
 
 describe('决策链', () => {
+  it('conversationId 从请求贯通到公开事件（实时区会话隔离数据源）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ conversationId: 'conv-tools' }))
+    expect(events.at(-1)?.conversationId).toBe('conv-tools')
+  })
   it('未注册工具 → rejected CAPABILITY_UNAVAILABLE（不弹窗 + wire rejected，H1）', async () => {
     const { svc, events, submitStatus } = mkService()
     await svc.handleRequest(mkReq({ toolName: 'desktop.command.run' }))

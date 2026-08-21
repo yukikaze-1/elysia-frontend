@@ -26,7 +26,7 @@ export interface BootstrapStores {
   live2d?: { handleDirective(e: Live2DDirectiveEvent): void }
   // 阶段 6 批次 B（Task 7）：toolStore——tool.* 事件旁路（判别键 event，代码 H5；stores 注入模式，
   // 与 live2d.directive 旁路同款——消息 store 不依赖工具框架）+ generation.started 清终态接线（M6）。
-  tools?: { init(): void; applyBackendEvent(e: BackendEvent): void; clearForGeneration(): void }
+  tools?: { init(): void; applyBackendEvent(e: BackendEvent): void; clearForGeneration(): void; setActiveConversationId(id: string | undefined): void }
 }
 
 export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapStores): { register(): void } {
@@ -36,6 +36,7 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
     const leavingConnected = prevStatus === 'connected' && s.status !== 'connected'
     prevStatus = s.status
     stores.connection.setState(s)
+    stores.tools?.setActiveConversationId(s.activeConversationId)   // 阶段 6 联调收口：实时工具卡片按活动会话过滤
     stores.message.handleConnectionStateChange(s)
     if (s.status === 'connected') {
       void stores.conversation.onConnected(s.connectionId)

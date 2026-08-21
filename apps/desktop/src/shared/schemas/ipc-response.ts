@@ -116,7 +116,7 @@ const CaptureSourceSchema = z.object({ sourceId: z.string(), sourceName: z.strin
 const CapturePreviewSchema = z.object({ sourceId: z.string(), previewDataUrl: z.string() }).strict()
 
 export const PublicToolEventSchema = z.object({
-  id: z.string(), desktopCallId: z.string().optional(), toolName: z.string(), title: z.string(),
+  id: z.string(), desktopCallId: z.string().optional(), conversationId: z.string().optional(), toolName: z.string(), title: z.string(),
   runtime: z.literal('desktop'), status: z.enum(['requested', 'awaiting_permission', 'running', 'completed', 'failed', 'rejected', 'cancelled', 'timeout']),
   reason: z.string().optional(), inputSummary: z.string().optional(), pathSummary: z.string().optional(),
   resultSummary: z.string().optional(),
