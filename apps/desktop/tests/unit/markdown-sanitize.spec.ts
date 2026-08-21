@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 // tests/unit/markdown-sanitize.spec.ts（行为记录层——安全门禁归 tests/integration/markdown-xss.spec.ts 真实 Chromium）
-// 行为差异标注（阶段 7 批次 A Task 2 实测，2026-08-22）：DOMPurify 3.4.14 在 happy-dom 20.11.2 下遍历层失效——
+// 行为差异标注（阶段 7 批次 A Task 2 实测 + Task 8 翻转尝试复验，2026-08-22）：DOMPurify 3.4.14 在 happy-dom 20.11.2 下遍历层失效——
 // ① _readNodeName 缓存 getter 返回 ''（uponSanitizeElement 钩子实测 tagName=''）→ ALLOWED/ATTR 判定全不中；
 // ② happy-dom NodeIterator 在当前节点被移除后 nextNode() 即终止（实测先访问 BODY/H1，移除 H1 后迭代器死亡），
 //    消毒只处理到首个被移除元素就停，其后元素含危险标签/on*/危险协议原样保留。
 // 因此「输出不含可执行面」类断言在 happy-dom 下无法成立——按 brief 行为差异处理：保留用例、断言不弱化，
 // 以 it.fails 标注（断言仍执行且必须如预期失败——happy-dom 环境修复后可翻回 it）；安全门禁由
-// tests/integration/markdown-xss.spec.ts（真实 Chromium，待后续任务创建）承载。配置钉住/纯函数断言不受影响。
+// tests/integration/markdown-xss.spec.ts（真实 Chromium）承载。Task 8 已复验翻转（7 用例 it.fails→it 全红：
+// 失败清单与 Task 2 完全一致——<h1>/<style>/onerror/javascript:/cy-code-block/「代码」均未净化），
+// 结论：happy-dom 环境缺陷未变，canary 维持 it.fails 并记录（集成层 2/2 全绿为安全判据）。配置钉住/纯函数断言不受影响。
 import { describe, expect, it } from 'vitest'
 import { renderMarkdown, wrapCodeBlocks, trimCodeText, DOMPURIFY_CONFIG } from '../../src/renderer/src/utils/markdown'
 

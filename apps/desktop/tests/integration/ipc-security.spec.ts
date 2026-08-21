@@ -4,7 +4,6 @@ import { join } from 'path'
 import type { ElectronApplication, Page } from 'playwright'
 import { IpcChannels, PushChannels } from '@shared/contracts'
 import { launchApp, closeApp } from './helpers/app'
-
 let app: ElectronApplication
 let page: Page
 let userData: string
@@ -124,5 +123,112 @@ describe('IPC 安全', () => {
     }, join(__dirname, '../../out/preload/index.js')) // tests/integration → apps/desktop/out/preload/index.js
     expect(res.ok).toBe(false)
     expect(res.err).toContain('拒绝')
+  })
+  it('未知通道 invoke → 未注册通道报错（Electron 层拒绝语义；spec §4.2）', async () => {
+    // 测试专用窗口：nodeIntegration 仅为本断言触达原始 ipcRenderer（应用面 desktopApi 恒窄——第 1 条白名单用例已钉）；
+    // 断言标的 = Electron「ipcMain.handle 未注册名 invoke 必须 reject」本身（预载面/prod 面无此通道可达性——M2 契约）。
+    // 用后即刻销毁；与既有「非主窗口 webContents invoke」夹具窗口同族（测试专用 BrowserWindow 先例）。
+    const res = await app.evaluate(async ({ BrowserWindow }) => {
+      const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false } })
+      await win.loadURL('about:blank')
+      try {
+        const out = await win.webContents.executeJavaScript(
+          "require('electron').ipcRenderer.invoke('cy:nonexistent-channel-xyz').then((r) => 'ok:' + JSON.stringify(r)).catch((e) => 'err:' + e.message)"
+        )
+        return { out }
+      } catch (e: unknown) { return { out: 'exec-fail:' + String(e) } }
+      finally { win.destroy() }
+    })
+    expect(res.out).toMatch(/^err:/)
+    expect(res.out).toMatch(/no handler registered/i)
+  })
+  it('超大对象入参（>4MiB 结构）→ 通道级边界拒（IPC_MESSAGE_TOO_LARGE；spec §4.2）', async () => {
+    const err = await page.evaluate(async () => {
+      try {
+        const big = 'x'.repeat(4.5 * 1024 * 1024)   // 4.5MiB 单结构——超 MAX_IPC_MESSAGE_BYTES（4MiB，ipc.ts:96）
+        await window.desktopApi.cacheMessages({
+          conversationId: 'conv-oversize',
+          updatedAt: new Date().toISOString(),
+          messages: [{ messageId: 'm-oversize', conversationId: 'conv-oversize', role: 'user', status: 'completed', createdAt: new Date().toISOString(), content: big }],
+        })
+        return null
+      } catch (e: unknown) { return e instanceof Error ? e.message : String(e) }
+    })
+    expect(err).toBeTruthy()
+    expect(err).toContain('IPC_MESSAGE_TOO_LARGE')
+  })
+  it('类型混淆抽样（数字/布尔冒充字符串等）→ SCHEMA_VALIDATION_FAILED（spec §4.2）', async () => {
+    const errs = await page.evaluate(async () => {
+      const out: string[] = []
+      const attempts: Array<() => Promise<unknown>> = [
+        () => window.desktopApi.setBackendToken(123 as unknown as string),
+        () => window.desktopApi.setEndpoint(42 as unknown as string),
+        () => window.desktopApi.diagnosticsDevModeSet('yes' as unknown as boolean),
+      ]
+      for (const attempt of attempts) {
+        try { await attempt(); out.push('ok') }
+        catch (e: unknown) { out.push(e instanceof Error ? e.message : String(e)) }
+      }
+      return out
+    })
+    expect(errs.length).toBe(3)
+    for (const err of errs) expect(err).toContain('SCHEMA_VALIDATION_FAILED')
+  })
+  it('openExternal >2048 字符 → 拒（SCHEMA_VALIDATION_FAILED；task-1-med1 待办收口）', async () => {
+    const err = await page.evaluate(async () => {
+      try { await window.desktopApi.openExternal(`https://example.com/${'x'.repeat(2100)}`); return null }
+      catch (e: unknown) { return e instanceof Error ? e.message : String(e) }
+    })
+    expect(err).toBeTruthy()
+    expect(err).toContain('SCHEMA_VALIDATION_FAILED')
+    // 正方向未被 2048 破坏：monkeypatch shell.openExternal（navigation.spec 先例）记录 → 合法 ≤2048 URL 到达打开层
+    await app.evaluate(({ shell }) => {
+      const g = globalThis as unknown as { __ext: string[] }
+      g.__ext = []
+      shell.openExternal = (u: string): Promise<void> => { g.__ext.push(u); return Promise.resolve() }
+    })
+    const ok = await page.evaluate(async () => {
+      try { await window.desktopApi.openExternal('https://example.com/ok'); return 'ok' }
+      catch (e: unknown) { return 'err:' + (e instanceof Error ? e.message : String(e)) }
+    })
+    expect(ok).toBe('ok')
+    await expect.poll(() => app.evaluate(() => (globalThis as unknown as { __ext: string[] }).__ext), { timeout: 5000, interval: 200 })
+      .toContain('https://example.com/ok')
+  })
+})
+
+describe('路径/重放/授权后参数引用断言（spec §1.1-3——阶段 6 实现证据「引用 + 无回退」哨兵；L-14）', () => {
+  // 口径（plan Task 8 集成扩展段）：引用既有阶段 6 验证过的实现面（safe-open Windows 变体/UNC/ADS、
+  // paramHash canonical、callId 幂等、queryStatus 三分支）——不重写实现、不复制行为断言
+  // （行为权威面在阶段 6 单测 tool-service.spec/param-hash.spec/safe-open.spec），本层钉「走查发现点
+  // 的导出仍存在 + 语义常量未回退」，防后续改造静默移除/改名。
+  it('safe-open：Windows 语义注入体（preOpenLstat/checkModeMask）+ 默认平台选择（引用哨兵）', async () => {
+    const { posixPlatform, windowsPlatform, defaultSafeOpenPlatform } = await import('../../src/main/persistence/safe-open')
+    expect(posixPlatform.kind).toBe('posix')
+    expect(windowsPlatform.kind).toBe('windows')
+    expect(windowsPlatform.preOpenLstat).toBe(true)    // Windows 无 O_NOFOLLOW → open 前 lstat 拒 symlink
+    expect(windowsPlatform.checkModeMask).toBe(false)  // NTFS 合成权限位跳过
+    expect(posixPlatform.checkModeMask).toBe(true)     // POSIX existing 校验权限位（0400/0404 拒——批次 C 修复）
+    expect(typeof defaultSafeOpenPlatform()).toBe('object')
+  })
+  it('paramHash canonical：canonicalJsonStringify 键序稳定 + computeParamHash 确定性/敏感性（引用哨兵）', async () => {
+    const { canonicalJsonStringify, computeParamHash } = await import('../../src/main/tools/param-hash')
+    expect(canonicalJsonStringify({ a: 1, b: 2 })).toBe(canonicalJsonStringify({ b: 2, a: 1 }))
+    const h = computeParamHash({ path: '/p', args: { x: 1 } })
+    expect(computeParamHash({ path: '/p', args: { x: 1 } })).toBe(h)
+    expect(computeParamHash({ path: '/p', args: { x: 2 } })).not.toBe(h)
+  })
+  it('调用幂等/值校验优先级/queryStatus 数据源哨兵（真实行为面归阶段 6 单测——本层钉模块面不灭）', async () => {
+    const { PATH_BLACKLIST_DEFAULTS, isPathBlacklisted, normalizeToolPath } = await import('../../src/main/tools/tool-policy')
+    const { TOOL_NAMES, DESKTOP_TOOL_VERSION } = await import('../../src/main/tools/tool-registry')
+    const toolService = await import('../../src/main/tools/tool-service')
+    expect(PATH_BLACKLIST_DEFAULTS.length).toBeGreaterThan(0)     // 黑名单预置非空（可注入 replace——路径面归阶段 6）
+    expect(typeof isPathBlacklisted).toBe('function')
+    expect(typeof normalizeToolPath).toBe('function')
+    expect(TOOL_NAMES).toEqual(['desktop.file.select', 'desktop.file.read', 'desktop.file.write', 'desktop.screen.capture'])
+    expect(DESKTOP_TOOL_VERSION).toBe('1.0.0')
+    // “callId 幂等（canonicalJsonStringify 比对）+ paramHash 重算校验 + queryStatus 三分支（L-1/完成/失败）”
+    // 为 tool-service 内部行为——此处以「服务工厂/决策链入口仍存在」钉住实现面（行为测试在阶段 6 单测子集）
+    expect(typeof toolService.createToolService).toBe('function')
   })
 })

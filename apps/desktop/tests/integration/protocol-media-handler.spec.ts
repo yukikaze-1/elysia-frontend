@@ -13,6 +13,10 @@ const fetchStatus = (url: string): Promise<number> =>
   launched.app.evaluate(async ({ net }, u) => {
     try { return (await net.fetch(u)).status } catch { return -1 }
   }, url)
+const fetchStatusWithHeaders = (url: string, headers: Record<string, string>): Promise<number> =>
+  launched.app.evaluate(async ({ net }, arg) => {
+    try { return (await net.fetch(arg.url, { headers: arg.headers })).status } catch { return -1 }
+  }, { url, headers })
 
 describe('protocol.handle 媒体分支（spec §4.4/D1）', () => {
   it('非 renderer host 的媒体前缀仍 404（host 校验先于媒体路由）', async () => {
@@ -28,5 +32,18 @@ describe('protocol.handle 媒体分支（spec §4.4/D1）', () => {
   })
   it('sticker id 白名单外 → 403（MediaService.sticker 白名单经 handler 生效）', async () => {
     expect(await fetchStatus('cyrene://renderer/__cyrene-media/sticker/ST_1')).toBe(403)
+  })
+  it('§4.3 补断言：Sec-Fetch-Dest document 的媒体请求 → 403（isDocumentRequest 拒绝——顶层导航语义不进媒体面）', async () => {
+    // 既有分支（handler.ts:122）缺集成断言面——「阅读器/框架式导航」不得经媒体代理触发文档加载
+    expect(await fetchStatusWithHeaders('cyrene://renderer/__cyrene-media/attachment/att_1', { 'Sec-Fetch-Dest': 'document' })).toBe(403)
+    expect(await fetchStatusWithHeaders('cyrene://renderer/__cyrene-media/sticker/ST_1', { 'Sec-Fetch-Dest': 'document' })).toBe(403)
+  })
+  it('§4.3 补断言：合法格式但不存在的 attachmentId → 签名流式分支执行（base 未配置→500 resolve fail / 上游不可达→502 瞬态——绝无文件服务 200/404 泄漏）', async () => {
+    // 判别面：id 格式合法（att_ 前缀）→ 进入 MediaService.stream → resolveSignedUrl：
+    // 本套件未设后端 endpoint → base 未配置 → SignedUrlResolveError 500（P0-01 fail-closed）；
+    // 配了 base 后（真实会话）→ createSignedUrl → 上游失败 502 瞬态——两条均属「签名流式层已接线且失败收敛」，
+    // 若走错分支（文件服务/静态兜底）会得到 200/404——此断言即负向哨兵。
+    const status = await fetchStatus('cyrene://renderer/__cyrene-media/attachment/att_deadbeef')
+    expect([500, 502, 401, 403, 410]).toContain(status)   // 签名失败族——永不 200/404 文件泄漏
   })
 })
