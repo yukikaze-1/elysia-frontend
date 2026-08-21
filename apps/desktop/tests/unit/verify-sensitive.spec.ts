@@ -5,20 +5,23 @@ import { describe, expect, it } from 'vitest'
 import {
   SECRET_BLACKLIST,
   EXCLUDED_DIR_PREFIXES,
+  SELF_EXCLUDED_FILES,
   isExcludedPath,
+  isSelfExcludedFile,
   scanSecretsInText,
   allowlistEntryFor
 } from '../../scripts/verify-sensitive-core.mjs'
 
-describe('verify:sensitive 核心（黑名单规则集，D7A-14）', () => {
-  it('黑名单共 7 规则（redact RULES 四条 + 赋值形态两条 + PRIVATE KEY 头）', () => {
+describe('verify:sensitive 核心（黑名单规则集，D7A-14 + review LOW①）', () => {
+  it('黑名单共 8 规则（redact RULES 四条 + 赋值形态两条 + PRIVATE KEY 头 + 长串规则）', () => {
     expect(SECRET_BLACKLIST.map((r) => r.name)).toEqual([
       'bearer-token', 'jwt', 'sk-api-key', 'aws-access-key',
-      'agent-access-token-assign', 'account-token-assign', 'private-key-header'
+      'agent-access-token-assign', 'account-token-assign', 'private-key-header',
+      'base64-long-string'
     ])
   })
 
-  it('黑名单 7 规则逐一命中各自形态（redact RULES + 赋值形态 + PRIVATE KEY）', () => {
+  it('黑名单 8 规则逐一命中各自形态（redact RULES + 赋值形态 + PRIVATE KEY）', () => {
     const cases = [
       { name: 'bearer-token', trigger: 'Authorization: Bearer a1b2c3_-~+/xyz' },
       // eyJ 后 ≥20 位 [A-Za-z0-9_-] + 点 + ≥1 段
@@ -29,7 +32,9 @@ describe('verify:sensitive 核心（黑名单规则集，D7A-14）', () => {
       { name: 'aws-access-key', trigger: 'AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE' },
       { name: 'agent-access-token-assign', trigger: 'AGENT_ACCESS_TOKEN=cyrene-dev-secret' },
       { name: 'account-token-assign', trigger: 'ACCOUNT_TOKEN = "cyrene-dev-secret"' },
-      { name: 'private-key-header', trigger: '-----BEGIN RSA PRIVATE KEY-----' }
+      { name: 'private-key-header', trigger: '-----BEGIN RSA PRIVATE KEY-----' },
+      // 40+ 位 [A-Za-z0-9+/]（裸长串，redact 第 4 条原文形态——无 Bearer/sk-/AKIA 前缀也不漏检）
+      { name: 'base64-long-string', trigger: 'x = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"' }
     ]
     for (const c of cases) {
       const hits = scanSecretsInText(c.trigger)
@@ -45,7 +50,9 @@ describe('verify:sensitive 核心（黑名单规则集，D7A-14）', () => {
       'AKIA1234（不足 16 位）',
       'if (env.AGENT_ACCESS_TOKEN) return', // 仅引用无赋值
       'process.env.ACCOUNT_TOKEN // 读取', // 仅引用无赋值
-      '-----BEGIN CERTIFICATE-----' // 证书头非私钥
+      '-----BEGIN CERTIFICATE-----', // 证书头非私钥
+      '01234567890123456789012345678901234567', // 38 位（不足 40）
+      'CyToolCard/CyLiveToolCards 短词表（26 位，不足 40）' // 词表类足够短不命中（长词表按规则命中→主干允许表承接）
     ]
     for (const line of benign) {
       const hits = scanSecretsInText(line)
@@ -67,12 +74,23 @@ describe('verify:sensitive 核心（黑名单规则集，D7A-14）', () => {
   })
 })
 
-describe('verify:sensitive 核心（排除目录，spec §5.1 D7A-14）', () => {
-  it('third_party/ 整树前缀排除；边界前缀不误排', () => {
+describe('verify:sensitive 核心（排除目录与自排除，spec §5.1 D7A-14 + review HIGH-1）', () => {
+  it('third_party/ 整树前缀排除；vendored live2d 两树同级；边界前缀不误排', () => {
     expect(EXCLUDED_DIR_PREFIXES).toContain('third_party/')
     expect(isExcludedPath('third_party/CubismSdkForWeb-5-r.5/bin/live2dcubismcore.min.js')).toBe(true)
+    // review LOW① 落地中实测：vendored asm.js base64 副本与 Framework 源码同 third_party 语义（lint 同款忽略）
+    expect(isExcludedPath('apps/desktop/src/renderer/public/live2d/live2dcubismcore.min.js')).toBe(true)
+    expect(isExcludedPath('apps/desktop/src/renderer/src/live2d/framework/model/cubismmodel.ts')).toBe(true)
     expect(isExcludedPath('notthird-party/keep.txt')).toBe(false)
     expect(isExcludedPath('apps/desktop/src/main/index.ts')).toBe(false)
+  })
+
+  it('扫描器自身三文件自排除（HIGH-1：黑名单字面量/触发器必然命中自身且非秘密）', () => {
+    expect(SELF_EXCLUDED_FILES.length).toBe(3)
+    expect(isSelfExcludedFile('apps/desktop/scripts/verify-sensitive.mjs')).toBe(true)
+    expect(isSelfExcludedFile('apps/desktop/scripts/verify-sensitive-core.mjs')).toBe(true)
+    expect(isSelfExcludedFile('apps/desktop/tests/unit/verify-sensitive.spec.ts')).toBe(true)
+    expect(isSelfExcludedFile('apps/desktop/src/main/index.ts')).toBe(false)
   })
 })
 

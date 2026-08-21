@@ -142,10 +142,17 @@ async function smoke() {
       // （fuse 读回断言已证明最终态），smoke 断言的 CSP/渲染/协议等行为不受 fuse 位影响。
       console.log(`（冒烟目标：未分发包打包产物 ${path.relative(root, packagedExe)}——复制包含 resources/ 的目录副本并 flip-back 三项 fuse 后启动）`)
       const { flipFuses, FuseV1Options, FuseVersion } = await import('@electron/fuses')
+      // LOW④（review 2026-08-22）：darwin 的 findPackagedExecutable 返回 …/Cyrene.app/Contents/MacOS，
+      // 单复制 MacOS 目录会缺 Contents/Resources 与 Info.plist——按 bundle 结构复制整个 .app（两级上溯），
+      // flipExe 取 bundle 内 Contents/MacOS/<候选名>；linux/win 整目录即含 resources/，语义一致。
       const packagedDir = path.dirname(packagedExe)
+      const isMac = process.platform === 'darwin'
+      const copyRoot = isMac ? path.resolve(packagedDir, '..', '..') : packagedDir
       flipTmp = path.join(os.tmpdir(), `cyrene-smoke-flipback-${process.pid}-${Date.now()}`)
-      fs.cpSync(packagedDir, flipTmp, { recursive: true })
-      flipExe = path.join(flipTmp, path.basename(packagedExe))
+      fs.cpSync(copyRoot, flipTmp, { recursive: true })
+      flipExe = isMac
+        ? path.join(flipTmp, 'Contents', 'MacOS', path.basename(packagedExe))
+        : path.join(flipTmp, path.basename(packagedExe))
       try {
         // flipFuses 2.x 为 async；version 必须是 FuseVersion.V1（"1"），三个 fuse 键回 true（ENABLE）
         await flipFuses(flipExe, {
