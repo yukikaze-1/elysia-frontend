@@ -485,7 +485,7 @@
 - **行为变更点**：① `BackendAdapter.subscribe` 单槽 → 多处理器 Set（接口语义升级——doc 01 §6.1 已同步；mock 防并列订阅覆盖既有聊天订阅；devTap 回调异常隔离 try/catch + logger.warn）；② Markdown 净化替换（移除 decodeEntities/sanitizeHtml/DANGEROUS_TAGS/NAMED_ENTITIES；img src `data:` 经 DOMPurify DATA_URI_TAGS 保留、任务列表 input 剥离——记录为已知行为）；③ `devTools: true` webPreferences（开关为唯一开启路径；verify:artifact 旧「生产无 DevTools」断言面核实无此断言，变更处全部列出）；④ Fuses 三项关闭（RunAsNode/EnableNodeOptionsEnvironmentVariable/EnableNodeCliInspectArguments=false——`--inspect` 系参数面产物级收口，NODE_OPTIONS 注入面关闭，与 rejectForbiddenDebugSwitches 双保险；OnlyLoadAppFromAsar/EmbeddedAsarIntegrityValidation 保持现状归阶段 8）。
 - **已知限制与记录**：happy-dom 非可信消毒 oracle（单元层仅行为记录，安全门禁全归真实 Chromium 集成层）；verify:sensitive 自排除盲区（扫描器三文件恒定盲区，变更须过 review——已注释）；类别级 allowlist 仅豁免 base64-long-string 规则（规则域限定——规则 1-7 不被通用条目弱化）；第三方 vendor（third_party/+vendored live2d 两树）整体排除（必然误报且非本仓代码）；flip-back smoke 副本（产物本体保持 flipped，读回断言证明最终态）。
 - **三态 = 已开发、未联调**（真实 Windows Electron 联调归开发者批次后）——**不触发全量交叉 Review 重跑**，联调通过后做收口 Review。
-- **门禁**：verify:sensitive 提交树 exit 0（黑名单 8 规则、570 扫/368 排除/1591 放行——以提交树实测为准）+ verify:artifact 静态读回 DISABLE×3 + `--smoke`（xvfb，flip-back 副本）+ check:contract（wire 未变）+ 全量单测/集成；**计数最终值以主会话批次收口（CLAUDE.md）为准**。
+- **门禁**：verify:sensitive 提交树 exit 0（黑名单 8 规则、574 扫/368 排除/1609 放行——以提交树实测为准）+ verify:artifact 静态读回 DISABLE×3 + `--smoke`（xvfb，flip-back 副本）+ check:contract（wire 未变）+ 全量单测/集成；**计数最终值以主会话批次收口（CLAUDE.md）为准**。
 
 ### 18.3 自动回归
 
