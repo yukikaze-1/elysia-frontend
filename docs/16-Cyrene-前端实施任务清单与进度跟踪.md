@@ -400,7 +400,7 @@
 
 **进入条件：** 阶段 3～6 的 Demo 范围功能完成。
 
-> **阶段 7 批次 A（安全收敛）状态注记（2026-08-22）：** **F-7 批次 A（DOMPurify Markdown 净化 + IPC 攻击面核对 + 路径/重放断言面 + verify:sensitive 敏感扫描门禁 + 「开发与诊断」设置页（日志管理/开发者模式/连接诊断/脱敏诊断导出）+ Electron Fuses 三项关闭 + doc 07 §17 发布安全门槛 20 项核对）已落地并全量验证（三态=已开发、未联调）**——真实 Windows Electron（REAL）联调由开发者批次后执行（通过后升「已真实联调」）；**门禁实测（2026-08-22）：1959 单测（151 files，含 7 expected-fail）/ 127 集成（19 files）+ typecheck/lint/build + check:contract（WS 35/35 + 5 未纳 warn + REST 16/16）+ verify:sensitive（574/368/1609/8）+ verify:artifact（DISABLE×3）全绿**（明细见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`）；决策与执行记录见 `docs/review/2026-08-22-阶段7批次A-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-22-phase7-batcha-security-convergence-*`；提交链 `02853c1`→…→`141484c`（Task 1~7）+ Task 8（8a 集成 `1d384ab`/`6640e69`/`86de341` + 8b 文档 `67b263d`/`f1046e8`）+ 收口 `cf27c1b`/`1ed13a0`/`0cf9156`。
+> **阶段 7 批次 A（安全收敛）状态注记（2026-08-22）：** **F-7 批次 A（DOMPurify Markdown 净化 + IPC 攻击面核对 + 路径/重放断言面 + verify:sensitive 敏感扫描门禁 + 「开发与诊断」设置页（日志管理/开发者模式/连接诊断/脱敏诊断导出）+ Electron Fuses 三项关闭 + doc 07 §17 发布安全门槛 20 项核对）已落地并全量验证（三态=已开发、未联调）**——真实 Windows Electron（REAL）联调由开发者批次后执行（通过后升「已真实联调」）；**门禁实测（2026-08-22）：1959 单测（151 files，含 7 expected-fail）/ 127 集成（19 files）+ typecheck/lint/build + check:contract（WS 35/35 + 5 未纳 warn + REST 16/16）+ verify:sensitive（574/368/1609/8）+ verify:artifact（DISABLE×3）全绿**（明细见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`）；决策与执行记录见 `docs/review/2026-08-22-阶段7批次A-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-22-phase7-batcha-security-convergence-*`；提交链 `aa2656a`→…→`e95e6e9`（Task 1~7）+ Task 8（8a 集成 `e6aac0a`/`7ede8af`/`42474f6` + 8b 文档 `02bf9d5`/`eff6f65`）+ 收口 `5c09978`/`f5786bb`/`65bb43a`。
 
 ### 任务清单
 
