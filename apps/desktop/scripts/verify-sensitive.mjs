@@ -813,6 +813,50 @@ const ALLOWLIST = [
     reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
   },
   {
+    // —— 阶段 7 批次 A 文档（Task 8b 提交 f1046e8——门禁收口时新增漂移，Task 8 收口人工核对）——
+    // 两条文件均为批次说明性散文/路径/标识符长串（OnlyLoadAppFromAsar/EmbeddedAsarIntegrityValidation、
+    // 长路径串等——列 102/34/38/51 逐行已人工核对无真实秘密），按 docs/review 类别级条目同款入口放行。
+    path: "docs/review/2026-08-22-阶段7批次A-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读标识符/路径长串（ASAR 完整性字段名串，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
+    path: "docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（Fuses/verify:artifact/开发者模式说明行，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
+    // —— 阶段 7 批次 A 文档（Task 8b 提交 67b263d 后续迭代，门禁收口再核对）——
+    // docs/17 两条为流程说明散文行（扫描器排除目录/规则自引用说明——Task 7 报告「黑名单正则自引用」同族）；
+    // 决策记录 D7A-14 行为黑名单正则字面量文本（规则自引用——同族放行，见 Task 7 首跑清单第 3 类）。
+    path: "docs/17-Cyrene-前端开发环境与依赖安装记录.md", anchor: /排除目录：`third_party\/`/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中 1 行——排除目录说明散文（vendor 排除理由行，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
+    path: "docs/17-Cyrene-前端开发环境与依赖安装记录.md", anchor: /对散文「Bearer \+ 词」天然高误报/,
+    rules: ['bearer-token'],
+    reason: `bearer-token 命中 1 行——黑名单规则自引用说明散文（「Bearer + 词」误报说明——规则本体引用，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
+    path: "docs/review/2026-08-22-阶段7批次A-决策记录.md", anchor: /D7A-14 \| 敏感扫描黑名单 \|/,
+    rules: ['agent-access-token-assign', 'account-token-assign'],
+    reason: `agent/account-token-assign 命中 1 行（2 规则）——决策表 D7A-14 行内嵌黑名单正则字面量（AGENT_ACCESS_TOKEN/ACCOUNT_TOKEN 规则自引用——属「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
+    // —— 阶段 7 批次 A 文档（Task 8b 并行迭代再核对，门禁收口）——
+    // docs/08:395 = Fuses 兼容帧说明行（长标识符/路径串——非高熵）；docs/17:295 = 黑名单 8 规则列示行
+    // （规则名与赋值形态字面量——规则自引用散文，属「已人工核对无真实秘密」说明性示例）。
+    path: "docs/08-Cyrene-前端测试与Demo验收方案-v0.2.md", anchor: /Fuses \| verify:artifact 静态阶段/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中 1 行——Fuses/verify:artifact 说明行（长标识符/路径串，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
+    path: "docs/17-Cyrene-前端开发环境与依赖安装记录.md", anchor: /黑名单 8 规则：Bearer token/,
+    rules: ['bearer-token', 'agent-access-token-assign', 'account-token-assign'],
+    reason: `黑名单规则列示行（规则名/赋值形态字面量自引用——「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
+  },
+  {
     path: "docs/superpowers/2026-08-12-phase01-recheck-batchA-final-report.md", anchor: /[A-Za-z0-9+/]{40,}/,
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
