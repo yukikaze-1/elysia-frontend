@@ -292,6 +292,10 @@ export interface MockBackendOptions {
    *  改经此交付 DesktopToolRequest 给 Main 装配的 tool-service；id 自增 call_mock_<n>/tc_mock_desktop_<n>，A3）。
    *  对齐 ttsAudioSink 构造注入先例；缺省 undefined 不交付。 */
   toolRequestSink?: (req: DesktopToolRequest) => void
+  /** 阶段 7 批次 A（Task 3，可行 MED）：回复正文夹具覆盖（CYRENE_MOCK_REPLY_FIXTURE env 桥）——非 undefined 时，
+   *  scheduleReplay 中 public_reply 段正文以本文本覆盖（首个 public_reply delta 全量、其后置空；inner_voice 不变）。
+   *  集成 markdown-xss 注入 XSS 载荷用；缺省 undefined 行为不变。 */
+  replyFixtureText?: string
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -313,7 +317,9 @@ function createMockConversations(): Conversation[] {
  * 真实后端协议未联调前,一切经 Mock 的任务标记为"已开发、未联调"。
  */
 export class MockBackend implements BackendAdapter {
-  private handler?: BackendEventHandler
+  /** 多处理器订阅槽（阶段 7 批次 A，D7A-15/可行 H-4）：单槽升级为 Set——诊断服务 devTap 作为并列
+   *  订阅者，单槽会被 chat-service 订阅覆盖导致 mock 下聊天断流（与 real-backend 多槽语义对齐）。 */
+  private readonly handlers = new Set<BackendEventHandler>()
   private connected = false
   private readonly fixture: BackendEvent[]
   private readonly emitDelayMs: number
@@ -326,6 +332,8 @@ export class MockBackend implements BackendAdapter {
   private readonly toolFlow?: MockToolFlow
   /** 阶段 6 批次 A（F-6-22）：归档配对 seed（CYRENE_MOCK_TOOL_HISTORY）；缺省 false 不注入 */
   private readonly toolHistory: boolean
+  /** 阶段 7 批次 A（Task 3）：回复正文夹具覆盖文本（CYRENE_MOCK_REPLY_FIXTURE env 桥；缺省 undefined 不覆盖） */
+  private readonly replyFixtureText?: string
   /** 阶段 6 批次 B（Task 6）：桌面工具请求 sink（构造注入；缺省 undefined 不交付） */
   private readonly toolRequestSink?: (req: DesktopToolRequest) => void
   /** 阶段 6 批次 B（Task 6）：桌面工具请求序号——每次 desktop kind 发射自增 → call_mock_<n>/tc_mock_desktop_<n>（A3） */
@@ -424,6 +432,7 @@ export class MockBackend implements BackendAdapter {
     this.toolFlow = options.toolFlow
     this.toolHistory = options.toolHistory ?? false
     this.toolRequestSink = options.toolRequestSink
+    this.replyFixtureText = options.replyFixtureText
     this.messageRecords = this.seedMessages()
     // 阶段 6 批次 A（F-6-22）：CYRENE_MOCK_TOOL_HISTORY=1 → 归档配对 seed（tc_seed_1 骨架 + 结果消息）
     if (this.toolHistory) {
@@ -466,10 +475,9 @@ export class MockBackend implements BackendAdapter {
   }
 
   subscribe(handler: BackendEventHandler): () => void {
-    this.handler = handler
-    return () => {
-      if (this.handler === handler) this.handler = undefined
-    }
+    this.handlers.add(handler)
+    // 包一层保 void 返回（照抄 real-backend.ts:217 形态——Set.delete 返回 boolean，直接返回即泄漏返回值类型）
+    return () => { this.handlers.delete(handler) }
   }
 
   async connect(input: ConnectInput): Promise<BackendSession> {
@@ -857,6 +865,9 @@ export class MockBackend implements BackendAdapter {
     const rspId = this.idFactory()
     const segmentMap = new Map<string, string>()
     const genTimers: ReturnType<typeof setTimeout>[] = []
+    // 阶段 7 批次 A（Task 3）：回复正文覆盖标记（每代局部——并发两代互不串扰；首批 public_reply delta 后关闭，
+    // 其后 public_reply delta 置空 → 回复正文 = 夹具文本，内声优不受影响）
+    let replyFixtureFirstDelta = true
     this.fixture.forEach((event, index) => {
       const fresh: Record<string, unknown> = { ...event }
       if ('generationId' in event) fresh.generationId = genId
@@ -873,6 +884,13 @@ export class MockBackend implements BackendAdapter {
       }
       // BackendEvent 是接口联合，需 as unknown as 双转（TS2352）
       const timer = setTimeout(() => {
+        // 回复正文覆盖（阶段 7 批次 A / 可行 MED）：replyFixtureText 注入时，public_reply 通道首个 delta
+        // 文本替换为夹具全文、其后 public_reply delta 置空（回复正文恒 = 夹具内容，集成 XSS 载荷注入用）。
+        // 与下方 generationEmotion 同在 emit 时刻改写（fresh 每事件一份，发射时刻改值与既有并发快照语义一致）。
+        if (event.event === 'generation.delta' && this.replyFixtureText !== undefined && event.channel === 'public_reply') {
+          fresh.text = replyFixtureFirstDelta ? this.replyFixtureText : ''
+          replyFixtureFirstDelta = false
+        }
         // 信封在 emit 时刻打（非调度时刻）：replay 挂起期间交错发出的语音/TTS 事件（stamp() 也在 emit 时刻）
         // 与 replay 事件共享同一计数器 → 收到顺序恒等于 stamp 顺序，sequence 全局严格递增（review Important-1）
         // Task 6（阶段 5 批次 B 集成）：情绪注入——generation.completed 覆写 emotion（情绪态→表情可观测）
@@ -938,7 +956,11 @@ export class MockBackend implements BackendAdapter {
   }
 
   private emit(event: BackendEvent): void {
-    this.handler?.(event)
+    // 多槽分发 + 单处理器异常隔离（阶段 7 批次 A）：一个订阅者抛错不中断事件流与其他处理器
+    // （real emit 无兜底——devTap 订阅者抛错即断聊天事件流，R2-3/安全 LOW①）
+    for (const handler of this.handlers) {
+      try { handler(event) } catch { /* 单处理器异常隔离：不中断事件流与其他处理器 */ }
+    }
   }
 
   /** 共享单调信封（Minor 11）：全部 Mock 事件（replay + 语音/TTS）复用同一计数器打 eventId/sequence */

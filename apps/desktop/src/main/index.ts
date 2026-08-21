@@ -1,6 +1,7 @@
 // apps/desktop/src/main/index.ts
 import { app, dialog, Menu, safeStorage, BrowserWindow } from 'electron'
 import { join } from 'path'
+import { readFileSync } from 'fs'
 import { realpath } from 'fs/promises'
 import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, PushChannels, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
@@ -165,6 +166,13 @@ async function main(): Promise<void> {
     // 按 kind 发射 tool.* 领域事件；非法 JSON/形状 → 不注入）与归档配对 seed（CYRENE_MOCK_TOOL_HISTORY='1'/'true'）
     const mockToolFlow = parseMockToolFlowEnv(process.env.CYRENE_MOCK_TOOL_FLOW)
     const mockToolHistory = parseMockToolHistoryEnv(process.env.CYRENE_MOCK_TOOL_HISTORY)
+    // 阶段 7 批次 A（Task 3，可行 MED）：mock 回复正文夹具 env 桥——CYRENE_MOCK_REPLY_FIXTURE 指向本地文件，
+    // 内容经 options.replyFixtureText 覆盖 mock 生成回复正文（集成 markdown-xss 注入 XSS 载荷用）。
+    // 仅 mock 模式（useMock 门控——真实模式误设不注入，纪律同 mockMouthLevel）；renderer 不读 env；
+    // 读取失败（路径缺失/权限）→ readFileSync 抛 IOException 构造报错 fail-start（测试夹具缺失属装配错误）。
+    const mockReplyFixtureText = useMock && process.env.CYRENE_MOCK_REPLY_FIXTURE
+      ? readFileSync(process.env.CYRENE_MOCK_REPLY_FIXTURE, 'utf-8')
+      : undefined
     // P4-B TTS 实时朗读音频 sink 桥容器（Task 5 RealBackend getTtsMedia → Task 6 MediaService putTtsAudio）：
     // mediaSvc 在 adapter 之后创建，用 const 桥打破 adapter→media 环引用（与 chatBridge 同款模式）；
     // getTtsMedia 回调只在 audio_end 帧到达时触发，此时 mediaSvc 已装配完。
@@ -180,7 +188,7 @@ async function main(): Promise<void> {
     }
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), ...(mockReplyFixtureText !== undefined ? { replyFixtureText: mockReplyFixtureText } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,
