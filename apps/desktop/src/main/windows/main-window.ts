@@ -22,9 +22,15 @@ function registerMicrophonePermissionOnce(): void {
   registerMicrophonePermission(session.defaultSession)
 }
 
-export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
+export interface MainWindowOpts {
+  /** 阶段 7 批次 A（Task 5，spec §6.4）：开发者模式会话态 getter（F12 门）；缺省恒 false（模块不反向依赖服务） */
+  isDevMode?: () => boolean
+}
+
+export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: MainWindowOpts): void {
   registerMicrophonePermissionOnce()
   const config = getAppConfig()
+  const isDevMode = opts?.isDevMode ?? (() => false)
   const devUrl = process.env['ELECTRON_RENDERER_URL']
   // 加载/导航统一谓词（shouldUseViteDevServer = 未打包 && 有 dev server）：
   // dev（electron-vite dev，含 --mode test）→ http；打包恒 cyrene://（残留 dev env 无法劫持）；
@@ -47,7 +53,9 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      devTools: config.devToolsAllowed, // BrowserWindow 层封死 DevTools：打包恒 false（Electron 安全检查清单项）
+      // D7A-04（阶段 7 批次 A）：devTools 恒 true——开关为唯一开启路径：诊断设置页 devMode 开关（openDevTools/closeDevTools
+      // 经 onDevModeChange 接线）+ F12 门（config.devToolsAllowed || isDevMode()）。远程调试端口恒关不变（rejectForbiddenDebugSwitches 不动）。
+      devTools: true, // 开关收敛：D7A-04（见上）——既有 devToolsAllowed 仅作 F12 快捷门的另一半判据
       // backgroundThrottling: false——渲染进程 timer/rAF 恒定运行，不随窗口遮挡/失焦节流。
       // 理由（2026-08-19 CI 修复）：① CI 无 WM 的 xvfb 下窗口被判为遮挡 → Chromium 默认节流（timer~1/秒 +
       // rAF 暂停）→ Live2D 渲染环停摆（C1 口型/C2.1 画布 0 像素）；② 生产上全渲染进程 timer 节流会拖慢
@@ -83,7 +91,8 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
     // deny（preventDefault 已调）
   })
 
-  if (config.devToolsAllowed) {
+  // D7A-04（spec §6.4）：F12 门——开发构建（devToolsAllowed）恒注册；打包态仅开发者模式会话态（isDevMode getter）时注册
+  if (config.devToolsAllowed || isDevMode()) {
     win.webContents.on('before-input-event', (_ev, input) => {
       if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools()
     })
@@ -97,23 +106,23 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void): void {
   }
 }
 
-export function ensureMainWindow(loadErrorSink?: (err: unknown) => void): void {
+export function ensureMainWindow(loadErrorSink?: (err: unknown) => void, opts?: MainWindowOpts): void {
   const win = getMainWindow()
   if (!win || win.isDestroyed()) {
-    createMainWindow(loadErrorSink)
+    createMainWindow(loadErrorSink, opts)
     if (consumePendingFocus()) { const w = getMainWindow(); if (w) { if (w.isMinimized()) w.restore(); if (!w.isVisible()) w.show(); w.focus() } }
     return
   }
 }
 
-export function focusOrDefer(): void {
+export function focusOrDefer(opts?: MainWindowOpts): void {
   const win = getMainWindow()
   if (!win) {
-    if (app.isReady() && appStarted) { createMainWindow(); raiseWindow(); return }
+    if (app.isReady() && appStarted) { createMainWindow(undefined, opts); raiseWindow(); return }
     setPendingFocus()
     return
   }
-  if (win.isDestroyed()) { createMainWindow(); raiseWindow(); return }
+  if (win.isDestroyed()) { createMainWindow(undefined, opts); raiseWindow(); return }
   raiseWindow()
 }
 

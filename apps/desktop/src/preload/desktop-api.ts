@@ -22,6 +22,9 @@ import type {
   CreateConversationInput,
   DictationStartInput,
   DictationStopInput,
+  DiagnosticsDevEvent,
+  DiagnosticsExportResult,
+  DiagnosticsState,
   FileValidationResult,
   HistoryEntry,
   Live2DModelSummary,
@@ -68,6 +71,9 @@ import {
   ClientRequestRefSchema,
   ConnectionStateSchema,
   ConversationSchema,
+  DiagnosticsDevEventSchema,
+  DiagnosticsExportResultSchema,
+  DiagnosticsStateSchema,
   EndpointResponseSchema,
   FileValidationResultSchema,
   GrantDirectoryResponseSchema,
@@ -425,6 +431,34 @@ async function toolListHistory(limit?: number): Promise<HistoryEntry[]> {
   return unwrap(await invokeWithArgs<HistoryEntry[]>(IpcChannels.toolHistory, limit === undefined ? {} : { limit }), HistoryResponseSchema)
 }
 
+// —— 阶段 7 批次 A（Task 5，spec §6.2）：诊断五 invoke 通道 + dev-event 推送订阅（契约 R2-1 定名）——
+async function diagnosticsState(): Promise<DiagnosticsState> {
+  return unwrap(await invoke<DiagnosticsState>(IpcChannels.diagnosticsState), DiagnosticsStateSchema)
+}
+async function diagnosticsDevModeSet(enabled: boolean): Promise<void> {
+  unwrap(await invokeWithArgs<void>(IpcChannels.diagnosticsDevModeSet, { enabled }), z.undefined())
+}
+async function diagnosticsOpenLogDir(): Promise<void> {
+  unwrap(await invoke<void>(IpcChannels.diagnosticsOpenLogDir), z.undefined())
+}
+async function diagnosticsClearLogs(): Promise<void> {
+  unwrap(await invoke<void>(IpcChannels.diagnosticsClearLogs), z.undefined())
+}
+async function diagnosticsExport(): Promise<DiagnosticsExportResult> {
+  return unwrap(await invoke<DiagnosticsExportResult>(IpcChannels.diagnosticsExport), DiagnosticsExportResultSchema)
+}
+/** 订阅 diagnostics:dev-event（Main webContents.send 推送——onToolEvent 先例直写，无 subscribePush 工具函数）；
+ *  DiagnosticsDevEventSchema 校验（strict 未知键即失效载荷），非法丢弃 + warn；返回取消函数 */
+function onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void {
+  const listener = (_event: unknown, payload: unknown): void => {
+    const parsed = DiagnosticsDevEventSchema.safeParse(payload)
+    if (parsed.success) handler(parsed.data)
+    else console.warn('[desktopApi] diagnostics:dev-event 非法载荷已丢弃')
+  }
+  ipcRenderer.on(PushChannels.diagnosticsDevEvent, listener)
+  return () => ipcRenderer.removeListener(PushChannels.diagnosticsDevEvent, listener)
+}
+
 /**
  * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
  * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
@@ -575,7 +609,14 @@ export const desktopApi = {
   toolGrantDirectory,
   toolListGrants,
   toolRevokeGrant,
-  toolListHistory
+  toolListHistory,
+  // —— 阶段 7 批次 A（Task 5）：诊断面 ——
+  diagnosticsState,
+  diagnosticsDevModeSet,
+  diagnosticsOpenLogDir,
+  diagnosticsClearLogs,
+  diagnosticsExport,
+  onDiagnosticsDevEvent
 }
 
 export type DesktopApi = typeof desktopApi

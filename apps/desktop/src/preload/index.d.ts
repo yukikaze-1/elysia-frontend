@@ -20,6 +20,9 @@ import type {
   CredentialStatus,
   DictationStartInput,
   DictationStopInput,
+  DiagnosticsDevEvent,
+  DiagnosticsExportResult,
+  DiagnosticsState,
   FileValidationResult,
   HistoryEntry,
   Live2DModelSummary,
@@ -135,6 +138,13 @@ declare global {
       toolListGrants(): Promise<PermissionGrant[]>
       toolRevokeGrant(id: string): Promise<void>
       toolListHistory(limit?: number): Promise<HistoryEntry[]>
+      // —— 阶段 7 批次 A（Task 5，契约 R2-1 定名：diagnosticsExport——export 为 JS 保留字不可作方法名）——
+      diagnosticsState(): Promise<DiagnosticsState>
+      diagnosticsDevModeSet(enabled: boolean): Promise<void>
+      diagnosticsOpenLogDir(): Promise<void>
+      diagnosticsClearLogs(): Promise<void>
+      diagnosticsExport(): Promise<DiagnosticsExportResult>
+      onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void
     }
   }
 }

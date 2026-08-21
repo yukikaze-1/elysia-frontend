@@ -18,6 +18,8 @@ import type { BackendAdapter } from '../transport/backend-adapter'
 import { registerModelHandlers } from '../models/model-handlers'
 import { registerSettingsHandlers } from '../settings/settings-handlers'
 import type { SettingsService } from '../settings/settings-service'
+import type { DiagnosticsService } from '../diagnostics/diagnostics-service'
+import { registerDiagnosticsHandlers } from './diagnostics-handlers'
 import { registerVoiceHandlers } from '../voice/voice-handlers'
 import { registerLive2dHandlers } from './live2d-handlers'
 import { registerToolHandlers } from './tool-handlers'
@@ -40,6 +42,7 @@ export function registerHandlers(deps: {
   tools: ToolService
   grants: GrantStore                 // 批次 C（D6C-12）：目录授权仓库（tool 四新通道数据源）
   auditDir: string                   // 批次 C（D6C-12）：审计目录（toolHistory 回读）
+  diagnostics: DiagnosticsService    // 阶段 7 批次 A（Task 5）：诊断五通道数据源
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -56,4 +59,5 @@ export function registerHandlers(deps: {
   registerVoiceHandlers({ adapter: deps.voice.adapter, media: deps.voice.media, sanitize, logger: deps.logger })
   registerLive2dHandlers({ registry: deps.live2d.registry, sanitize, logger: deps.logger })
   registerToolHandlers({ tools: deps.tools, sanitize, grants: deps.grants, history: readAuditEvents, auditDir: deps.auditDir })
+  registerDiagnosticsHandlers({ service: deps.diagnostics, sanitize, logger: deps.logger })
 }

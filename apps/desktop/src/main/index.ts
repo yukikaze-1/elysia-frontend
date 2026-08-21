@@ -3,6 +3,7 @@ import { app, dialog, Menu, safeStorage, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { readFileSync } from 'fs'
 import { realpath } from 'fs/promises'
+import { release as osRelease, type as osType } from 'node:os'
 import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, PushChannels, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
 import type { Message } from '@shared/contracts/message'
@@ -19,6 +20,7 @@ import { ConnectionConfig } from './connection/connection-config'
 import { registerCyreneScheme, registerCyreneProtocolHandler } from './protocol'
 import { createLive2dResolver } from './protocol/handler'
 import { createDiagnostics, type Diagnostics } from './diagnostics'
+import { createDiagnosticsService, type DiagnosticsService } from './diagnostics/diagnostics-service'
 import type { AuditEvent } from './diagnostics/audit'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
@@ -50,7 +52,8 @@ const fatal = createFatalShutdown({
 })
 
 // 打包：移除 DevTools 加速键。macOS 用最小菜单保留 Cmd+Q/Cmd+C/V（appMenu/editMenu/windowMenu 不含 View→DevTools）；
-// 其余平台 null 即可。
+// 其余平台 null 即可。D7A-04（阶段 7 批次 A）：生产菜单无 DevTools 角色——DevTools 唯一开启路径 = 诊断设置页
+// devMode 开关（onDevModeChange 接线 openDevTools/closeDevTools）+ F12 门（config.devToolsAllowed || isDevMode()，main-window.ts）。
 function applyProductionMenu(): void {
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]))
@@ -212,6 +215,46 @@ async function main(): Promise<void> {
               : undefined
           })
         })()
+    // —— 阶段 7 批次 A（Task 5，spec §6.3）：诊断服务装配（F-08 定案——adapter deps 注入、构造期 subscribe，无 attachAdapter 方法；
+    //   构造在 adapter 之后：事件源引用须先就位——与 chat/tool svc 同款时序治理）——
+    //   deps：dirs{logs,audit,temp}（harness 导出落 temp）/logWriter（createDiagnostics 扩展返回——Task 3）/auditor/sanitize/
+    //   getMainWindow（导出保存对话框父窗）/getConnectionSummary（后端连接现场：origin/status/protocolVersion）/
+    //   onDevModeChange（spec §6.4：DevTools 开=openDevTools detach、关=closeDevTools——窗口侧不持状态，会话态在 service 内）/
+    //   onDevEvent（diagnostics:dev-event push——M2 契约，main/index.ts:245 webContents.send 先例形态）/appInfo（F-C1：D7A-08 manifest 上下文）。
+    const diagnosticsSvc: DiagnosticsService = createDiagnosticsService({
+      dirs: { logs: dirs.logs, audit: dirs.audit, temp: dirs.temp },
+      logger: diagnostics.logger,
+      auditor: diagnostics.auditor,
+      logWriter: diagnostics.logWriter,
+      sanitize,
+      adapter,
+      getMainWindow: () => getMainWindow() ?? undefined,   // registry 返回 null→undefined（service 侧判空回退无父对话框）
+      getConnectionSummary: () => {
+        const s = adapter.getConnectionState()
+        let origin: string | undefined
+        try { origin = s.serverUrl !== undefined ? new URL(s.serverUrl).origin : undefined } catch { origin = undefined } // 非法 URL/mock 场景不出 origin
+        return { origin, status: s.status, protocolVersion: s.protocolVersion }
+      },
+      onDevEvent: (ev) => { const w = getMainWindow(); w?.webContents.send(PushChannels.diagnosticsDevEvent, ev) },
+      onDevModeChange: (enabled) => {
+        const win = getMainWindow()
+        if (!win || win.isDestroyed()) return
+        if (enabled) win.webContents.openDevTools({ mode: 'detach' })
+        else win.webContents.closeDevTools()
+      },
+      appInfo: () => ({
+        appName: 'Cyrene',
+        appVersion: app.getVersion(),
+        electron: process.versions.electron,
+        chrome: process.versions.chrome,
+        node: process.versions.node,
+        platform: process.platform,
+        arch: process.arch,
+        os: `${osType()} ${osRelease()}`,
+        packaged: app.isPackaged,
+        mode: config.mode,
+      }),
+    })
     // —— 阶段 6 批次 C（V-4 HIGH 定案）：SettingsService 上移——批次 C 需在 createToolService 之前装配（GrantStore 构造依赖 settings）——
     // settings 不依赖 toolSvc（无环）；load 为 eager（save 在内存态上 merge，未装载即 save 会以默认值覆盖已有落盘值）。
     const settingsSvc = new SettingsService({ dir: dirs.config, safeRoot, logger: diagnostics.logger })
@@ -338,7 +381,7 @@ async function main(): Promise<void> {
     // 阶段 5 批次 A Live2D 模型注册表（spec D5A-07）：扫 dirs.models，manifest+integrity 两级可用性 + fail-closed verify。
     // 纯磁盘只读，无生命周期（懒加载 integrity），registerHandlers 前装配即可。
     const live2dRegistry = new Live2DModelRegistry({ modelsDir: dirs.models })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },
@@ -365,7 +408,10 @@ async function main(): Promise<void> {
     diagnostics.logger.info('protocol:registered')
     diagnostics.logger.info('app:started', { mode: config.mode, packaged: app.isPackaged })
     markAppStarted()
-    ensureMainWindow((err) => diagnostics?.logger.error('window:load-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) }))
+    ensureMainWindow(
+      (err) => diagnostics?.logger.error('window:load-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) }),
+      { isDevMode: () => diagnosticsSvc.getState().devMode },   // D7A-04：F12 门 getter（打包态仅 devMode 会话态时注册）
+    )
   } catch (e) {
     fatal(e instanceof UserDataDirError ? e.message : `启动失败：${e instanceof Error ? e.message : '未知错误'}`)
   }

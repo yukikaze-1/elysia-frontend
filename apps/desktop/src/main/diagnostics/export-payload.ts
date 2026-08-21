@@ -66,10 +66,19 @@ export async function readTailLines(file: string, maxBytes: number): Promise<str
 export interface ExportManifestInput {
   schemaVersion: 1
   generatedAt?: string
+  // D7A-08/F-C1（Task 4 review MED，Task 5 收口）：manifest 上下文溯源字段（装配层 appInfo 注入——
+  // appName/version/electron/chrome/node/platform/arch/os/exportedAt/packaged/mode；缺失不落键、字符串经双净化）
   appName?: string
   appVersion?: string
   platform?: string
   electron?: string
+  chrome?: string
+  node?: string
+  arch?: string
+  os?: string
+  exportedAt?: string
+  packaged?: boolean
+  mode?: string
 }
 export interface ExportLogFile { name: string; lines: string[] }
 export type ExportSummary = Record<string, unknown>
@@ -95,6 +104,19 @@ export interface ExportPayloadDoc {
     droppedLines: number
     logSha256: string
     auditSha256: string
+    // D7A-08/F-C1：上下文溯源字段（可选——装配注入 appInfo 后经此落包；字符串双净化、缺失不落键）
+    generatedAt?: string
+    exportedAt?: string
+    appName?: string
+    appVersion?: string
+    platform?: string
+    electron?: string
+    chrome?: string
+    node?: string
+    arch?: string
+    os?: string
+    packaged?: boolean
+    mode?: string
   }
   summary: ExportSummary
   logFiles: ExportLogFile[]
@@ -146,6 +168,9 @@ export function buildExportPayload(input: ExportPayloadInput, opts?: { sanitize?
   const effectiveTruncatedAudit = input.truncatedAudit || audit.dropped > 0
   const logSha256 = sha256Hex(JSON.stringify(logFiles))
   const auditSha256 = sha256Hex(JSON.stringify(audit.lines))
+  // D7A-08/F-C1：上下文溯源字段逐项透传（字符串经 sanitize+redact 双净化；undefined 不落键——JSON.stringify 省略）
+  const man = input.manifest
+  const ctxText = (v?: string): string | undefined => (v === undefined ? undefined : redactSensitiveValues(sanitize(v)))
   return {
     schemaVersion: 1,
     manifest: {
@@ -156,6 +181,18 @@ export function buildExportPayload(input: ExportPayloadInput, opts?: { sanitize?
       droppedLines: logDropped + audit.dropped,
       logSha256,
       auditSha256,
+      generatedAt: ctxText(man.generatedAt),
+      exportedAt: ctxText(man.exportedAt),
+      appName: ctxText(man.appName),
+      appVersion: ctxText(man.appVersion),
+      electron: ctxText(man.electron),
+      chrome: ctxText(man.chrome),
+      node: ctxText(man.node),
+      platform: ctxText(man.platform),
+      arch: ctxText(man.arch),
+      os: ctxText(man.os),
+      packaged: man.packaged,
+      mode: ctxText(man.mode),
     },
     summary,
     logFiles,

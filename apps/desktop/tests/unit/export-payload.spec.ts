@@ -127,4 +127,65 @@ describe('buildExportPayload（逐行脱敏 / 超长行丢弃 / sha / manifest �
     expect(doc.summary).toEqual({ origin: 'https://127.0.0.1:9009', status: 'connected', protocolVersion: '2.0' })
     expect(doc.logFiles[0].name).toBe('app.log')
   })
+
+  it('F-C1（D7A-08）：input.manifest 上下文溯源字段逐项透传到输出 manifest（字符串经双净化、布尔直传、缺失不落键）', () => {
+    const doc = buildExportPayload(
+      input({
+        manifest: {
+          schemaVersion: 1,
+          generatedAt: '2026-08-22T00:00:00.000Z',
+          exportedAt: '2026-08-22T00:00:01.000Z',
+          appName: 'Cyrene',
+          appVersion: '0.1.0+abc',
+          platform: 'linux',
+          electron: '43.3.0',
+          chrome: '140.0.0.0',
+          node: '22.23.0',
+          arch: 'x64',
+          os: 'Linux 6.8.0',
+          packaged: false,
+          mode: 'test',
+        },
+      }),
+      identity,
+    )
+    expect(doc.manifest.generatedAt).toBe('2026-08-22T00:00:00.000Z')
+    expect(doc.manifest.exportedAt).toBe('2026-08-22T00:00:01.000Z')
+    expect(doc.manifest.appName).toBe('Cyrene')
+    expect(doc.manifest.appVersion).toBe('0.1.0+abc')
+    expect(doc.manifest.platform).toBe('linux')
+    expect(doc.manifest.electron).toBe('43.3.0')
+    expect(doc.manifest.chrome).toBe('140.0.0.0')
+    expect(doc.manifest.node).toBe('22.23.0')
+    expect(doc.manifest.arch).toBe('x64')
+    expect(doc.manifest.os).toBe('Linux 6.8.0')
+    expect(doc.manifest.packaged).toBe(false)
+    expect(doc.manifest.mode).toBe('test')
+  })
+
+  it('F-C1：字符串字段经双净化（sanitize+redact）；缺失字段不落键（JSON.stringify 省略）', () => {
+    const doc = buildExportPayload(
+      input({
+        manifest: { schemaVersion: 1, appName: 'Cyrene', os: 'Bearer sk-abcdef' },
+      }),
+      { sanitize: (s) => s.replace(/\//g, '').replace(/\s+/g, ' ') },
+    )
+    expect(doc.manifest.appName).toBe('Cyrene')
+    expect(doc.manifest.os).toBe('Bearer [REDACTED]') // redact 打标（sanitize 恒等——无路径/替换面）
+    // 缺失字段不落键：以实际序列化 payload 为准（对象内 undefined 值键经 JSON.stringify 省略）
+    const round = JSON.parse(JSON.stringify(doc)) as { manifest: Record<string, unknown> }
+    expect(round.manifest.packaged).toBeUndefined()
+    expect(round.manifest.mode).toBeUndefined()
+    expect(round.manifest.generatedAt).toBeUndefined() // 未传 generatedAt → 不落键（F-C1：无空时间戳占位）
+  })
+
+  it('F-C1：summary.classify 语义——双净化不改变既有段（回归：日志/审计段不受 manifest 字段影响）', () => {
+    const doc = buildExportPayload(
+      input({ manifest: { schemaVersion: 1, appName: 'Cyrene' } }),
+      { sanitize: (s) => s },
+    )
+    expect(doc.logFiles[0].lines).toEqual(['ok line', 'Bearer [REDACTED]', 'plain'])
+    expect(doc.audit[0]).toContain('Bearer [REDACTED]')
+    expect(doc.logSha256).toMatch(/^[0-9a-f]{64}$/)
+  })
 })

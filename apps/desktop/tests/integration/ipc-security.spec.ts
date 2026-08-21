@@ -22,13 +22,14 @@ describe('IPC 安全', () => {
         hasProcess: typeof w.process
       }
     })
-    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键;阶段3 G2 加持久化面 4 键(cacheMessages/hydratePersistence/openExternal/persistSession) → 26 键;阶段3 G3 加 attachments 面 4 键(attachmentsCancel/attachmentsCheck/attachmentsUpload/attachmentsValidate) → 30 键;阶段3 G4 加历史/表情面 3 键(getMessageContext/listStickers/queryChatHistory) → 33 键;阶段4 批次A 加模型服务/TTS 面 9 键(activateModelProfile/deleteModelProfile/getActiveModelSelection/listModelProfiles/listTtsVoices/previewTts/saveModelProfile/setTtsVoice/testModelProfile) → 42 键;阶段4 批次B 加语音面 12 键(audioCancel/voiceCancelDictation/voiceCancelRealtime/voiceCommit/voiceDiscard/voiceSendAudio/voiceStartDictation/voiceStartRealtime/voiceStartRecord/voiceStopDictation/voiceStopRealtime/voiceStopRecord) + 设置面 2 键(settingsLoad/settingsSave) → 56 键;阶段5 批次A 加 Live2D 面 1 键(listLive2dModels) → 57 键;阶段6 批次B 加工具面 6 键(onToolEvent/toolCancel/toolConfirmUpload/toolDecide/toolList/toolPickSource) → 63 键;阶段6 批次C 加目录授权/审批历史面 4 键(toolGrantDirectory/toolListGrants/toolRevokeGrant/toolListHistory) → 67 键
+    // 批次A desktopApi 扩展:既有 4 键(3 凭据 + getAppInfo)+ chat 11 方法 + 3 订阅 + 连接装配 3 键(setEndpoint/getEndpoint/getRuntimeInfo) = 21 键;批次B T10 加 onChatError → 22 键;阶段3 G2 加持久化面 4 键(cacheMessages/hydratePersistence/openExternal/persistSession) → 26 键;阶段3 G3 加 attachments 面 4 键(attachmentsCancel/attachmentsCheck/attachmentsUpload/attachmentsValidate) → 30 键;阶段3 G4 加历史/表情面 3 键(getMessageContext/listStickers/queryChatHistory) → 33 键;阶段4 批次A 加模型服务/TTS 面 9 键(activateModelProfile/deleteModelProfile/getActiveModelSelection/listModelProfiles/listTtsVoices/previewTts/saveModelProfile/setTtsVoice/testModelProfile) → 42 键;阶段4 批次B 加语音面 12 键(audioCancel/voiceCancelDictation/voiceCancelRealtime/voiceCommit/voiceDiscard/voiceSendAudio/voiceStartDictation/voiceStartRealtime/voiceStartRecord/voiceStopDictation/voiceStopRealtime/voiceStopRecord) + 设置面 2 键(settingsLoad/settingsSave) → 56 键;阶段5 批次A 加 Live2D 面 1 键(listLive2dModels) → 57 键;阶段6 批次B 加工具面 6 键(onToolEvent/toolCancel/toolConfirmUpload/toolDecide/toolList/toolPickSource) → 63 键;阶段6 批次C 加目录授权/审批历史面 4 键(toolGrantDirectory/toolListGrants/toolRevokeGrant/toolListHistory) → 67 键;阶段7 批次A（Task 5）加诊断面 6 键(diagnosticsClearLogs/diagnosticsDevModeSet/diagnosticsExport/diagnosticsOpenLogDir/diagnosticsState/onDiagnosticsDevEvent) → 73 键(契约 R2-1 定名:export 为 JS 保留字→diagnosticsExport)
     expect(surface.keys).toEqual([
       'activate', 'activateModelProfile', 'attachmentsCancel', 'attachmentsCheck', 'attachmentsUpload', 'attachmentsValidate',
       'audioCancel',
       'cacheMessages', 'cancel', 'clearBackendToken', 'connect', 'createConversation', 'deleteConversation', 'deleteModelProfile',
+      'diagnosticsClearLogs', 'diagnosticsDevModeSet', 'diagnosticsExport', 'diagnosticsOpenLogDir', 'diagnosticsState',
       'disconnect', 'getActiveModelSelection', 'getAppInfo', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getMessageContext', 'getMessages',
-      'getRuntimeInfo', 'hydratePersistence', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'onToolEvent',
+      'getRuntimeInfo', 'hydratePersistence', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'onDiagnosticsDevEvent', 'onToolEvent',
       'openExternal', 'persistSession', 'previewTts', 'queryChatHistory', 'renameConversation', 'saveModelProfile',
       'send', 'setBackendToken', 'setEndpoint', 'setTtsVoice', 'settingsLoad', 'settingsSave', 'testModelProfile',
       'toolCancel', 'toolConfirmUpload', 'toolDecide', 'toolGrantDirectory', 'toolList', 'toolListGrants', 'toolListHistory', 'toolPickSource', 'toolRevokeGrant',
@@ -46,6 +47,14 @@ describe('IPC 安全', () => {
     expect(Object.values(IpcChannels)).not.toContain('chat:error')
     // 订阅面含 onChatError(纯 push 订阅方法;22 键白名单已含该键)
     const hasSub = await page.evaluate(() => typeof window.desktopApi.onChatError === 'function')
+    expect(hasSub).toBe(true)
+  })
+  it('diagnostics:dev-event 是纯 push 通道:不入 IpcChannels invoke 枚举(契约 R2-1)', async () => {
+    // 阶段 7 批次 A(Task 5):diagnostics:dev-event=Main→Renderer 下行(M2 契约——不入 registerHandler 面);
+    // 订阅面 onDiagnosticsDevEvent 为 preload ipcRenderer.on(push 通道 + DiagnosticsDevEventSchema 校验)。
+    expect(PushChannels.diagnosticsDevEvent).toBe('diagnostics:dev-event')
+    expect(Object.values(IpcChannels)).not.toContain('diagnostics:dev-event')
+    const hasSub = await page.evaluate(() => typeof window.desktopApi.onDiagnosticsDevEvent === 'function')
     expect(hasSub).toBe(true)
   })
   it('超大输入 → SCHEMA_VALIDATION_FAILED', async () => {

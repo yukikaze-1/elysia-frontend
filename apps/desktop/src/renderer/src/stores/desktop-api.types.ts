@@ -23,6 +23,9 @@ import type {
   CredentialStatus,
   DictationStartInput,
   DictationStopInput,
+  DiagnosticsDevEvent,
+  DiagnosticsExportResult,
+  DiagnosticsState,
   FileValidationResult,
   HistoryEntry,
   Live2DModelSummary,
@@ -138,4 +141,11 @@ export interface DesktopApiLike {
   toolListGrants(): Promise<PermissionGrant[]>
   toolRevokeGrant(id: string): Promise<void>
   toolListHistory(limit?: number): Promise<HistoryEntry[]>
+  // —— 阶段 7 批次 A（Task 5）：诊断面（preload 已实装；Renderer 消费为 Task 6 设置页「开发与诊断」子页）——
+  diagnosticsState(): Promise<DiagnosticsState>
+  diagnosticsDevModeSet(enabled: boolean): Promise<void>
+  diagnosticsOpenLogDir(): Promise<void>
+  diagnosticsClearLogs(): Promise<void>
+  diagnosticsExport(): Promise<DiagnosticsExportResult>
+  onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void
 }

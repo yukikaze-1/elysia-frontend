@@ -68,6 +68,20 @@ export interface DiagnosticsService {
   exportPackage(): Promise<DiagnosticsExportResult>
 }
 
+/** F-C1（D7A-08 manifest 上下文溯源字段）：装配层注入的 app 信息（app.getVersion/isPackaged/process.versions+/config.mode） */
+export interface DiagnosticsAppInfo {
+  appName: string
+  appVersion: string
+  electron: string
+  chrome: string
+  node: string
+  platform: string
+  arch: string
+  os: string
+  packaged: boolean
+  mode: string
+}
+
 /** 日志目录文件清单 + 总大小（sync——getState 为同步接口；目录缺失/权限异常 → 空清单兜底，不阻塞展示面） */
 function readLogDirInfo(dir: string): { logSizeBytes: number; logFiles: DiagnosticsState['logFiles'] } {
   try {
@@ -156,6 +170,7 @@ export function createDiagnosticsService(deps: {
   getConnectionSummary: () => { origin?: string; status?: string; protocolVersion?: string }
   onDevEvent?: (ev: DiagnosticsDevEvent) => void        // push 出口（Task 5 接线 webContents.send）
   onDevModeChange?: (enabled: boolean) => void          // 副作用出口（Task 5 接线 openDevTools/closeDevTools——spec §6.4）
+  appInfo: () => DiagnosticsAppInfo                     // F-C1（Task 5 收口）：导出 manifest 上下文字段（D7A-08）
   now?: () => number                                     // 测试注入
 }): DiagnosticsService {
   let devMode = false // D7A-05：会话态（Main 内存；不写 settings.json——重启恢复禁用）
@@ -257,10 +272,26 @@ export function createDiagnosticsService(deps: {
         // ① 收集：日志尾读（≤3 文件 × 5MiB 行对齐）+ 审计直读（30 天窗口全量，超 15MiB 截尾保最新端）
         const logs = await collectLogFiles({ logs: deps.dirs.logs, logger: deps.logger })
         const auditColl = await collectAuditLines(deps.dirs.audit, new Date(now()), deps.logger)
-        // ② 组包（逐行二次脱敏在 build 内——D7A-09）
+        // ② 组包（逐行二次脱敏在 build 内——D7A-09；manifest 上下文溯源字段经 appInfo 注入——F-C1/D7A-08）
+        const info = deps.appInfo()
+        const exportedAt = new Date(now()).toISOString()
         const payload = buildExportPayload(
           {
-            manifest: { schemaVersion: 1, generatedAt: new Date(now()).toISOString() },
+            manifest: {
+              schemaVersion: 1,
+              generatedAt: exportedAt,
+              exportedAt,
+              appName: info.appName,
+              appVersion: info.appVersion,
+              electron: info.electron,
+              chrome: info.chrome,
+              node: info.node,
+              platform: info.platform,
+              arch: info.arch,
+              os: info.os,
+              packaged: info.packaged,
+              mode: info.mode,
+            },
             summary: deps.getConnectionSummary(),
             logFiles: logs.files,
             auditLines: auditColl.lines,

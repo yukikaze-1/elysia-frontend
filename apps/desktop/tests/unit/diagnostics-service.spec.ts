@@ -73,6 +73,8 @@ function makeCtx(opts: {
     openPath: opts.openPath,
     onDevEvent,
     onDevModeChange,
+    // F-C1（Task 5）：manifest 上下文字段夹具（固定值——exportPackage 断言 appName/exportedAt 等在场）
+    appInfo: () => ({ appName: 'Cyrene', appVersion: '0.1.0', electron: '43.3.0', chrome: '140.0.0.0', node: '22.23.0', platform: 'linux', arch: 'x64', os: 'Linux 6.8.0', packaged: false, mode: 'test' }),
     now: () => t,
   })
   return {
@@ -312,13 +314,21 @@ describe('exportPackage（harness 落 temp：黑名单 0 命中 + truncated 标�
       expect(content).not.toContain('sk-abcdef0123456789')
       expect(content).not.toContain('Bearer abc12345')
       expect(content).toContain('Bearer [REDACTED]')
-      const doc = JSON.parse(content) as { schemaVersion: number; manifest: { schemaVersion: number; truncated: boolean; logSha256: string; auditSha256: string; droppedLines: number }; logFiles: Array<{ name: string; lines: string[] }>; audit: string[]; logSha256: string; auditSha256: string }
+      const doc = JSON.parse(content) as { schemaVersion: number; manifest: { schemaVersion: number; truncated: boolean; logSha256: string; auditSha256: string; droppedLines: number; appName?: string; appVersion?: string; exportedAt?: string; platform?: string; packaged?: boolean; mode?: string; generatedAt?: string }; logFiles: Array<{ name: string; lines: string[] }>; audit: string[]; logSha256: string; auditSha256: string }
       expect(doc.schemaVersion).toBe(1)
       expect(doc.manifest.schemaVersion).toBe(1)
       expect(doc.manifest.truncated).toBe(false)
       expect(doc.manifest.droppedLines).toBe(0)
       expect(/^[0-9a-f]{64}$/.test(doc.logSha256)).toBe(true)
       expect(doc.logSha256).toBe(doc.manifest.logSha256)
+      // F-C1（D7A-08）：manifest 上下文溯源字段必须随包落盘（装配 appInfo 注入全字段）
+      expect(doc.manifest.appName).toBe('Cyrene')
+      expect(doc.manifest.appVersion).toBe('0.1.0')
+      expect(doc.manifest.platform).toBe('linux')
+      expect(doc.manifest.packaged).toBe(false)
+      expect(doc.manifest.mode).toBe('test')
+      expect(doc.manifest.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+      expect(doc.manifest.exportedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
       expect(doc.logFiles.map((f) => f.name).sort()).toEqual(['app.log', 'app.log.1'])
       expect(doc.audit.length).toBe(1)
       // 审计 diagnostics:exported（ts 必填、无路径——summary 只含大小/截断）
