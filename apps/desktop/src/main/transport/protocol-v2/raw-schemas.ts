@@ -19,10 +19,14 @@ const RawTokenRoundSchema = z.object({
   reasoning_tokens: z.number().int().nonnegative().optional(),
   round_num: z.number().int().nonnegative(),   // 后端 TokenRound.round_num 为 int(无下限,测试用 0);契约对齐
   timestamp: z.string().optional()
-})
-const RawTokenUsageSchema = z.object({ rounds: z.array(RawTokenRoundSchema), turn_total: z.number().int().nonnegative() })
-const RawTokenStatsSchema = z.object({ total: z.number().int().nonnegative(), byModel: z.record(z.string(), z.number().int().nonnegative()) })
-const RawConversationUsageSchema = z.object({ total: z.number().int().nonnegative(), byModel: z.record(z.string(), z.number().int().nonnegative()) })
+}).strict()
+const RawTokenUsageSchema = z.object({ rounds: z.array(RawTokenRoundSchema), turn_total: z.number().int().nonnegative() }).strict()
+const RawTokenStatsSchema = z.object({ total: z.number().int().nonnegative(), byModel: z.record(z.string(), z.number().int().nonnegative()) }).strict()
+const RawConversationUsageSchema = z.object({ total: z.number().int().nonnegative(), byModel: z.record(z.string(), z.number().int().nonnegative()) }).strict()
+const RawTokenTurnStatsSchema = z.object({
+  rounds: z.array(RawTokenRoundSchema).optional(),
+  turn_total: z.number().int().nonnegative().optional()
+}).strict()
 
 const RawSessionMessageItemSchema = z.object({
   role: z.string().min(1),
@@ -177,6 +181,24 @@ const RawStateSchema = z.object({
 const RawTypingSchema = z.object({
   type: z.literal('typing'),
   typing: z.boolean()
+}).strict()
+
+/** v1 输出旁路仍可能广播到 v2 连接的兼容帧：严格识别，连接层显式忽略。 */
+const RawDeltaMessageSchema = z.object({
+  type: z.literal('delta'),
+  content: z.string(),
+  stream_id: z.number().int().optional()
+}).strict()
+const RawMessageMessageSchema = z.object({
+  type: z.literal('message'),
+  role: z.string().optional(),
+  content: z.string().optional(),
+  mood: z.string().optional()
+}).strict()
+const RawTokenUsageMessageSchema = z.object({
+  type: z.literal('token_usage'),
+  turn: RawTokenTurnStatsSchema.optional(),
+  session: RawTokenStatsSchema.optional()
 }).strict()
 
 const RawErrorMessageSchema = z.object({
@@ -388,6 +410,9 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawUserAckSchema,
   RawStateSchema,
   RawTypingSchema,
+  RawDeltaMessageSchema,
+  RawMessageMessageSchema,
+  RawTokenUsageMessageSchema,
   RawErrorMessageSchema,
   RawSwitchModelResultSchema,
   RawSetTtsVoiceResultSchema,

@@ -125,6 +125,8 @@ export interface BackendAdapter {
   /** 工具附件上传（阶段 6 批次 B Task 5：先 POST /api/uploads/desktop/{callId}（X-Client-Connection 持有者校验）
    *  拿 url 再回填 tool.status attachments，H1——响应仅 {url}，mimeType/label 本地回填） */
   uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment>
+  /** 已归档桌面截图读取：Main 持有 Bearer 并返回经 MIME/大小校验的字节；Renderer 不接触后端 URL/Token。 */
+  readToolAttachment(callId: string): Promise<{ bytes: Uint8Array; mimeType: 'image/png' } | null>
   /** 桌面工具请求钩子（阶段 6 批次 B Task 6，D6B-08/D6B-15）：real 专用——handleFrame case 'tool.request'
    *  路由至此（不再 emit 领域事件）；index.ts 在 adapter 构造后注入（避免构造环）。mock 不实现（MockBackend 经
    *  toolRequestSink 构造注入，D6B-15）。 */

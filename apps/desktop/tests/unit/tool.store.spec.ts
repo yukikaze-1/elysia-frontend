@@ -33,6 +33,28 @@ describe('toolStore 三来路归一化', () => {
     s.applyBackendEvent({ event: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as unknown as ToolBackendEvent)
     expect(s.records['tc_b1']).toMatchObject({ runtime: 'backend', status: 'running' })
   })
+  it('真实乱序：backend desktop started 先到时，本地 awaiting_permission 仍覆盖并打开权限窗', () => {
+    const s = useToolStore()
+    s.applyBackendEvent({ event: 'tool.started', callId: 'tc_d1', toolName: 'desktop.file.read', runtime: 'desktop', inputSummary: 'path=<redacted>' } as unknown as ToolBackendEvent)
+    expect(s.records['tc_d1']).toMatchObject({ runtime: 'desktop', status: 'running' })
+    expect(s.records['tc_d1'].desktopCallId).toBeUndefined()
+
+    s.upsertLocal({ ...mkLocal('awaiting_permission', 'tc_d1'), desktopCallId: 'call_d1', pathSummary: 'stage6-read-deny.txt', dataFlowNote: '文件内容将发送到后端' })
+
+    expect(s.records['tc_d1']).toMatchObject({ runtime: 'desktop', status: 'awaiting_permission', desktopCallId: 'call_d1' })
+    expect(s.waitingForApproval).toBe(true)
+    expect(s.pendingPathSummary?.pathSummary).toBe('stage6-read-deny.txt')
+    expect(s.pendingDataFlowNote?.dataFlowNote).toContain('发送到后端')
+  })
+  it('本地 running 后的迟到 awaiting_permission 仍被单向状态机拒绝', () => {
+    const s = useToolStore()
+    s.upsertLocal({ ...mkLocal('running'), desktopCallId: 'call_1' })
+    s.upsertLocal({ ...mkLocal('awaiting_permission'), desktopCallId: 'call_1', pathSummary: '/late.md', dataFlowNote: 'late' })
+    expect(s.records['tc_1'].status).toBe('running')
+    expect(s.waitingForApproval).toBe(false)
+    expect(s.pendingPathSummary).toBeNull()
+    expect(s.pendingDataFlowNote).toBeNull()
+  })
   it('D6B-21 修正：backend 自身 started→completed 正常推进（仅 desktop 记录挡覆盖——Task 8 集成发现）', () => {
     const s = useToolStore()
     s.applyBackendEvent({ event: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as unknown as ToolBackendEvent)
@@ -93,6 +115,18 @@ describe('toolStore 三来路归一化', () => {
     s.upsertLocal(mkLocal('completed', 'tc_d'))
     expect(s.captureState).not.toBeNull() // 非 capture 终态不清 captureState
     s.upsertLocal({ ...mkLocal('completed', 'tc_c'), toolName: 'desktop.screen.capture' })
+    expect(s.captureState).toBeNull()
+  })
+  it('权限窗收尾只清审批侧信道，不清正在等待选源的 captureState', () => {
+    const s = useToolStore()
+    s.upsertLocal({ ...mkLocal('awaiting_permission', 'tc_cap'), toolName: 'desktop.screen.capture', desktopCallId: 'call_cap', dataFlowNote: '截图将发送到后端' })
+    s.upsertLocal({ ...mkLocal('running', 'tc_cap'), toolName: 'desktop.screen.capture', desktopCallId: 'call_cap', captureSources: [{ sourceId: 's1', sourceName: '屏幕 1', thumbnailDataUrl: 'data:image/png;base64,xx' }] })
+
+    s.clearApprovalLocal()
+
+    expect(s.pendingDataFlowNote).toBeNull()
+    expect(s.captureState).toMatchObject({ callId: 'call_cap', sources: [{ sourceId: 's1' }] })
+    s.upsertLocal({ ...mkLocal('cancelled', 'tc_cap'), toolName: 'desktop.screen.capture', desktopCallId: 'call_cap' })
     expect(s.captureState).toBeNull()
   })
   it('L1（fix round 1）：liveOrder 截断只逐出最旧终态——awaiting 保留', () => {

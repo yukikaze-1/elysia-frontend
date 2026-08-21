@@ -14,7 +14,9 @@ export function registerCyreneScheme(): void {
         secure: true,
         supportFetchAPI: true,
         stream: true,
-        corsEnabled: false,
+        // Electron 43+ 会在协议 handler 之前拒绝跨源 fetch；实际来源仍由
+        // handler 的 ACAO 白名单控制，未受信来源不会获得跨源读取权限。
+        corsEnabled: true,
         bypassCSP: false
       }
     }

@@ -53,9 +53,11 @@ describe('IPC 领域响应 Schema', () => {
       content: 'ls 结果',
       status: 'completed',
       createdAt: 't',
-      tool: { callId: 'c1', name: 'desktop.command.run', success: true, durationMs: 12 }
+      tool: { callId: 'c1', name: 'desktop.command.run', success: true, durationMs: 12, desktopCallId: 'call_1', attachmentCount: 1 }
     }
-    expect(MessageSchema.safeParse(toolMsg).success).toBe(true)
+    const parsed = MessageSchema.safeParse(toolMsg)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.data.tool).toMatchObject({ desktopCallId: 'call_1', attachmentCount: 1 })
     expect(MessageSchema.safeParse({ ...toolMsg, tool: 'not-an-object' }).success).toBe(false)
   })
 

@@ -98,6 +98,13 @@ const RECONNECT_MAX_ATTEMPTS = 6
 const HANDSHAKE_TIMEOUT_DEFAULT_MS = 10000
 const REST_TIMEOUT_DEFAULT_MS = 10000
 const UPLOAD_TIMEOUT_DEFAULT_MS = 60000
+const TOOL_CAPTURE_MAX_BYTES = 16 * 1024 * 1024
+const DESKTOP_CALL_ID_PATTERN = /^call_[A-Za-z0-9_-]+$/
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const
+
+function hasPngSignature(bytes: Uint8Array): boolean {
+  return bytes.length >= PNG_SIGNATURE.length && PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)
+}
 
 /** category → search 端点 category 参数（P2-1：不做 'image,video' 组合串假设——契约无出处；按 docs/02 §19 资源端点
  *  单值枚举 image|link|video|audio|file|sticker 处理。image_video（图片/视频 tab）拆两次单值查询合并；其余单值透传；
@@ -222,6 +229,11 @@ export class RealBackend implements BackendAdapter {
       case 'expression': return
       case 'state': return // FE-INT-P1-01:FSM 状态契约识别,renderer 暂不消费(有意忽略,勿误删)
       case 'typing': return // FE-INT-P1-01:输入状态契约识别,renderer 暂不消费(有意忽略,勿误删)
+      // 阶段 6 真实联调：后端少数旧输出旁路会越过 v2 分流，向 v2 连接广播这三类 v1 兼容帧。
+      // v2 的 generation.* / session 已是权威来源；这里只做严格 schema 接纳并显式忽略，避免重复渲染与伪协议告警。
+      case 'delta':
+      case 'message':
+      case 'token_usage': return
       case 'user_message.ack': this.handleAck(frame); return
       case 'error': this.handleErrorFrame(frame); return
       case 'switch_model_result': {
@@ -725,8 +737,8 @@ export class RealBackend implements BackendAdapter {
     if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '会话详情响应校验失败')
     const { session, messages } = parsed.data
     // 详情第一页 query_page 为 _id 倒序 → (timestamp, messageId) 正序归一化(与 toMessagePage 'before' 同规则)
-    const items = messages
-      .map((m) => this.restMapper.toDomainMessage(m, session.conversationId))
+    const items = pairToolCalls(messages
+      .map((m) => this.restMapper.toDomainMessage(m, session.conversationId)))
       .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.messageId < b.messageId ? -1 : 1)
     return { ...this.restMapper.toConversation(session), messages: items }
   }
@@ -1204,6 +1216,71 @@ export class RealBackend implements BackendAdapter {
         // I3/D17：disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED；否则是超时 timer abort → TIMEOUT
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件上传超时(${uploadTimeoutMs}ms)`)
+      }
+      throw e
+    } finally {
+      clearTimeout(timer)
+      this.activeControllers.delete(controller)
+    }
+  }
+
+  /**
+   * 读取已归档桌面截图。Bearer、后端地址和原始上传 URL 始终留在 Main；返回前执行 ID、状态、
+   * MIME、大小及 PNG 魔数校验，避免把任意受鉴权响应代理给 Renderer。
+   */
+  async readToolAttachment(callId: string): Promise<{ bytes: Uint8Array; mimeType: 'image/png' } | null> {
+    if (!DESKTOP_CALL_ID_PATTERN.test(callId)) return null
+    if (!this.serverUrl || this.state.status === 'disconnected') {
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法读取工具附件')
+    }
+    const controller = new AbortController()
+    const timeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    this.activeControllers.add(controller)
+    const url = `${this.serverUrl.replace(/\/$/, '')}/uploads/desktop/${encodeURIComponent(callId)}.png`
+    try {
+      const res = await (this.options.fetchImpl ?? fetch)(url, {
+        signal: controller.signal,
+        headers: { authorization: `Bearer ${this.token}`, accept: 'image/png' }
+      })
+      if (res.status === 404) return null
+      if (!res.ok) throw new CyreneError(mapHttpError(res.status, 'HTTP_ERROR'), `工具附件读取失败 ${res.status}`)
+      const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
+      if (mime !== 'image/png') {
+        await res.body?.cancel()
+        return null
+      }
+      const declaredLength = Number(res.headers.get('content-length'))
+      if (Number.isFinite(declaredLength) && declaredLength > TOOL_CAPTURE_MAX_BYTES) {
+        await res.body?.cancel()
+        return null
+      }
+      const reader = res.body?.getReader()
+      if (!reader) return null
+      const chunks: Uint8Array[] = []
+      let total = 0
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (!value) continue
+        total += value.byteLength
+        if (total > TOOL_CAPTURE_MAX_BYTES) {
+          await reader.cancel()
+          return null
+        }
+        chunks.push(value)
+      }
+      const bytes = new Uint8Array(total)
+      let offset = 0
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset)
+        offset += chunk.byteLength
+      }
+      return hasPngSignature(bytes) ? { bytes, mimeType: 'image/png' } : null
+    } catch (e) {
+      if (controller.signal.aborted) {
+        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，工具附件读取已取消')
+        throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件读取超时(${timeoutMs}ms)`)
       }
       throw e
     } finally {

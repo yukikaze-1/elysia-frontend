@@ -5,10 +5,10 @@
 //  - 后端目录缺失 → exit 0(CI/他人机器跳过,不硬依赖);
 //  - 后端 frame type 提取优先 contract.schema.json 判别联合;退化用 ws_message.py `Literal["…"]`(pydantic 写法);
 //  - 解析 type < 3 → exit 1(防静默 false pass);
-//  - 比对限定当前 WS v2 帧子集(WS_V2_FRAME_TYPES 白名单 32 型);前端缺 → exit 1 + 列出;
+//  - 比对限定当前 WS v2 帧子集(WS_V2_FRAME_TYPES 白名单 35 型);前端缺 → exit 1 + 列出;
 //  - 字段级：后端生成的 ws-v2-*.jsonl 逐条 parseRawFrame，解析结果必须与输入深度相等（防 zod 静默 strip）;
 //  - 从后端 JSON Schema 的字段定义构造 error/rejected ACK 关键可选字段探针。
-//  - 未纳帧(capabilities/delta/message/token_usage/transcription/command/wake/service_mode_result 等)走 warn 白名单,不报错。
+//  - 未纳帧(capabilities/transcription/command/wake/service_mode_result)走 warn 白名单,不报错。
 // 本脚本不进入 CI 主流程;手动或 `check:contract` 运行。
 
 import { readFileSync, existsSync, readdirSync } from 'fs'
@@ -19,21 +19,23 @@ const SCHEMA_JSON = `${BACKEND_DIR}/contract.schema.json` // 判别联合(如不
 const BACKEND_TRACES = '/home/yomu/elysia-agent/docs/archive/frontend-handoff-v2/traces'
 const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
 
-// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 32 型
+// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 35 型
 const WS_V2_FRAME_TYPES = [
   'server_info', 'session', 'expression', 'user_message.ack', 'error',
   'generation.started', 'generation.segment.started', 'generation.delta',
   'generation.segment.completed', 'generation.completed', 'generation.failed',
   'state', 'typing', // FE-INT-P1-01:11 型 → 13 型,state/typing 兼容帧纳入字段级深比较
+  // 阶段6 真实联调：后端旧输出旁路仍会广播的 v1 兼容帧，严格接纳但不进入领域层
+  'delta', 'message', 'token_usage',
   'switch_model_result', 'set_tts_voice_result', // 阶段4 批次A:模型 Profile 激活/TTS 声音切换结果帧
   // 阶段4 批次B:三种语音(BE-060/061/062)+ TTS 播放控制(BE-063),13 型 → 28 型
   'voice.transcript', 'voice_session.started', 'voice_session.partial', 'voice_session.turn',
   'voice_session.ack', 'voice_session.ended', 'dictation.partial', 'dictation.final',
   'dictation.cancelled', 'audio_start', 'audio', 'audio_end', 'audio_cancelled',
-  // 阶段6 批次A（F-6-02）：工具双轨帧 + 过渡期 action 兼容帧，28 型 → 32 型
+  // 阶段6 批次A（F-6-02）：工具双轨帧 + 过渡期 action 兼容帧，31 型 → 35 型
   'tool.request', 'tool.started', 'tool.completed', 'action'
 ]
-// 未纳帧(capabilities/delta/message/token_usage/transcription/command/wake/service_mode_result 等):前端有意滞后,只 warn 不报错(F2 白名单)
+// 未纳帧(capabilities/transcription/command/wake/service_mode_result):前端有意滞后,只 warn 不报错(F2 白名单)
 
 if (!existsSync(BACKEND_DIR)) { console.log('[check-contract] 后端仓库未挂载,跳过'); process.exit(0) }
 

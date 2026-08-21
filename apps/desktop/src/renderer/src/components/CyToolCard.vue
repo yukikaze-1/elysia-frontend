@@ -6,6 +6,7 @@
 import { computed } from 'vue'
 import type { ToolCallRecord } from '@shared/contracts/tool'
 import { useToolStore } from '../stores/tool.store'
+import CyImageAttachment from './CyImageAttachment.vue'
 
 const props = defineProps<{ record: ToolCallRecord; readonly?: boolean }>()
 const emit = defineEmits<{ openApproval: []; cancel: []; pick: [sourceId: string]; confirmUpload: [] }>()
@@ -18,6 +19,11 @@ const statusText = computed(() => STATUS_TEXT[props.record.status] ?? props.reco
 const isBackend = computed(() => props.record.runtime === 'backend')
 const awaiting = computed(() => props.record.status === 'awaiting_permission' && !props.readonly)
 const isCapture = computed(() => props.record.toolName === 'desktop.screen.capture')
+const captureAttachmentId = computed(() =>
+  isCapture.value && props.record.status === 'completed' && (props.record.attachmentCount ?? 0) > 0
+    ? props.record.desktopCallId
+    : undefined
+)
 // L3（fix round 1）：pathSummary 按 record 的 callId 绑定（pendingPathSummary 侧信道 callId 匹配才展示，
 // 不串到其它卡片）
 const pathSummary = computed(() => {
@@ -39,6 +45,8 @@ const pathSummary = computed(() => {
     <p v-if="record.outputSummary" class="cy-tool-result">{{ record.outputSummary }}<template v-if="record.truncated">…（已截断）</template></p>
     <p v-if="record.error?.message" class="cy-tool-error">{{ record.error.message }}</p>
     <p v-if="record.attachmentCount" class="cy-tool-attachments">含 {{ record.attachmentCount }} 个附件</p>
+    <CyImageAttachment v-if="captureAttachmentId" class="cy-tool-capture-archive" :attachment-id="captureAttachmentId"
+                       route-type="tool-capture" name="截图结果" data-testid="tool-capture-archive" />
     <p v-if="record.startedAt" class="cy-tool-time">{{ record.startedAt.slice(0, 19).replace('T', ' ') }}<template v-if="record.finishedAt"> → {{ record.finishedAt.slice(0, 19).replace('T', ' ') }}</template></p>
     <!-- 批次 C（F-4）：grant 命中自动执行路径的完成记录携带 diff（F-7 契约 ToolCallRecord.diff，终态不清）→
          只读 Diff 信息条（无确认按钮——approval-diff 仅权限窗） -->
@@ -79,14 +87,16 @@ const pathSummary = computed(() => {
 .cy-tool-status { margin-left: auto; color: var(--cy-text-muted); }
 .cy-tool-path, .cy-tool-summary, .cy-tool-result, .cy-tool-error, .cy-tool-attachments, .cy-tool-time { margin: 4px 0 0; color: var(--cy-text-secondary); overflow-wrap: anywhere; }
 .cy-tool-error { color: var(--cy-danger, #d33); }
+.cy-tool-capture-archive { margin-top: 6px; }
 .cy-tool-actions { margin-top: 6px; display: flex; gap: 8px; }
 .cy-btn { padding: 3px 10px; border: 1px solid var(--cy-border); border-radius: 6px; background: var(--cy-bg); cursor: pointer; }
 .cy-btn-approve { border-color: var(--cy-accent, #1a66ff); color: var(--cy-accent, #1a66ff); }
-.cy-capture-sources { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.cy-tool-capture { max-height: 45vh; overflow-y: auto; overscroll-behavior: contain; margin-top: 6px; }
+.cy-capture-sources { display: flex; gap: 8px; flex-wrap: wrap; }
 .cy-capture-source { border: 1px solid var(--cy-border); border-radius: 6px; padding: 4px; background: var(--cy-bg); cursor: pointer; }
 .cy-capture-source img { width: 120px; height: 90px; object-fit: cover; display: block; }
-.cy-capture-preview img { max-width: 100%; border-radius: 6px; }
-.cy-capture-preview { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.cy-capture-preview img { max-width: 100%; max-height: 30vh; object-fit: contain; align-self: flex-start; border-radius: 6px; }
+.cy-capture-preview { display: flex; flex-direction: column; gap: 6px; }
 .cy-tool-diff-readonly { margin-top: 6px; }
 .cy-tool-diff-note { color: var(--cy-text-muted); font-size: 11px; }
 .cy-diff-body { background: var(--cy-bg); padding: 4px; border-radius: 6px; max-height: 160px; overflow: auto; margin: 2px 0 0; font-size: 11px; white-space: pre-wrap; }

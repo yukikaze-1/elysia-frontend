@@ -25,4 +25,15 @@ describe('CyToolCard 只读 Diff（F-4）', () => {
     expect(w.find('[data-testid="tool-diff-readonly"]').exists()).toBe(true)
     expect(w.find('[data-testid="approval-diff"]').exists()).toBe(false)   // 无确认按钮
   })
+
+  it('归档截图记录通过 Main 自定义协议渲染，不含后端 URL', () => {
+    const rec: ToolCallRecord = {
+      id: 'tc_cap', desktopCallId: 'call_2025c9e03ffa', toolName: 'desktop.screen.capture',
+      runtime: 'desktop', status: 'completed', attachmentCount: 1
+    }
+    const w = mount(CyToolCard, { props: { record: rec, readonly: true }, global: { plugins: [pinia] } })
+    const image = w.get('[data-testid="tool-capture-archive"]')
+    expect(image.attributes('src')).toBe('cyrene://renderer/__cyrene-media/tool-capture/call_2025c9e03ffa')
+    expect(w.html()).not.toContain('/uploads/desktop/')
+  })
 })

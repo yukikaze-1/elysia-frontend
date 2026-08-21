@@ -8,11 +8,15 @@ const now = () => 1_752_000_000_000   // 固定时钟（2026-07 起）
 
 function mkService(opts: {
   sign?: (id: string) => Promise<{ url: string; expiresAt: string }>
+  readToolAttachment?: (id: string) => Promise<{ bytes: Uint8Array; mimeType: 'image/png' } | null>
   fetchImpl?: typeof fetch
   baseUrl?: () => string | undefined
 } = {}): MediaService {
   return new MediaService({
-    backend: { signAttachmentUrl: opts.sign ?? (async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() })) },
+    backend: {
+      signAttachmentUrl: opts.sign ?? (async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() })),
+      ...(opts.readToolAttachment ? { readToolAttachment: opts.readToolAttachment } : {})
+    },
     baseUrl: opts.baseUrl ?? (() => 'http://127.0.0.1:9'),
     now,
     fetchImpl: opts.fetchImpl
@@ -23,6 +27,7 @@ describe('parseMediaPath / isDocumentRequest', () => {
   it('解析 /__cyrene-media/{mediaType}/{id}', () => {
     expect(parseMediaPath('/__cyrene-media/attachment/att_1')).toEqual({ mediaType: 'attachment', id: 'att_1' })
     expect(parseMediaPath('/__cyrene-media/sticker/st_1')).toEqual({ mediaType: 'sticker', id: 'st_1' })
+    expect(parseMediaPath('/__cyrene-media/tool-capture/call_1')).toEqual({ mediaType: 'tool-capture', id: 'call_1' })
     expect(parseMediaPath('/__cyrene-media/tts-live/live-1')).toEqual({ mediaType: 'tts-live', id: 'live-1' })
   })
   it('非媒体路径/缺段/未知 mediaType → null', () => {
@@ -34,6 +39,27 @@ describe('parseMediaPath / isDocumentRequest', () => {
   it('Sec-Fetch-Dest: document → 拒绝（防媒体字节作顶层文档，spec §4.9）', () => {
     expect(isDocumentRequest(new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'document' } }))).toBe(true)
     expect(isDocumentRequest(new Request('cyrene://renderer/__cyrene-media/attachment/att_1', { headers: { 'sec-fetch-dest': 'img' } }))).toBe(false)
+  })
+})
+
+describe('MediaService.stream tool-capture 分支（阶段 6 真实联调）', () => {
+  it('合法 callId → Main 鉴权读取结果以 PNG/no-store 返回', async () => {
+    const readToolAttachment = vi.fn(async () => ({ bytes: new Uint8Array([0x89, 0x50]), mimeType: 'image/png' as const }))
+    const svc = mkService({ readToolAttachment })
+    const res = await svc.stream('tool-capture', 'call_2025c9e03ffa', new Request('cyrene://renderer/__cyrene-media/tool-capture/call_2025c9e03ffa', { headers: { 'sec-fetch-dest': 'img' } }))
+    expect(readToolAttachment).toHaveBeenCalledWith('call_2025c9e03ffa')
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toBe('image/png')
+    expect(res.headers.get('cache-control')).toBe('no-store')
+  })
+  it('非法 callId / 未命中 / 读取异常分别映射 403 / 404 / 502', async () => {
+    const readToolAttachment = vi.fn(async () => null)
+    const svc = mkService({ readToolAttachment })
+    const request = new Request('cyrene://renderer/__cyrene-media/tool-capture/x', { headers: { 'sec-fetch-dest': 'img' } })
+    expect((await svc.stream('tool-capture', '../call_1', request)).status).toBe(403)
+    expect((await svc.stream('tool-capture', 'call_missing', request)).status).toBe(404)
+    const failed = mkService({ readToolAttachment: async () => { throw new Error('down') } })
+    expect((await failed.stream('tool-capture', 'call_failed', request)).status).toBe(502)
   })
 })
 

@@ -359,20 +359,20 @@ describe('createLive2dStateSource 批次 C（C3）：pushDirective 指令建议�
 describe('createLive2dStateSource 阶段 6（Task7）：toolWaiting → waiting_permission（waiting_permission 瞬态，事件驱动回退）', () => {
   afterEach(() => { vi.useRealTimers() })
 
-  it('compose：toolWaiting=true 且非 generating/speaking → waiting_permission（优先于 emotion）', () => {
+  it('compose：toolWaiting=true → waiting_permission（优先于 emotion）', () => {
     expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: false, emotion: 'happy', toolWaiting: true })).toBe('waiting_permission')
   })
 
-  it('compose：toolWaiting=true 但 isGenerating=true → 不打断（thinking 优先）', () => {
-    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: true, isSpeaking: false, emotion: 'happy', toolWaiting: true })).toBe('thinking')
-    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: true, emotion: 'happy', toolWaiting: true })).toBe('speaking')
+  it('compose：toolWaiting=true 以 3 级态覆盖 thinking/speaking', () => {
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: true, isSpeaking: false, emotion: 'happy', toolWaiting: true })).toBe('waiting_permission')
+    expect(composeCharacterState({ connection: { status: 'connected' }, isGenerating: false, isSpeaking: true, emotion: 'happy', toolWaiting: true })).toBe('waiting_permission')
   })
 
   it('compose：connection error（3 级）仍优先于 waiting_permission', () => {
     expect(composeCharacterState({ connection: { status: 'error' }, isGenerating: false, isSpeaking: false, emotion: undefined, toolWaiting: true })).toBe('error')
   })
 
-  it('toolWaiting=true 且非 generating/speaking → 真实组合产物 waiting_permission', () => {
+  it('toolWaiting=true → 真实组合产物 waiting_permission', () => {
     const s = makeSources({ emo: 'happy' })
     const push = vi.fn()
     const handle = createLive2dStateSource(s.input, push)
@@ -382,16 +382,18 @@ describe('createLive2dStateSource 阶段 6（Task7）：toolWaiting → waiting_
     handle.unsub()
   })
 
-  it('toolWaiting=true 但 isGenerating=true → 不打断（thinking 保持）', () => {
+  it('toolWaiting 覆盖 thinking/speaking；清除后恢复当前真实业务态', () => {
     const s = makeSources({ gen: true })
     const push = vi.fn()
     const handle = createLive2dStateSource(s.input, push)
     expect(push).toHaveBeenLastCalledWith('thinking') // 初始组合 thinking
     push.mockClear()
     s.toolWait.value = true
-    // 组合仍是 thinking：waiting_permission 永不出现（thinking 优先）；同态不重推
-    expect(push).not.toHaveBeenCalledWith('waiting_permission')
+    expect(push).toHaveBeenLastCalledWith('waiting_permission')
+    push.mockClear()
     s.speak.value = true
+    expect(push).not.toHaveBeenCalled() // 等待态存续时，底层业务态变化不覆盖 3 级授权态
+    s.toolWait.value = false
     expect(push).toHaveBeenLastCalledWith('speaking')
     handle.unsub()
   })

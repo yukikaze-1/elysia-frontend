@@ -17,6 +17,7 @@ export interface RawTokenRound {
 export interface RawTokenUsage { rounds: RawTokenRound[]; turn_total: number }
 export interface RawTokenStats { total: number; byModel: Record<string, number> }
 export interface RawConversationUsage { total: number; byModel: Record<string, number> }
+export interface RawTokenTurnStats { rounds?: RawTokenRound[]; turn_total?: number }
 
 /** 建连帧(ws_handler:session → server_info → expression) */
 export interface RawSessionMessage {
@@ -63,6 +64,10 @@ export interface RawExpression {
 export interface RawState { type: 'state'; state: string }
 /** 输入状态变更（同上） */
 export interface RawTyping { type: 'typing'; typing: boolean }
+/** 后端部分旧输出路径仍会向 v2 连接广播的兼容帧；v2 领域链路有权威 generation/session 帧，故只识别不消费。 */
+export interface RawDeltaMessage { type: 'delta'; content: string; stream_id?: number }
+export interface RawMessageMessage { type: 'message'; role?: string; content?: string; mood?: string }
+export interface RawTokenUsageMessage { type: 'token_usage'; turn?: RawTokenTurnStats; session?: RawTokenStats }
 
 /** generation 文本聊天帧 */
 export interface RawGenerationStarted {
@@ -418,6 +423,7 @@ export type RawClientFrame =
 
 export type RawFrame =
   | RawSessionMessage | RawServerInfo | RawExpression | RawState | RawTyping
+  | RawDeltaMessage | RawMessageMessage | RawTokenUsageMessage
   | RawGenerationStarted | RawGenerationSegmentStarted | RawGenerationDelta
   | RawGenerationSegmentCompleted | RawGenerationCompleted | RawGenerationFailed
   | RawUserAck | RawErrorMessage

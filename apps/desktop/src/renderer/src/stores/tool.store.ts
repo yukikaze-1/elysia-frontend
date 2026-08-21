@@ -36,13 +36,17 @@ export const useToolStore = defineStore('tool', () => {
 
   const waitingForApproval = computed(() => liveOrder.value.some(id => records.value[id]?.status === 'awaiting_permission'))
 
-  function upsertRecord(id: string, rec: ToolCallRecord): void {
+  function upsertRecord(id: string, rec: ToolCallRecord): boolean {
     const existing = records.value[id]
-    if (existing && TERMINAL.includes(existing.status) && existing.status !== rec.status) return   // 终态单向
-    if (existing?.status === 'running' && rec.status === 'awaiting_permission') return            // 不回退
+    if (existing && TERMINAL.includes(existing.status) && existing.status !== rec.status) return false   // 终态单向
+    // 真实后端可能先发 tool.started(runtime=desktop)，再由 Main 下发本地 awaiting_permission。
+    // 前者没有 desktopCallId，只是服务端生命周期占位，不能压过本地权限现实；只有已经
+    // 进入本地 running 的记录（带 desktopCallId）才禁止回退到 awaiting_permission。
+    if (existing?.status === 'running' && existing.desktopCallId && rec.status === 'awaiting_permission') return false
     records.value[id] = rec
     if (!liveOrder.value.includes(id)) liveOrder.value.push(id)
     trimLiveOrder()
+    return true
   }
   /** L1（fix round 1）：liveOrder 截断只逐出最旧的**终态**记录——awaiting/running 不参与裁剪（可短暂 >3），
    *  防 awaiting 记录被逐出导致 waitingForApproval 变 false（Live2D waiting_permission 消失/权限窗关闭/探针不可达） */
@@ -60,10 +64,10 @@ export const useToolStore = defineStore('tool', () => {
       attachmentCount: ev.attachmentCount }
     // F-7（批次 C）：diff 同步写入记录（终态不清——只读 Diff 卡数据源；pendingDiff 侧信道仍保留给权限窗）
     if (ev.diff) rec.diff = ev.diff
-    upsertRecord(ev.id, rec)
+    const applied = upsertRecord(ev.id, rec)
     const cid = ev.desktopCallId ?? ev.id
     // L2（fix round 1）：侧信道写入受终态单向守卫——迟到 awaiting 事件（记录已终态，upsertRecord 已拒）不写侧信道
-    if (ev.status === 'awaiting_permission' && !TERMINAL.includes(records.value[ev.id]?.status ?? 'unknown')) {
+    if (applied && ev.status === 'awaiting_permission' && records.value[ev.id]?.status === 'awaiting_permission') {
       if (ev.pathSummary) pendingPathSummary.value = { callId: cid, pathSummary: ev.pathSummary }
       if (ev.diff) pendingDiff.value = { callId: cid, diff: ev.diff }
       if (ev.dataFlowNote) pendingDataFlowNote.value = { callId: cid, dataFlowNote: ev.dataFlowNote }
@@ -71,7 +75,7 @@ export const useToolStore = defineStore('tool', () => {
     // M2（fix round 1）：终态侧信道清理按 callId 匹配——A awaiting 时 B 终态不清 A 的侧信道（权限窗不退化）；
     // captureState 仅同工具（desktop.screen.capture）终态清
     if (TERMINAL.includes(ev.status)) clearApprovalFor(ev, cid)
-    if (ev.toolName === 'desktop.screen.capture' && ev.status === 'running' && (ev.captureSources || ev.capturePreview)) {
+    if (applied && ev.toolName === 'desktop.screen.capture' && ev.status === 'running' && (ev.captureSources || ev.capturePreview)) {
       captureState.value = { callId: cid, sources: ev.captureSources, preview: ev.capturePreview }
     }
   }
@@ -82,9 +86,8 @@ export const useToolStore = defineStore('tool', () => {
     if (pendingDataFlowNote.value?.callId === cid) pendingDataFlowNote.value = null
     if (ev.toolName === 'desktop.screen.capture' && captureState.value?.callId === cid) captureState.value = null
   }
-  function clearApprovalLocal(): void {   // 完整 M11：终态清理侧信道（权限窗关闭/回收）
+  function clearApprovalLocal(): void {   // 权限窗关闭只回收审批侧信道；capture 交互态必须留到同 callId 终态事件清理
     pendingPathSummary.value = null; pendingDiff.value = null; pendingDataFlowNote.value = null
-    captureState.value = null   // L6：capture 面板终态一并回收
   }
   function applyBackendEvent(ev: ToolBackendEvent): void {
     if (ev.event === 'tool.started') {

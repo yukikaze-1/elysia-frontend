@@ -81,7 +81,9 @@ export const MessageToolInfoSchema = z.object({
   error: z.string().optional(),
   errorType: z.string().optional(),
   durationMs: z.number().optional(),
-  truncated: z.boolean().optional()
+  truncated: z.boolean().optional(),
+  desktopCallId: z.string().optional(),
+  attachmentCount: z.number().int().nonnegative().optional()
 })
 
 // —— 阶段 6 批次 B：工具 schema（镜像 ToolCallRecord/PublicToolEvent；ToolCallRecordSchema 需在 MessageSchema 定义之前，D6B-10）——

@@ -29,6 +29,26 @@ interface MessageSource {
   truncated?: boolean
 }
 
+const DESKTOP_CAPTURE_SRC_PATTERN = /^\/uploads\/desktop\/(call_[A-Za-z0-9_-]+)\.png$/
+
+/**
+ * 后端把桌面截图归档为无 attachment_id 的 image ContentPart。这里只从固定相对路径和 PNG MIME
+ * 派生调用 ID/数量，不把受鉴权的后端 URL 带入 Renderer。混入多个 callId 时 fail-closed。
+ */
+function extractDesktopCaptureInfo(content: unknown): Pick<MessageToolInfo, 'desktopCallId' | 'attachmentCount'> | undefined {
+  if (!Array.isArray(content)) return undefined
+  const ids: string[] = []
+  for (const item of content) {
+    if (typeof item !== 'object' || item === null) continue
+    const part = item as { type?: unknown; src?: unknown; mime?: unknown }
+    if (part.type !== 'image' || part.mime !== 'image/png' || typeof part.src !== 'string') continue
+    const match = DESKTOP_CAPTURE_SRC_PATTERN.exec(part.src)
+    if (match?.[1]) ids.push(match[1])
+  }
+  if (ids.length === 0 || ids.some((id) => id !== ids[0])) return undefined
+  return { desktopCallId: ids[0], attachmentCount: ids.length }
+}
+
 export class RestMapper {
   // onProtocolWarning 保留在 RestMapperOptions(与 FrameMapper 对齐),当前无告警点,暂不存储
   constructor(_options: RestMapperOptions = {}) {}
@@ -144,6 +164,8 @@ export class RestMapper {
       const toolDurationMs = toOptionalNonNegativeNumber(src.duration_ms)
       if (toolDurationMs !== undefined) tool.durationMs = toolDurationMs
       if (src.truncated !== undefined) tool.truncated = src.truncated
+      const capture = extractDesktopCaptureInfo(src.content)
+      if (capture) Object.assign(tool, capture)
       if (Object.keys(tool).length) base.tool = tool
     }
     if (src.mood) base.emotion = src.mood // 回放项 mood → 领域 emotion(docs/18 §14 不静默丢弃)
@@ -232,6 +254,11 @@ export function pairToolCalls(messages: Message[]): Message[] {
       }
       if (info.durationMs !== undefined) tc.durationMs = info.durationMs
       if (info.truncated !== undefined) tc.truncated = info.truncated
+      if (info.desktopCallId !== undefined) {
+        tc.desktopCallId = info.desktopCallId
+        tc.runtime = 'desktop'
+      }
+      if (info.attachmentCount !== undefined) tc.attachmentCount = info.attachmentCount
       tc.finishedAt = r.createdAt
     }
   }

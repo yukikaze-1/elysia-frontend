@@ -105,6 +105,10 @@ export interface MessageToolInfo {
   errorType?: string
   durationMs?: number
   truncated?: boolean
+  /** 桌面工具桥调用 ID（仅从受信的归档工具附件路径派生；不透出后端 URL） */
+  desktopCallId?: string
+  /** 归档工具结果中可恢复的附件数量 */
+  attachmentCount?: number
 }
 
 /** 单轮 token 消耗(映射自后端 raw TokenRound;session_id/timestamp 有意丢弃) */

@@ -45,6 +45,7 @@ const NEW_FIXTURES = [
   'chat-reconnect-replay.jsonl',
   'chat-no-delta-public-reply.jsonl',
   'state-typing.jsonl',
+  'legacy-output-compat.jsonl',
   'chat-replay-tool.jsonl'
 ]
 
@@ -70,7 +71,7 @@ describe('wire fixture 两层校验', () => {
     }
   })
 
-  it('manifest verified/backendCommit:既有 4 组 verified:true+beeba577,新增 9 组 verified:false+unverified', () => {
+  it('manifest verified/backendCommit:既有 4 组 verified:true+beeba577,新增 10 组 verified:false+unverified', () => {
     for (const f of VERIFIED_FIXTURES) {
       const m = readManifest(f.replace(/\.jsonl$/, '.manifest.json'))
       expect(m.verified).toBe(true)

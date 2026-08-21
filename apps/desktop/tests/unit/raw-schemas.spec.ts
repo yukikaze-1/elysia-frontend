@@ -199,16 +199,42 @@ describe('state/typing 兼容帧（FE-INT-P1-01）', () => {
   })
 })
 
+describe('后端旧输出旁路兼容帧（阶段 6 真实联调）', () => {
+  it('delta/message/token_usage 合法形状通过且保留完整字段', () => {
+    const frames = [
+      { type: 'delta', content: '增量', stream_id: 7 },
+      { type: 'message', role: 'assistant', content: '完整消息', mood: 'neutral' },
+      {
+        type: 'token_usage',
+        turn: { rounds: [{ model: 'm', input_tokens: 1, output_tokens: 2, total_tokens: 3, round_num: 1 }], turn_total: 3 },
+        session: { total: 3, byModel: { m: 3 } }
+      }
+    ]
+    for (const frame of frames) {
+      const parsed = parseRawFrame(frame)
+      expect(parsed.success).toBe(true)
+      if (parsed.success) expect(parsed.data).toEqual(frame)
+    }
+  })
+
+  it('兼容帧仍按字段类型与嵌套 strict fail-closed', () => {
+    expect(parseRawFrame({ type: 'delta', content: 1 }).success).toBe(false)
+    expect(parseRawFrame({ type: 'message', content: 'x', extra: true }).success).toBe(false)
+    expect(parseRawFrame({ type: 'token_usage', turn: { extra: 1 } }).success).toBe(false)
+    expect(parseRawFrame({ type: 'token_usage', session: { total: 1, byModel: {}, extra: 1 } }).success).toBe(false)
+  })
+})
+
 describe('raw schemas fingerprint(2C)', () => {
-  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),15 → 28(阶段4 批次B 增 13 语音/TTS 帧) → 29(阶段5 批次C 增 live2d.directive) → 33(阶段6 批次A 工具帧+action)', () => {
-    expect(RAW_FRAME_TYPES).toHaveLength(33)
+  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),阶段6 实联调纳入 3 类后端旧输出兼容帧后为 36 型', () => {
+    expect(RAW_FRAME_TYPES).toHaveLength(36)
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
       'action', 'audio', 'audio_cancelled', 'audio_end', 'audio_start',
-      'dictation.cancelled', 'dictation.final', 'dictation.partial',
+      'delta', 'dictation.cancelled', 'dictation.final', 'dictation.partial',
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',
-      'generation.started', 'live2d.directive', 'server_info', 'session', 'set_tts_voice_result', 'state',
-      'switch_model_result', 'tool.completed', 'tool.request', 'tool.started', 'typing', 'user_message.ack',
+      'generation.started', 'live2d.directive', 'message', 'server_info', 'session', 'set_tts_voice_result', 'state',
+      'switch_model_result', 'token_usage', 'tool.completed', 'tool.request', 'tool.started', 'typing', 'user_message.ack',
       'voice.transcript', 'voice_session.ack', 'voice_session.ended',
       'voice_session.partial', 'voice_session.started', 'voice_session.turn'
     ])

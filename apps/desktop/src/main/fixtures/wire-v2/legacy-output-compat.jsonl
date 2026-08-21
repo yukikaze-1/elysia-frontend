@@ -1,0 +1,3 @@
+{"type":"delta","content":"兼容增量","stream_id":7}
+{"type":"message","role":"assistant","content":"兼容完整消息","mood":"neutral"}
+{"type":"token_usage","turn":{"rounds":[{"model":"deepseek/deepseek-v4-flash","input_tokens":1,"output_tokens":2,"total_tokens":3,"round_num":1,"timestamp":"2026-08-21T00:00:00Z"}],"turn_total":3},"session":{"total":3,"byModel":{"deepseek/deepseek-v4-flash":3}}}

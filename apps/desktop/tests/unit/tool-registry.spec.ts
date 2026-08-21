@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createToolRegistry, TOOL_NAMES } from '../../src/main/tools/tool-registry'
+import { createToolRegistry, DESKTOP_TOOL_VERSION, TOOL_NAMES } from '../../src/main/tools/tool-registry'
 
 describe('tool-registry', () => {
   it('四工具注册齐全（TOOL_NAMES 全含）', () => {
@@ -8,6 +8,10 @@ describe('tool-registry', () => {
     expect(r.size).toBe(4)
   })
   it('未知名 → 无定义', () => { expect(createToolRegistry().has('desktop.command.run')).toBe(false) })
+  it('四工具版本与后端冻结版本一致', () => {
+    expect(DESKTOP_TOOL_VERSION).toBe('1.0.0')
+    expect(new Set([...createToolRegistry().values()].map((tool) => tool.version))).toEqual(new Set(['1.0.0']))
+  })
   it('inputSchema strict 拒未知字段 + 缺必填', () => {
     const r = createToolRegistry()
     expect(r.get('desktop.file.read')!.inputSchema.safeParse({ path: '/a', extra: 1 }).success).toBe(false)

@@ -8,6 +8,7 @@
 // 组合顺序（spec §3.1 优先级收敛 + plan Task4 Step3，source 权威，直接采纳；I-4 error 优先级最高）：
 //   connection disconnected → offline
 //   connection.status==='error' → error（3 级，紧跟连接判定，高于 thinking/speaking 与 emotion）
+//   toolWaiting → waiting_permission（3 级，覆盖 thinking/speaking，审批终态后按当前业务源恢复）
 //   isGenerating && !isSpeaking → thinking
 //   isSpeaking（voiceStore.tts.playing 或当前生成已产出正文）→ speaking
 //   emotion（最后完成 assistant message .emotion）经 normalizeEmotionCode 本地归一（happy/sad/surprised）→ 对应
@@ -92,7 +93,8 @@ function isTransient(s: CharacterState): boolean {
 /** 纯组合（可独立单测）：按优先级收敛表把各源读值归约为最终 CharacterState。
  *  顺序（I-4 拍板：spec §3.1 优先级表 binding）：offline(0) → error(3) → waiting_permission(3) →
  *  thinking/speaking(2) → emotion(1) → idle(0)——error 优先级最高，紧跟连接判定，不被 thinking(2)/emotion(1)
- *  遮蔽；waiting_permission（工具等待授权，Task 7）紧随 error：生成/说话中不打断（thinking/speaking 优先）。 */
+ *  遮蔽；waiting_permission（工具等待授权，Task 7）紧随 error，以 3 级现实态覆盖生成/说话，审批终态后
+ *  watch 会按仍然有效的 thinking/speaking/idle 业务源恢复。 */
 export function composeCharacterState(inputs: {
   connection: ConnectionState
   isGenerating: boolean
@@ -104,8 +106,8 @@ export function composeCharacterState(inputs: {
   if (connection.status === 'disconnected') return 'offline'
   // error=3（最高）：连接存活错误态优先于 thinking/speaking(2) 与 emotion(1)
   if (connection.status === 'error') return 'error'
-  // 阶段 6（Task 7）：工具等待授权（优先级 3）——error 判定后；生成/说话不打断（thinking/speaking 优先）
-  if (inputs.toolWaiting && !isGenerating && !isSpeaking) return 'waiting_permission'
+  // 阶段 6 真实联调：工具等待授权是 3 级现实态，必须覆盖 2 级 thinking/speaking（验收 §7.4）。
+  if (inputs.toolWaiting) return 'waiting_permission'
   if (isGenerating && !isSpeaking) return 'thinking'
   if (isSpeaking) return 'speaking'
   const mood = normalizeEmotionCode(emotion) // F-1：中/英文自由文本归一；未命中 undefined → idle

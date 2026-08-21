@@ -55,6 +55,38 @@ describe('pairToolCalls 配对（Task 5 / F-6-19/21）', () => {
     const out = pairToolCalls(msgs)
     expect(out[0].toolCalls?.[0]?.outputSummary).toBe('ok')
   })
+  it('桌面截图 ContentPart → 仅派生安全 callId/附件数，并把归档卡 runtime 修正为 desktop', () => {
+    const assistant = mapper.toDomainMessage(asRest({
+      role: 'assistant', message_id: 'm-cap-a', timestamp: 't0',
+      tool_calls: [{ id: 'tc_cap', function: { name: 'desktop.screen.capture', arguments: '{}' } }]
+    }), 'c')
+    const result = mapper.toDomainMessage(asRest({
+      role: 'tool', message_id: 'm-cap-r', timestamp: 't1', tool_call_id: 'tc_cap',
+      name: 'desktop.screen.capture', success: true,
+      content: [
+        { type: 'text', content: '' },
+        { type: 'image', src: '/uploads/desktop/call_2025c9e03ffa.png', mime: 'image/png', attachment_id: null }
+      ]
+    }), 'c')
+    expect(result.tool).toMatchObject({ desktopCallId: 'call_2025c9e03ffa', attachmentCount: 1 })
+    expect(JSON.stringify(result.tool)).not.toContain('/uploads/desktop/')
+    expect(pairToolCalls([assistant, result])[0].toolCalls?.[0]).toMatchObject({
+      id: 'tc_cap', runtime: 'desktop', desktopCallId: 'call_2025c9e03ffa', attachmentCount: 1
+    })
+  })
+  it('截图归档路径/MIME 不匹配或混入多个 callId → 不派生代理凭据', () => {
+    const malformed = mapper.toDomainMessage(asRest({
+      role: 'tool', message_id: 'm-bad', timestamp: 't', tool_call_id: 'tc', success: true,
+      content: [
+        { type: 'image', src: 'https://evil.example/uploads/desktop/call_a.png', mime: 'image/png' },
+        { type: 'image', src: '/uploads/desktop/call_a.png', mime: 'image/jpeg' },
+        { type: 'image', src: '/uploads/desktop/call_a.png', mime: 'image/png' },
+        { type: 'image', src: '/uploads/desktop/call_b.png', mime: 'image/png' }
+      ]
+    }), 'c')
+    expect(malformed.tool?.desktopCallId).toBeUndefined()
+    expect(malformed.tool?.attachmentCount).toBeUndefined()
+  })
 })
 
 describe('pairToolCalls R-A3 空串错误（Task 6 / D6B-21）', () => {

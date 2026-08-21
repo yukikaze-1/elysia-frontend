@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createToolService, DesktopToolRequest, ToolServiceError } from '../../src/main/tools/tool-service'   // ToolServiceError import（H4）
-import { createToolRegistry } from '../../src/main/tools/tool-registry'
+import { createToolRegistry, DESKTOP_TOOL_VERSION } from '../../src/main/tools/tool-registry'
 import { GRANT_TTL_OPTIONS_MS } from '../../src/shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单
 
 /** 测试事件收集接口（按本文件断言字段最小建模；PublicToolEvent 可赋值） */
@@ -31,7 +31,7 @@ beforeEach(() => { mkdirSync(FIXTURES, { recursive: true }) })
 afterEach(() => { rmSync(FIXTURES, { recursive: true, force: true }) })
 
 function mkReq(over: Partial<DesktopToolRequest> = {}): DesktopToolRequest {
-  return { callId: 'call_1', sourceCallId: 'tc_1', toolName: 'desktop.file.read', toolVersion: '1.0',
+  return { callId: 'call_1', sourceCallId: 'tc_1', toolName: 'desktop.file.read', toolVersion: DESKTOP_TOOL_VERSION,
     runtime: 'desktop', arguments: { path: `${FIXTURES}/notes.md` }, reason: 'read notes', expiresAt: Date.now() + 30_000, ...over }
 }
 function mkService(over: Record<string, unknown> = {}) {
@@ -65,7 +65,7 @@ describe('决策链', () => {
   })
   it('平台不支持 → 同码拒绝（B3；注入 windows-only 工具，H7）', async () => {
     const registry = createToolRegistry()
-    registry.set('desktop.winonly', { name: 'desktop.winonly', version: '1.0', runtime: 'desktop', title: 'w', description: '', dataFlowNote: '', localRisk: 'safe', permissionMode: 'automatic', supportedPlatforms: ['windows'], inputSchema: z.object({}).strict(), outputSchema: z.record(z.string(), z.unknown()), executeRef: 'file.read', defaultTimeoutMs: 1000, isPathTool: false })
+    registry.set('desktop.winonly', { name: 'desktop.winonly', version: DESKTOP_TOOL_VERSION, runtime: 'desktop', title: 'w', description: '', dataFlowNote: '', localRisk: 'safe', permissionMode: 'automatic', supportedPlatforms: ['windows'], inputSchema: z.object({}).strict(), outputSchema: z.record(z.string(), z.unknown()), executeRef: 'file.read', defaultTimeoutMs: 1000, isPathTool: false })
     const { svc, events } = mkService({ registry })
     await svc.handleRequest(mkReq({ toolName: 'desktop.winonly', arguments: {} }))
     expect(events.at(-1)!.error?.code).toBe('CAPABILITY_UNAVAILABLE')
@@ -86,7 +86,8 @@ describe('决策链', () => {
   })
   it('黑名单路径命中 → PATH_BLOCKLISTED 不弹窗（压过一切）', async () => {
     const { svc, events } = mkService()
-    await svc.handleRequest(mkReq({ arguments: { path: '/etc/passwd' } }))
+    const blacklistedPath = process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd'
+    await svc.handleRequest(mkReq({ arguments: { path: blacklistedPath } }))
     expect(events.at(-1)!.error?.code).toBe('PATH_BLOCKLISTED')
     expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
   })
@@ -609,7 +610,7 @@ describe('批次 C：grant 目录授权', () => {
 describe('批次 C：reconnect queryStatus 三分支（D6C-11）', () => {
   it('expired → terminal(timeout) + wire cancelled；cancelled/rejected → terminal(cancelled)；succeeded/null → 保持 awaiting（禁止自动执行）', async () => {
     const mk = (status: string | null) => {
-      const qs = vi.fn(async () => (status === null ? null : { callId: 'call_r', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', paramHash: 'h', status: status as never, createdAt: 'x', expiresAt: 'y' }))
+      const qs = vi.fn(async () => (status === null ? null : { callId: 'call_r', toolName: 'desktop.file.read', toolVersion: DESKTOP_TOOL_VERSION, runtime: 'desktop', paramHash: 'h', status: status as never, createdAt: 'x', expiresAt: 'y' }))
       return { ...mkService({ queryStatus: qs, grants: mkGrantStore({ matches: () => undefined }) }), qs }
     }
     // 建立 awaiting 记录后调 reconnect()：

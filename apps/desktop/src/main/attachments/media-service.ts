@@ -5,10 +5,11 @@ import type { AttachmentCheckResult, AttachmentSignResult } from '@shared/contra
 import type { BackendAdapter } from '../transport/backend-adapter'
 import { STICKER_ID_PATTERN } from '../transport/protocol-v2/content-part'
 
-export type MediaRouteType = 'attachment' | 'sticker' | 'tts-preview' | 'tts-live'
+export type MediaRouteType = 'attachment' | 'sticker' | 'tool-capture' | 'tts-preview' | 'tts-live'
 export const MEDIA_PATH_PREFIX = '/__cyrene-media/'
 
 const ATTACHMENT_ID_PATTERN = /^att_[A-Za-z0-9_-]+$/
+const DESKTOP_CALL_ID_PATTERN = /^call_[A-Za-z0-9_-]+$/
 const STICKER_MIME = 'image/png'
 const STICKER_MAX_BYTES = 1024 * 1024   // P3-2：docs/07 行 101 大小上限；公开静态贴图免鉴权
 const RE_SIGN_LEEWAY_MS = 5 * 60 * 1000
@@ -41,7 +42,7 @@ export function parseMediaPath(pathname: string): { mediaType: MediaRouteType; i
   const segs = rest.split('/')
   if (segs.length !== 2 || segs.some((s) => s.length === 0)) return null
   const [mt, id] = segs as [string, string]
-  if (mt !== 'attachment' && mt !== 'sticker' && mt !== 'tts-preview' && mt !== 'tts-live') return null
+  if (mt !== 'attachment' && mt !== 'sticker' && mt !== 'tool-capture' && mt !== 'tts-preview' && mt !== 'tts-live') return null
   return { mediaType: mt, id }
 }
 
@@ -54,7 +55,7 @@ export interface ResolvedSignedUrl { url: string; expiresAt: number }
 
 export class MediaService {
   private readonly cache = new Map<string, ResolvedSignedUrl>()
-  private readonly backend: Pick<BackendAdapter, 'signAttachmentUrl'>
+  private readonly backend: Pick<BackendAdapter, 'signAttachmentUrl'> & Partial<Pick<BackendAdapter, 'readToolAttachment'>>
   private readonly baseUrl: () => string | undefined
   private readonly now: () => number
   private readonly fetchImpl: typeof fetch
@@ -64,7 +65,7 @@ export class MediaService {
   private readonly ttsLiveCache = new Map<string, { bytes: Uint8Array; mime: string; createdAt: number }>()
   private readonly TTS_LIVE_TTL_MS = 300_000
 
-  constructor(deps: { backend: Pick<BackendAdapter, 'signAttachmentUrl'>; baseUrl: () => string | undefined; now?: () => number; fetchImpl?: typeof fetch }) {
+  constructor(deps: { backend: Pick<BackendAdapter, 'signAttachmentUrl'> & Partial<Pick<BackendAdapter, 'readToolAttachment'>>; baseUrl: () => string | undefined; now?: () => number; fetchImpl?: typeof fetch }) {
     this.backend = deps.backend
     this.baseUrl = deps.baseUrl
     this.now = deps.now ?? Date.now
@@ -90,9 +91,26 @@ export class MediaService {
   async stream(mediaType: MediaRouteType, id: string, request: Request): Promise<Response> {
     if (isDocumentRequest(request)) return new Response('Forbidden', { status: 403 })
     if (mediaType === 'sticker') return this.streamSticker(id)
+    if (mediaType === 'tool-capture') return this.streamToolCapture(id)
     if (mediaType === 'tts-preview') return this.streamTtsPreview(id)
     if (mediaType === 'tts-live') return this.streamTtsLive(id)
     return this.streamAttachment(id, request)
+  }
+
+  /** 桌面截图归档代理：调用 ID 白名单；字节只由 BackendAdapter 的鉴权读取方法提供。 */
+  private async streamToolCapture(callId: string): Promise<Response> {
+    if (!DESKTOP_CALL_ID_PATTERN.test(callId)) return new Response('Forbidden', { status: 403 })
+    if (!this.backend.readToolAttachment) return new Response('Not Found', { status: 404 })
+    try {
+      const hit = await this.backend.readToolAttachment(callId)
+      if (!hit) return new Response('Not Found', { status: 404 })
+      return new Response(hit.bytes as unknown as BodyInit, {
+        status: 200,
+        headers: { 'Content-Type': hit.mimeType, 'Cache-Control': 'no-store' }
+      })
+    } catch {
+      return new Response('Bad Gateway', { status: 502 })
+    }
   }
 
   /** 试听音频一次性缓存：放入后 60s 过期；put 时顺手清理过期项（时钟用现有 this.now = deps.now ?? Date.now） */

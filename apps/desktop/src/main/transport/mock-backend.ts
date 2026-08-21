@@ -66,6 +66,7 @@ import type { BackendAdapter, BackendEventHandler, UploadContent } from './backe
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
 import type { DesktopToolRequest } from '../tools/tool-service'
+import { DESKTOP_TOOL_VERSION } from '../tools/tool-registry'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
 
 /** 上传 MIME → kind 提示值（Mock 确定性；真实后端以魔数真值为准） */
@@ -817,6 +818,11 @@ export class MockBackend implements BackendAdapter {
     return { url: 'mock://tool-attachment/' + callId, mimeType: mime, label }
   }
 
+  /** mock 不持久化工具附件；归档媒体代理按未命中降级。 */
+  async readToolAttachment(_callId: string): Promise<null> {
+    return null
+  }
+
   /** 批次 C（D6C-11/R6）：查询桌面调用服务端状态——mock 无端点，恒 null（记录取舍；
    *  装配不注入 queryStatus → tool-service reconnect 不查，F-20） */
   async getToolCallStatus(_callId: string): Promise<DesktopCallStatus | null> {
@@ -894,7 +900,7 @@ export class MockBackend implements BackendAdapter {
             const seq = ++this.mockToolSeq
             this.toolRequestSink?.({
               callId: `call_mock_${seq}`, sourceCallId: `tc_mock_desktop_${seq}`,
-              toolName: r.toolName, toolVersion: '1.0', runtime: 'desktop',
+              toolName: r.toolName, toolVersion: DESKTOP_TOOL_VERSION, runtime: 'desktop',
               arguments: r.arguments ?? {}, reason: r.reason,
               expiresAt: Date.now() + 30_000,
             })

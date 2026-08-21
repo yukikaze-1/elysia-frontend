@@ -325,7 +325,7 @@ describe('RealBackend WS 连接', () => {
     await b.disconnect()
   })
 
-  it('state/typing 帧不 emit、不 warn、不断连（FE-INT-P1-01）', async () => {
+  it('state/typing 与旧输出旁路兼容帧不 emit、不 warn、不断连', async () => {
     const warnings: ProtocolWarning[] = []
     const b = new RealBackend({ now: () => Date.now(), onProtocolWarning: (w) => warnings.push(w) })
     await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
@@ -334,6 +334,13 @@ describe('RealBackend WS 连接', () => {
     const send = (payload: unknown) => { wss.clients.forEach((c) => c.send(JSON.stringify(payload))) }
     send({ type: 'state', state: 'thinking' })
     send({ type: 'typing', typing: true })
+    send({ type: 'delta', content: 'legacy', stream_id: 1 })
+    send({ type: 'message', role: 'assistant', content: 'legacy final', mood: 'neutral' })
+    send({
+      type: 'token_usage',
+      turn: { rounds: [{ input_tokens: 1, output_tokens: 2, total_tokens: 3, round_num: 1 }], turn_total: 3 },
+      session: { total: 3, byModel: { model: 3 } }
+    })
     await new Promise((r) => setTimeout(r, 50))
     expect(events).toEqual([]) // 不 emit
     expect(warnings).toEqual([]) // 不 warn
@@ -392,6 +399,27 @@ describe('RealBackend REST 方法', () => {
     expect(calls[0]?.url).toContain('/api/sessions')
     expect(calls[0]?.url).toContain('limit=20')
     expect((calls[0]?.opts.headers as Record<string, string>).authorization).toBe('Bearer sk-token')
+  })
+
+  it('getConversation 对详情页 assistant/tool 结果配对，恢复归档截图卡元数据', async () => {
+    const { fetchImpl } = mockFetch({
+      '/api/sessions/conv-cap': {
+        session: { conversationId: 'conv-cap', title: 'capture', messageCount: 2, updatedAt: 't1', active: true },
+        active: true,
+        messages: [
+          { role: 'assistant', message_id: 'm1', timestamp: 't0', tool_calls: [{ id: 'tc_cap', function: { name: 'desktop.screen.capture', arguments: '{}' } }] },
+          { role: 'tool', message_id: 'm2', timestamp: 't1', tool_call_id: 'tc_cap', tool_name: 'desktop.screen.capture', success: true,
+            content: [{ type: 'image', src: '/uploads/desktop/call_archive_1.png', mime: 'image/png', attachment_id: null }] }
+        ]
+      }
+    })
+    const b = new RealBackend({ fetchImpl, now: () => Date.now(), wsFactory: () => fakeWs() })
+    await b.connect({ serverUrl: 'http://test.local', token: 't' })
+    const detail = await b.getConversation({ conversationId: 'conv-cap' })
+    expect(detail.messages?.[0]?.toolCalls?.[0]).toMatchObject({
+      runtime: 'desktop', desktopCallId: 'call_archive_1', attachmentCount: 1
+    })
+    await b.disconnect()
   })
 
   it('getConversationMessages 透传 before + 400 CONTRACT_VALIDATION → CyreneError', async () => {
@@ -538,6 +566,33 @@ describe('RealBackend uploadAttachments / signAttachmentUrl（spec §4.5/§3.2�
 })
 
 describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
+  it('readToolAttachment：Bearer 鉴权读取固定 PNG 路径，校验后返回字节', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(png, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(png.length) } }))
+    const b = new RealBackend(makeOpts({ fetchImpl }))
+    await b.connect({ serverUrl: 'http://backend.local', token: 'secret-token' })
+    const result = await b.readToolAttachment('call_2025c9e03ffa')
+    expect(result).toEqual({ bytes: png, mimeType: 'image/png' })
+    const [url, init] = fetchImpl.mock.calls[0]!
+    expect(String(url)).toBe('http://backend.local/uploads/desktop/call_2025c9e03ffa.png')
+    expect((init?.headers as Record<string, string>).authorization).toBe('Bearer secret-token')
+    await b.disconnect()
+  })
+
+  it('readToolAttachment：非法 ID、MIME/PNG 魔数或超限声明均 fail-closed', async () => {
+    const badMime = new RealBackend(makeOpts({ fetchImpl: async () => new Response('x', { status: 200, headers: { 'content-type': 'text/html' } }) }))
+    await badMime.connect({ serverUrl: 'http://backend.local', token: 't' })
+    expect(await badMime.readToolAttachment('../call_1')).toBeNull()
+    expect(await badMime.readToolAttachment('call_bad_mime')).toBeNull()
+    await badMime.disconnect()
+
+    const tooLarge = new RealBackend(makeOpts({ fetchImpl: async () => new Response(new Uint8Array([0x89]), { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(16 * 1024 * 1024 + 1) } }) }))
+    await tooLarge.connect({ serverUrl: 'http://backend.local', token: 't' })
+    expect(await tooLarge.readToolAttachment('call_too_large')).toBeNull()
+    await tooLarge.disconnect()
+  })
+
   it('tool.request 帧 → onToolRequest 收到 DesktopToolRequest（含 paramHash/arguments/expiresAt）+ 不再 emit 事件', async () => {
     const toolServer = createServer()
     const toolWss = new WebSocketServer({ server: toolServer, path: '/ws' })
