@@ -91,12 +91,14 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
     // deny（preventDefault 已调）
   })
 
-  // D7A-04（spec §6.4）：F12 门——开发构建（devToolsAllowed）恒注册；打包态仅开发者模式会话态（isDevMode getter）时注册
-  if (config.devToolsAllowed || isDevMode()) {
-    win.webContents.on('before-input-event', (_ev, input) => {
-      if (input.type === 'keyDown' && input.key === 'F12') win.webContents.toggleDevTools()
-    })
-  }
+  // D7A-04（spec §6.4）：F12 运行期门——恒注册处理器，按下时按当前态判定。
+  // （最终 review MED-1 修正：创建时一次性求值会使打包态 F12 永不注册——devMode 只能在窗口创建后
+  //  经设置页开启；运行期判定保持「非 dev 构建且非 devMode 时 F12 无效果」语义不变）
+  win.webContents.on('before-input-event', (_ev, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12' && (config.devToolsAllowed || isDevMode())) {
+      win.webContents.toggleDevTools()
+    }
+  })
 
   if (usingDevServer && devOrigin) {
     win.loadURL(devOrigin.toString()).catch((err) => { loadErrorSink?.(err) })
