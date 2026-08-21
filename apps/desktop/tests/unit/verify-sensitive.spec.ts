@@ -9,7 +9,8 @@ import {
   isExcludedPath,
   isSelfExcludedFile,
   scanSecretsInText,
-  allowlistEntryFor
+  allowlistEntryFor,
+  allowlistEntryMatches
 } from '../../scripts/verify-sensitive-core.mjs'
 
 describe('verify:sensitive 核心（黑名单规则集，D7A-14 + review LOW①）', () => {
@@ -94,21 +95,38 @@ describe('verify:sensitive 核心（排除目录与自排除，spec §5.1 D7A-14
   })
 })
 
-describe('verify:sensitive 核心（行级 allowlist：路径精确 + 锚定段）', () => {
+describe('verify:sensitive 核心（行级 allowlist：路径精确 + 锚定段 + 规则域）', () => {
   const entries = [
     { path: 'apps/desktop/tests/fixtures/leak.json', anchor: /Bearer XXXEXAMPLE/, reason: 'fixture 样例' },
     { path: 'docs/example.md', anchor: /AGENT_ACCESS_TOKEN=your-token/, reason: '文档示例' }
   ]
 
-  it('锚定段命中返回对应条目', () => {
-    expect(allowlistEntryFor(
-      [entries[0]],
-      '  "Authorization": "Bearer XXXEXAMPLE"'
-    )).toBe(entries[0])
+  it('锚定段命中返回对应条目（无 rules 域 = 全规则豁免）', () => {
+    expect(allowlistEntryFor([entries[0]], '  "Authorization": "Bearer XXXEXAMPLE"', 'bearer-token')).toBe(entries[0])
   })
 
   it('锚定段不命中 / 行不在该路径 → null（fail-loud 依据）', () => {
-    expect(allowlistEntryFor([entries[0]], 'Authorization: Bearer YYYEXAMPLE')).toBe(null)
-    expect(allowlistEntryFor([], 'Bearer XXXEXAMPLE')).toBe(null)
+    expect(allowlistEntryFor([entries[0]], 'Authorization: Bearer YYYEXAMPLE', 'bearer-token')).toBe(null)
+    expect(allowlistEntryFor([], 'Bearer XXXEXAMPLE', 'bearer-token')).toBe(null)
+  })
+
+  it('R2-1：rules 限定的类别级条目不豁免规则域外的命中（通用 40+ 锚不得放行 Bearer）', () => {
+    const generic = [{ path: 'x.ts', anchor: /[A-Za-z0-9+/]{40,}/, rules: ['base64-long-string'], reason: '类别' }]
+    // 同时含 40+ run 与 Bearer 的行：规则 8 命中放行、规则 1 命中不放行（正是 MED-1 弱化面）
+    const line = 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN'
+    expect(allowlistEntryFor(generic, line, 'base64-long-string')).toBe(generic[0])
+    expect(allowlistEntryFor(generic, line, 'bearer-token')).toBe(null)
+    // 无 rules 域条目（精确语义）对两规则均放行
+    const free = [{ path: 'x.ts', anchor: /[A-Za-z0-9+/]{40,}/, reason: '类别' }]
+    expect(allowlistEntryFor(free, line, 'bearer-token')).toBe(free[0])
+    expect(allowlistEntryFor(free, line, 'base64-long-string')).toBe(free[0])
+  })
+
+  it('R2-1：allowlistEntryMatches 同样按规则域过滤（fired 记账与服务同规则）', () => {
+    const generic = { anchor: /[A-Za-z0-9+/]{40,}/, rules: ['base64-long-string'], reason: '类别' }
+    const line = 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN'
+    expect(allowlistEntryMatches(generic, line, 'base64-long-string')).toBe(true)
+    expect(allowlistEntryMatches(generic, line, 'bearer-token')).toBe(false)
+    expect(allowlistEntryMatches({ anchor: /[A-Za-z0-9+/]{40,}/, reason: 'x' }, line, 'bearer-token')).toBe(true)
   })
 })

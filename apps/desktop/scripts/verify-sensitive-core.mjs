@@ -64,13 +64,25 @@ export function scanSecretsInText(text, blacklist = SECRET_BLACKLIST) {
 }
 
 /**
- * 行级 allowlist 匹配：路径由调用方按精确路径索引（entries 已是该路径的条目列表），
- * 此处只做「锚定段」匹配。锚定命中 = 该行允许放行；不命中返回 null（违规）。
- * 锚定正则无 /g，重复 test 安全。
+ * 行级 allowlist 匹配：路径由调用方按精确路径索引（entries 已是该路径的条目列表）。
+ * 判定 = 锚定段命中 && 规则域命中：
+ *  - anchor.test(lineText)：锚定段（无 /g，重复 test 安全）；
+ *  - rules：undefined / 空 = 全规则豁免（精确条目语义——锚定段已逐行人工核对，维持现状）；
+ *    数组 = 仅豁免列出的规则名（类别级条目语义——R2-1：通用 40+ 锚若豁免全部规则，
+ *    覆盖文件内「同时含 40+ run」的新增 Bearer/JWT/sk- 行会被静默放行——真实 token 形态普遍 ≥40 字符）。
+ * 命中返回条目；不命中返回 null（违规）。
  */
-export function allowlistEntryFor(entries, lineText) {
+export function allowlistEntryMatches(entry, lineText, hitName) {
+  if (!entry.anchor.test(lineText)) return false
+  if (Array.isArray(entry.rules) && entry.rules.length > 0) {
+    if (!entry.rules.includes(hitName)) return false
+  }
+  return true
+}
+
+export function allowlistEntryFor(entries, lineText, hitName) {
   for (const e of entries) {
-    if (e.anchor.test(lineText)) return e
+    if (allowlistEntryMatches(e, lineText, hitName)) return e
   }
   return null
 }
