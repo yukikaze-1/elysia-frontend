@@ -7,6 +7,13 @@ files:
   - out/**
   - package.json
 asar: false
+# 阶段 7 批次 A（spec §7.1/7.2）：fuse 三项关闭——打包产物不承担 node 子进程执行面 /
+# NODE_OPTIONS 注入面收口（与 rejectForbiddenDebugSwitches 双保险）/ 防 --inspect 开调试端口。
+# 配套读回断言在 scripts/verify-artifact.cjs（静态 read-back + --smoke flip-back 副本）。
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
 linux:
   target: dir
   category: Utility

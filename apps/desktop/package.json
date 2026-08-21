@@ -26,6 +26,7 @@
     "make": "echo 'Forge 打包留待阶段 8 配置——本命令未实现，非零退出防假绿' && exit 1",
     "package": "electron-vite build && electron-builder --dir",
     "verify:artifact": "node scripts/verify-artifact.cjs",
+    "verify:sensitive": "node scripts/verify-sensitive.mjs",
     "check:contract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/check-backend-contract.mjs",
     "live2d:install": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/live2d-install.mjs",
     "check:node": "node scripts/check-node-version.mjs"
@@ -41,6 +42,7 @@
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron/fuses": "2.1.3",
     "@types/marked": "^6.0.0",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",

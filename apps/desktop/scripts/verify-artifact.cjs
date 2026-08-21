@@ -2,6 +2,7 @@
 // 静态检查 out/ 产物；仅显式传 --smoke 时加 Playwright _electron 启动冒烟（存在 DISPLAY 不够，须显式请求）。
 const fs = require('fs')
 const path = require('path')
+const os = require('os')
 
 const root = path.join(__dirname, '..')
 const out = path.join(root, 'out')
@@ -88,12 +89,42 @@ function findPackagedExecutable(root) {
   return { exe: null, foundPackagedDir: anyDirExisted }
 }
 
+// fuse 状态读回断言（spec §7.2）：electron-builder yml `electronFuses` 三键 → wire 读回 → 必须 DISABLE（48 字节枚举）。
+// 本脚本为 CJS，@electron/fuses 2.x 为 ESM-only（require 会 ERR_REQUIRE_ESM）——经 await import 动态导入；
+// 双版本并存注记：electron-builder 26.15.3 内置 @electron/fuses@^1.8.0 负责写 wire，本脚本经 apps/desktop
+// node_modules 解析 devDep @electron/fuses@2.1.3 负责读——wire 为 Electron 字节布局（V1 sentinel 同源），
+// 跨版本兼容；若未来版本撕裂（sentinel/字节位置变化）getCurrentFuseWire 抛错 → 本函数 fail（fail-closed +
+// 提示检查 devDep 版本，勿静默跳过）。
+async function checkFuses(exe) {
+  const { getCurrentFuseWire, FuseV1Options, FuseState } = await import('@electron/fuses')
+  let wire
+  try {
+    wire = await getCurrentFuseWire(exe)
+  } catch (e) {
+    // getCurrentFuseWire 2.x 对不支持的二进制（非 Electron 12+ / wire 损坏）抛错——不静默跳
+    fail(`fuse wire 读取失败：${e.message}（二进制不支持或 @electron/fuses devDep 与产物不兼容？——检查 apps/desktop node_modules/@electron/fuses 版本）`)
+    return
+  }
+  const expects = [
+    [FuseV1Options.RunAsNode, 'runAsNode（node 子进程执行面）'],
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable, 'enableNodeOptionsEnvironmentVariable（NODE_OPTIONS 注入面）'],
+    [FuseV1Options.EnableNodeCliInspectArguments, 'enableNodeCliInspectArguments（--inspect 调试参数）']
+  ]
+  for (const [opt, label] of expects) {
+    const v = wire[opt]
+    if (v === FuseState.DISABLE) ok(`fuse ${label} = DISABLE（wire[${opt}]=${v}）`)
+    else fail(`fuse ${label} 未关闭：wire[${opt}]=${v}，期望 DISABLE=${FuseState.DISABLE}——electron-builder.yml electronFuses 三键未生效或读回错位？`)
+  }
+}
+
 async function smoke() {
   // 在 try 外解析（catch 分支要引用 packagedExe 打诊断提示；块级 const 在 catch 不可见会 ReferenceError）
   const { exe: packagedExe, foundPackagedDir } = findPackagedExecutable(root)
   if (foundPackagedDir && !packagedExe) {
     fail('存在未分发包目录但找不到应用二进制（Cyrene/cyrene）——打包命名变化或产物残缺，不静默回退 out/（Step 5 应已 rm -rf dist）')
   }
+  let flipTmp = null
+  let flipExe = null
   try {
     const { _electron } = require('playwright')
     const env = { ...process.env }
@@ -104,8 +135,31 @@ async function smoke() {
     env.CYRENE_TEST_HARNESS = '1' // 显式标记测试 harness：让调试门放行 Playwright 注入的 --remote-debugging-port=0/--inspect=0（生产默认拒绝）
     let app
     if (packagedExe) {
-      console.log(`（冒烟目标：未分发包打包产物 ${path.relative(root, packagedExe)}）`)
-      app = await _electron.launch({ executablePath: packagedExe, args: [], cwd: root, env, timeout: 30000 })
+      // spec §7.2（可行 R2-1）：Playwright `_electron.launch` 硬依赖 `--inspect=0` 的「Debugger listening on」行
+      // （coreBundle.js:43975/44061-66）——三项 fuse 关闭后直接启动 flipped 产物必挂 30s 超时。
+      // 解法：复制整个未分发包目录（资源须与二进制同目录——Electron 按 exe 同目录解析 resources/，单文件
+      // 副本会因缺 resources 立即退出）→ flip-back 三项回 true → Playwright 启动副本；产物本体保持关闭态
+      // （fuse 读回断言已证明最终态），smoke 断言的 CSP/渲染/协议等行为不受 fuse 位影响。
+      console.log(`（冒烟目标：未分发包打包产物 ${path.relative(root, packagedExe)}——复制包含 resources/ 的目录副本并 flip-back 三项 fuse 后启动）`)
+      const { flipFuses, FuseV1Options, FuseVersion } = await import('@electron/fuses')
+      const packagedDir = path.dirname(packagedExe)
+      flipTmp = path.join(os.tmpdir(), `cyrene-smoke-flipback-${process.pid}-${Date.now()}`)
+      fs.cpSync(packagedDir, flipTmp, { recursive: true })
+      flipExe = path.join(flipTmp, path.basename(packagedExe))
+      try {
+        // flipFuses 2.x 为 async；version 必须是 FuseVersion.V1（"1"），三个 fuse 键回 true（ENABLE）
+        await flipFuses(flipExe, {
+          version: FuseVersion.V1,
+          [FuseV1Options.RunAsNode]: true,
+          [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: true,
+          [FuseV1Options.EnableNodeCliInspectArguments]: true
+        })
+        ok(`flip-back 完成（临时副本目录 ${path.basename(flipTmp)}：三项回 true；产物本体保持关闭态）`)
+      } catch (e) {
+        fail(`flip-back 失败：${e.message}——冒烟拒绝启动（fail-closed，产物 fuse 位保持关闭态；可能副本损坏/只读）`)
+        return
+      }
+      app = await _electron.launch({ executablePath: flipExe, args: [], cwd: root, env, timeout: 30000 })
     } else {
       console.log('（冒烟目标：out/ 未打包直启——未找到未分发包产物）')
       // ELECTRON_RUN_AS_NODE 下 require('electron') 返回 cli 函数而非路径（本仓沙箱注入该 env，docs/17 P-2）；
@@ -238,12 +292,16 @@ async function smoke() {
       // 而不只是单测覆盖纯函数）。out/ 未打包 isPackaged=false 不触发门，此处只在 packagedExe 时测。
       // 注：本断言实际由 Playwright 注入的 --inspect=0 触发门（allowRandomPort=false 时拒绝），早于显式 --remote-debugging-port=9222——
       // 它证明打包调试门会拒绝非 harness 启动；显式端口 9222 的拒绝由单测 config-debug-switches.spec 另行覆盖。
+      // 负路径用 flip-back 副本（flipExe）：产物本体三项 fuse 关闭后 Playwright 注入的 --inspect=0 得不到
+      // 「Debugger listening on」，Playwright 内部遗留未消费的 chromeMatchPromise 拒绝 → Node 进程崩溃（unhandled rejection）；
+      // 副本 fuse 已回 true（与改动前的可启动形态一致）——本断言验证的是应用层调试门（fuse 无关），
+      // fuse 层证明由静态读回断言承担（三项 DISABLE 已在上方断言）。
       if (packagedExe) {
         const negEnv = { ...env }
         delete negEnv.CYRENE_TEST_HARNESS
         let negRejected = false
         try {
-          const negApp = await _electron.launch({ executablePath: packagedExe, args: ['--remote-debugging-port=9222'], env: negEnv, timeout: 15000 })
+          const negApp = await _electron.launch({ executablePath: flipExe, args: ['--remote-debugging-port=9222'], env: negEnv, timeout: 15000 })
           try {
             const negWin = await negApp.firstWindow({ timeout: 5000 }).catch(() => null)
             if (negWin) { /* 拿到窗口 = 门没生效 */ } else { negRejected = true }
@@ -263,10 +321,26 @@ async function smoke() {
     if (packagedExe) {
       console.error('  提示：若为超时/立即退出，可能是单实例锁冲突（你在跑 pnpm dev / 真实 Cyrene？或上一次冒烟未正常关闭），或调试门与 Playwright 注入开关冲突（确认 CYRENE_TEST_HARNESS=1 已注入、Playwright 注入形态为 --remote-debugging-port=0/--inspect=0）')
     }
+  } finally {
+    // flip-back 副本为临时目录（os.tmpdir()），用后整树删除（spec §7.2 已知边界）
+    if (flipTmp) {
+      fs.rmSync(flipTmp, { recursive: true, force: true })
+      console.log(`（已删除 flip-back 临时副本目录 ${flipTmp}）`)
+    }
   }
 }
 
 ;(async () => {
+  // 2.5 fuse 读回（静态断言，不启动 Electron）：未分发包产物存在时读回三项关闭态。
+  // 有打包目录但找不到二进制 → fail（同 smoke 语义，防打包命名变化被静默掩盖）；无打包产物（out/ 未打包形态）→ 跳过提示。
+  const { exe: fuseExe, foundPackagedDir: fuseDirFound } = findPackagedExecutable(root)
+  if (fuseDirFound && !fuseExe) {
+    fail('存在未分发包目录但找不到应用二进制——fuse 读回无法执行（打包命名变化/产物残缺），不静默跳过')
+  } else if (fuseExe) {
+    await checkFuses(fuseExe)
+  } else {
+    console.log('（fuse 读回跳过：无未分发包产物——先 `pnpm -F @cyrene/desktop package` 再验证）')
+  }
   const wantSmoke = process.argv.includes('--smoke')
   if (wantSmoke) {
     // Linux 需 DISPLAY 或 WAYLAND_DISPLAY（X/Wayland 均可）；win32/darwin 有原生显示
