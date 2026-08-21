@@ -1,42 +1,101 @@
-// tests/unit/markdown-sanitize.spec.ts
-// Task 5:renderMarkdown 基础 markdown 渲染 + XSS 消毒(script/on* 剥离)——utils/markdown.ts 的领域纯逻辑。
-// 组件 v-html 渲染安全由 sanitize 保证;UI 视觉留阶段 3 E2E。
+// @vitest-environment happy-dom
+// tests/unit/markdown-sanitize.spec.ts（行为记录层——安全门禁归 tests/integration/markdown-xss.spec.ts 真实 Chromium）
+// 行为差异标注（阶段 7 批次 A Task 2 实测，2026-08-22）：DOMPurify 3.4.14 在 happy-dom 20.11.2 下遍历层失效——
+// ① _readNodeName 缓存 getter 返回 ''（uponSanitizeElement 钩子实测 tagName=''）→ ALLOWED/ATTR 判定全不中；
+// ② happy-dom NodeIterator 在当前节点被移除后 nextNode() 即终止（实测先访问 BODY/H1，移除 H1 后迭代器死亡），
+//    消毒只处理到首个被移除元素就停，其后元素含危险标签/on*/危险协议原样保留。
+// 因此「输出不含可执行面」类断言在 happy-dom 下无法成立——按 brief 行为差异处理：保留用例、断言不弱化，
+// 以 it.fails 标注（断言仍执行且必须如预期失败——happy-dom 环境修复后可翻回 it）；安全门禁由
+// tests/integration/markdown-xss.spec.ts（真实 Chromium，待后续任务创建）承载。配置钉住/纯函数断言不受影响。
 import { describe, expect, it } from 'vitest'
-import { renderMarkdown, wrapCodeBlocks, trimCodeText } from '../../src/renderer/src/utils/markdown'
+import { renderMarkdown, wrapCodeBlocks, trimCodeText, DOMPURIFY_CONFIG } from '../../src/renderer/src/utils/markdown'
 
-describe('Markdown 渲染 + 消毒', () => {
-  it('基础 markdown(标题/粗体/列表/代码块)', () => {
-    expect(renderMarkdown('# 标题')).toContain('<h1')
-    expect(renderMarkdown('**粗体**')).toContain('<strong')
-    expect(renderMarkdown('- a\n- b')).toContain('<li')
+describe('renderMarkdown（DOMPurify 显式白名单）', () => {
+  it.fails('基础渲染：标题/粗体/列表/代码块', () => {
+    const html = renderMarkdown('# 标题\n\n**粗体**\n\n- 甲\n- 乙\n\n`code`')
+    expect(html).toContain('<h1>')
+    expect(html).toContain('<strong>')
+    expect(html).toContain('<li>')
+    expect(html).toContain('<code>')
+    expect(html).toContain('cy-code-block')
   })
-  it('XSS:script/on* 被剥离', () => {
-    expect(renderMarkdown('<script>alert(1)</script>')).not.toContain('<script')
-    expect(renderMarkdown('<img src=x onerror=alert(1)>')).not.toContain('onerror')
+  it.fails('DANGEROUS_TAGS 全剥（script/style/iframe/object/embed/link/meta/base/form/svg/math）', () => {
+    const html = renderMarkdown('<script>alert(1)</script><style>body{display:none}</style><iframe src="x"></iframe><svg onload="x()"></svg><form><input></form>')
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain('<style')
+    expect(html).not.toContain('<iframe')
+    expect(html).not.toContain('<svg')
+    expect(html).not.toContain('<form')
+    expect(html).not.toContain('<input')
   })
-  it('XSS:entity/无引号编码的 javascript: 协议被剥离', () => {
-    // marked 对链接 href 不做 & 转义、对 raw HTML 透传:`&colon;`/`&#58;` 与无引号值都可能是协议注入载体
-    expect(renderMarkdown('[x](javascript&colon;alert(1))')).not.toContain('javascript')
-    expect(renderMarkdown('<a href=javascript:alert(1)>x</a>')).not.toContain('javascript:')
+  it.fails('on* 属性剥离（onerror/onload/onclick/onbegin）', () => {
+    const html = renderMarkdown('<img src="x" onerror="window.__xssFired=1"><div onclick="x()">t</div>')
+    expect(html).not.toContain('onerror')
+    expect(html).not.toContain('onclick')
+  })
+  it.fails('危险 URI 剥离：javascript:/data:/vbscript:（含实体与大小写变体）', () => {
+    for (const payload of [
+      '[x](javascript:alert(1))', '[x](JAVASCRIPT:alert(1))', '[x](javascript&colon;alert(1))',
+      '[x](&#106;avascript:alert(1))', '[x](data:text/html,<script>alert(1)</script>)', '[x](vbscript:msgbox(1))',
+    ]) {
+      const html = renderMarkdown(payload)
+      expect(html).not.toContain('javascript')
+      expect(html).not.toContain('data:')
+      expect(html).not.toContain('vbscript')
+    }
+  })
+  it.fails('前导空白 URI 变体剥离（安全复核 M-1）', () => {
+    const html = renderMarkdown('[x]( javascript:alert(1))')
+    expect(html).not.toContain('javascript')
+  })
+  it('http/https/cyrene: 相对链接保留', () => {
+    expect(renderMarkdown('[a](https://example.com)')).toContain('href="https://example.com"')
+    expect(renderMarkdown('[a](/relative/path)')).toContain('href="/relative/path"')
+  })
+  it('style 属性剥离（当前 happy-dom 偶发通过——真实门禁归集成层）', () => {
+    expect(renderMarkdown('<div style="background:url(javascript:alert(1))">t</div>')).not.toContain('style=')
+  })
+  it.fails('代码块：包裹 + language 类保留', () => {
+    const html = renderMarkdown('```ts\nconst a = 1\n```')
+    expect(html).toContain('cy-code-block')
+    expect(html).toContain('language-ts')
+    expect(html).toContain('const a = 1')
+  })
+  it.fails('默认无语言标签「代码」', () => {
+    const html = renderMarkdown('```\ncode\n```')
+    expect(html).toContain('代码')
+  })
+  it('trimCodeText 只去尾部换行（\n+$ 语义；保尾部空格）', () => {
+    expect(trimCodeText('a\n\n')).toBe('a')
+    expect(trimCodeText('a  \n')).toBe('a  ')
+  })
+  it('wrapCodeBlocks 保留 <code> 属性 + 无语言默认「代码」（原实现逐字符不变，直接单测兜底）', () => {
+    const html = wrapCodeBlocks('<pre><code class="language-ts">const a = 1</code></pre>')
+    expect(html).toContain('cy-code-block')
+    expect(html).toContain('language-ts')
+    expect(wrapCodeBlocks('<pre><code>plain</code></pre>')).toContain('代码')
+  })
+  it('代码内容含 <script> 被消毒', () => {
+    const html = renderMarkdown('```\n<script>alert(1)</script>\n```')
+    expect(html).not.toContain('<script>alert')
   })
 })
 
-describe('阶段 3 G2 代码块（spec §4.6.1 D7）', () => {
-  it('renderMarkdown 输出含 cy-code-block 包裹 + 语言标签 + 保留 <code>（复制取文）', () => {
-    const html = renderMarkdown('```ts\nconst a = 1\n```')
-    expect(html).toContain('cy-code-block')
-    expect(html).toContain('cy-code-lang')
-    expect(html).toContain('ts')
-    expect(html).toContain('<code class="language-ts">')
+describe('DOMPURIFY_CONFIG（配置钉住——USE_PROFILES 缺席 + 显式白名单）', () => {
+  it('不用 USE_PROFILES（与显式表互斥——spec D7A-01）', () => {
+    expect((DOMPURIFY_CONFIG as Record<string, unknown>).USE_PROFILES).toBeUndefined()
   })
-  it('wrapCodeBlocks 无语言 → 默认「代码」', () => {
-    expect(wrapCodeBlocks('<pre><code>plain</code></pre>')).toContain('代码')
+  it('ALLOWED_TAGS 含渲染面、不含 input/script/style', () => {
+    const tags = DOMPURIFY_CONFIG.ALLOWED_TAGS as string[]
+    expect(tags).toContain('a'); expect(tags).toContain('pre'); expect(tags).toContain('code'); expect(tags).toContain('img')
+    expect(tags).not.toContain('input'); expect(tags).not.toContain('script'); expect(tags).not.toContain('style')
   })
-  it('trimCodeText 去尾部换行', () => {
-    expect(trimCodeText('a\nb\n\n')).toBe('a\nb')
+  it('ALLOWED_ATTR 白名单（无 on*/style/id）', () => {
+    const attrs = DOMPURIFY_CONFIG.ALLOWED_ATTR as string[]
+    expect(attrs).toContain('href'); expect(attrs).toContain('src'); expect(attrs).toContain('class')
+    expect(attrs).not.toContain('onerror'); expect(attrs).not.toContain('style'); expect(attrs).not.toContain('id')
   })
-  it('代码内容含 <script> 被 sanitize 转义/剥离不执行（CSP 纵深）', () => {
-    const html = renderMarkdown('```html\n<script>alert(1)</script>\n```')
-    expect(html).not.toContain('<script>alert')
+  it('ALLOW_DATA_ATTR false', () => {
+    expect(DOMPURIFY_CONFIG.ALLOW_DATA_ATTR).toBe(false)
   })
 })

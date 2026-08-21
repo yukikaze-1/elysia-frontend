@@ -1,81 +1,31 @@
 // src/renderer/src/utils/markdown.ts
-// Markdown → 安全 HTML(C-13):marked.parse + 轻量消毒,组件 v-html 渲染。
-// CSP(script-src 'self',无 unsafe-inline)已拦截内联 <script>/on* 事件处理器,这里是纵深防御。
-// 已知限制:scoped 消毒器(危险标签/on*/危险协议),非完整 DOM 级 HTML 净化(DOMPurify 留待后续按需引入)。
+// 阶段 7 批次 A（D7A-01）：marked.parse → DOMPurify.sanitize（显式白名单配置）→ wrapCodeBlocks。
+// 不使用 USE_PROFILES（DOMPurify 3.4.x 中与显式 ALLOWED_TAGS/ALLOWED_ATTR 互斥——html profile 整体覆盖显式表）。
+// 三层机制：①本 ALLOWED_URI_REGEXP ②DOMPurify 内部 ATTR_WHITESPACE 全局剥离（purify.es.mjs _sanitizeAttributes:1644/:326）③CyMarkdown.vue 点击层（preventDefault + 仅 http(s) openExternal）。
+// 单测（happy-dom）为行为记录层——安全门禁在 tests/integration/markdown-xss.spec.ts（真实 Chromium）。
+// 已知行为变更（记录于决策记录）：img src 的 data: 经 DOMPurify DATA_URI_TAGS 分支保留（img 上下文无脚本面；现 sanitizeHtml 为更严口径）。
+import DOMPurify, { type Config as DOMPurifyConfig } from 'dompurify'   // 3.4.14：顶层 type Config（无 namespace——别名为防 TS2503，准确性 R2 实测）
 import { marked } from 'marked'
 
-/** 整块剥离的危险元素(含其内容)——标记/样式/嵌入/导航类都不该出现在聊天渲染里 */
-const DANGEROUS_TAGS = ['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'svg', 'math']
+export const DOMPURIFY_CONFIG = {
+  ALLOWED_TAGS: ['a', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'details', 'div', 'dl', 'dt',
+    'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'img', 'ins', 'kbd', 'li', 'mark', 'ol', 'p',
+    'pre', 'q', 's', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'table', 'tbody', 'td',
+    'th', 'thead', 'tr', 'u', 'ul'],
+  ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'width', 'height', 'class', 'start', 'type'],
+  ALLOW_DATA_ATTR: false,
+  // 回溯安全形态（安全复核 R2-MED-1 修正）：前导 C0/空格外层吞 + 负向断言内层再吞（两层都吞后仍不成 scheme 才放行）
+  ALLOWED_URI_REGEXP: /^(?:[\u0000-\u0020]*)(?:(?:https?|cyrene|mailto):|(?!(?:[\u0000-\u0020]*)[a-z][a-z0-9+.\-]*:))/i,
+  SANITIZE_DOM: true,
+} satisfies DOMPurifyConfig
 
-/** 危险相关命名实体小映射(numeric 实体 `&#58;`/`&#106;` 等走通用数值分支) */
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  colon: ':',
-  sol: '/',
-  tab: '\t',
-  newline: '\n',
-  nbsp: ' '
+/** Markdown → 安全 HTML：marked.parse（GFM 默认）→ DOMPurify → 代码块包裹 */
+export function renderMarkdown(text: string): string {
+  const html = marked.parse(text, { async: false })
+  return wrapCodeBlocks(DOMPurify.sanitize(html, DOMPURIFY_CONFIG))   // 先净化再包裹（复制按钮不被打回——现实现同序）
 }
 
-/**
- * HTML entity 归一化(循环直至稳定,防嵌套编码如 `&amp;colon;`)。
- * marked 对 raw HTML 透传、对链接 href 不做 & 转义,`javascript&colon;`/`&#58;`/`&#106;` 等
- * 会把协议编码后注入——先解回再匹配剥离才有效。仅解小映射命名实体 + 通用 numeric;
- * 其余命名实体(如 &copy;)保留,交给浏览器 v-html 渲染。
- */
-function decodeEntities(input: string): string {
-  let out = input
-  for (let i = 0; i < 4; i++) {
-    const next = out.replace(/&(#(?:x[0-9a-fA-F]{1,6}|[0-9]{1,7})|[a-zA-Z][a-zA-Z0-9]{0,20});/g, (m, body: string) => {
-      if (body[0] === '#') {
-        const hex = body[1] === 'x' || body[1] === 'X'
-        const code = parseInt(hex ? body.slice(2) : body.slice(1), hex ? 16 : 10)
-        if (code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)) {
-          try {
-            return String.fromCodePoint(code)
-          } catch {
-            return m
-          }
-        }
-        return m
-      }
-      return NAMED_ENTITIES[body.toLowerCase()] ?? m
-    })
-    if (next === out) break
-    out = next
-  }
-  return out
-}
-
-/**
- * 轻量 HTML 消毒(先 entity 归一化,再依次剥离):
- * ① 成对危险标签整块剥离(含内容),再剥残留的自闭合/未闭合开标签;
- * ② 剥离 on* 事件属性(单/双引号与无引号三种形态);
- * ③ 剥离 javascript:/data:/vbscript: 协议的 href/src/xlink:href 属性
- *    (带引号与不带引号值都匹配;值前部命中危险协议则整属性移除,含 markdown 链接语法生成的)。
- */
-function sanitizeHtml(html: string): string {
-  let out = decodeEntities(html)
-  for (const tag of DANGEROUS_TAGS) {
-    out = out.replace(new RegExp(`<\\s*${tag}\\b[^>]*>[\\s\\S]*?<\\s*\\/\\s*${tag}\\s*>`, 'gi'), '')
-    out = out.replace(new RegExp(`<\\s*${tag}\\b[^>]*>`, 'gi'), '')
-  }
-  out = out.replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/gi, '')
-  out = out.replace(/\s+(?:href|src|xlink:href)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/gi, (attr) => {
-    const eq = attr.indexOf('=')
-    const raw = attr.slice(eq + 1).trim()
-    const value = raw.replace(/^["']|["']$/g, '')
-    return /^(?:javascript|data|vbscript)\s*:/i.test(value) ? '' : attr
-  })
-  return out
-}
-
-/** 代码块包裹（sanitize 后字符串处理，spec §4.6.1 D7）：语言标签 + 复制按钮占位；无高亮库，代码内容保持转义文本。
- *  保留 `<code>` 元素（复制交互经 `pre code` 取 textContent），语言从 `language-xxx` class 提取，无则「代码」。 */
+/** 代码块包裹：保留 <code> 元素（复制交互经 pre code 取 textContent），语言从 language-xxx class 提取——与现实现逐字符一致（markdown.ts:79-85） */
 export function wrapCodeBlocks(html: string): string {
   return html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/gi, (_m, attrs: string, body: string) => {
     const langMatch = /class="[^"]*\blanguage-([a-zA-Z0-9_+-]+)[^"]*"/.exec(attrs)
@@ -84,13 +34,7 @@ export function wrapCodeBlocks(html: string): string {
   })
 }
 
-/** 复制文本：去尾部换行（spec §4.6.1） */
+/** 复制文本：去尾部换行（\n+$ 语义——只去换行不去空格，与现实现一致） */
 export function trimCodeText(text: string): string {
   return text.replace(/\n+$/, '')
-}
-
-/** 渲染 markdown → 消毒后 HTML(marked.parse 同步调用,async:false 保证 string 返回) */
-export function renderMarkdown(text: string): string {
-  const html = marked.parse(text, { async: false })
-  return wrapCodeBlocks(sanitizeHtml(html)) // sanitize 后再包裹，复制按钮不被打回
 }
