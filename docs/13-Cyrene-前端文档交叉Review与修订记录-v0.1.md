@@ -471,7 +471,7 @@
 | 08 §8 | 测试矩阵补充注记（markdown-xss 集成（真实 Chromium 安全门禁层）/diagnostics-ipc 集成/verify:sensitive 门禁/fuse 读回断言，对应 §8 各面） |
 | 11 §8 | 落地注记（四分区实现态、会话态不持久化、二次确认文案、Adapter 映射由事件条目领域名承担、Live2D 帧耗时延 7C、导出二次脱敏） |
 | 12 §4.8 | H-09 行（182）「正式确认待产品」→「已确认（默认关+二次确认开关）」——引语归属 doc 16 §2.8:166（一致 N-4） |
-| 16 §2.8/§4.0/§4/§10 + changelog | H-09 行升 [x] 并改写行本体（「恒关」→「默认关 + 设置页二次确认开关（会话态）」）；§4.0 决策表开发者模式行修订并注记「2026-08-21 用户拍板修订」（修订 2026-08-08 前置决策）；§4 生产恒关落地项行注记修订；§10 阶段 7 状态注记 + 任务清单勾选/验收门槛标注（7B/7C/7D 归属）；2026-08-22 changelog 行（门禁计数以验收记录为准，主会话回填） |
+| 16 §2.8/§4.0/§4/§10 + changelog | H-09 行升 [x] 并改写行本体（「恒关」→「默认关 + 设置页二次确认开关（会话态）」）；§4.0 决策表开发者模式行修订并注记「2026-08-21 用户拍板修订」（修订 2026-08-08 前置决策）；§4 生产恒关落地项行注记修订；§10 阶段 7 状态注记 + 任务清单勾选/验收门槛标注（7B/7C/7D 归属）；2026-08-22 changelog 行（门禁实测：1959 单测（151 files，含 7 expected-fail）/ 127 集成（19 files）+ check:contract WS 35/35+REST 16/16 + verify:sensitive/verify:artifact 全绿） |
 | 17 / README | verify:sensitive 命令说明（doc 17 新节 + README 命令表）；fuse/打包相关命令注记（verify:artifact 静态读回 + smoke flip-back、electron-builder.yml `electronFuses` 三键） |
 | spec §5.1（设计文档） | verify:sensitive 黑名单修正为 8 规则（第 8 条 40+ base64）+ 排除清单同步（third_party/ + vendored live2d 两树 + 扫描器自身自排除 + 类别级 allowlist 仅豁免 base64-long-string 的规则域语义）——Task 7 LOW-2 |
 | 决策记录 | `docs/review/2026-08-22-阶段7批次A-决策记录.md`（D7A-01~15 + 用户拍板 + 委托裁决 + review 记录 + 提交链） |
