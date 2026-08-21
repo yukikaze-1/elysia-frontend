@@ -61,14 +61,20 @@ export const IpcChannels = {
   toolGrantDirectory: 'tool:grant-directory',             // 阶段 6 批次 C（D6C-12）：目录授权创建（invoke）
   toolGrants: 'tool:grants',                              // 阶段 6 批次 C（D6C-12）：授权清单（invoke）
   toolGrantRevoke: 'tool:grant-revoke',                   // 阶段 6 批次 C（D6C-12）：撤销授权（invoke）
-  toolHistory: 'tool:history'                             // 阶段 6 批次 C（D6C-12）：审批历史回读（invoke）
+  toolHistory: 'tool:history',                            // 阶段 6 批次 C（D6C-12）：审批历史回读（invoke）
+  diagnosticsState: 'diagnostics:state',                  // 阶段 7 批次 A：诊断状态（invoke）
+  diagnosticsDevModeSet: 'diagnostics:dev-mode-set',      // 阶段 7 批次 A：开发者模式开关（invoke，幂等）
+  diagnosticsOpenLogDir: 'diagnostics:open-log-dir',      // 阶段 7 批次 A：打开日志目录（invoke）
+  diagnosticsClearLogs: 'diagnostics:clear-logs',         // 阶段 7 批次 A：清理日志（invoke）
+  diagnosticsExport: 'diagnostics:export'                 // 阶段 7 批次 A：导出脱敏诊断包（invoke）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
 /** Main → Renderer 主动推送通道(PushChannels)：不入 IpcChannels（非命令，无 invoke 语义） */
 export const PushChannels = {
   event: 'chat:event', state: 'chat:state', replay: 'chat:replay', error: 'chat:error',
-  toolEvent: 'tool:event'                                 // 阶段 6 批次 B：工具公开事件推送（M2 契约：推送入 PushChannels）
+  toolEvent: 'tool:event',                                // 阶段 6 批次 B：工具公开事件推送（M2 契约：推送入 PushChannels）
+  diagnosticsDevEvent: 'diagnostics:dev-event'            // 阶段 7 批次 A：开发者模式协议事件推送（下行）
 } as const
 
 /** IPC 错误体：只含公开信息，不泄漏堆栈/路径；结构化字段跨 contextBridge 经 message 前缀保真 */

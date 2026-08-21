@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, DesktopCallStatus, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import { DIAGNOSTICS_PREVIEW_MAX, DIAGNOSTICS_TYPE_MAX } from '@shared/contracts'
 
 /**
  * 共享领域响应 Schema —— 严格镜像 `shared/contracts` 类型(C1)。
@@ -399,3 +400,27 @@ export const DesktopCallStatusSchema: z.ZodType<DesktopCallStatus> = z.object({
   status: RepoCallStatusSchema, createdAt: z.string(), expiresAt: z.string(),
   result: z.record(z.string(), z.unknown()).optional(), error: z.record(z.string(), z.unknown()).optional(),
 }).strict()
+
+// —— 阶段 7 批次 A：诊断出参 schema（严格镜像 contracts/diagnostics.ts——类型注解钉镜像（ChatHistoryItemSchema 同族先例），
+//    .strict()：push/state 面未知键即失效载荷（契约 R2-4）。displayDir 已 sanitize、绝对路径不上行（M-2）。——
+export const DiagnosticsStateSchema: z.ZodType<DiagnosticsState> = z.object({
+  devMode: z.boolean(),
+  displayDir: z.string(),
+  logSizeBytes: z.number().nonnegative(),
+  logFiles: z.array(z.object({ name: z.string().max(255), sizeBytes: z.number().nonnegative(), modifiedAt: z.string() })),
+  retentionDays: z.number().int().positive(),
+  auditRetentionDays: z.number().int().positive(),
+  eventDropped: z.number().nonnegative(),
+  lastCleanup: z.object({ removedFiles: z.number().nonnegative(), freedBytes: z.number().nonnegative() }).nullable(),
+}).strict()
+
+export const DiagnosticsDevEventSchema: z.ZodType<DiagnosticsDevEvent> = z.object({
+  ts: z.string(),
+  type: z.string().max(DIAGNOSTICS_TYPE_MAX),
+  preview: z.string().max(DIAGNOSTICS_PREVIEW_MAX),
+}).strict()
+
+export const DiagnosticsExportResultSchema: z.ZodType<DiagnosticsExportResult> = z.discriminatedUnion('cancelled', [
+  z.object({ cancelled: z.literal(false), displayPath: z.string(), sizeBytes: z.number().nonnegative(), truncatedLog: z.boolean(), truncatedAudit: z.boolean() }),
+  z.object({ cancelled: z.literal(true) }),
+])

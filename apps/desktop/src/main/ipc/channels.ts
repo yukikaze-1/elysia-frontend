@@ -30,7 +30,7 @@ export const endpointResponseSchema = EndpointResponseSchema
 export const runtimeInfoResponseSchema = RuntimeInfoSchema
 export const chatSendSchema = z.object({
   conversationId: z.string().min(1),
-  text: z.string(),
+  text: z.string().max(65_536),      // D7A-13：消息正文 64KiB 上界（无界字段补值；MAX_IPC_MESSAGE_BYTES 预算内）
   clientRequestId: z.string().min(1),
   attachments: z.array(z.object({
     attachmentId: z.string().min(1),
@@ -47,7 +47,7 @@ export const chatGetMessagesSchema = z.object({
 })
 export const chatRenameSchema = z.object({
   conversationId: z.string().min(1),
-  title: z.string().min(1)
+  title: z.string().min(1).max(200)   // D7A-13：标题 200 上界（无界字段补值）
 })
 export const chatActivateSchema = z.object({
   conversationId: z.string().min(1)
@@ -57,7 +57,7 @@ export const chatListConversationsSchema = z.object({
   limit: z.number().int().positive().optional()
 })
 export const chatCreateSchema = z.object({
-  title: z.string().optional()
+  title: z.string().max(200).optional()   // D7A-13：标题 200 上界（无界字段补值）
 })
 export const chatCancelSchema = z.object({
   generationId: z.string().min(1)
@@ -84,7 +84,7 @@ export const UploadFileDescriptorSchema = z.object({
   mediaType: z.string().min(1),
   source: z.enum(['picker', 'drag_drop', 'paste']),
   kind: z.enum(['image', 'video', 'audio', 'file', 'link']).optional(),
-  path: z.string().optional(),
+  path: z.string().max(1024).optional(),   // D7A-13：attachment 路径 1024 上界（无界字段补值）
   bytes: z.instanceof(Uint8Array).optional()
 }).refine((d) => (d.path !== undefined) !== (d.bytes !== undefined), { message: 'path/bytes 二选一' })
 
@@ -99,7 +99,7 @@ export const chatQueryHistorySchema = z.object({
     z.object({ type: z.literal('conversation'), conversationId: z.string().min(1) }),
     z.object({ type: z.literal('all_conversations') })
   ]),
-  query: z.string().optional(),
+  query: z.string().max(512).optional(),   // D7A-13：搜索 query 512 上界（无界字段补值）
   localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   timeZone: z.string().min(1),
   category: z.enum(['all', 'image_video', 'sticker', 'file', 'audio', 'link']),
@@ -145,7 +145,7 @@ export const voiceStartRecordSchema = z.object({ recordingId: z.string().min(1) 
 export const voiceStopRecordSchema = z.object({ recordingId: z.string().min(1) })
 export const voiceCommitSchema = z.object({
   recordingId: z.string().min(1),
-  text: z.string(),                       // 转写文本可为空（未识别提交）
+  text: z.string().max(10_240),       // D7A-13：转写提交文本 10KiB 上界（无界字段补值；未识别空文本允许）
   conversationId: z.string().min(1),
   clientRequestId: z.string().min(1),
   clientMessageId: z.string().min(1)
@@ -169,3 +169,10 @@ export const audioCancelSchema = z.object({ streamId: z.number().int() })
 
 // —— 阶段 5 批次 A Live2D 命令 request schema（spec D5A-07；响应 schema 在 shared/schemas/ipc-response Live2DListResponseSchema）——
 export const live2dListModelsSchema = z.undefined()
+
+// —— 阶段 7 批次 A 诊断命令 request schema（响应 schema 在 shared/schemas/ipc-response Diagnostics*）——
+export const diagnosticsStateSchema = z.undefined()
+export const diagnosticsDevModeSetSchema = z.object({ enabled: z.boolean() })
+export const diagnosticsOpenLogDirSchema = z.undefined()
+export const diagnosticsClearLogsSchema = z.undefined()
+export const diagnosticsExportSchema = z.undefined()
