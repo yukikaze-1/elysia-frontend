@@ -8,6 +8,7 @@ import CyModelServicesPane from './CyModelServicesPane.vue'
 import CyVoicePane from './CyVoicePane.vue'
 import CyLive2DPane from './CyLive2DPane.vue'
 import CySecurityPane from './CySecurityPane.vue'
+import CyDiagnosticsPane from './CyDiagnosticsPane.vue'
 import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
 import { useVoiceStore } from '../stores/voice.store'
 
@@ -28,7 +29,7 @@ const NAV_ITEMS = [
   { key: 'voice', label: '语音', note: '阶段4 P4-B', placeholder: '普通录音/实时语音会话/输入法转写/TTS 自动朗读' },
   { key: 'security', label: '安全与权限', note: '阶段6', placeholder: '安全策略/权限审批/已授权命令' },
   { key: 'character', label: '角色与外观', note: '阶段5', placeholder: 'Live2D 角色与外观' },
-  { key: 'diagnostics', label: '开发与诊断', note: '阶段6', placeholder: '开发者模式/日志' }
+  { key: 'diagnostics', label: '开发与诊断', note: '阶段7', placeholder: '开发者模式/日志' }
 ] as const
 
 type NavKey = (typeof NAV_ITEMS)[number]['key']
@@ -100,6 +101,7 @@ onBeforeUnmount(() => { triggerElement = null })
           <CyVoicePane v-else-if="activeNav === 'voice'" />
           <CyLive2DPane v-else-if="activeNav === 'character'" />
           <CySecurityPane v-else-if="activeNav === 'security'" />
+          <CyDiagnosticsPane v-else-if="activeNav === 'diagnostics'" />
           <div v-else class="cy-settings-placeholder" role="status">
             <strong>{{ currentNavLabel }}功能页</strong>
             <span>占位：{{ currentNavNote }} 落地</span>
