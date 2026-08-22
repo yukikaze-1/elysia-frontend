@@ -1,5 +1,5 @@
 import { _electron, chromium, type ElectronApplication, type Page } from 'playwright'
-import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync, realpathSync } from 'fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'os'
 import { join, extname, resolve, sep, dirname } from 'path'
@@ -31,9 +31,15 @@ const MIME: Record<string, string> = {
   '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json'
 }
 
+function comparablePath(path: string): string {
+  const real = realpathSync(path)
+  return process.platform === 'win32' ? real.toLowerCase() : real
+}
+
 /** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env。
  *  seedFiles：启动时预置文件（relPath 相对 userData 根，如 'app-cache/message-cache-v1.json'）——损坏恢复测试在 load() 前注入非法 JSON。
- *  opts.env：附加环境变量（合并到 env 构造末尾；Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
+ *  opts.env：附加环境变量（先合并；测试隔离/Mock 三项不变量随后覆盖，调用方不可改写安全门；
+ *  Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
  *  目录 0700、文件 0600：否则 ensureUserDataDirs（0700 无 group/other）与 openSafeFile 读（0400 无 group/other）会因权限误判损坏/拒绝启动 */
 export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>, opts: LaunchOptions = {}): Promise<LaunchedApp> {
   const electronPath = ELECTRON_EXEC
@@ -44,19 +50,33 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
     mkdirSync(dirname(p), { recursive: true, mode: 0o700 })
     writeFileSync(p, f.content, { mode: 0o600 })
   }
-  const appDataKey = process.platform === 'win32' ? 'APPDATA' : process.platform === 'darwin' ? 'HOME' : 'XDG_CONFIG_HOME'
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
-    [appDataKey]: userData,        // appData→userData 隔离(join(appData,'Cyrene'))
+    ...(opts.env ?? {}),
+    // 权威隔离门：Main 在 test+harness+未打包三重门下 setPath('appData', userData)，并在
+    // installAppIdentity 前读回校验。不能再依赖 Windows APPDATA env（Electron 43 实测无效）。
+    CYRENE_TEST_APP_DATA: userData,
     CYRENE_TEST_HARNESS: '1',
     CYRENE_BACKEND: 'mock',        // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
-    ...(opts.env ?? {})
   }
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
   const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...(opts.extraArgs ?? [])], cwd: ROOT, env, timeout: 30000 })
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  return { app, page, userData }
+  try {
+    // 第二道 fail-closed：主进程已成功启动后，在任何测试动作前核对 Electron 实际 appData/userData。
+    // 若未来 Main 覆盖门被重构坏，助手直接失败，绝不让用例继续操作真实凭据/缓存。
+    const actual = await app.evaluate(({ app }) => ({ appData: app.getPath('appData'), userData: app.getPath('userData') }))
+    const isolated = comparablePath(actual.appData) === comparablePath(userData)
+      && comparablePath(actual.userData) === comparablePath(join(userData, 'Cyrene'))
+    if (!isolated) throw new Error('Electron 集成测试 appData/userData 未指向临时隔离目录')
+
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    return { app, page, userData }
+  } catch (err) {
+    try { await app.close() } catch { /* 启动失败时尽力关闭 */ }
+    if (opts.userData === undefined) { try { rmSync(userData, { recursive: true, force: true }) } catch { /* 尽力 */ } }
+    throw err
+  }
 }
 
 export async function closeApp(launched: LaunchedApp, opts: { keepUserData?: boolean } = {}): Promise<void> {

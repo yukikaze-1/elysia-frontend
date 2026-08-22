@@ -7,12 +7,12 @@ import { release as osRelease, type as osType } from 'node:os'
 import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, PushChannels, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
 import type { Message } from '@shared/contracts/message'
-import { installAppIdentity, expectedUserDataBase } from './app/lifecycle'
+import { applyTestAppDataOverride, installAppIdentity, expectedUserDataBase } from './app/lifecycle'
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
 import { getMainWindow } from './ipc/registry'
 import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
-import { hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from './config/debug-switches'
+import { findForbiddenDebugLaunch } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
 import { evaluateDevRendererUrl } from './config/trusted-renderer-origin'
 import { resolveBackendMode } from './config/backend-mode'
@@ -69,15 +69,17 @@ function rejectForbiddenDebugSwitches(): boolean {
     present: app.commandLine.hasSwitch(n),
     value: app.commandLine.getSwitchValue(n)
   })
-  // 仅测试 harness（verify:artifact 冒烟显式设 CYRENE_TEST_HARNESS=1）放行 =0 随机端口；生产默认严格拒绝
+  // 仅测试 harness（verify:artifact 冒烟显式设 CYRENE_TEST_HARNESS=1）放行 =0 随机端口；
+  // 开发态与打包态统一执行门禁，避免 dev 启动参数绕过“任何构建恒关”基线。
   const allowRandomPort = process.env['CYRENE_TEST_HARNESS'] === '1'
-  if (app.isPackaged && hasForbiddenDebugSwitch(process.argv, getSwitch, allowRandomPort)) {
-    fatal('远程调试/调试开关在发布构建中被禁用')
+  const violation = findForbiddenDebugLaunch(process.argv, getSwitch, process.env['NODE_OPTIONS'], allowRandomPort)
+  if (violation === 'switch') {
+    fatal('远程调试/调试开关被禁用')
     return true
   }
-  // NODE_OPTIONS 纯 env 通道（argv/commandLine 均不含它）：Electron main 是 Node，单 env 即开 inspector
-  if (app.isPackaged && hasForbiddenNodeOptions(process.env['NODE_OPTIONS'])) {
-    fatal('NODE_OPTIONS 含调试开关在发布构建中被禁用')
+  // NODE_OPTIONS 纯 env 通道（argv/commandLine 均不含它）：Electron main 是 Node，单 env 即开 inspector。
+  if (violation === 'node_options') {
+    fatal('NODE_OPTIONS 含调试开关被禁用')
     return true
   }
   return false
@@ -85,10 +87,14 @@ function rejectForbiddenDebugSwitches(): boolean {
 
 async function main(): Promise<void> {
   if (rejectForbiddenDebugSwitches()) return
-  registerCyreneScheme() // app ready 前
 
   let ident
   try {
+    // 集成测试 appData 隔离必须早于身份安装与任何 userData 落盘。Windows Electron 43
+    // 不保证 APPDATA env 能改写 app.getPath('appData')，故使用显式 test-only setPath 门。
+    const mode = typeof __APP_MODE__ === 'string' ? __APP_MODE__ : 'production'
+    applyTestAppDataOverride(mode)
+    registerCyreneScheme() // app ready 前
     ident = installAppIdentity()
   } catch (e) {
     fatal(e instanceof Error ? e.message : '未知错误')

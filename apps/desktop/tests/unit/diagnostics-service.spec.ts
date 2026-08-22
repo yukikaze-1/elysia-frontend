@@ -355,12 +355,15 @@ describe('exportPackage（harness 落 temp：黑名单 0 命中 + truncated 标�
       writeFileSync(join(d.logs, 'app.log.2'), 'rot2\n', { mode: 0o600 })
       writeFileSync(join(d.logs, 'app.log.3'), 'rot3-oldest\n', { mode: 0o600 })
       const base = new Date('2026-08-20T00:00:00Z').getTime()
+      const at = (offsetMs: number): Date => new Date(base + offsetMs)
       await import('fs/promises').then((m) =>
         Promise.all([
-          m.utimes(join(d.logs, 'app.log.3'), base, base),
-          m.utimes(join(d.logs, 'app.log.2'), base + 60_000, base + 60_000),
-          m.utimes(join(d.logs, 'app.log.1'), base + 120_000, base + 120_000),
-          m.utimes(join(d.logs, 'app.log'), base + 180_000, base + 180_000),
+          // fs.utimes 的 number 参数单位为秒；旧写法误传 Date.getTime() 毫秒值，在 Windows
+          // 会落到不可表示年份并报 EINVAL。统一传 Date，避免平台差异。
+          m.utimes(join(d.logs, 'app.log.3'), at(0), at(0)),
+          m.utimes(join(d.logs, 'app.log.2'), at(60_000), at(60_000)),
+          m.utimes(join(d.logs, 'app.log.1'), at(120_000), at(120_000)),
+          m.utimes(join(d.logs, 'app.log'), at(180_000), at(180_000)),
         ]),
       )
       const { svc } = makeCtx({ dirs: { logs: d.logs, audit: d.audit, temp: d.temp }, sanitize: (s) => s })

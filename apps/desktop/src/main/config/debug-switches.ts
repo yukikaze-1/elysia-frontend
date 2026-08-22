@@ -61,3 +61,23 @@ export function hasForbiddenNodeOptions(nodeOptions: string | undefined): boolea
   if (!nodeOptions) return false
   return /(^|\s)--inspect(?:-brk|-node|-brk-node|-wait|-wait-node)?(?=\s|=|$)/.test(nodeOptions)
 }
+
+export type ForbiddenDebugLaunchReason = 'switch' | 'node_options'
+
+/**
+ * 启动级统一策略：远程调试/Node inspector 对开发态与打包态一视同仁。
+ *
+ * 这里刻意不接收 `isPackaged`。doc 07 的安全基线是“任何构建都不得开放远程调试
+ * 端口”，只允许显式测试 harness 使用随机端口（=0/pipe）。将环境分支留在调用处
+ * 容易再次出现开发态漏门，因此把完整裁决收敛到一个纯函数并由单测钉死。
+ */
+export function findForbiddenDebugLaunch(
+  argv: readonly string[],
+  getSwitch: (name: string) => { present: boolean; value: string },
+  nodeOptions: string | undefined,
+  allowRandomPort = false
+): ForbiddenDebugLaunchReason | null {
+  if (hasForbiddenDebugSwitch(argv, getSwitch, allowRandomPort)) return 'switch'
+  if (hasForbiddenNodeOptions(nodeOptions)) return 'node_options'
+  return null
+}

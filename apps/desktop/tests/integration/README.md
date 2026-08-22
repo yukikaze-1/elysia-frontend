@@ -18,12 +18,11 @@ pnpm test:integration
 
 | 平台 | userData 隔离 | 说明 |
 |---|---|---|
-| Linux | `XDG_CONFIG_HOME` → 临时目录 | 本机默认；无显示器时需 xvfb |
-| Windows | `APPDATA` → 临时目录 | `helpers/app.ts` 按 `process.platform` 选择隔离环境变量，appData→`join(appData,'Cyrene')` |
-| macOS | `HOME` → 临时目录 | 同上 |
+| Windows | `CYRENE_TEST_APP_DATA` → Main 显式 `app.setPath('appData')` | Electron 43 不保证 `APPDATA` env 改写 Known Folder；test+harness+未打包三重门，启动后再读回 appData/userData |
+| Linux / macOS | `CYRENE_TEST_APP_DATA` → Main 显式 `app.setPath('appData')` | 与 Windows 共用同一权威隔离路径；平台环境变量只留给独立 CLI 测试，不作为 Electron 安全边界 |
 | **CI** | 仅 Linux | `xvfb-run -a pnpm test:integration` |
 
-`launchApp()` 恒以 `--mode test` 构建产物启动，`CYRENE_TEST_HARNESS=1` 标记 + 临时 `userData` 隔离，不污染开发/生产配置。
+`launchApp()` 恒以 `--mode test` 构建产物启动，设置 `CYRENE_TEST_HARNESS=1` + `CYRENE_TEST_APP_DATA=<临时目录>`；Main 在 `installAppIdentity()` 前显式覆写并读回，助手启动后再核对 `appData=<临时目录>`、`userData=<临时目录>/Cyrene`。任一不一致均 fail-closed，不继续运行用例。
 
 ## 失败排障
 

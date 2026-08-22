@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from '../../src/main/config/debug-switches'
+import { findForbiddenDebugLaunch, hasForbiddenDebugSwitch, hasForbiddenNodeOptions } from '../../src/main/config/debug-switches'
 
 const none = (): { present: boolean; value: string } => ({ present: false, value: '' })
 // 模拟 commandLine：present=开关已注入；value=getSwitchValue（''=裸开关/未注入）
@@ -61,5 +61,20 @@ describe('hasForbiddenNodeOptions', () => {
     expect(hasForbiddenNodeOptions('--inspect-port=0')).toBe(false)
     expect(hasForbiddenNodeOptions('--require /opt/tools/--inspect-helper.js')).toBe(false)
     expect(hasForbiddenNodeOptions('--max-old-space-size=4096')).toBe(false)
+  })
+})
+
+describe('findForbiddenDebugLaunch', () => {
+  it('所有构建共用同一启动门：显式 CDP 端口命中 switch（不接收 isPackaged 分支）', () => {
+    expect(findForbiddenDebugLaunch(['electron', '--remote-debugging-port=9223'], none, undefined)).toBe('switch')
+  })
+
+  it('NODE_OPTIONS inspector 命中 node_options', () => {
+    expect(findForbiddenDebugLaunch(['electron', '.'], none, '--inspect=9229')).toBe('node_options')
+  })
+
+  it('测试 harness 仅放行随机端口，显式端口仍拒绝', () => {
+    expect(findForbiddenDebugLaunch(['electron', '--remote-debugging-port=0'], none, undefined, true)).toBeNull()
+    expect(findForbiddenDebugLaunch(['electron', '--remote-debugging-port=9223'], none, undefined, true)).toBe('switch')
   })
 })
