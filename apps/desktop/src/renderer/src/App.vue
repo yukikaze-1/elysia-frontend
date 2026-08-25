@@ -4,6 +4,7 @@
 // 阶段 4 批次 A：视图切换——chat 四区（v-if）/ tasks 占位（v-else-if）/ settings 全窗 overlay（v-else）；
 // NavRail 常驻（settings 关闭回焦目标）；CyLive2DPanel 高频渲染 gate（非 chat 视图不渲染）。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import CyRendererCrashBanner from './components/CyRendererCrashBanner.vue'
 import CyTitleBar from './components/CyTitleBar.vue'
 import CyNavRail from './components/CyNavRail.vue'
 import CyConversationList from './components/CyConversationList.vue'
@@ -61,7 +62,9 @@ watch(() => layout.notice, (n) => {
 
 <template>
   <!-- 四区布局:导航 / 会话列表 / 聊天 / Live2D 右栏（角色栏是布局列，不覆盖聊天）。grid-template-* 由有效布局驱动（D10）。
-       阶段 4 批次 A：Chat 视图整体 v-if；Tasks 占位；Settings 全窗 overlay（fixed，覆盖标题栏以下全部区域）。 -->
+       阶段 4 批次 A：Chat 视图整体 v-if；Tasks 占位；Settings 全窗 overlay（fixed，覆盖标题栏以下全部区域）。
+       阶段 7 批次 B（Task 3）：CyRendererCrashBanner 全局挂载（不随 view 切换）——reload 后 getLastCrash 读 marker 提示。 -->
+  <CyRendererCrashBanner />
   <div ref="rootRef" class="cy-app" :style="gridStyle">
     <CyTitleBar />
     <CyNavRail />
