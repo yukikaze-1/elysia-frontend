@@ -3,7 +3,7 @@
 // index.ts 同名时声明文件被静默丢弃——使 tsconfig.node.json（含 tests/**/*）永远加载不到它。
 // 本文件以非冲突基名落于 tests 树，让 launchApp 返回的 page.evaluate 内 `window.desktopApi` 在
 // node 编译程序中可见（渲染进程类型来自 src/preload/index.d.ts，两者共享 @shared/contracts 类型）。
-import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, ChatHistoryPage, ChatHistoryQuery, CredentialStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, FileValidationResult, Live2DModelSummary, MessageContextQuery, MessagePage, PersistSessionInput, PersistSessionResult, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
+import type { AppInfo, AttachmentCheckResult, AttachmentsUploadResponse, BackendSession, CacheMessagesInput, ChatHistoryPage, ChatHistoryQuery, CredentialStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, FileValidationResult, Live2DModelSummary, MessageContextQuery, MessagePage, PersistSessionInput, PersistSessionResult, RendererCrashEvent, RuntimeInfo, SessionPersistenceState } from '@shared/contracts'
 import type { StickerManifest } from '@shared/contracts/sticker'
 
 declare global {
@@ -44,6 +44,8 @@ declare global {
       diagnosticsClearLogs(): Promise<void>
       diagnosticsExport(): Promise<DiagnosticsExportResult>
       onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void
+      // —— 阶段 7 批次 B（Task 1）崩溃面（与 src/preload/index.d.ts 同源） ——
+      getLastCrash(): Promise<RendererCrashEvent | null>
     }
   }
 }
