@@ -43,6 +43,7 @@ import type {
   PublicToolEvent,
   RealtimeVoiceControlInput,
   RealtimeVoiceStartInput,
+  RendererCrashEvent,
   RuntimeInfo,
   SendMessageInput,
   SessionPersistenceState,
@@ -88,6 +89,7 @@ import {
   PageSchema,
   PersistSessionResultSchema,
   PublicToolEventSchema,
+  RendererCrashEventSchema,
   RuntimeInfoSchema,
   SessionPersistenceStateSchema,
   SettingsStateSchema,
@@ -459,6 +461,11 @@ function onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () =
   return () => ipcRenderer.removeListener(PushChannels.diagnosticsDevEvent, listener)
 }
 
+// —— 阶段 7 批次 B（Task 1）：Renderer 崩溃 marker invoke（诊断面延续；invoke + unwrap 惯例——响应 schema.nullable()）——
+async function getLastCrash(): Promise<RendererCrashEvent | null> {
+  return unwrap(await invoke<RendererCrashEvent | null>(IpcChannels.diagnosticsLastCrash), RendererCrashEventSchema.nullable())
+}
+
 /**
  * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
  * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
@@ -616,7 +623,9 @@ export const desktopApi = {
   diagnosticsOpenLogDir,
   diagnosticsClearLogs,
   diagnosticsExport,
-  onDiagnosticsDevEvent
+  onDiagnosticsDevEvent,
+  // —— 阶段 7 批次 B（Task 1）：Renderer 崩溃 marker ——
+  getLastCrash
 }
 
 export type DesktopApi = typeof desktopApi

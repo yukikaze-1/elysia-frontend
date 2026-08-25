@@ -66,7 +66,8 @@ export const IpcChannels = {
   diagnosticsDevModeSet: 'diagnostics:dev-mode-set',      // 阶段 7 批次 A：开发者模式开关（invoke，幂等）
   diagnosticsOpenLogDir: 'diagnostics:open-log-dir',      // 阶段 7 批次 A：打开日志目录（invoke）
   diagnosticsClearLogs: 'diagnostics:clear-logs',         // 阶段 7 批次 A：清理日志（invoke）
-  diagnosticsExport: 'diagnostics:export'                 // 阶段 7 批次 A：导出脱敏诊断包（invoke）
+  diagnosticsExport: 'diagnostics:export',                 // 阶段 7 批次 A：导出脱敏诊断包（invoke）
+  diagnosticsLastCrash: 'diagnostics:last-crash',    // 阶段 7 批次 B：读取最近 Renderer 崩溃 marker（invoke，一次性——读后清空）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
@@ -74,7 +75,8 @@ export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 export const PushChannels = {
   event: 'chat:event', state: 'chat:state', replay: 'chat:replay', error: 'chat:error',
   toolEvent: 'tool:event',                                // 阶段 6 批次 B：工具公开事件推送（M2 契约：推送入 PushChannels）
-  diagnosticsDevEvent: 'diagnostics:dev-event'            // 阶段 7 批次 A：开发者模式协议事件推送（下行）
+  diagnosticsDevEvent: 'diagnostics:dev-event',           // 阶段 7 批次 A：开发者模式协议事件推送（下行）
+  rendererCrash: 'renderer:crash',   // 阶段 7 批次 B：Renderer 崩溃推送占位（不实际发送——Render 已死收不到；实际走 getLastCrash invoke）
 } as const
 
 /** IPC 错误体：只含公开信息，不泄漏堆栈/路径；结构化字段跨 contextBridge 经 message 前缀保真 */

@@ -36,3 +36,9 @@ export interface DiagnosticsClearedLogs {
 export const DIAGNOSTICS_PREVIEW_MAX = 200
 /** dev-event type（领域事件名）上界 */
 export const DIAGNOSTICS_TYPE_MAX = 64
+
+// —— 阶段 7 批次 B（Task 1）：Renderer 崩溃 marker 契约（diagnostics:last-crash 响应）——
+/** Renderer 崩溃 reason 闭合枚举：8 值（不存在于 wire 字段之外便不可注入，fail-closed） */
+export type RendererCrashReason = 'clean-exit' | 'abnormal-exit' | 'killed' | 'crashed' | 'oom' | 'launch-failed' | 'integrity-failure' | 'memory-eviction'
+/** Renderer 崩溃事件（最近一次崩溃 marker；read-after-clear——读取后 Main 侧清空） */
+export interface RendererCrashEvent { reason: RendererCrashReason; exitCode: number }

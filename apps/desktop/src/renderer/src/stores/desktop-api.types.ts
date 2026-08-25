@@ -43,6 +43,7 @@ import type {
   PersistSessionResult,
   RealtimeVoiceControlInput,
   RealtimeVoiceStartInput,
+  RendererCrashEvent,
   RuntimeInfo,
   SendMessageInput,
   SessionPersistenceState,
@@ -148,4 +149,6 @@ export interface DesktopApiLike {
   diagnosticsClearLogs(): Promise<void>
   diagnosticsExport(): Promise<DiagnosticsExportResult>
   onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void
+  // —— 阶段 7 批次 B（Task 1，H1 修正）：Renderer 崩溃 marker（banner 组件 api.getLastCrash() 消费——DesktopApiLike 手写窄接口必须含它）——
+  getLastCrash(): Promise<RendererCrashEvent | null>
 }

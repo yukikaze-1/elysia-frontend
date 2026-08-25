@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 import { DIAGNOSTICS_PREVIEW_MAX, DIAGNOSTICS_TYPE_MAX } from '@shared/contracts'
 
 /**
@@ -424,3 +424,10 @@ export const DiagnosticsExportResultSchema: z.ZodType<DiagnosticsExportResult> =
   z.object({ cancelled: z.literal(false), displayPath: z.string(), sizeBytes: z.number().nonnegative(), truncatedLog: z.boolean(), truncatedAudit: z.boolean() }),
   z.object({ cancelled: z.literal(true) }),
 ])
+
+// —— 阶段 7 批次 B（Task 1）：Renderer 崩溃 marker schema（严格镜像 contracts/diagnostics.ts——z.ZodType 注解钉镜像 +
+//    .strict()：reason 闭合枚举未知键即失效载荷（对齐 DiagnosticsDevEventSchema 镜像范式）——
+export const RendererCrashEventSchema: z.ZodType<RendererCrashEvent> = z.object({
+  reason: z.enum(['clean-exit','abnormal-exit','killed','crashed','oom','launch-failed','integrity-failure','memory-eviction']),
+  exitCode: z.number().int(),
+}).strict()

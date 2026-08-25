@@ -40,6 +40,7 @@ import type {
   PersistSessionResult,
   RealtimeVoiceControlInput,
   RealtimeVoiceStartInput,
+  RendererCrashEvent,
   RuntimeInfo,
   SendMessageInput,
   SessionPersistenceState,
@@ -145,6 +146,8 @@ declare global {
       diagnosticsClearLogs(): Promise<void>
       diagnosticsExport(): Promise<DiagnosticsExportResult>
       onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void
+      // —— 阶段 7 批次 B（Task 1）：Renderer 崩溃 marker（读取最近一次崩溃，读后 Main 清空）——
+      getLastCrash(): Promise<RendererCrashEvent | null>
     }
   }
 }
