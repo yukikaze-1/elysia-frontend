@@ -3,11 +3,12 @@
 // 全部经 createIpcHandler（请求/响应 schema 双向校验 + 结构化错误上提）+ registerHandler（可信 sender/arity 守卫）；
 // `diagnostics:dev-event` 为 Main→Renderer 下行 push——不入本模块（装配直接 webContents.send(PushChannels.diagnosticsDevEvent)，M2 契约）。
 import { IpcChannels } from '@shared/contracts/ipc'
-import { DiagnosticsExportResultSchema, DiagnosticsStateSchema } from '@shared/schemas/ipc-response'
+import { DiagnosticsExportResultSchema, DiagnosticsStateSchema, RendererCrashEventSchema } from '@shared/schemas/ipc-response'
 import { z } from 'zod'
 import { diagnosticsClearLogsSchema, diagnosticsDevModeSetSchema, diagnosticsExportSchema, diagnosticsOpenLogDirSchema, diagnosticsStateSchema } from './channels'
 import { createIpcHandler } from './executor'
 import { registerHandler } from './registry'
+import { getCrashMarker } from '../windows/main-window'   // 阶段 7 批次 B（Task 2）：最近 Renderer 崩溃 marker 一次性读源（re-review N1 定案——直 import，免 handlers.ts 线程化）
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import type { Logger } from '../diagnostics/logger'
 import type { DiagnosticsService } from '../diagnostics/diagnostics-service'
@@ -28,4 +29,8 @@ export function registerDiagnosticsHandlers(deps: {
     createIpcHandler(diagnosticsClearLogsSchema, z.undefined(), () => service.clearLogs(), { sanitize, channel: IpcChannels.diagnosticsClearLogs, logger }), 0)
   registerHandler(IpcChannels.diagnosticsExport,
     createIpcHandler(diagnosticsExportSchema, DiagnosticsExportResultSchema, () => service.exportPackage(), { sanitize, channel: IpcChannels.diagnosticsExport, logger }), 0)
+  // —— 阶段 7 批次 B（Task 2）：最近 Renderer 崩溃 marker 读取（invoke，一次性——读后清）——
+  //    直 import getCrashMarker（main-window 模块级 marker 一次性读源）；响应 RendererCrashEventSchema.nullable()。
+  registerHandler(IpcChannels.diagnosticsLastCrash,
+    createIpcHandler(z.undefined(), RendererCrashEventSchema.nullable(), () => getCrashMarker(), { sanitize, channel: IpcChannels.diagnosticsLastCrash, logger }), 0)
 }

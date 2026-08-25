@@ -131,6 +131,13 @@ describe('registerDiagnosticsHandlers 真实接线（electron mock 捕获 ipcMai
     if (res.ok) expect(DiagnosticsExportResultSchema.safeParse(res.data).success).toBe(true)
     expect(service.exportPackage).toHaveBeenCalledTimes(1)
   })
+  it('diagnostics:last-crash（阶段 7 批次 B Task 2）——直 import getCrashMarker，无崩溃 → ok data null（arity 0 + RendererCrashEventSchema.nullable 响应）', async () => {
+    const service = makeService()
+    const { invoke } = await registerOnce(service)
+    const res = await invoke(IpcChannels.diagnosticsLastCrash)
+    expect(res.ok).toBe(true)
+    if (res.ok) expect(res.data).toBeNull() // getCrashMarker 模块级初始 null（一次性读后清）
+  })
   it('schema 畸形（enabled:"yes"）→ SCHEMA_VALIDATION_FAILED 且不调 service.setDevMode', async () => {
     const service = makeService()
     const { invoke } = await registerOnce(service)

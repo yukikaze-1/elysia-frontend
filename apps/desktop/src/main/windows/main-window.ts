@@ -7,6 +7,38 @@ import { evaluateDevRendererUrl } from '../config/trusted-renderer-origin'
 import { PROTOCOL_SCHEME, RENDERER_HOST } from '../protocol'
 import { classifyNavigation } from './navigation'
 import { registerMicrophonePermission } from './mic-permission'
+import type { AuditEvent } from '../diagnostics/audit'
+import type { Logger } from '../diagnostics/logger'
+
+// —— 阶段 7 批次 B（D7B-05/08）：崩溃留痕 sink + crashMarker——模块级注入（安全 MED-2：second-instance/activate
+//    focusOrDefer 不带 opts，per-opts 会丢——提升为模块级变量，所有创建路径共享）——
+//    LOW-2：crashSink 只存 logger/audit（无 onRendererGone 死成员——renderer 已死收不到 push，改 marker 持久化）。
+let crashSink: { logger?: Logger; audit?: (e: Omit<AuditEvent, 'ts'>) => void } = {}
+export function setCrashSink(sink: typeof crashSink): void { crashSink = sink }
+let crashMarker: { reason: string; exitCode: number; ts: number } | null = null
+/** 一次性读后清：返回最近一次 Renderer 崩溃 reason/exitCode（剥 ts——契约 RendererCrashEvent 无 ts），读后置 null */
+export function getCrashMarker(): { reason: string; exitCode: number } | null {
+  const m = crashMarker
+  crashMarker = null
+  return m ? { reason: m.reason, exitCode: m.exitCode } : null
+}
+
+// —— 阶段 7 批次 B（D7B-05/06/07）：render-process-gone 抽函数——单一可测入口（对齐 handleChildProcessGone 模式）——
+//    注入 deps（logger/audit 可选 + marker/setMarker/reload）；clean-exit 正常关窗退出不处理；
+//    非 clean-exit → warn + audit(renderer:crash) + 写 crashMarker（renderer 已死收不到 push，marker 供 reload 后 getLastCrash 读）+ reload。
+export function handleRendererGone(details: { reason: string; exitCode: number }, deps: {
+  logger?: Logger
+  audit?: (e: Omit<AuditEvent, 'ts'>) => void
+  marker: { reason: string; exitCode: number; ts: number } | null
+  setMarker: (m: { reason: string; exitCode: number; ts: number }) => void
+  reload: () => void
+}): void {
+  if (details.reason === 'clean-exit') return
+  deps.logger?.warn('render-process-gone', { reason: details.reason, exitCode: details.exitCode })
+  deps.audit?.({ type: 'renderer:crash', summary: `渲染进程异常：${details.reason} (exit ${details.exitCode})` })
+  deps.setMarker({ reason: details.reason, exitCode: details.exitCode, ts: Date.now() })  // D7B-05 修正：renderer 已死收不到 push——marker 供 reload 后 getLastCrash 读
+  deps.reload()  // D7B-06/07
+}
 
 let pendingFocus = false
 let appStarted = false
@@ -98,6 +130,20 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
     if (input.type === 'keyDown' && input.key === 'F12' && (config.devToolsAllowed || isDevMode())) {
       win.webContents.toggleDevTools()
     }
+  })
+
+  // D7B-05/D7B-07：Renderer 崩溃——检测 + 持久化 marker + 自动 reload + 审计。
+  // 注意：render-process-gone 在 win.webContents（WebContents 类，electron.d.ts:17304）真实签名是 **2 参** (event, details)——details 是第 2 参。
+  //   （brief 引用的 3 参 (event, webContents, details) 隶属于 App 类接口 electron.d.ts:700，非 WebContents——H-1 定位错误；此处以真实 WebContents 签名为准。）
+  // 抽函数 handleRendererGone：注入 crashSink（logger/audit）+ crashMarker（读写经闭包）+ reload（win 生存守卫）。
+  win.webContents.on('render-process-gone', (_ev, details) => {
+    handleRendererGone(details, {
+      logger: crashSink.logger,
+      audit: crashSink.audit,
+      marker: crashMarker,
+      setMarker: (m) => { crashMarker = m },
+      reload: () => { if (!win.isDestroyed() && win.webContents) win.webContents.reload() },
+    })
   })
 
   if (usingDevServer && devOrigin) {

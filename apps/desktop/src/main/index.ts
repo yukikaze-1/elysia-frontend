@@ -11,7 +11,7 @@ import { applyTestAppDataOverride, installAppIdentity, expectedUserDataBase } fr
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
 import { getMainWindow } from './ipc/registry'
-import { ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
+import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
 import { findForbiddenDebugLaunch } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
 import { evaluateDevRendererUrl } from './config/trusted-renderer-origin'
@@ -22,6 +22,7 @@ import { createLive2dResolver } from './protocol/handler'
 import { createDiagnostics, type Diagnostics } from './diagnostics'
 import { createDiagnosticsService, type DiagnosticsService } from './diagnostics/diagnostics-service'
 import type { AuditEvent } from './diagnostics/audit'
+import type { Logger } from './diagnostics/logger'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
 import { SessionStore } from './persistence/session-store'
@@ -50,6 +51,17 @@ const fatal = createFatalShutdown({
   closeAll: () => (diagnostics ? diagnostics.closeAll() : Promise.resolve()),
   exit: (c) => app.exit(c)
 })
+
+// —— 阶段 7 批次 B（D7B-08，契约 H-1 解耦）：child-process-gone 抽函数——供 Task 6 gpu-process.spec 单测。
+//    关注 GPU 子进程异常：warn + audit(gpu:crash)（独立 type，勿复用 renderer:crash）。
+//    非 GPU（Utility/Zygote/Sandbox helper 等）有意忽略——renderer 崩溃由 render-process-gone 覆盖，child-process-gone 无 Renderer 子进程。
+//    task-2-brief 3c：仅作注册回调，抽函数供 Task 6 单测。deps { logger, audit }——无 reload（GPU 不 reload，N2 定案删死参）。
+export function handleChildProcessGone(details: { type: string; reason: string; exitCode: number }, deps: { logger: Logger; audit: (e: Omit<AuditEvent, 'ts'>) => void }): void {
+  if (details.type === 'GPU') {
+    deps.logger.warn('gpu-process-gone', { reason: details.reason, exitCode: details.exitCode })
+    deps.audit({ type: 'gpu:crash', summary: `GPU 进程异常：${details.reason} (exit ${details.exitCode})` })  // 契约 H-1 解耦
+  }
+}
 
 // 打包：移除 DevTools 加速键。macOS 用最小菜单保留 Cmd+Q/Cmd+C/V（appMenu/editMenu/windowMenu 不含 View→DevTools）；
 // 其余平台 null 即可。D7A-04（阶段 7 批次 A）：生产菜单无 DevTools 角色——DevTools 唯一开启路径 = 诊断设置页
@@ -135,6 +147,14 @@ async function main(): Promise<void> {
         )
       } catch { /* fail-open 恒成立 */ }
     }
+    // —— 阶段 7 批次 B（D7B-05/07/08）：崩溃监听装配——
+    // ① child-process-gone：main() 内注册——audit/diagnostics 为 main() 局部（安全 MED-1），经抽函数 handleChildProcessGone
+    //    （GPU 分支 gpu:crash 解耦，契约 H-1；无 reload——GPU 不 reload，N2 定案）。
+    // ② setCrashSink：main-window 模块级 sink 装配（logger/audit；无 onRendererGone 死成员，LOW-2；crashMarker 内部写）。
+    //   注：diagnostics 为模块级 let（undefined 初始），此处已赋值（createDiagnostics 在 L129 成功）——捕获本地 const 供本作用域后续用。
+    const diagLogger = diagnostics.logger
+    app.on('child-process-gone', (_ev, d) => handleChildProcessGone(d, { logger: diagLogger, audit }))
+    setCrashSink({ logger: diagLogger, audit })
     // 启动门禁（B2/P0-02）：dev 模式下 ELECTRON_RENDERER_URL 必须指向受信地址（回环或 allowlist）。
     // 在 requestSingleInstanceLock 之后——只有持锁主实例评估（第二实例已在 lock 处 exit(0)）。
     // fatal exit 异步，故 untrusted 后必须 return，否则继续建窗/装配。
