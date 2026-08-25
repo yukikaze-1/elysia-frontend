@@ -13,6 +13,7 @@ import type { BackendEvent, ConnectionState, Message, MessageAttachment, Message
 import { StreamAccumulator } from '@shared/domain'
 import { api } from './desktop-api'
 import { useConversationStore } from './conversation.store'
+import { useDraftStore } from './draft.store'
 import { useCacheStore } from './cache.store'
 import { cmpMsg } from '../utils/message-order'
 import { parsePublicError, type PublicError } from '../utils/public-error'
@@ -455,6 +456,10 @@ export const useMessageStore = defineStore('message', () => {
   /** 断线(reconnecting/error/disconnected):先清 local-* pending 乐观消息(I5),再处理 in-flight → interrupted(P1-6) */
   function handleConnectionStateChange(s: ConnectionState): void {
     if (s.status !== 'reconnecting' && s.status !== 'error' && s.status !== 'disconnected') return
+    // Task 4（H-3）：断线自动持久化当前会话草稿——flush(cid) 立即落盘草稿/滚动锚点，防断线丢草稿。
+    // currentId 保留（断线不切会话），flush 必传 conversationId；无活动会话则跳过。
+    const cid = useConversationStore().currentId
+    if (cid) void useDraftStore().flush(cid)
     // I5:清理 byId 中 status='pending' 且 key 以 local- 开头的用户消息(未确认;后端若已处理会经 replay 带回正式版本)
     // F11:插在 activeGenerationId 早退之前,无 active generation 时清理也执行
     for (const id of [...order.value]) {

@@ -29,7 +29,7 @@ import { SessionStore } from './persistence/session-store'
 import { SettingsService } from './settings/settings-service'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
-import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthLevelEnv, parseMockMouthWindowEnv, parseMockDirectiveEnv, parseMockToolFlowEnv, parseMockToolHistoryEnv } from './transport/mock-backend'
+import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthLevelEnv, parseMockMouthWindowEnv, parseMockDirectiveEnv, parseMockToolFlowEnv, parseMockToolHistoryEnv, parseMockDisconnectAfterMsEnv } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
@@ -195,6 +195,10 @@ async function main(): Promise<void> {
     // 按 kind 发射 tool.* 领域事件；非法 JSON/形状 → 不注入）与归档配对 seed（CYRENE_MOCK_TOOL_HISTORY='1'/'true'）
     const mockToolFlow = parseMockToolFlowEnv(process.env.CYRENE_MOCK_TOOL_FLOW)
     const mockToolHistory = parseMockToolHistoryEnv(process.env.CYRENE_MOCK_TOOL_HISTORY)
+    // 阶段 7 批次 B（Task 4）：mock 自动断线模拟（CYRENE_MOCK_DISCONNECT_AFTER_MS）——设置时 connect() 成功起
+    // setTimeout 到期触发 error 态断线（lastError='mock-disconnect'）；手动 connect() 恢复 connected。
+    // 与其它 parseMock*Env 平铺（parseMockHistoryCountEnv 同款）——undefined 不注入，真实模式（useMock false）不装配。
+    const mockDisconnectAfter = parseMockDisconnectAfterMsEnv(process.env.CYRENE_MOCK_DISCONNECT_AFTER_MS)
     // 阶段 7 批次 A（Task 3，可行 MED）：mock 回复正文夹具 env 桥——CYRENE_MOCK_REPLY_FIXTURE 指向本地文件，
     // 内容经 options.replyFixtureText 覆盖 mock 生成回复正文（集成 markdown-xss 注入 XSS 载荷用）。
     // 仅 mock 模式（useMock 门控——真实模式误设不注入，纪律同 mockMouthLevel）；renderer 不读 env；
@@ -217,7 +221,7 @@ async function main(): Promise<void> {
     }
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), ...(mockReplyFixtureText !== undefined ? { replyFixtureText: mockReplyFixtureText } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), ...(mockReplyFixtureText !== undefined ? { replyFixtureText: mockReplyFixtureText } : {}), ...(mockDisconnectAfter !== undefined ? { disconnectAfterMs: mockDisconnectAfter } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,

@@ -236,6 +236,14 @@ export function parseMockToolHistoryEnv(env: string | undefined): boolean {
   return env === '1' || env === 'true'
 }
 
+/** CYRENE_MOCK_DISCONNECT_AFTER_MS env → disconnectAfterMs（Task 4 / 阶段 7 批次 B env 桥）：undefined/空串 → undefined
+ *  （不注入，连接保持）；正整数 → n；0/负数/NaN → undefined（不注入）。与 parseMockHistoryCountEnv 的空串=不开语义一致。 */
+export function parseMockDisconnectAfterMsEnv(value: string | undefined): number | undefined {
+  if (!value) return undefined
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
 /** C3：DirectiveState 七值（与 wire 契约一致；剔除 error——error=3 必须 client 驱动，D5C-07） */
 const MOCK_DIRECTIVE_STATES: ReadonlySet<string> = new Set([
   'idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised'
@@ -296,6 +304,10 @@ export interface MockBackendOptions {
    *  scheduleReplay 中 public_reply 段正文以本文本覆盖（首个 public_reply delta 全量、其后置空；inner_voice 不变）。
    *  集成 markdown-xss 注入 XSS 载荷用；缺省 undefined 行为不变。 */
   replyFixtureText?: string
+  /** 阶段 7 批次 B（Task 4）：自动断线模拟（CYRENE_MOCK_DISCONNECT_AFTER_MS env 桥）——设置后 connect() 成功起
+   *  setTimeout 到期触发 simulateDisconnect() → error 态（lastError='mock-disconnect'）；手动 connect() 恢复 connected。
+   *  缺省 undefined 不注入（连接保持）。 */
+  disconnectAfterMs?: number
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -321,6 +333,11 @@ export class MockBackend implements BackendAdapter {
    *  订阅者，单槽会被 chat-service 订阅覆盖导致 mock 下聊天断流（与 real-backend 多槽语义对齐）。 */
   private readonly handlers = new Set<BackendEventHandler>()
   private connected = false
+  /** Task 4：断线模拟——simulateDisconnect() 置 error 态；connect() 成功复位 false */
+  private errored = false
+  /** Task 4：断线模拟定时器（disconnectAfterMs 到期触发 simulateDisconnect()；dispose/clearTimers 清理） */
+  private disconnectTimer?: ReturnType<typeof setTimeout>
+  private readonly disconnectAfterMs?: number
   private readonly fixture: BackendEvent[]
   private readonly emitDelayMs: number
   private readonly generationEmotion?: string // Task 6：generation.completed 情绪注入（CYRENE_MOCK_GENERATION_EMOTION）
@@ -426,6 +443,7 @@ export class MockBackend implements BackendAdapter {
 
   constructor(options: MockBackendOptions = {}) {
     this.seedHistoryCount = options.seedHistoryCount ?? 0
+    this.disconnectAfterMs = options.disconnectAfterMs
     this.voiceErrorOpt = options.voiceError
     this.transcriptText = options.voiceTranscriptText ?? '这是一段测试录音的转写文本'
     this.transcriptDelayMs = options.transcriptDelayMs ?? 0
@@ -482,18 +500,35 @@ export class MockBackend implements BackendAdapter {
 
   async connect(input: ConnectInput): Promise<BackendSession> {
     this.connected = true
+    this.errored = false // 手动 reconnect：重置 error 态 → 发 connected
+    if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = undefined }
+    if (this.disconnectAfterMs) {
+      this.disconnectTimer = setTimeout(() => this.simulateDisconnect(), this.disconnectAfterMs)
+    }
     this.onConnectionStateChange?.({ status: 'connected' })
     return { ...MOCK_SESSION, serverUrl: input.serverUrl }
   }
 
   async disconnect(): Promise<void> {
     this.connected = false
+    this.errored = false // 用户主动断开：非 error 态
     this.clearTimers()
     this.onConnectionStateChange?.({ status: 'disconnected' })
   }
 
+  /** Task 4：断线模拟——置 error 态（lastError='mock-disconnect'），并广播给订阅方（手动 connect 恢复 connected） */
+  private simulateDisconnect(): void {
+    if (!this.connected) return
+    this.connected = false
+    this.errored = true
+    this.onConnectionStateChange?.({ status: 'error', lastError: 'mock-disconnect' })
+  }
+
   getConnectionState(): ConnectionState {
-    return { status: this.connected ? 'connected' : 'disconnected' }
+    return {
+      status: this.errored ? 'error' : this.connected ? 'connected' : 'disconnected',
+      ...(this.errored ? { lastError: 'mock-disconnect' } : {})
+    }
   }
 
   async listConversations(_input: PageQuery): Promise<Page<Conversation>> {
@@ -953,6 +988,7 @@ export class MockBackend implements BackendAdapter {
     this.transcriptTimers.forEach((t) => clearTimeout(t))
     this.transcriptTimers = []
     if (this.ttsCancelTimer) { clearTimeout(this.ttsCancelTimer); this.ttsCancelTimer = undefined } // C1：清 TTS 采样窗口取消定时器
+    if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = undefined } // Task 4：清断线模拟定时器（防 dispose 悬挂）
   }
 
   private emit(event: BackendEvent): void {
