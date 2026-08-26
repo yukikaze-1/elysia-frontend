@@ -100,6 +100,10 @@ function rejectForbiddenDebugSwitches(): boolean {
 async function main(): Promise<void> {
   if (rejectForbiddenDebugSwitches()) return
 
+  // 阶段 7 批次 C（Task 5 性能测量）：精确内存信息——Chromium 默认 performance.memory 为近似值，
+  // enable-precise-memory-info 让 usedJSHeapSize 接近真实（性能测量断言用）。必须在 app ready 前设置。
+  app.commandLine.appendSwitch('enable-precise-memory-info')
+
   let ident
   try {
     // 集成测试 appData 隔离必须早于身份安装与任何 userData 落盘。Windows Electron 43
