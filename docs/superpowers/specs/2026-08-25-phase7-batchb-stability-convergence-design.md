@@ -11,7 +11,7 @@
 
 7B = **稳定性收敛批次**，覆盖四个面：
 
-1. **Renderer 崩溃恢复**（纯新增）：主进程监听 `render-process-gone`（改 3 参回调）+ `child-process-gone`（GPU，main() 内），崩溃时留痕 + 持久化 crash marker → 自动 reload + 审计；reload 后新 Renderer 经 `getLastCrash` 读 marker 显示提示条。
+1. **Renderer 崩溃恢复**（纯新增）：主进程监听 `render-process-gone`（2 参回调——真实 WebContents 签名）+ `child-process-gone`（GPU，main() 内），崩溃时留痕 + 持久化 crash marker → 自动 reload + 审计；reload 后新 Renderer 经 `getLastCrash` 读 marker 显示提示条。
 2. **网络中断回归 + 新能力**：断线浏览历史（既有）+ **草稿断线自动持久化**（新增）+ mock 断线模拟（新增）+ mock/real 回归集。
 3. **缓存损坏统一层**（架构收口）：抽取 `createCorruptIsolation` 骨架（隔离备份/重建/审计计数/单测模板），各持久化 store 采用但**各自声明 fail-open 或 fail-closed 语义**。
 4. **GPU 上下文恢复**（核对 + 进程级兜底）：Live2D 渲染层链路完整（阶段 5 批次 C），7B 补 Electron **GPU 进程崩溃**(`child-process-gone` type==='GPU') 兜底。
@@ -28,7 +28,7 @@
 
 | 面 | 内容 | 类型 |
 |---|---|---|
-| **A. Renderer 崩溃恢复** | `webContents.on('render-process-gone')`（3 参回调）→ 留痕 + crash marker + 自动 reload + 审计 `renderer:crash`；进程级 `app.on('child-process-gone')`（GPU，main() 内注册——对 A 面的进程级兜底，落点面 D） | **纯新增** |
+| **A. Renderer 崩溃恢复** | `webContents.on('render-process-gone')`（2 参回调——真实 WebContents 签名）→ 留痕 + crash marker + 自动 reload + 审计 `renderer:crash`；进程级 `app.on('child-process-gone')`（GPU，main() 内注册——对 A 面的进程级兜底，落点面 D） | **纯新增** |
 | **B. 网络中断回归 + 新能力** | 断线浏览历史（既有 offlineView，补回归）+ 草稿断线自动持久化（新增）+ mock 断线模拟 `CYRENE_MOCK_DISCONNECT_AFTER_MS` + real/mock 回归集 | **回归 + 新增** |
 | **C. 缓存损坏统一层** | `createCorruptIsolation` 骨架（隔离备份/重建/审计计数/单测模板）；settings/credentials/session-store/tool-history 采用，各自声明 fail-open/fail-closed | **架构收口** |
 | **D. GPU 上下文恢复** | Live2D 渲染层链路核对（阶段5批次C已完整）；+ Electron 进程级 GPU crash（`child-process-gone` type==='GPU'）兜底 + `enableHardwareAcceleration` 评估 | **核对 + 进程级新增** |
@@ -130,8 +130,8 @@ export interface MainWindowOpts {
 // D7B-05/D7B-07：Renderer 崩溃——检测 + 持久化 marker + 自动 reload + 审计。
 // 崩溃是进程级：Main 检测与处置；Renderer 已崩，reload 由 Main 执行，且 killed renderer 收不到 push（安全 H-2）。
 // logger/audit/onRendererGone 为模块级注入 sink（安全 MED-2：所有窗口创建路径共享，非 per-opts）。
-// 注意：render-process-gone 回调是 3 参（event, webContents, details）——details 是第 3 参（可行性 H-1 修正）。
-win.webContents.on('render-process-gone', (_ev, _webContents, details) => {
+// 注意：win.webContents（WebContents 类）的 render-process-gone 回调是 2 参（_ev, details）——details 是第 2 参（Electron 43 electron.d.ts:17304；3 参属 App 接口，H-1 定位偏差已修正）。
+win.webContents.on('render-process-gone', (_ev, details) => {
   // details.reason 枚举：clean-exit | abnormal-exit | killed | crashed | oom | launch-failed | integrity-failure | memory-eviction
   if (details.reason === 'clean-exit') return  // 正常关窗退出，不处理
   // ① 留痕（审计 + 日志）——非 clean-exit 全走崩溃路径
@@ -146,7 +146,7 @@ win.webContents.on('render-process-gone', (_ev, _webContents, details) => {
 })
 ```
 
-**注意**：`render-process-gone` 回调为 3 参 `(_ev, _webContents, details)`——第 2 参是 `webContents` 本体，`details` 是第 3 参（Electron 43 `electron.d.ts:700-703`）。**`clean-exit` 是唯一正常退出**，其余 `abnormal-exit`/`killed`/`crashed`/`oom`/`launch-failed`/`integrity-failure`/`memory-eviction` 全走崩溃路径。
+**注意**：`win.webContents`（`WebContents` 类）的 `render-process-gone` 回调为 **2 参** `(_ev, details)`——`details` 是第 2 参（Electron 43 `electron.d.ts:17304`；3 参 `(event, webContents, details)` 属 `App` 接口 `electron.d.ts:700`，非 WebContents 事件）。**`clean-exit` 是唯一正常退出**，其余 `abnormal-exit`/`killed`/`crashed`/`oom`/`launch-failed`/`integrity-failure`/`memory-eviction` 全走崩溃路径。
 
 **`crashMarker` 持久化**：Main 侧模块级 `let crashMarker: { reason; exitCode; ts } | null = null`；崩溃时写入；reload 后 Renderer 经 `getLastCrash`（新增 invoke）读取；`getLastCrash` 读一次后**清空 marker**（一次性，防 reload 后每次启动都提示）。
 
@@ -319,8 +319,8 @@ export function createCorruptIsolation(deps: CorruptIsolationOpts): CorruptIsola
 **TDD**：先写失败测试（schema/invoke/preload 未存在），实现后绿。**不含 onRendererCrash**（已移除——安全 H-2）。
 
 ### Task 2: 主进程崩溃监听（render-process-gone + reload + 审计 + crash marker）
-**Files**: `main/windows/main-window.ts`（+render-process-gone **3 参回调** + 模块级 logger/audit/onRendererGone sink + crashMarker）、`main/index.ts`（+child-process-gone **main() 内注册** + getLastCrash handler + ensureMainWindow 装配模块级 sink）、`tests/unit/renderer-crash-handler.spec.ts`
-**TDD**：崩溃钩子触发 → audit `renderer:crash` + crashMarker 写入 + reload；`clean-exit` 不处理；**3 参回调**（details 正确读取）。
+**Files**: `main/windows/main-window.ts`（+render-process-gone **2 参回调** + 模块级 logger/audit/onRendererGone sink + crashMarker）、`main/index.ts`（+child-process-gone **main() 内注册** + getLastCrash handler + ensureMainWindow 装配模块级 sink）、`tests/unit/renderer-crash-handler.spec.ts`
+**TDD**：崩溃钩子触发 → audit `renderer:crash` + crashMarker 写入 + reload；`clean-exit` 不处理；**2 参回调**（details 正确读取）。
 
 ### Task 3: 崩溃提示 UI（reload 后读 marker）
 **Files**: `renderer/src/main.ts`（+bootstrap 时 getLastCrash）、`renderer/src/components/CyRendererCrashBanner.vue`（新）、`tests/unit/cy-renderer-crash-banner.spec.ts`

@@ -4,7 +4,7 @@
 
 **Goal:** 落实 7B 稳定性收敛四面——Renderer 崩溃恢复（检测+marker+reload+审计）、网络断线草稿/ mock 断线模拟、缓存损坏统一层、GPU 进程级兜底。
 
-**Architecture:** 主进程崩溃监听（render-process-gone 3 参回调 + child-process-gone main() 内注册）→ crashMarker 持久化 → reload 后 Renderer 经 getLastCrash invoke 读取显示提示；草稿断线 flush(cid)+mock disconnectAfterMs；createCorruptIsolation 骨架（isolate 带 safeRoot + Logger 同构）各 store 语义保留；child-process-gone GPU 审计 gpu:crash 不 reload。
+**Architecture:** 主进程崩溃监听（render-process-gone 2 参回调 + child-process-gone main() 内注册）→ crashMarker 持久化 → reload 后 Renderer 经 getLastCrash invoke 读取显示提示；草稿断线 flush(cid)+mock disconnectAfterMs；createCorruptIsolation 骨架（isolate 带 safeRoot + Logger 同构）各 store 语义保留；child-process-gone GPU 审计 gpu:crash 不 reload。
 
 **Tech Stack:** Electron 43.3.0 / Vue 3 / TypeScript / Vitest（单元 + Electron 集成）/ zod / pnpm workspace。
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **三态**：本批 = 代码批，Mock 驱动，**三态 = 已开发、未联调**（真实 Windows Electron 联调为批次后）。
-- **render-process-gone 回调是 3 参** `(_ev, _webContents, details)`——details 是第 3 参（Electron 43 electron.d.ts:700-703）。`child-process-gone` 回调是 2 参 `(_ev, details)`。
+- **render-process-gone 回调是 2 参** `(_ev, details)`——`win.webContents`（`WebContents` 类）的真实签名为 2 参（Electron 43 electron.d.ts:17304）；3 参 `(event, webContents, details)` 属 `interface App`（electron.d.ts:700），非 WebContents 事件。`child-process-gone` 回调也是 2 参 `(_ev, details)`。**本批按真实 2 参实现**（Task 2 已核；early spec/plan 的「3 参」为 H-1 定位偏差——本文档后续已一并修正）。
 - **audit type 解耦**：renderer 崩溃 `renderer:crash`、GPU 崩溃 **`gpu:crash`**（勿共用 `'renderer:crash'`——契约 H-1）。
 - **崩溃提示非实时 push**：Renderer 已死收不到 push——崩溃提示 = crashMarker + reload 后 `getLastCrash` invoke 读取（一次性清空）。
 - **正文零泄露**：崩溃载荷 `{reason, exitCode}` 仅元数据；草稿正文写 drafts-v1.json 是合法持久化（非日志/非诊断导出）；`.corrupt-*` 备份不纳入导出/传输——**行为半：`isolate()` 须实现 `pruneCorrupt` 有界保留**（HIGH-1，spec 安全 MED-4「只留最新一份」）+ **文档半：doc 01/07 注明 `.corrupt` 不纳入导出**。
@@ -173,10 +173,10 @@ git commit -m "feat(阶段7批次B): Task1 崩溃契约层——RendererCrashEve
 
 ---
 
-### Task 2: 主进程崩溃监听（render-process-gone 3 参 + crashMarker + 审计 + reload）
+### Task 2: 主进程崩溃监听（render-process-gone 2 参 + crashMarker + 审计 + reload）
 
 **Files:**
-- Modify: `apps/desktop/src/main/windows/main-window.ts`（+render-process-gone 3 参监听 + 模块级 logger/audit sink + crashMarker + getCrashMarker）
+- Modify: `apps/desktop/src/main/windows/main-window.ts`（+render-process-gone 2 参监听 + 模块级 logger/audit sink + crashMarker + getCrashMarker）
 - Modify: `apps/desktop/src/main/index.ts`（+child-process-gone main() 内调 handleChildProcessGone + 装配 setCrashSink）
 - Modify: `apps/desktop/src/main/ipc/diagnostics-handlers.ts`（+getLastCrash handler，直 import getCrashMarker——准确性 MED-1 + re-review N1 定案：免 handlers.ts 线程化）
 - Test: `apps/desktop/tests/unit/renderer-crash-handler.spec.ts`
@@ -195,7 +195,7 @@ import { describe, expect, it, vi } from 'vitest'
 // 具体实现：createMainWindow 签名不变，但崩溃监听读模块级 crashSink（logger/audit——无 onRendererGone）与 crashMarker。
 ```
 
-（单测聚焦：`clean-exit` 不触发 audit；`crashed` 触发 audit + marker 写入 + reload 调用；3 参回调正确读 details。）
+（单测聚焦：`clean-exit` 不触发 audit；`crashed` 触发 audit + marker 写入 + reload 调用；2 参回调正确读 details。）
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -217,8 +217,8 @@ export function getCrashMarker(): { reason: string; exitCode: number } | null { 
 **3b. `main/windows/main-window.ts`** 崩溃监听（before-input-event 之后）：
 ```ts
 // D7B-05/D7B-07：Renderer 崩溃——检测 + 持久化 marker + 自动 reload + 审计。
-// 注意：render-process-gone 回调是 3 参（event, webContents, details）——details 是第 3 参（可行性 H-1）。
-win.webContents.on('render-process-gone', (_ev, _webContents, details) => {
+// 注意：win.webContents（WebContents 类）的 render-process-gone 回调是 2 参（_ev, details）——details 是第 2 参（Electron 43 electron.d.ts:17304；3 参属 App 接口，H-1 定位偏差已修正）。
+win.webContents.on('render-process-gone', (_ev, details) => {
   if (details.reason === 'clean-exit') return  // 正常关窗退出，不处理
   crashSink.logger?.warn('render-process-gone', { reason: details.reason, exitCode: details.exitCode })
   crashSink.audit?.({ type: 'renderer:crash', summary: `渲染进程异常：${details.reason} (exit ${details.exitCode})` })
@@ -256,7 +256,7 @@ Expected: PASS
 
 ```bash
 git add apps/desktop/src/main/windows/main-window.ts apps/desktop/src/main/index.ts apps/desktop/src/main/ipc/diagnostics-handlers.ts apps/desktop/tests/unit/renderer-crash-handler.spec.ts
-git commit -m "feat(阶段7批次B): Task2 主进程崩溃监听——render-process-gone 3 参 + crashMarker + 审计 + reload；child-process-gone handleChildProcessGone（抽函数）+ getLastCrash handler 落 diagnostics-handlers（直 import getCrashMarker）（TDD）"
+git commit -m "feat(阶段7批次B): Task2 主进程崩溃监听——render-process-gone 2 参 + crashMarker + 审计 + reload；child-process-gone handleChildProcessGone（抽函数）+ getLastCrash handler 落 diagnostics-handlers（直 import getCrashMarker）（TDD）"
 ```
 
 ---
