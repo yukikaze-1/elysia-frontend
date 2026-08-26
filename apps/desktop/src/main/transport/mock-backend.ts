@@ -244,6 +244,16 @@ export function parseMockDisconnectAfterMsEnv(value: string | undefined): number
   return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
+/** CYRENE_MOCK_MULTI_SEGMENT env → 多分段回复分段数（Task 4 / 阶段 7 批次 C）：undefined/空串→undefined；
+ *  正整数→原值；0/负数/NaN/非整数→undefined（不允许空 seed）。useMock 门控（index.ts 装配）。
+ *  与 parseMockHistoryCountEnv 的「0/负数兜底默认值」语义刻意不同——多分段是显式注入，非法值一律不注入。 */
+export function parseMockMultiSegmentEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value === '') return undefined
+  const n = Number(value)
+  if (!Number.isInteger(n) || n <= 0) return undefined
+  return n
+}
+
 /** C3：DirectiveState 七值（与 wire 契约一致；剔除 error——error=3 必须 client 驱动，D5C-07） */
 const MOCK_DIRECTIVE_STATES: ReadonlySet<string> = new Set([
   'idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised'
@@ -308,6 +318,11 @@ export interface MockBackendOptions {
    *  setTimeout 到期触发 simulateDisconnect() → error 态（lastError='mock-disconnect'）；手动 connect() 恢复 connected。
    *  缺省 undefined 不注入（连接保持）。 */
   disconnectAfterMs?: number
+  /** 阶段 7 批次 C（Task 4）：多分段回复分段数（CYRENE_MOCK_MULTI_SEGMENT env 桥）——设置 N 时 scheduleReplay
+   *  用 generateMultiSegmentEvents 生成 N 个 public_reply 分段【取代而非追加】夹具既有 public_reply 段，
+   *  generation.completed 居末（否则 renderer 标 completing 非 completed）。与 seedHistoryCount 正交——
+   *  前者控回复分段数，后者控历史/长会话消息数。缺省 undefined 走既有夹具回放。 */
+  multiSegmentCount?: number
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -338,6 +353,8 @@ export class MockBackend implements BackendAdapter {
   /** Task 4：断线模拟定时器（disconnectAfterMs 到期触发 simulateDisconnect()；dispose/clearTimers 清理） */
   private disconnectTimer?: ReturnType<typeof setTimeout>
   private readonly disconnectAfterMs?: number
+  /** 阶段 7 批次 C（Task 4）：多分段回复分段数（CYRENE_MOCK_MULTI_SEGMENT env 桥；缺省 undefined 走夹具回放） */
+  private readonly multiSegmentCount?: number
   private readonly fixture: BackendEvent[]
   private readonly emitDelayMs: number
   private readonly generationEmotion?: string // Task 6：generation.completed 情绪注入（CYRENE_MOCK_GENERATION_EMOTION）
@@ -444,6 +461,7 @@ export class MockBackend implements BackendAdapter {
   constructor(options: MockBackendOptions = {}) {
     this.seedHistoryCount = options.seedHistoryCount ?? 0
     this.disconnectAfterMs = options.disconnectAfterMs
+    this.multiSegmentCount = options.multiSegmentCount ?? undefined
     this.voiceErrorOpt = options.voiceError
     this.transcriptText = options.voiceTranscriptText ?? '这是一段测试录音的转写文本'
     this.transcriptDelayMs = options.transcriptDelayMs ?? 0
@@ -541,7 +559,16 @@ export class MockBackend implements BackendAdapter {
     return { ...conv }
   }
 
-  async getConversationMessages(_input: ConversationMessagesQuery): Promise<MessagePage> {
+  async getConversationMessages(input: ConversationMessagesQuery): Promise<MessagePage> {
+    // 阶段 7 批次 C（Task 4，准确 M-2）：seedHistoryCount>0（CYRENE_MOCK_HISTORY_LARGE）时，激活会话返回该会话的
+    // messageRecords（升序分页）——长会话 200 条前提（conversation.store activate 读 getMessages 走此路径）；
+    // 否则维持空页（既有行为，历史查看器消息上下文自取）。
+    if (this.seedHistoryCount > 0) {
+      const records = this.messageRecords
+        .filter((m) => m.conversationId === input.conversationId)
+        .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
+      return { items: records, hasMore: false }
+    }
     return { items: [], hasMore: false }
   }
 
@@ -894,10 +921,45 @@ export class MockBackend implements BackendAdapter {
     return base
   }
 
+  /**
+   * 阶段 7 批次 C（Task 4）：多分段回复种子生成（纯方法，scheduleReplay 与单测共用——满足准确 M-7 / N-1 修正）。
+   * 当 multiSegmentCount=N 设置时，生成 N 个 public_reply 分段的完整流式事件序列：
+   *  - generation.started 首位（renderer 归属守卫唯一带 conversationId 的事件——缺失则后续增量全被丢弃）；
+   *  - 每段 generation.segment.started（segmentIndex=i）→ 1 个 generation.delta（deltaSequence=0）→ generation.segment.completed；
+   *  - generation.completed 居末（所有 N 段完成后，确保 applyCompleted 最后执行——hasGap→completed 非 completing）。
+   * 文本为可读确定性「模拟命中文本 N」（避 base64-long-string 黑名单，安全 M-4）。取代而非追加夹具 public_reply 段。
+   * 注意：segment 事件（started/delta/completed）按 BackendEvent 判别联合**不承载** messageId/responseId/conversationId
+   * （与既有夹具一致——归属经 generationByConversation 表推导），仅 generation.started/completed 带 conversationId。
+   */
+  generateMultiSegmentEvents(generationId: string, messageId: string, responseId: string, conversationId: string): BackendEvent[] {
+    const events: BackendEvent[] = []
+    events.push({ ...this.stamp(), event: 'generation.started', generationId, messageId, responseId, conversationId })
+    for (let i = 0; i < (this.multiSegmentCount ?? 0); i++) {
+      const segId = `pr-ms-${i}`
+      const text = `模拟命中文本 ${i}` // 可读确定性文本，避 base64 黑名单（安全 M-4）
+      events.push({ ...this.stamp(), event: 'generation.segment.started', segmentId: segId, segmentIndex: i, channel: 'public_reply', kind: 'markdown', generationId })
+      events.push({ ...this.stamp(), event: 'generation.delta', segmentId: segId, segmentIndex: i, channel: 'public_reply', kind: 'markdown', generationId, deltaSequence: 0, text })
+      events.push({ ...this.stamp(), event: 'generation.segment.completed', segmentId: segId, segmentIndex: i, channel: 'public_reply', kind: 'markdown', generationId })
+    }
+    events.push({ ...this.stamp(), event: 'generation.completed', generationId, messageId, responseId })
+    return events
+  }
+
   private scheduleReplay(conversationId: string): void {
     const genId = this.idFactory()
     const msgId = this.idFactory()
     const rspId = this.idFactory()
+    // 阶段 7 批次 C（Task 4）：multiSegmentCount 设置时改用 generateMultiSegmentEvents（取代而非追加夹具 public_reply 段）
+    if (this.multiSegmentCount) {
+      const events = this.generateMultiSegmentEvents(genId, msgId, rspId, conversationId)
+      const genTimers: ReturnType<typeof setTimeout>[] = []
+      // 信封已在生成时刻打（stamp() 同步分配 eventId/sequence）——与夹具逐条重放的「emit 时刻打戳」语义有差异，
+      // 但序列仍是发顺序严格递增（每代独立），且与其余语音/TTS 事件共享同一 nextSequence 计数器不会回退。
+      // 逐条 setTimeout 重放（保持与夹具同款的分档延时节奏），generation.completed 已在 events 居末。
+      events.forEach((e, i) => { genTimers.push(setTimeout(() => this.emit(e), i * this.emitDelayMs)) })
+      this.generationTimers.set(genId, genTimers)
+      return
+    }
     const segmentMap = new Map<string, string>()
     const genTimers: ReturnType<typeof setTimeout>[] = []
     // 阶段 7 批次 A（Task 3）：回复正文覆盖标记（每代局部——并发两代互不串扰；首批 public_reply delta 后关闭，
