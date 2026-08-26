@@ -19,10 +19,26 @@ export const DOMPURIFY_CONFIG = {
   SANITIZE_DOM: true,
 } satisfies DOMPurifyConfig
 
-/** Markdown → 安全 HTML：marked.parse（GFM 默认）→ DOMPurify → 代码块包裹 */
+/**
+ * 模块级 markdown 渲染缓存（阶段 7 批次 C，D7C-08：选 Map 而非 WeakMap——string key 非弱持有）。
+ * renderMarkdown 是 text 的纯函数（DOMPurify 配置为静态常量，非运行时变量），故可按 source 字符串记忆化；
+ * key = source 文本，value = sanitize 后 HTML（post-sanitize，安全）。敏感文本作为值驻留 renderer 堆内
+ * （M-1 接受档）——仅会话内清空（resetConversation 挂载点）、不跨信任边界。
+ */
+const markdownCache = new Map<string, string>()
+
+/** Markdown → 安全 HTML：marked.parse（GFM 默认）→ DOMPurify → 代码块包裹；命中缓存则跳过 parse+sanitize */
 export function renderMarkdown(text: string): string {
-  const html = marked.parse(text, { async: false })
-  return wrapCodeBlocks(DOMPurify.sanitize(html, DOMPURIFY_CONFIG))   // 先净化再包裹（复制按钮不被打回——现实现同序）
+  const cached = markdownCache.get(text)
+  if (cached !== undefined) return cached
+  const html = wrapCodeBlocks(DOMPurify.sanitize(marked.parse(text, { async: false }), DOMPURIFY_CONFIG))   // 先净化再包裹（复制按钮不被打回——现实现同序）
+  markdownCache.set(text, html)
+  return html
+}
+
+/** 清空 markdown 渲染缓存——会话切换（resetConversation）挂载点调用，防敏感内容跨会话驻留 */
+export function clearMarkdownCache(): void {
+  markdownCache.clear()
 }
 
 /** 代码块包裹：保留 <code> 元素（复制交互经 pre code 取 textContent），语言从 language-xxx class 提取——与现实现逐字符一致（markdown.ts:79-85） */

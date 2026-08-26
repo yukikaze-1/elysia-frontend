@@ -17,6 +17,7 @@ import { useDraftStore } from './draft.store'
 import { useCacheStore } from './cache.store'
 import { cmpMsg } from '../utils/message-order'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { clearMarkdownCache } from '../utils/markdown'   // 阶段 7 批次 C（Task 3）：会话切换清空 markdown 渲染缓存（M-2 单一挂载点）
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -139,6 +140,7 @@ export const useMessageStore = defineStore('message', () => {
     highlightSegmentId.value = undefined
     nextCursor.value = undefined
     loadingEarlier.value = false
+    clearMarkdownCache()   // 阶段 7 批次 C（Task 3）：会话切换清空 markdown 缓存（M-2 单一挂载点，防敏感内容跨会话驻留）
   }
 
   function applyEvent(event: BackendEvent): void {
