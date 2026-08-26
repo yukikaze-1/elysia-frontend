@@ -1171,6 +1171,23 @@ const ALLOWLIST = [
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 557 行——已人工核对全部为npm 包完整性哈希（registry sha512 公开字段，确定性非秘密）（逐文件核对 2026-08-22）`
   },
+  // ── 阶段 7 批次 B 收口（Task 7 门禁）：Task 1~6 新落文档/测试的 base64-long-string 误报 ──
+  // 全部为可读路径/标识符长串（模块导入串 + 文档 git add 串），非高熵秘密——逐行人工核对 2026-08-26。
+  {
+    path: "apps/desktop/tests/unit/cy-renderer-crash-banner.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 1 行——已人工核对为组件导入可读路径串（src/renderer/src/components/CyRendererCrashBanner.vue，非高熵秘密）（逐文件核对 2026-08-26）`
+  },
+  {
+    path: "docs/superpowers/plans/2026-08-25-phase7-batchb-stability-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 13 行——已人工核对全部为可读路径/标识符长串（模块导入串 + git add 串 + getLastCrash/contracts/corrupt-isolation 等标识符斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
+  },
+  {
+    path: "docs/superpowers/specs/2026-08-25-phase7-batchb-stability-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（renderer/src/main.ts + getLastCrash 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
+  },
 ]
 let failed = false
 const ok = (m) => console.log(`✓ ${m}`)

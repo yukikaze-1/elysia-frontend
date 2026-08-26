@@ -56,6 +56,21 @@ describe('IPC 安全', () => {
     const hasSub = await page.evaluate(() => typeof window.desktopApi.onDiagnosticsDevEvent === 'function')
     expect(hasSub).toBe(true)
   })
+  it('diagnostics:last-crash 是纯 invoke 通道:不入 PushChannels 推送枚举(阶段 7 批次 B Task 1)', async () => {
+    // Renderer 崩溃后已死,Mark 落盘,后续经 getLastCrash invoke 一次性读回——故为命令式 invoke 通道,
+    // 绝不入 Main→Renderer 推送集合(PushChannels),也无 ipcRenderer.on 订阅语义。
+    expect(Object.values(PushChannels)).not.toContain('diagnostics:last-crash')
+    expect(Object.values(IpcChannels)).toContain('diagnostics:last-crash')
+    // preload 暴露 getLastCrash(invoke 一次性读后清空;74 键白名单已含该键)
+    const hasHandler = await page.evaluate(() => typeof window.desktopApi.getLastCrash === 'function')
+    expect(hasHandler).toBe(true)
+  })
+  it('renderer:crash 是纯 push 占位通道:不入 IpcChannels invoke 枚举(阶段 7 批次 B Task 1)', async () => {
+    // renderer:crash 为 Main→Renderer 下行推送占位(契约层明示不实际发送——Renderer 已死收不到,实际走 getLastCrash invoke);
+    // PushChannels.rendererCrash 必须存在于推送集合,且不出现在任何命令式 invoke 通道枚举里,也无 preload 订阅方法。
+    expect(PushChannels.rendererCrash).toBe('renderer:crash')
+    expect(Object.values(IpcChannels)).not.toContain('renderer:crash')
+  })
   it('超大输入 → SCHEMA_VALIDATION_FAILED', async () => {
     const err = await page.evaluate(async () => {
       try { await window.desktopApi.setBackendToken('x'.repeat(4097)); return null }
