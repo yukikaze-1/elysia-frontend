@@ -4,9 +4,9 @@
 // 损坏/版本不匹配 → 备份 settings.json.corrupt + 回默认（fail-open，不阻塞启动，与 SessionStore 同款隔离重建）；
 // save 为 patch merge（未提交字段保持现值），落盘前 SettingsStateSchema.parse 兜底（Minor 19：version 非 1 拒绝）。
 import { join } from 'path'
-import { rename } from 'fs/promises'
 import { atomicWriteFile } from '../credentials/atomic-write'
 import { openSafeFile } from '../persistence/safe-open'
+import { createCorruptIsolation, type CorruptIsolation } from '../persistence/corrupt-isolation'
 import { DEFAULT_SETTINGS, SettingsStateSchema } from '@shared/schemas'
 import type { SettingsPatch, SettingsState } from '@shared/contracts'
 import type { Logger } from '../diagnostics/logger'
@@ -15,22 +15,25 @@ export interface SettingsServiceDeps {
   dir: string
   safeRoot: string
   logger: Logger
+  countDiagnostic(code: string): void
 }
 
 export const SETTINGS_FILE_NAME = 'settings.json'
 
 export class SettingsService {
   private readonly file: string
+  private readonly isolation: CorruptIsolation
   private state: SettingsState = DEFAULT_SETTINGS
   private loaded = false
 
   constructor(private readonly deps: SettingsServiceDeps) {
     this.file = join(deps.dir, SETTINGS_FILE_NAME)
+    this.isolation = createCorruptIsolation({ logger: deps.logger, countDiagnostic: deps.countDiagnostic })
   }
 
   /**
    * 装载：文件缺失 → DEFAULT_SETTINGS；存在 → openSafeFile + JSON parse + SettingsStateSchema.safeParse；
-   * 失败（损坏/版本不匹配/非普通文件/权限不符）→ 备份 ${file}.corrupt + 回默认（fail-open）。
+   * 失败（损坏/版本不匹配/非普通文件/权限不符）→ 隔离备份 .corrupt-settings-<ts> + 回默认（fail-open）。
    */
   async load(): Promise<SettingsState> {
     try {
@@ -49,9 +52,10 @@ export class SettingsService {
         return this.state
       }
       this.deps.logger.warn('settings:corrupt-isolated', { file: SETTINGS_FILE_NAME })
-      await rename(this.file, `${this.file}.corrupt`).catch(() => {}) // 隔离保留现场，不污染后续写入
+      await this.isolation.isolate(this.file, 'settings', this.deps.safeRoot) // 隔离保留现场，不污染后续写入
       this.state = DEFAULT_SETTINGS
     }
+    await this.isolation.pruneCorrupt(this.file, 'settings') // HIGH-1 有界保留：只留最新一份 .corrupt-settings-*
     this.loaded = true
     return this.state
   }

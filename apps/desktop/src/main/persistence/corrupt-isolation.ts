@@ -1,0 +1,49 @@
+// src/main/persistence/corrupt-isolation.ts —— Task 5: 缓存损坏统一层骨架。
+// 契约：M-3 复用真实 Logger 接口；M-4/HIGH-1 `.corrupt-<tag>-<ts>` 隔离 + pruneCorrupt 有界保留（只留最新一份）。
+// 纪律：isolate 隔离保留现场（rename 后原文件消失，后续写入不污染）；countDiagnostic 计数（调用方不再重复计）。
+// 跨平台修正：pruneCorrupt 用 node:path 的 dirname/basename 替代 brief 的 lastIndexOf('/')（后者在 Windows 反斜杠路径下失效）。
+import { rename, readdir, unlink } from 'node:fs/promises'
+import { realpath } from 'node:fs/promises'
+import { dirname, basename, join } from 'node:path'
+import type { Logger } from '../diagnostics/logger'
+
+export interface CorruptIsolationOpts {
+  logger: Logger
+  countDiagnostic(code: string): void
+}
+export interface CorruptIsolation {
+  isolate(file: string, tag: string, safeRoot?: string): Promise<string>
+  dropInvalid(code: string): void
+  /** HIGH-1（安全 MED-4 修法）：有界保留——下次成功 load() 时清同 tag 旧 `.corrupt-*`（只留最新一份）。deleteOld=true 时调用 */
+  pruneCorrupt(file: string, tag: string): Promise<void>
+}
+function nowIso(): string { return new Date().toISOString().replace(/[:.]/g, '-') }
+async function assertContained(file: string, safeRoot: string): Promise<void> {
+  const real = await realpath(file)
+  const rel = real.startsWith(safeRoot) ? real.slice(safeRoot.length) : real
+  if (rel.startsWith('..') || rel.includes('..') || !real.startsWith(safeRoot)) throw new Error(`isolate 目标逃逸安全根: ${file}`)
+}
+export function createCorruptIsolation(deps: CorruptIsolationOpts): CorruptIsolation {
+  return {
+    async isolate(file, tag, safeRoot) {
+      if (safeRoot) await assertContained(file, safeRoot)  // 安全 MED-3：safeRoot 必传则校验
+      const dest = `${file}.corrupt-${tag}-${nowIso()}`
+      await rename(file, dest).catch(() => {})  // 隔离保留现场，不污染后续写入
+      deps.countDiagnostic('persistence:corrupt-isolated')
+      return dest
+    },
+    dropInvalid(code) { deps.countDiagnostic(code) },
+    async pruneCorrupt(file, tag) {
+      // HIGH-1 修法：清同 tag 旧 `.corrupt-<tag>-<ts>`，只留最新一份（本次 isolate 的 dest 除外）。
+      // 跨平台修正：用 path.dirname/basename 定位目录与基名（brief 的 lastIndexOf('/') 在 Windows 反斜杠路径下失效）。
+      const dir = dirname(file)
+      const base = basename(file)
+      const prefix = `${base}.corrupt-${tag}-`
+      try {
+        const entries = await readdir(dir)
+        const targets = entries.filter((n) => n.startsWith(prefix)).sort()  // ts 字典序 ≈ 时间序
+        for (const n of targets.slice(0, -1)) await unlink(join(dir, n)).catch(() => {})  // 留最新
+      } catch { /* 目录不存在：no-op */ }
+    }
+  }
+}

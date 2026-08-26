@@ -2,7 +2,7 @@
 // Task 8:Main SettingsService 持久化——load 缺失→默认 / save patch merge / 损坏隔离备份 / 版本不匹配回默认 /
 // 非法 patch 拒绝 / 原子写产物可读 + handler 接线（env=node，直接调用 createIpcHandler，不经 ipcMain）。
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsService, SETTINGS_FILE_NAME } from '../../src/main/settings/settings-service'
@@ -28,14 +28,14 @@ function settingsPath(dir: string): string { return join(dir, SETTINGS_FILE_NAME
 describe('SettingsService', () => {
   it('load：文件缺失 → DEFAULT_SETTINGS（不落盘）', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     expect(await svc.load()).toEqual(DEFAULT_SETTINGS)
     expect(existsSync(settingsPath(dir))).toBe(false)
   })
 
   it('save：patch merge 保留未触及字段，产物可读且重启可装载', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     await svc.load()
     const saved = await svc.save({ voice: { enabled: false } })
     expect(saved.voice.enabled).toBe(false)
@@ -52,26 +52,27 @@ describe('SettingsService', () => {
     expect(saved2.voice.enabled).toBe(false)
     expect(saved2.dictation.insertMode).toBe('replace_selection')
     // 新实例重载 → 持久化值生效
-    const svc2 = new SettingsService({ dir, safeRoot, logger })
+    const svc2 = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     expect(await svc2.load()).toEqual(saved2)
   })
 
   it('损坏文件 → 备份 settings.json.corrupt + 回默认（fail-open）', async () => {
     const { dir, safeRoot } = makeDir()
     writeFileSync(settingsPath(dir), 'not-json{{{', { mode: 0o600 })
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     expect(await svc.load()).toEqual(DEFAULT_SETTINGS)
-    expect(existsSync(`${settingsPath(dir)}.corrupt`)).toBe(true)
-    expect(readFileSync(`${settingsPath(dir)}.corrupt`, 'utf8')).toBe('not-json{{{') // 现场隔离保留
+    const corruptFiles = readdirSync(dir).filter((n) => n.startsWith('settings.json.corrupt-settings-'))
+    expect(corruptFiles.length).toBe(1)
+    expect(readFileSync(join(dir, corruptFiles[0]), 'utf8')).toBe('not-json{{{') // 现场隔离保留
     expect(logger.warn).toHaveBeenCalledWith('settings:corrupt-isolated', { file: SETTINGS_FILE_NAME })
   })
 
   it('版本不匹配（version 非 1）→ 回默认并隔离备份（Minor 19）', async () => {
     const { dir, safeRoot } = makeDir()
     writeFileSync(settingsPath(dir), JSON.stringify({ version: 2, voice: DEFAULT_SETTINGS.voice, dictation: DEFAULT_SETTINGS.dictation }), { mode: 0o600 })
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     expect(await svc.load()).toEqual(DEFAULT_SETTINGS)
-    expect(existsSync(`${settingsPath(dir)}.corrupt`)).toBe(true)
+    expect(readdirSync(dir).some((n) => n.startsWith('settings.json.corrupt-settings-'))).toBe(true)
   })
 
   // —— 阶段 5 批次 A（A6，D5A-10）：live2d 段向后兼容 + 部分 patch merge ——
@@ -84,18 +85,18 @@ describe('SettingsService', () => {
       dictation: { sttProfileId: 'stt/p1', insertMode: 'replace_selection' }
     }
     writeFileSync(settingsPath(dir), JSON.stringify(oldFile), { mode: 0o600 })
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     const state = await svc.load()
     expect(state.version).toBe(1)                                  // 不动 version
     expect(state.voice.enabled).toBe(false)                        // 既有子树保留（不走 corrupt 全量重置）
     expect(state.dictation.sttProfileId).toBe('stt/p1')
     expect(state.live2d).toEqual(DEFAULT_LIVE2D) // .default(DEFAULT_LIVE2D) 补齐（批次 B 全量 10 字段默认）
-    expect(existsSync(`${settingsPath(dir)}.corrupt`)).toBe(false) // 非 corrupt 路径
+    expect(readdirSync(dir).some((n) => n.startsWith('settings.json.corrupt-settings-'))).toBe(false) // 非 corrupt 路径
   })
 
   it('部分 patch {enabled:false} 保留 modelId（第三 merge 行）', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     await svc.load()
     const s1 = await svc.save({ live2d: { modelId: 'haru' } })
     expect(s1.live2d).toEqual({ ...DEFAULT_LIVE2D, modelId: 'haru' })
@@ -109,7 +110,7 @@ describe('SettingsService', () => {
 
   it('IP-1：单字段 patch 不 clobber 已持久化的非默认字段（patch 路径无默认注入）', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     await svc.load()
     // 先设定非默认值：scale 2.5、lipSync false、offsetX 0.4（全部非默认）
     const seeded = await svc.save({ live2d: { scale: 2.5, lipSync: false, offsetX: 0.4 } })
@@ -127,7 +128,7 @@ describe('SettingsService', () => {
 
   it('live2d patch 非法（modelId 非 string|null / enabled 非 boolean）→ 拒绝', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     await svc.load()
     await expect(svc.save({ live2d: { enabled: 'yes' as unknown as boolean } })).rejects.toThrow()
     await expect(svc.save({ live2d: { modelId: 42 as unknown as string | null } })).rejects.toThrow()
@@ -135,7 +136,7 @@ describe('SettingsService', () => {
 
   it('zod 拒绝非法 patch（save 落盘前 SettingsStateSchema.parse 兜底）', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     await svc.load()
     await expect(svc.save({ voice: { enabled: 'yes' as unknown as boolean } })).rejects.toThrow()
     await expect(svc.save({ dictation: { insertMode: 'prepend' as unknown as 'append' } })).rejects.toThrow()
@@ -144,9 +145,9 @@ describe('SettingsService', () => {
 
   it('save 前未 load → 自装载后 merge（不覆盖已有落盘值）', async () => {
     const { dir, safeRoot } = makeDir()
-    const seed = new SettingsService({ dir, safeRoot, logger })
+    const seed = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     await seed.save({ voice: { autoReadReply: false } })
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     const saved = await svc.save({ voice: { enabled: false } }) // 未显式 load
     expect(saved.voice.autoReadReply).toBe(false) // 已有落盘值保留
     expect(saved.voice.enabled).toBe(false)
@@ -156,7 +157,7 @@ describe('SettingsService', () => {
 describe('settings handler（createIpcHandler 接线）', () => {
   it('settings:load 成功 → ok:true 带 SettingsState', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     const h = createIpcHandler(settingsLoadSchema, SettingsStateSchema, () => svc.load(), { sanitize, channel: 'settings:load', logger })
     const res = await h(undefined)
     expect(res).toEqual({ ok: true, data: DEFAULT_SETTINGS })
@@ -164,7 +165,7 @@ describe('settings handler（createIpcHandler 接线）', () => {
 
   it('settings:save 合法 patch → ok:true 带 merge 后新 state', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     const h = createIpcHandler(settingsSaveSchema, SettingsStateSchema, (patch) => svc.save(patch), { sanitize, channel: 'settings:save', logger })
     const res = await h({ voice: { enabled: false } })
     expect(res.ok).toBe(true)
@@ -176,7 +177,7 @@ describe('settings handler（createIpcHandler 接线）', () => {
 
   it('settings:save 非法 patch → ok:false SCHEMA_VALIDATION_FAILED', async () => {
     const { dir, safeRoot } = makeDir()
-    const svc = new SettingsService({ dir, safeRoot, logger })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
     const h = createIpcHandler(settingsSaveSchema, SettingsStateSchema, (patch) => svc.save(patch), { sanitize, channel: 'settings:save', logger })
     const res = await h({ voice: { enabled: 'x' } })
     expect(res.ok).toBe(false)

@@ -287,7 +287,7 @@ async function main(): Promise<void> {
     })
     // —— 阶段 6 批次 C（V-4 HIGH 定案）：SettingsService 上移——批次 C 需在 createToolService 之前装配（GrantStore 构造依赖 settings）——
     // settings 不依赖 toolSvc（无环）；load 为 eager（save 在内存态上 merge，未装载即 save 会以默认值覆盖已有落盘值）。
-    const settingsSvc = new SettingsService({ dir: dirs.config, safeRoot, logger: diagnostics.logger })
+    const settingsSvc = new SettingsService({ dir: dirs.config, safeRoot, logger: diagnostics.logger, countDiagnostic: (code: string) => diagnostics?.logger.warn('persistence:diagnostic', { code }) })
     await settingsSvc.load() // fail-open：损坏/版本不匹配隔离备份 + 回默认，不阻塞启动
     // F-4：platform 显式变量（原 toolSvc 内联字面量上提——grantStore normalizeDirectory 与 toolSvc 共用同一平台判定）
     const platform: 'posix' | 'windows' = process.platform === 'win32' ? 'windows' : 'posix'

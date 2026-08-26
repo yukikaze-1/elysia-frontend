@@ -2,9 +2,10 @@
 // drafts-v1.json（草稿+锚点+lastActive，高频小）+ message-cache-v1.json（会话列表+消息快照，低频大）。
 // 纪律：版本化 schemaVersion + 逐条校验 + 整文件损坏隔离重建（不污染）+ 配额（100KB/条、50 会话、20 会话缓存、300 条/会话）+ 淘汰告知 + 正文永不写日志。
 import { join, basename } from 'path'
-import { rename, unlink } from 'fs/promises'
+import { unlink } from 'fs/promises'
 import { atomicWriteFile } from '../credentials/atomic-write'
 import { openSafeFile } from './safe-open'
+import { createCorruptIsolation, type CorruptIsolation } from './corrupt-isolation'
 import { MAX_IPC_MESSAGE_BYTES, type Conversation, type ConversationDraft, type Message, type PersistSessionInput, type PersistSessionResult, type ScrollAnchor, type SessionPersistenceState } from '@shared/contracts'
 import { ConversationDraftSchema, ConversationSchema, MessageSchema } from '@shared/schemas'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
@@ -40,15 +41,17 @@ function nowIso(): string { return new Date().toISOString() }
 export class SessionStore {
   private readonly draftsFile: string
   private readonly cacheFile: string
+  private readonly isolation: CorruptIsolation
   private drafts: DraftsFile = { schemaVersion: 1, entries: {}, scrollAnchors: {} }
   private cache: CacheFile = { schemaVersion: 1, conversations: [], snapshots: {} }
 
   constructor(private readonly deps: SessionStoreDeps) {
     this.draftsFile = join(deps.appCache, 'drafts-v1.json')
     this.cacheFile = join(deps.appCache, 'message-cache-v1.json')
+    this.isolation = createCorruptIsolation({ logger: deps.logger, countDiagnostic: deps.countDiagnostic })
   }
 
-  /** 损坏隔离读取：整文件 JSON 失败 → rename .corrupt-<ts> 重建空；条目级失败丢条目不污染（FE-S1-P2-02 纪律） */
+  /** 损坏隔离读取：整文件 JSON 失败 → isolation.isolate 备份 .corrupt-session-<ts> 重建空；条目级失败丢条目不污染（FE-S1-P2-02 纪律） */
   async load(): Promise<void> {
     this.drafts = await this.readFile(this.draftsFile, (raw) => {
       const out: DraftsFile = { schemaVersion: 1, entries: {}, scrollAnchors: {} }
@@ -57,7 +60,7 @@ export class SessionStore {
         for (const [k, v] of Object.entries(data.entries as Record<string, unknown>)) {
           const parsed = ConversationDraftSchema.safeParse({ conversationId: k, text: (v as { text?: string })?.text ?? '', attachmentLocalIds: [], updatedAt: (v as { text?: string; updatedAt?: string })?.updatedAt ?? '' })
           if (parsed.success) out.entries[k] = { text: parsed.data.text, updatedAt: parsed.data.updatedAt }
-          else { this.deps.countDiagnostic('draft:drop-invalid'); continue }
+          else { this.isolation.dropInvalid('draft:drop-invalid'); continue }
         }
       }
       if (data.scrollAnchors && typeof data.scrollAnchors === 'object') {
@@ -96,6 +99,9 @@ export class SessionStore {
       }
       return out
     })
+    // HIGH-1 有界保留：整文件损坏隔离后，下次成功 load() 清同 tag 旧 `.corrupt-session-*`（只留最新一份）
+    await this.isolation.pruneCorrupt(this.draftsFile, 'session')
+    await this.isolation.pruneCorrupt(this.cacheFile, 'session')
   }
 
   private async readFile<T>(file: string, parse: (raw: unknown) => T): Promise<T> {
@@ -104,10 +110,9 @@ export class SessionStore {
       try { return parse(JSON.parse(await fd.readFile('utf8'))) } finally { await fd.close() }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return parse({}) // 首次启动无文件 → 空
-      // 整文件损坏：隔离保留现场（不含正文），重建空
+      // 整文件损坏：统一层隔离保留现场（不含正文），重建空（countDiagnostic 计数在 isolation.isolate 内部，防双计数）
       this.deps.logger.warn('persistence:corrupt-isolated', { file: basename(file) })
-      this.deps.countDiagnostic('persistence:corrupt-isolated')
-      await rename(file, `${file}.corrupt-${nowIso().replace(/[:.]/g, '-')}`).catch(() => {})
+      await this.isolation.isolate(file, 'session', this.deps.safeRoot)
       return parse({})
     }
   }

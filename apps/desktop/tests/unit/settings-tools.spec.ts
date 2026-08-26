@@ -63,7 +63,7 @@ describe('SettingsService.save tools merge（spec §3.8——不丢 voice/live2d
   it('voice patch 不丢 tools；tools patch 不丢 voice/live2d/dictation', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'cy-settings-tools-'))
     try {
-      const svc = new SettingsService({ dir, safeRoot: dir, logger: { warn: vi.fn() } as never })
+      const svc = new SettingsService({ dir, safeRoot: dir, logger: { warn: vi.fn() } as never, countDiagnostic: vi.fn() })
       const tools: ToolsSettings = { grants: [GRANT] }
       const s1 = await svc.save({ tools })
       expect(s1.tools).toEqual(tools)
@@ -74,7 +74,7 @@ describe('SettingsService.save tools merge（spec §3.8——不丢 voice/live2d
       const s3 = await svc.save({})
       expect(s3.tools).toEqual(tools)                    // 空 patch 保持现值
       // 落盘内容：新实例重载保留 tools（原子写 + load 对称）
-      const svc2 = new SettingsService({ dir, safeRoot: dir, logger: { warn: vi.fn() } as never })
+      const svc2 = new SettingsService({ dir, safeRoot: dir, logger: { warn: vi.fn() } as never, countDiagnostic: vi.fn() })
       expect((await svc2.load()).tools).toEqual(tools)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
