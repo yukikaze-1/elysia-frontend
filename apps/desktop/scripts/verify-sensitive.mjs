@@ -1188,6 +1188,16 @@ const ALLOWLIST = [
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（renderer/src/main.ts + getLastCrash 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
   },
+  {
+    path: "docs/06-Cyrene-前端状态管理与本地存储设计-v0.2.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（createCorruptIsolation(deps) + main/persistence/corrupt-isolation.ts + { isolate, dropInvalid, pruneCorrupt } 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
+  },
+  {
+    path: "docs/review/2026-08-25-阶段7批次B-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（createCorruptIsolation 的 { isolate, dropInvalid, pruneCorrupt } + logger/audit/countDiagnostic/safeRoot/realpath 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
+  },
 ]
 let failed = false
 const ok = (m) => console.log(`✓ ${m}`)
