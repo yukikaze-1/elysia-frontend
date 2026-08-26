@@ -249,6 +249,8 @@
 - [ ] 日志和诊断导出通过敏感信息扫描；
 - [ ] 主链路异常可以恢复或安全失败。
 
+> **状态注记（2026-08-25，阶段 7 批次 B 稳定性收敛已落地，已开发、未联调）：** 批次 B（稳定性收敛）已落地并全量验证——**门禁：159 单测 files / 1995 passed + 7 expected-fail；21 集成 files / 131 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（590 文件扫/1624 行放行/8 规则）**。覆盖面：A Renderer 崩溃恢复（`render-process-gone` 2 参检测 + crashMarker + reload 后 `getLastCrash` invoke 读 marker + CyRendererCrashBanner + 审计 `renderer:crash`）/ B 网络中断回归+新能力（断线浏览历史 + 草稿断线 `flush(cid)` + mock `disconnectAfterMs` + `CYRENE_MOCK_DISCONNECT_AFTER_MS` env）/ C 缓存损坏统一层（`createCorruptIsolation` + `isolate`/`dropInvalid`/`pruneCorrupt` + settings/session-store 采用 + **credentials fail-closed 不拉平**）/ D GPU 上下文恢复（Live2D 层 + `gpu:crash` 进程级兜底）。本批对应 §10.2「主链路异常可恢复或安全失败」（7B 完成 4 面）、②「缓存损坏」、⑦「崩溃/断线」；「Blocker/Critical 为 0」「安全发布清单通过」的完整收口归 7D 全流程、性能相关（长会话/内存/GPU）归 7C。**三态 = 已开发、未联调**（真实 Windows Electron 联调为批次后）；spec/plan 见 `docs/superpowers/specs|plans/2026-08-25-phase7-batchb-stability-convergence-*`，决策见 `docs/review/2026-08-25-阶段7批次B-决策记录.md`。
+
 ## 11. 阶段 8：打包、跨平台与 Demo 验收
 
 ### 11.1 技术任务

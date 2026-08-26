@@ -96,6 +96,8 @@
 - 性能模式；
 - 不保存 SDK 实例、WebGL 对象或高频嘴部值。
 
+> **阶段 7 批次 B（2026-08-25，GPU 上下文恢复，Mock 驱动，标「已开发、未联调」）：** **GPU 上下文恢复 = Live2D 渲染层 + 进程级兜底**（面 D）。渲染层——阶段 5 批次 C 已落地：`adapter.initialize` 半初始化 try/catch 兜底 + `reset(modelId?)` GPU 丢失**一次重建**（rebuildGuard finally 复位非永久；成功恢复 ready + 重放 settings/CharacterState；失败 → 静态头像）。进程级——**`child-process-gone` GPU 分支**（`index.ts` 抽 `handleChildProcessGone(details, deps)`）：只留痕 `gpu:crash`（audit）**不 reload**——Live2D 经 `webglcontextlost` + `restoreLostContext`/`rebuild` 间接覆盖该症状（7B 不动 Live2D 层，链路是间接的：GPU 进程崩溃 → Chromium 自动重启 GPU → 各 Renderer 的 WebGL context 置 lost → `webglcontextlost` 触发 → Live2D 恢复）。单测见 `gpu-process.spec.ts`。
+
 ### 3.7 `settingsStore`
 
 - Renderer 可见的非敏感设置副本；
@@ -277,6 +279,8 @@ interface PendingAttachmentState {
 - 草稿数量和总大小设置上限；
 - 删除会话时删除其草稿。
 
+> **阶段 7 批次 B（2026-08-25，断线草稿自动保存，Mock 驱动，标「已开发、未联调」）：** `messageStore.handleConnectionStateChange` 在**断线/error** 时补 `flush(cid)`（调用 `useDraftStore` 的 `flush(conversationId)`）——防断线把当前草稿丢在内存态；`persistNow` 为 fail-open（保内存态，持久化失败不阻断）。**不改发送状态机**（用户拍板 D7B-04——不新增「离线发消息队列」）；断线后经既有重连 replay 恢复同步。单测见 `draft-persist.spec.ts`。
+
 ## 8. 本地持久化分层
 
 ### 8.1 普通配置
@@ -344,6 +348,8 @@ interface CredentialStatus {
 不提供读取明文 Token 的 Desktop API。
 
 自定义模型 Profile 按所有权分层保存：后端 Profile 由后端保存，Desktop Profile 的非敏感配置由 Main 保存、密钥进入系统安全存储，Local Worker Profile 由 Main 保存公开引用并由 Worker 管理其秘密。Renderer 只缓存公开字段、凭据状态和编辑中的一次性密钥输入；提交结束立即清除。
+
+> **阶段 7 批次 B（2026-08-25，缓存损坏统一层——凭据 fail-closed 不拉平，Mock 驱动，标「已开发、未联调」）：** 本批落地**缓存损坏统一层** `createCorruptIsolation(deps)`（`main/persistence/corrupt-isolation.ts`，注入 logger/audit/countDiagnostic/safeRoot/realpath 可单测），返回 `{ isolate(file, tag, safeRoot?) → 把损坏文件 rename 为 `.corrupt-<tag>-<ts>` 隔离副本；dropInvalid(code) → 计数；pruneCorrupt(file, tag) → 下次成功 load 时清同 tag 旧副本只留最新一份（有界保留）}`。**语义按 store 各自声明**——统一骨架 + 语义可配，绝不拉平。采用者：**settings / session-store**（`settings-service.ts` 备份名由 `.corrupt` 迁移为 `.corrupt-<tag>-<ts>`、补 `countDiagnostic` 注入；`session-store.ts` 用 isolate+dropInvalid、**移除既有 countDiagnostic 防双计数**）。**credentials（安全凭据）不纳入统一层**（主会话裁决）——理由：① 凭据形态是 fail-closed（损坏/形状失败 → 拒绝使用该凭据，绝不「重建空凭据」），与统一层的「隔离 + 重建默认 + fail-open」冲突；② 不为密文增 `.corrupt-*` 磁盘备份副本（即使密文也扩大攻击面）；③ 5 参构造注入为 settings/session-store 的损坏处理定制、纳入凭据不划算；④ 既有 CredentialStore 自身已 fail-closed（阶段 0/1 整改 FE-S1-P1-03 的 `EMPTY_FILE` 工厂化）。`.corrupt-*` 隔离副本（尤其 message-cache-v1.json）留存聊天正文，经 `pruneCorrupt` 有界保留、**不纳入日志/审计/诊断导出**（doc 01/07 注明）。
 
 ### 8.3 会话缓存
 
@@ -446,6 +452,8 @@ Demo 可以按复杂度选择：
 ## 14. 验收标准
 
 > **阶段 6 批次 C 注记（2026-08-21）**：settings.tools grants 子树 + GrantStore 边界已落地（见 §3.7/§8.1 注记）——grants 持久化归 Main `settings.json` `tools` 子树（`ToolsSettingsSchema.default({grants: []})`，version 1 向后兼容，无迁移脚本）；授权管理以 `tool:grants`/`tool:grant-revoke` 为交互面，settingsStore 不消费 tools（`tool:grants` 权威刷新源）。
+
+> **阶段 7 批次 B（2026-08-25）注记：** 本批落地「缓存损坏统一层 + 断线草稿自动保存 + live2d GPU 上下文恢复」——对应下表「本地缓存损坏后应用仍可启动」「Main 是设置、凭据和审计持久化边界」等项。`createCorruptIsolation`（`isolate`/`dropInvalid`/`pruneCorrupt`）由 settings/session-store 采用，credentials 不纳入（fail-closed 不拉平，见 §8.2 注记）；`messageStore.handleConnectionStateChange` 断线补 `flush(cid)`（§7 注记）；面 D（GPU 上下文）= Live2D 层（阶段 5 批次 C）+ `gpu:crash` 进程级兜底（§3.6 注记）。**三态 = 已开发、未联调**。
 
 - [x] settings.tools grants 子树落地：`SettingsService.save` 子树 merge 不 clobber voice/live2d，version 1 向后兼容（2026-08-21，批次 C）
 - [x] GrantStore 边界落地：grants 读写归 Main（`grant-store.ts`），Renderer 只经 `tool:grants`/`tool:grant-revoke` 交互，settingsStore 不消费 tools（2026-08-21，批次 C）

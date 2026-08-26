@@ -97,6 +97,8 @@ flowchart LR
 
 Main 不负责 Vue UI 状态和 Live2D 画面渲染。
 
+> **阶段 7 批次 B（2026-08-25，崩溃恢复 + GPU 进程级兜底，Mock 驱动，标「已开发、未联调」）：** **Renderer 崩溃检测**——`main-window.ts` 对 `webContents.on('render-process-gone', (event, details))` 监听（**真实 WebContents 事件签名为 2 参 `(event, details)`，`details = { reason, exitCode }`**——spec/plan 曾以「3 参」描述，属 H-1 定位偏差，Task 2 已按真实 2 参纠正；3 参为 App 接口签名）；崩溃时经模块级 `setCrashSink({ logger, audit })` 注入的审计闭包记录 **`renderer:crash`**（与 GPU 崩溃 `gpu:crash` 解耦，D7B-08），并**持久化 crash marker**（模块级内存 `let crashMarker`，`getCrashMarker()` 读取），随后 `webContents.reload()`（D7B-06/07）。**崩溃提示非实时 push**——renderer 已死收不到，改由 reload 后新 Renderer 经 `getLastCrash`（`diagnostics:last-crash` invoke）读 marker 显示；`renderer:crash` push 通道保留为**契约占位 + 审计 type 解耦参照**，不实际发送（D7B-05/09）。**GPU 进程级兜底**——`child-process-gone` GPU 分支统一为 `handleChildProcessGone(details, deps)`（`index.ts` 导出，main() 内注册、audit/diagnostics 定义之后），只留痕 `gpu:crash` **不 reload**（Live2D 层经 `webglcontextlost` + `restoreLostContext`/`rebuild` 间接恢复，阶段 5 批次 C 已实现）。**`getLastCrash` 一次性**（读后清空 marker；marker 为内存态，进程重启即失）。
+
 ### 3.2 Preload 职责
 
 - 通过 `contextBridge` 暴露稳定接口；
@@ -351,6 +353,8 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 
 统一历史查看器使用关键词、日期、分类和游标查询消息，图片/视频、表情包、文件、音频和链接（后端六分类）只保存来源引用。搜索结果与资源项通过 `messageId/responseId/segmentId` 加载上下文并跳转。Emoji 修改草稿文本，表情包作为结构化附件进入发送队列，两者均不自动发送。
 
+> **阶段 7 批次 B（2026-08-25，网络中断回归 + 新能力，Mock 驱动，标「已开发、未联调」）：** **断线浏览历史**——断线后历史查看器仍可访问本地以最近 20 会话为上限的离线缓存（阶段 3 G2）浏览/搜索，不依赖实时连接；**断线草稿自动保存**——`messageStore.handleConnectionStateChange` 在断线/error 时补 `flush(cid)`（`useDraftStore` 的 `flush(conversationId)`，D7B-04），防断线丢失草稿（fail-open——`persistNow` 保内存态）；重连后经既有 replay 恢复同步。**不改发送状态机**（不新增「离线发消息队列」——用户拍板 D7B-04）。mock 侧新增 `disconnectAfterMs` 断线模拟 + error→connected 恢复（`CYRENE_MOCK_DISCONNECT_AFTER_MS` env 桥，useMock 门控），供集成/单测钉住断线场景。
+
 ## 8. 应用生命周期
 
 ### 8.1 启动
@@ -420,6 +424,7 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 - [ ] 后端字段只在 Adapter 层出现；
 - [ ] IPC 和网络输入均有运行时 Schema；
 - [ ] 聊天、Live2D、工具模块可以独立失败和恢复；
+- [ ] 主链路异常（断线 / Renderer 崩溃 / 缓存损坏 / GPU 上下文丢失）可恢复或安全失败；
 - [ ] Windows 与 Ubuntu 共用领域层和 Renderer 主代码；
 - [ ] Desktop Runtime 工具无法绕过权限层；
 - [ ] 后端协议变化可通过替换 Adapter 适配。

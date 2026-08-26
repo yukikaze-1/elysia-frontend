@@ -30,6 +30,8 @@
 - 未经确认读取敏感目录、截图或覆盖文件；
 - 将完整文件内容、截图或 Token 写入普通日志。
 
+> **阶段 7 批次 B（2026-08-25，安全面——凭据 fail-closed 不拉平，Mock 驱动，标「已开发、未联调」）：** 本批缓存损坏统一层 `createCorruptIsolation` **只由 settings/session-store 采用，CredentialsStore（安全凭据）不纳入**（主会话裁决）。理由是凭据安全语义与统一层的「隔离 + 重建默认 + fail-open」相反（凭据损坏必须 fail-closed：拒绝使用该凭据，绝不「重建空凭据」）；不为密文增 `.corrupt-*` 磁盘备份副本（即使密文也扩大攻击面）；既有 CredentialStore 自身已 fail-closed（阶段 0/1 整改 FE-S1-P1-03 `EMPTY_FILE` 工厂化）。此裁决维持 doc 06 §8.2「Token/凭据不落普通配置、不显示明文」与 doc 07 §12 敏感面纪律不变——工具/凭据安全边界不因本批放宽。
+
 ## 2. 前端工具注册模型
 
 > **阶段 6 批次 A 注记（2026-08-20）**：领域统一调用记录为 `ToolCallRecord`，**权威键 `id = sourceCallId`（LLM `tool_call_id`）**；`desktopCallId`（桥 `call_*`）只作执行协议关联（ID 双轨，D6-03）。wire 双轨：Desktop 执行握手 `tool.request/tool.status`、Backend 展示生命周期 `tool.started/tool.completed`；前端领域单轨统一。详见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`。

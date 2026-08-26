@@ -375,6 +375,8 @@ Renderer DevTools 是更高风险能力：它天然可以检查当前已渲染 D
 > - **脱敏诊断导出**：单 JSON 文件（`diagnostics:export`，schemaVersion + manifest + summary + 日志段（每轮转文件尾 5MiB 行对齐，≤3 文件）+ 审计段（最近 30 天直读 `audit-*.jsonl` 全量，超 15MiB 截尾保留最新端）+ 段级 sha256）；导出前逐行二次脱敏（redact + sanitize，>1MiB 超长行整行丢弃并计数）；`showSaveDialog`（harness 落 `dirs.temp` 可自动断言）；审计 `diagnostics:exported`（summary 无路径）。
 > - **与 §8.2 列表差异（D7A-06 定案）**：「后端 Adapter 映射结果」由脱敏事件条目的领域事件名（`type` = BackendEvent 判别字段 `event`）承担展示（raw→domain 映射在 Adapter 侧完成，dev 面只展示 domain 名，原始帧内容永不进 Renderer）；「Live2D 帧耗时」**延 7C**（未导出可读统计则不扩展 API，本批显示「不可用」）。
 
+> **阶段 7 批次 B（2026-08-25，全局崩溃提示——非设置页，Mock 驱动，标「已开发、未联调」）：** 本批新增 **`CyRendererCrashBanner`** 全局崩溃提示条（挂在 `App.vue` 顶层），**不改设置页结构**——它不是设置在设置中心子页里，而是渲染进程崩溃后由新 Renderer 经 `getLastCrash` invoke 读 crash marker 后显示的**全局覆层横幅**（多行文案「应用曾崩溃并已重载…」，reload 后一次性读 marker）。沿用 doc 11 §9 保存和错误处理「错误处理不阻断主链路」风格；崩溃提示非实时 push（renderer 已死收不到）、一次性（读后清空）。若与现有断线横幅复用样式则不新增设置项。
+
 ## 9. 保存和错误处理
 
 - 设置按分类保存，不因某一项失败回滚无关分类；

@@ -385,3 +385,5 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 - [ ] 高风险已知问题已记录并获得明确接受。
 
 > **阶段 7 批次 A（2026-08-22）核对/修订注记：** 第 6/15/19/20 项由本批补齐（DOMPurify + markdown-xss 集成、开发者模式设置页开关与脱敏诊断、Fuses 三项关闭 + 产物读回断言、本批已知限制见 spec §10 与决策记录 §8）；第 17 项口径随 D7A-04/05 修订（生产默认关保持、增加二次确认开启路径与重启恢复禁用；远程调试恒关不变）；第 11 项（自定义 Endpoint SSRF 面）为后端职责——前端无实现面，记为「证据缺口」；**第 18 项（来源/完整性）为阶段 8 签名联动缺口（verify:artifact app-sha 已有、签名/校验和/ASAR 校验缺）**，详见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`（20 项逐条证据与状态）。
+
+> **阶段 7 批次 B（2026-08-25）崩溃/损坏安全面注记（Mock 驱动，标「已开发、未联调」）：** ⑦⑥ 项（崩溃或断线不会破坏已确认消息和用户文件 / 本地数据损坏可恢复）由本批补齐——**崩溃零正文**：`RendererCrashEvent{reason, exitCode}` 仅元数据，`.corrupt-*` 隔离副本（message-cache-v1.json 留存聊天正文）经 `pruneCorrupt` 有界保留、**不纳入任何导出与传输**（`collectLogFiles`/`collectAuditLines` 只扫 logs/audit 目录，export 不涉及 appCache/config 持久化目录）；**凭据 fail-closed 不拉平**：credentials 不纳入统一层（隔离+重建默认 = fail-open 与凭据 fail-closed 冲突，见决策记录 §4）；**崩溃审计 type 解耦**：`renderer:crash`（Renderer 崩溃）/ `gpu:crash`（GPU 崩溃）分开记录，不共用字符串。`.corrupt-*` 备份正文不入日志/审计/诊断导出纪律维持（doc 01/06 同步）。

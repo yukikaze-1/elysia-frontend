@@ -479,6 +479,8 @@ cyrene-integration-input/
 - [ ] 崩溃或断线不会破坏已确认消息和用户文件；
 - [ ] 日志和诊断导出通过敏感信息扫描。
 
+> **状态注记（2026-08-25，阶段 7 批次 B 稳定性收敛已落地，已开发、未联调）：** 批次 B（稳定性收敛）已落地并全量验证——**门禁：159 单测 files / 1995 passed + 7 expected-fail；21 集成 files / 131 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0**。范围 = 7B 四面（A Renderer 崩溃恢复 / B 网络中断回归+断线草稿自动保存 / C 缓存损坏统一层 // 凭据 fail-closed 不拉平 / D GPU 上下文恢复），对应此处任务 5「Renderer 崩溃、网络中断、缓存损坏和 GPU 上下文恢复」与验收「崩溃或断线不会破坏已确认消息和用户文件」；「Blocker/Critical 为 0」「安全发布清单通过」的完整收口归 7D 全流程；「200 条混合消息滚动」「100 个多分段回复」「性能/内存」归 7C。**三态 = 已开发、未联调**（真实 Windows Electron 联调为批次后）；决策见 `docs/review/2026-08-25-阶段7批次B-决策记录.md`。
+
 ### 9.9 阶段 8：打包、跨平台与 Demo 验收
 
 **进入条件：** 阶段 7 通过；H-03～H-09 发布相关项已确认。

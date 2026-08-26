@@ -490,3 +490,32 @@
 ### 18.3 自动回归
 
 对修订后的 01/07/08/11/12/13/16/17 与 README、spec §5.1、决策记录、安全发布清单核对执行结构回归（表格列数、代码围栏、重复标题、失效相对链接），结果 0 异常（见提交时检查）。
+
+## 19. 增量 Review：阶段 7 批次 B 稳定性收敛落地同步（2026-08-25）
+
+**触发条件：** doc 13 §9 ——「修改安全策略或权限模型」与「阶段门槛或验收脚本发生变化」：批次 B 落地 Renderer 崩溃恢复（检测/提示/reload/审计）、网络中断回归与断线草稿自动保存、缓存损坏统一层（凭证 fail-closed 不拉平）、GPU 上下文恢复进程级兜底。**同步时机：批次落地后的文档同步轮**（本章节）——全量 cross-review 按 doc 13 §9 延至真实联调后收口（spec/plan 四维 review 不替代）。
+
+### 19.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 01 §3.1/§7.6/§12 | §3.1 注记（崩溃检测 + GPU 进程级兜底：2 参 `render-process-gone`、crashMarker/getLastCrash/reload、`renderer:crash`/`gpu:crash` 审计解耦、`getLastCrash` 一次性）；§7.6 注记（断线浏览历史 + 草稿断线 `flush(cid)` 自动保存 + mock `disconnectAfterMs`/`CYRENE_MOCK_DISCONNECT_AFTER_MS`）；§12 验收补「主链路异常可恢复或安全失败」 |
+| 04 §1.2 | 安全面注记（凭据 fail-closed 不拉平——credentials 不纳入统一层 + 理由） |
+| 06 §3.6/§7/§8.2/§14 | §3.6 注记（GPU 上下文恢复 = Live2D 层 + `gpu:crash` 兜底）；§7 注记（断线草稿自动保存，不改发送状态机）；§8.2 注记（缓存损坏统一层 `createCorruptIsolation` + `isolate`/`dropInvalid`/`pruneCorrupt` + 各 store 语义可配 + **credentials 不纳入** + `.corrupt-*` 不纳入导出）；§14 验收注记（7B 落点 + 三态） |
+| 07 §17 | 崩溃/损坏安全面注记（崩溃零正文、`.corrupt-*` 不纳入导出传输、凭据 fail-closed 不拉平、崩溃审计 type 解耦） |
+| 10 §10.2 | 7B 状态注记（四面 + 门禁计数 + 三态） |
+| 11 §8 | 注记（CyRendererCrashBanner 全局崩溃提示——**不改设置页结构**，reload 后读 marker，非设置子页） |
+| 12 §9.8 | 7B 状态注记（对应任务 5/验收「崩溃或断线不破坏消息文件」，性能归 7C、Blocker 收口归 7D、三态） |
+| 17 | `CYRENE_MOCK_DISCONNECT_AFTER_MS` mock 断线 env 记录 |
+| 16 §10 | 阶段 7 批次 B 状态注记 + 任务清单勾选/验收标注（7B 完成 4 面，7C/7D 归属） |
+| README / CLAUDE.md | 阶段 7 批次 B 状态段 + 门禁终计数（159/1995+7xfail、131、check:contract、verify:sensitive）+ 三态标记（已开发、未联调） |
+| 决策记录 | `docs/review/2026-08-25-阶段7批次B-决策记录.md`（D7B-01~10 + 用户拍板 4 项 + 主会话裁决（credentials 不纳入）+ spec/plan 2 轮 review 记录 + Task 1~7 review 结论 + 提交链） |
+
+### 19.2 交叉 Review 结论
+
+- **新口径（跨 doc 统一）**：`webContents.on('render-process-gone')` 真实 WebContents 事件签名为 **2 参 `(event, details)`**（`electron.d.ts:17304`）；**3 参**属 App 接口（`electron.d.ts:700-702`）。本批 Task 2 已按 **2 参**（`(_ev, details)`，`details={reason, exitCode}`）实现。**spec/plan 里残留的「3 参」为 H-1 定位偏差陈旧口径，留待步骤 8 final review 统一修订**——本文档与批次 B 同步采纳「2 参（真实 WebContents 签名）」口径。
+- **安全策略变化（需重点说明）**：无安全放宽。缓存损坏统一层只由 settings/session-store 采用，**credentials（安全凭据）不纳入**（fail-closed 不拉平）——凭据损坏必须 fail-closed（拒绝使用该凭据、绝不重建空凭据），与统一层「隔离+重建默认+fail-open」冲突；不为密文增 `.corrupt-*` 磁盘备份副本。`.corrupt-*` 备份（message-cache-v1.json 留存聊天正文）经 `pruneCorrupt` 有界保留、**不纳入日志/审计/诊断导出**。
+- **信任边界无放宽**：崩溃审计 `renderer:crash`/`gpu:crash` 仅事件元数据（`{reason, exitCode}`），零正文；`getLastCrash` 一次性（读后清空）；崩溃提示非实时 push（renderer 已死收不到，改 reload 后 invoke 读 marker）。
+- **行为变更点**：① `messageStore.handleConnectionStateChange` 断线补 `flush(cid)` 草稿自动保存（不改发送状态机——不新增离线发消息队列）；② `settings-service.ts` 损坏备份名 `.corrupt` → `.corrupt-<tag>-<ts>`（同步 `settings-service.spec.ts` 断言为 `.corrupt-...` 前缀匹配）；③ session-store 移除既有 countDiagnostic（防双计数）；④ mock-backend 增 `disconnectAfterMs` + error→connected 恢复（新 env `CYRENE_MOCK_DISCONNECT_AFTER_MS`）。
+- **三态 = 已开发、未联调**（真实 Windows Electron 联调归开发者批次后）——**不触发全量交叉 Review 重跑**，联调通过后做收口 Review。
+- **门禁**：单测 159 files / 1995 passed + 7 expected-fail；集成 21 files / 131 passed；typecheck/lint/build 全绿；check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）；verify:sensitive exit 0（590 文件扫 / 1624 行放行 / 8 规则）。**计数最终值以主会话批次收口（CLAUDE.md）为准**。
