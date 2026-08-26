@@ -411,7 +411,7 @@
 - [x] 路径穿越、符号链接、重放与授权后参数变化测试（7A：引用既有阶段 6/0-1 实现证据 + 核对表式哨兵——safe-open Windows 变体/UNC/ADS、paramHash canonical、callId 幂等、queryStatus 三分支，验证「引用 + 无回退」；不重写实现）
 - [x] Token、模型密钥、聊天正文、Inner Voice、录音与本地数据泄漏扫描（7A：`verify:sensitive` 常驻门禁（`git ls-files` 全树、黑名单 8 规则含 40+ base64、third_party/+vendored live2d 两树+扫描器自排除、行级 allowlist fail-loud 锚定）+ 诊断导出逐行二次脱敏 + buildExportPayload 单测黑名单零命中）
 - [x] 直接语音字幕与文字草稿隔离测试（阶段 4 批次 B 已覆盖——R-S4 系列：字幕不写入草稿/取消不改变草稿；7A 未变更）
-- [x] 网络中断、Renderer 崩溃、缓存损坏与 GPU 上下文恢复（7B 已完成四面——A 崩溃检测+提示+安全失败 reload / B 断线浏览历史+草稿断线 flush(cid)+mock 断线 / C 缓存损坏统一层 createCorruptIsolation+semantic 可配+credentials 不纳入 / D L2D 层 + gpu:crash 进程级兜底；**已开发、未联调**）
+- [x] 网络中断、Renderer 崩溃、缓存损坏与 GPU 上下文恢复（7B 四面已落地——A 崩溃检测+提示+安全失败 reload / B 断线浏览历史+草稿断线 flush(cid)+mock 断线 / C 缓存损坏统一层 createCorruptIsolation+semantic 可配+credentials 不纳入 / D L2D 层 + gpu:crash 进程级兜底；**已开发、未联调**）
 - [ ] 长会话、长流式、历史资源列表与 Live2D 性能测试（→ 7C）
 - [~] 日志轮转、缓存上限、临时附件与录音清理（7A 已落地日志目录管理/打开/清理（轮转 5MB×3 + 审计 30 天）+ 日志段/审计段导出上限；缓存上限/临时附件/录音清理归 7B/7D）
 - [ ] 集中修复 Blocker、Critical 与主要回归问题（→ 7D）
