@@ -108,3 +108,67 @@ describe('captureAnchor / restoreScrollTop / compensateScroll（prepend 不跳�
     expect(a.offset).toBe(10) // 锚点偏移不变
   })
 })
+
+type Row = { kind: 'header' | 'item'; key: string; h: number }
+
+const mkRows = (): Row[] => [
+  { kind: 'header', key: 'h1', h: 34 },
+  { kind: 'item', key: 'a', h: 72 },
+  { kind: 'item', key: 'b', h: 72 },
+  { kind: 'header', key: 'h2', h: 34 },
+  { kind: 'item', key: 'c', h: 80 },
+]
+
+const keyFor = (r: Row) => (r.kind === 'header' ? `header:${r.key}` : r.key)
+const isAnchorable = (r: Row) => r.kind === 'item'
+const estimate = (r: Row) => r.h
+
+describe('virtual-window 泛型化（Task 1）', () => {
+  it('buildPrefix 用注入 estimate + keyFor 计算视觉高度（header/item 差异）', () => {
+    const rows = mkRows()
+    const prefix = buildPrefix(rows, {}, { estimate, keyFor })
+    expect(prefix).toEqual([0, 34, 106, 178, 212, 292])
+  })
+  it('captureAnchor 经 isAnchorable 跳过 header 行取首个 item', () => {
+    const rows = mkRows()
+    const prefix = buildPrefix(rows, {}, { estimate, keyFor })
+    // scrollTop=90 → 首个 item 行（'a', prefix[1]=34）为锚点，offset=90-34=56
+    const a = captureAnchor(rows, prefix, 90, 600, { isAnchorable, keyFor })
+    expect(a.messageId).toBe('a')
+    expect(a.offset).toBe(56)
+  })
+  it('restoreScrollTop 按 keyFor 找回锚点行', () => {
+    const rows = mkRows()
+    const prefix = buildPrefix(rows, {}, { estimate, keyFor })
+    expect(restoreScrollTop(rows, prefix, { messageId: 'c', offset: 10 }, keyFor)).toBe(212 + 10)
+  })
+  it('estimateHeight 泛型签名 + Message 重载并存', () => {
+    expect(estimateHeight(mkRows()[0], estimate)).toBe(34)   // 泛型签名
+    const msg = { role: 'user', content: 'hi', messageId: 'm1' } as unknown as Message
+    expect(estimateHeight(msg)).toBeGreaterThan(0)           // Message 重载（单参零改动）
+  })
+})
+
+// 完整 L-3 + 符合性 L-3 修复：Message 兼容回归锁——旧参调用（2/4/3 参）行为不变
+describe('virtual-window Message 兼容重载（Task 1，H-1 修复回归锁）', () => {
+  const mkMsg = (id: string, role: 'user' | 'assistant', content: string): Message =>
+    ({ messageId: id, role, content, createdAt: '', status: 'completed' } as Message)
+  it('buildPrefix 2 参（消息列表零改动）', () => {
+    const msgs = [mkMsg('a', 'user', 'x'), mkMsg('b', 'assistant', 'y')]
+    const heights = { a: 50, b: 80 }
+    expect(buildPrefix(msgs, heights)).toEqual([0, 50, 130])
+  })
+  it('captureAnchor 4 参（消息列表零改动）', () => {
+    const msgs = [mkMsg('a', 'user', 'x'), mkMsg('b', 'assistant', 'y')]
+    const heights = { a: 50, b: 80 }
+    const prefix = buildPrefix(msgs, heights)
+    const a = captureAnchor(msgs, prefix, 30, 600)
+    expect(a.messageId).toBe('a')
+  })
+  it('restoreScrollTop 3 参（消息列表零改动）', () => {
+    const msgs = [mkMsg('a', 'user', 'x'), mkMsg('b', 'assistant', 'y')]
+    const heights = { a: 50, b: 80 }
+    const prefix = buildPrefix(msgs, heights)
+    expect(restoreScrollTop(msgs, prefix, { messageId: 'b', offset: 10 })).toBe(60)   // 准确 r2 off-by-one 修正：prefix[1]=50 + offset 10 = 60（非 prefix[2] 的 130）
+  })
+})
