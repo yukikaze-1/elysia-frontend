@@ -138,7 +138,7 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
     } finally { await closeApp(launched) }
   })
 
-  it('③ 长会话（seed ≥100）：消息列表可视行有界（虚拟窗口，非全量 DOM，≤60）', async () => {
+  it('③ 长会话（seed ≥100）：消息列表可视行有界 + 虚拟垫片不收缩（真机修复回归门禁）', async () => {
     const launched = await launchWithSize({ CYRENE_MOCK_HISTORY_LARGE: '200' })
     try {
       const page = launched.page
@@ -147,11 +147,31 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       // 断言「可视行有界」而非「恰好 200 条」，100 条已足够验证虚拟化窗口（> 可视窗口 60）。
       await connectAndActivateFirst(page)
       // 消息列表虚拟化：可视行有界（seed 均分后>100 条，但可视行 ≤ 窗口），且 >0（非空）
-      await expect.poll(async () => page.evaluate(() => document.querySelectorAll('.cy-vlist-row').length), POLL).toBeGreaterThan(0)
-      const rows = await page.evaluate(() => document.querySelectorAll('.cy-vlist-row').length)
+      await expect.poll(async () => page.evaluate(() => document.querySelectorAll('.cy-messages > .cy-vlist-row').length), POLL).toBeGreaterThan(0)
+      const rows = await page.evaluate(() => document.querySelectorAll('.cy-messages > .cy-vlist-row').length)
       expect(rows).toBeGreaterThan(0)
       expect(rows).toBeLessThanOrEqual(60)   // 可视行有界（虚化，非全量 100+；实测 26）
-      console.log(`[perf-gate] long200 rows=${rows}`)
+      // 7C 真机修复回归：flex 列内的虚拟垫片不得被 flex-shrink 压成 0（否则 scrollHeight 不含估算总高，
+      // 长会话滚不到底部新消息——Windows 真机 56 条即复现，补 flex-shrink:0 后修复）。
+      const pads = await page.evaluate(() => {
+        const el = document.querySelector('.cy-messages')
+        if (!el) return null
+          const list = [...el.querySelectorAll(':scope > .cy-vlist-pad')]
+          const heights = list.map((p) => Number.parseFloat(getComputedStyle(p).height))
+          return {
+            flexShrink: list.map((p) => getComputedStyle(p).flexShrink),
+            topHeight: heights[0] ?? 0,
+            bottomHeight: heights[1] ?? 0,
+            scrollHeight: el.scrollHeight,
+            clientHeight: el.clientHeight
+          }
+        })
+        expect(pads).not.toBeNull()
+        expect(pads!.flexShrink).toHaveLength(2)
+        expect(pads!.flexShrink.every((v) => v === '0')).toBe(true)
+        expect(pads!.scrollHeight).toBeGreaterThan(pads!.clientHeight)
+        expect(Math.max(pads!.topHeight, pads!.bottomHeight)).toBeGreaterThan(0)
+        console.log(`[perf-gate] long200 rows=${rows} padTop=${pads?.topHeight}px padBottom=${pads?.bottomHeight}px sh=${pads?.scrollHeight}`)
     } finally { await closeApp(launched) }
   })
 

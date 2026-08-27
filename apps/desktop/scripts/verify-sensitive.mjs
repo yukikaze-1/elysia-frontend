@@ -141,6 +141,11 @@ const ALLOWLIST = [
     reason: 'B-02 条目散文（契约描述「静态 Bearer + AGENT_ACCESS_TOKEN」）——无赋值形态，无秘密实例'
   },
   {
+    path: 'docs/review/2026-08-27-阶段7批次C-验收.md', anchor: /10160fc553e601fa7c20d079c4f292c8f424be01/,
+    rules: ['base64-long-string'],
+    reason: '7C 验收记录 HEAD 提交 SHA（40 hex，公开 git 对象标识，确定性非秘密）——已人工核对无真实凭据'
+  },
+  {
     path: 'docs/16-Cyrene-前端实施任务清单与进度跟踪.md', anchor: /激活 \+ Bearer \+ 错误映射/,
     reason: '阶段 2 块 B 落地记录散文（REST 方法清单）——已人工核对无真实秘密'
   },

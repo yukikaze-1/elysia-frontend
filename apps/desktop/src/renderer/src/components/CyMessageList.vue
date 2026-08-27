@@ -259,6 +259,7 @@ onMounted(() => {
 <style scoped>
 .cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%); }
 .cy-vlist-row { display: flex; flex-direction: column; gap: 9px; padding: 6px 0; }
+.cy-vlist-pad { flex-shrink: 0; }   /* 7C 真机修复：flex 列内垫片必须禁收缩，否则 paddingTop/Bottom 被压成 0，长会话滚不到底部新消息 */
 .cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: 12px; }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
 .cy-located-chip { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }
 .cy-sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
