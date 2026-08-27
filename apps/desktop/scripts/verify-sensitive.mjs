@@ -1215,6 +1215,21 @@ const ALLOWLIST = [
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（estimateHeight/buildPrefix/computeWindow/captureAnchor/restoreScrollTop 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
   },
+  // ── 阶段 7 批次 D（Task 6 门禁）：spec/plan 新落文档的 base64-long-string 误报 ──
+  // 全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores,components,live2d,utils}/... 模块路径串
+  // + git add 串 + FrameBudget.getStats/needsDeferredRender/attachment.store.remove 等标识符的阅读性序列），
+  // 非高熵秘密——逐行人工核对 2026-08-27。锚 `/ [A-Za-z0-9+/]{40,}/` 与规则同型（类别级，仅豁免第 8 条规则域，
+  // 见 R2-1 注记）。
+  {
+    path: "docs/superpowers/plans/2026-08-27-phase7-batchd-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 19 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores/attachment.store,components/CyMessageList,components/CyMessageBubble,components/CyDiagnosticsPane,utils/virtual-window,live2d/perf,live2d/controller,stores/live2d.store,shared/contracts/live2d} 模块路径串 + git add 串 + FrameBudget.getStats/needsDeferredRender/remove() 补清 标识符的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
+  },
+  {
+    path: "docs/superpowers/specs/2026-08-27-phase7-batchd-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 9 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores/attachment.store,stores/voice.store,stores/message.store,stores/live2d.store,utils/virtual-window,components/CyMessageBubble,components/CyDiagnosticsPane,live2d/perf,live2d/controller} 模块路径串的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
+  },
 ]
 let failed = false
 const ok = (m) => console.log(`✓ ${m}`)

@@ -481,6 +481,8 @@ cyrene-integration-input/
 
 > **状态注记（2026-08-25，阶段 7 批次 B 稳定性收敛已落地，已开发、未联调）：** 批次 B（稳定性收敛）已落地并全量验证——**门禁：159 单测 files / 1995 passed + 7 expected-fail；21 集成 files / 131 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0**。范围 = 7B 四面（A Renderer 崩溃恢复 / B 网络中断回归+断线草稿自动保存 / C 缓存损坏统一层 // 凭据 fail-closed 不拉平 / D GPU 上下文恢复），对应此处任务 5「Renderer 崩溃、网络中断、缓存损坏和 GPU 上下文恢复」与验收「崩溃或断线不会破坏已确认消息和用户文件」；「Blocker/Critical 为 0」「安全发布清单通过」的完整收口归 7D 全流程；「200 条混合消息滚动」「100 个多分段回复」「性能/内存」归 7C。**三态 = 已开发、未联调**（真实 Windows Electron 联调为批次后）；决策见 `docs/review/2026-08-25-阶段7批次B-决策记录.md`。
 
+> **状态注记（2026-08-27，阶段 7 批次 D 收口收敛已落地，已开发、未联调）：** 批次 D（收口收敛）已落地并全量验证——**门禁：161 单测 files / 2016 passed + 7 expected-fail；22 集成 files / 136 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（604/368/1671/8）**。范围 = 五面 A~E：A 临时附件/录音/缓存上限确认（`attachment.store.remove()` 补清引用 + 无落盘/无 Blob URL + 缓存上限已落地确认（草稿 100KB×50 + 离线 20 会话））；B F-11 审批历史口径（读面 7 天 / 存面 30 天，不拉平）；C 观察项重开（视图感知暂停 + Live2D 数值读数接入诊断页——闭合 D7A-06）；D 阶段 7 收口（Blocker/Critical 为 0 + 安全发布清单通过）；E 文档同步。**三态 = 已开发、未联调**（真实 Windows Electron 联调为批次后独立项，阶段 7 批次 A/B/C 保持「已真实联调」——7A 2026-08-22 / 7B 2026-08-26 / 7C 2026-08-27 真机验收通过）；决策见 `docs/review/2026-08-27-阶段7批次D-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-27-phase7-batchd-convergence-*`。
+
 ### 9.9 阶段 8：打包、跨平台与 Demo 验收
 
 **进入条件：** 阶段 7 通过；H-03～H-09 发布相关项已确认。
