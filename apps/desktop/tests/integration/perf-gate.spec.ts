@@ -193,7 +193,25 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         expect(segs.empty).toBeGreaterThan(0)   // 视口外 overscan 行被门控（内容空）
         // 视口内回复非空（门控只影响视口外行）
         expect(segs.nonEmpty).toBeGreaterThan(0)
-        console.log(`[perf-gate] viewsense seg total=${segs.total} empty=${segs.empty} nonEmpty=${segs.nonEmpty}`)
+        // 7D 真机回归：border-box 实测高修复前，前缀和每行欠估 12px（padding 未计）→ strict 窗口偏前，
+        // 视口边缘出现「行已与视口相交但 completed segment 仍空 source」。断言：任何与视口相交的 .cy-vlist-row 内不得有空 .cy-segment。
+        await page.waitForTimeout(150)   // CyMarkdown 80ms 尾沿防抖 + ResizeObserver 实测高写入 → 让可见性翻转/行高补偿先稳定
+        const visibleBlank = await page.evaluate(() => {
+          const el = document.querySelector('.cy-messages')
+          if (!el) return []
+          const cRect = el.getBoundingClientRect()
+          const bad: string[] = []
+          el.querySelectorAll(':scope > .cy-vlist-row').forEach((row) => {
+            const rect = row.getBoundingClientRect()
+            if (rect.bottom <= cRect.top || rect.top >= cRect.bottom) return
+            row.querySelectorAll('.cy-segment').forEach((s) => {
+              if ((s.textContent ?? '').trim().length === 0) bad.push(`${row.getAttribute('data-message-id')?.slice(-6)}@${Math.round(rect.top - cRect.top)}`)
+            })
+          })
+          return bad
+        })
+        expect(visibleBlank).toEqual([])
+        console.log(`[perf-gate] viewsense seg total=${segs.total} empty=${segs.empty} nonEmpty=${segs.nonEmpty} visibleBlank=${visibleBlank.length}`)
     } finally { await closeApp(launched) }
   })
 

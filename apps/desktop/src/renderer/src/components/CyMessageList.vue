@@ -101,7 +101,11 @@ function captureCurrent(): void {
 
 /** 行实测：写 heights 并补偿锚点上方变化（D5，防估→实测推走锚点；评审 P1-2 前插行首测按实测-估高补差） */
 function onRowResized(id: string, entry: ResizeObserverEntry): void {
-  const h = entry.contentRect.height
+  // 7D 真机修复：用 border-box 实际高度（同 CyHistoryViewer）。contentRect 不含 .cy-vlist-row 的
+  // 上下 padding（6+6=12px/行），长列表前缀和会逐行欠估 → strict 可见窗口偏前 → 视口边缘出现「半可见但空 source」的 completed 行。
+  // 7D 真机修复：用 border-box 实际高度（同 CyHistoryViewer）。contentRect 不含 .cy-vlist-row 的
+  // 上下 padding（6+6=12px/行），长列表前缀和会逐行欠估 → strict 可见窗口偏前 → 视口边缘出现「半可见但空 source」的 completed 行。
+  const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
   const prev = heights.value[id]
   if (prev === h) return
   heights.value[id] = h
