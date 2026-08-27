@@ -224,7 +224,7 @@ describe('voice:audio-chunk 单向通道守卫（registerOneWayHandler）', () =
     emitOneWay(IpcChannels.voiceAudioChunk, fakeEvent, { bytes })
     expect(adapter.sendAudioBytes).toHaveBeenCalledTimes(1)
     expect(adapter.sendAudioBytes).toHaveBeenCalledWith(bytes)
-  })
+  }, 10000) // 7D 门禁收口：全量单测下 registerOnce(resetModules+动态 import) 累计耗时使该用例越过默认 5s（7D 验收记录既有 flaky），单列 10s 上限
   it('payload 畸形（bytes 非 Uint8Array）→ 丢弃 + warn（ipc:oneway-invalid）', async () => {
     const adapter = makeVoiceAdapter()
     const { emitOneWay, logger } = await registerOnce(adapter, { load: vi.fn(), save: vi.fn() })
