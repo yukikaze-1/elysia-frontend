@@ -1198,6 +1198,18 @@ const ALLOWLIST = [
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（createCorruptIsolation 的 { isolate, dropInvalid, pruneCorrupt } + logger/audit/countDiagnostic/safeRoot/realpath 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
   },
+  // ── 阶段 7 批次 C（Task 6 门禁）：spec/plan 新落文档的 base64-long-string 误报 ──
+  // 全部为可读路径/标识符长串（模块导入串 + git add 串 + 虚拟行/估算函数标识符），非高熵秘密——逐行人工核对 2026-08-27。
+  {
+    path: "docs/superpowers/plans/2026-08-26-phase7-batchc-perf-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 15 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/utils/virtual-window.ts 等模块导入串 + git add 串 + estimateHeight/buildPrefix/captureAnchor/restoreScrollTop 标识符的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
+  },
+  {
+    path: "docs/superpowers/specs/2026-08-26-phase7-batchc-perf-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    rules: ['base64-long-string'],
+    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（estimateHeight/buildPrefix/computeWindow/captureAnchor/restoreScrollTop 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
+  },
 ]
 let failed = false
 const ok = (m) => console.log(`✓ ${m}`)

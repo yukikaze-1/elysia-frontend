@@ -399,6 +399,8 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 - 大文件读取、哈希和上传不在 Renderer 主线程执行；
 - 单个工具或 Live2D 异常不得造成整个窗口崩溃。
 
+> **性能收敛注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 补两条性能面落地——① 历史查看器虚拟化：`CyHistoryViewer` 的 `groupedItems` 扁平化为虚拟行 `rows`，复用泛型化 `virtual-window` 数学内核（`buildPrefix<T>`/`captureAnchor<T>`/`restoreScrollTop<T>`，注入 estimate/keyFor/isAnchorable；`estimateHeight` 泛型签名 + `Message` 重载并存，消息列表调用处零改动），可视窗口 + overscan 渲染，500 项历史资源 DOM 节点有界；② 渲染缓存：`renderMarkdown` 模块级 `Map<string,string>`（source→HTML）+ `clearMarkdownCache()` 挂 `resetConversation`，完成态 segment 免重复 `marked.parse`+`DOMPurify.sanitize`。性能测量由集成 suite（`perf-gate.spec.ts`）常驻门禁——历史查看器 DOM 节点有界（硬失败）+ JS 堆上限（告警非硬失败，`app.commandLine.appendSwitch('enable-precise-memory-info')` 精确读取）+ 100 分段全量呈现 + 长会话行有界 + Live2D 折叠 rAF 停复核。**三态=已开发、未联调**（真实 Windows Electron 联调为批次后）。
+
 ## 11. 必须与后端核对的接口点
 
 - 后端当前使用 WebSocket、SSE 还是二者并存；

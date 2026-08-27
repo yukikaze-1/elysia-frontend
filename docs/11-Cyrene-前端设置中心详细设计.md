@@ -318,6 +318,8 @@ interface AuthorizedCommandTemplate {
 
 目标模型加载失败时保持当前模型，不让角色栏空白。
 
+> **性能读数注记（2026-08-26，阶段 7 批次 C，观察项）：** Live2D 性能读数接入诊断页为节奏内观察项——本批已由性能测量集成 suite（`perf-gate.spec.ts`）复核「折叠后 rAF 停」（维持现状，不 dispose），但「CPU/GPU 数值实测读数接入诊断页」未纳入本批（视测量——若 Live2D 读数测量简单且价值高则纳入，否则记观察项，决策 D7C-07）；断语：Live2D 关闭后 CPU/GPU 下降幅度是「停渲染级」（rAF 停为代理证据）而非「释放资源级」（collapse 不 dispose，expand 无需重载恢复快）。**三态=已开发、未联调**。
+
 ### 7.2 字体与颜色
 
 - 全局字体缩放；

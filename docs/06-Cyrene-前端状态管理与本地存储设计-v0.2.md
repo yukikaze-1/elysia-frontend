@@ -449,6 +449,8 @@ Demo 可以按复杂度选择：
 - 退出时清理无引用上传临时文件；
 - 不依赖用户手工清理才能避免无限增长。
 
+> **性能面注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 补「虚拟化 + 缓存 + 内存有界」三条——① 消息/历史虚拟列表 DOM 有界：历史查看器（7C 虚拟化）与消息列表（阶段 3）均经虚拟窗口渲染，DOM 节点数不随会话/结果数线性；② 渲染缓存：`renderMarkdown` 模块级 `Map<string,string>`（source→HTML，完成态 segment 命中免 re-parse），`clearMarkdownCache()` 挂 `resetConversation`（会话切换清空）——缓存上界以「会话内渲染分段总数」为界，非病态增长面（敏感文本 post-sanitize、仅会话内清空、不跨信任边界，接受档见决策记录 §8.6）；③ 测量驱动的内存有界：性能测量 suite（`perf-gate.spec.ts`）断言历史查看器 DOM 节点有界（硬失败）+ JS 堆上限（告警非硬失败，`usedJSHeapSize` 采样≥3 次取稳定值）——若实测 byId/cache.snapshots/historyViewer.items 无病态增长，记观察项不强行加上限（决策 D7C-05）。**三态=已开发、未联调**。
+
 ## 14. 验收标准
 
 > **阶段 6 批次 C 注记（2026-08-21）**：settings.tools grants 子树 + GrantStore 边界已落地（见 §3.7/§8.1 注记）——grants 持久化归 Main `settings.json` `tools` 子树（`ToolsSettingsSchema.default({grants: []})`，version 1 向后兼容，无迁移脚本）；授权管理以 `tool:grants`/`tool:grant-revoke` 为交互面，settingsStore 不消费 tools（`tool:grants` 权威刷新源）。

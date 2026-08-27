@@ -519,3 +519,31 @@
 - **行为变更点**：① `messageStore.handleConnectionStateChange` 断线补 `flush(cid)` 草稿自动保存（不改发送状态机——不新增离线发消息队列）；② `settings-service.ts` 损坏备份名 `.corrupt` → `.corrupt-<tag>-<ts>`（同步 `settings-service.spec.ts` 断言为 `.corrupt-...` 前缀匹配）；③ session-store 移除既有 countDiagnostic（防双计数）；④ mock-backend 增 `disconnectAfterMs` + error→connected 恢复（新 env `CYRENE_MOCK_DISCONNECT_AFTER_MS`）。
 - **三态 = 已开发、未联调**（真实 Windows Electron 联调归开发者批次后）——**不触发全量交叉 Review 重跑**，联调通过后做收口 Review。
 - **门禁**：单测 159 files / 1995 passed + 7 expected-fail；集成 21 files / 131 passed；typecheck/lint/build 全绿；check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）；verify:sensitive exit 0（590 文件扫 / 1624 行放行 / 8 规则）。**计数最终值以主会话批次收口（CLAUDE.md）为准**。
+
+## 20. 增量 Review：阶段 7 批次 C 性能收敛落地同步（2026-08-26）
+
+**触发条件：** doc 13 §9 ——「阶段门槛或验收脚本发生变化」与「修改安全策略或权限模型」：批次 C 落地历史查看器虚拟化（500 项不虚化）、CyMarkdown 渲染缓存、mock 多分段种子、性能测量常驻门禁（DOM 节点有界硬失败 + JS 堆告警）。**同步时机：批次落地后的文档同步轮**（本章节）——全量 cross-review 按 doc 13 §9 延至真实联调后收口（spec/plan 四维 review 不替代）。
+
+### 20.1 本次修订
+
+| 文档 | 变更 |
+|---|---|
+| 01 §10 | 性能边界注记（历史查看器虚拟化 + `renderMarkdown` 模块级缓存 + 性能测量常驻门禁 + `enable-precise-memory-info` + 三态） |
+| 03 §7.7 | 历史查看器虚拟化注记（`groupedItems` 扁平虚拟行 `rows` + 泛型化 `virtual-window` 内核 + data 层锚点补偿 + `estimateItemHeight` + snippet 保持 mustache 转义不变） |
+| 06 §13 | 性能面注记（虚拟列表 DOM 有界 + `renderMarkdown` 缓存上界 + 测量驱动的内存有界，决策 D7C-05） |
+| 10 §10.1/§10.2 | 7C 状态注记 + §10.2 完成标准勾选（「200 条/100 分段/500 项」「内存增长」「Live2D 下降」从 [ ] 转 [x]（7C 落点）） |
+| 11 §7 | Live2D 性能读数注记（观察项——本批复核「折叠后 rAF 停」，CPU/GPU 数值读数未纳入，决策 D7C-07） |
+| 16 §10/§13 | 7C 状态注记 + 任务清单/验收门槛勾选（「长会话/长流式/历史资源/Live2D 性能」[ ]→[x]）+ §13 变更记录新行 |
+| 17 | `CYRENE_MOCK_MULTI_SEGMENT` mock 多分段种子 env 记录 |
+| README / CLAUDE.md | 阶段 7 批次 C 状态段 + 门禁横计数（161/2011+7xfail、135、check:contract、verify:sensitive）+ 三态标记（已开发、未联调） |
+| 决策记录 | `docs/review/2026-08-26-阶段7批次C-决策记录.md`（D7C-01~08 预设 + D7C-09~16 补 + §4C 降级裁决 + spec/plan 2 轮 review 记录 + Task 1~5 review 结论 + 提交链） |
+
+### 20.2 交叉 Review 结论
+
+- **新口径（跨 doc 统一）**：历史查看器结果列表由「全量 DOM」改为「虚拟列表渲染」——`groupedItems` 扁平化为 `rows`（day header 为虚拟行），`buildPrefix<T>`/`captureAnchor<T>`/`restoreScrollTop<T>` 泛型化（注入 estimate/keyFor/isAnchorable），`estimateHeight` 双签名重载（`Message` 重载零改动 + 泛型签名），消息列表调用处零改动。
+- **安全策略变化（需重点说明）**：无安全放宽。虚拟化**只改 DOM 节点数**，不改变 snippet 敏感文本处理——搜索结果 snippet 保持 **mustache 插值转义**（`{{ hit.snippet }}`，非 v-html / 非 `renderMarkdown`），不落日志/导出。CyMarkdown 缓存为敏感文本二次驻留（`Map<source, html>`、post-sanitize、仅随会话切换清空、不跨信任边界）——接受档（决策记录 §8.6），非新病态面。
+- **信任边界无放宽**：性能测量断言**仅限聚合计数**（`usedJSHeapSize` 字节 / DOM 节点数 / 行数 / 分段数），绝不含 message text / segment 逐条长度 / 分段内容量（防测量演化为内容侧信道，安全 M-3）——集成/单测注释显式声明。
+- **行为变更点**：① `renderMarkdown` 对相同 source 命中缓存（输出不变，只改善性能）；② mock-backend 增 `multiSegmentCount`（新 env `CYRENE_MOCK_MULTI_SEGMENT`，useMock 门控，真实模式误设不注入）取代夹具 public_reply 段仅当设置时；③ `getConversationMessages` 在 `seedHistoryCount>0` 时返回该会话 messageRecords（长会话 seed 前提）。
+- **观察到的新观察项**：100 分段全量呈现（行内 segment 无条件渲染，不裁剪——「有界」由行级虚拟化 `.cy-vlist-row` 承担）→ 观察项「视图感知暂停」；`performance.memory` 非标准 API（弃用方向，门禁退化为仅 DOM 断言）；§4C 流式增量合并降级。
+- **三态 = 已开发、未联调**（真实 Windows Electron 联调归开发者批次后）——**不触发全量交叉 Review 重跑**，联调通过后做收口 Review。
+- **门禁**：单测 161 files / 2011 passed + 7 expected-fail；集成 22 files / 135 passed；typecheck/lint/build 全绿；check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）；verify:sensitive exit 0（598 文件扫 / 368 排除 / 1642 行放行 / 8 规则）。**计数最终值以主会话批次收口（CLAUDE.md）为准**。

@@ -241,6 +241,8 @@ AI 消息：复制 Public Reply、复制完整回复组、折叠 Inner Voice、�
 - 使用不透明游标懒加载，打开查看器不阻塞聊天流；
 - 已撤销、过期或下载失败的资源保留可解释占位；搜索失败或无结果不清空现有聊天内容。
 
+> **虚拟化注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 结果列表改为**虚拟列表渲染**——`groupedItems`（按自然日分组）扁平化为虚拟行 `rows`（`DayHeaderRow | ResultRow`，day header 固定高 ~34px / item 单行 snippet ~72px / sticker 缩略图行 +64px），复用泛型化 `virtual-window` 数学内核渲染可视窗口 + overscan（`OVERSCAN_PX`），命中结果**500 项不再全量 DOM**（`.cy-history-item` 节点数有界 ≤60，不随结果数线性）。剩余行为不变：日分组 header 仍正确显示（随虚拟行挂载）、锚点补偿改 data 层（`captureAnchor`/`restoreScrollTop` 前缀和二分，跳过 header 取首个 item 行，恢复偏移 ≤1px）、加载更多后新页行可达（滚动触发虚拟窗口重算）、Tab 焦点陷阱查询 overlay 全量 focusable（最后 focusable 仍为 footer「加载更多」）、跳转 `onJump`→`jumpToMessage` 不变、snippet 保持 **mustache 插值转义**（`{{ hit.snippet }}`，非 v-html / 非 renderMarkdown——虚拟化只改 DOM 节点数，**不改变** snippet 敏感文本转义与「不落日志/导出」语义）。
+
 ## 8. 输入区
 
 ### 8.1 输入规则
