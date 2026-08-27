@@ -123,6 +123,8 @@ export const useAttachmentStore = defineStore('attachment', () => {
   function remove(localId: string): void {
     if (uploading.value) return   // 上传中禁止移除（spec §4.3）
     commit({ type: 'remove', localId })
+    delete kindByLocalId.value[localId]   // 7D：单个移除即时释放强引用（上传中短路不清，由 clearOnSent/clear 兜底）
+    delete fileByLocalId.value[localId]
   }
 
   function clearOnSent(): void {

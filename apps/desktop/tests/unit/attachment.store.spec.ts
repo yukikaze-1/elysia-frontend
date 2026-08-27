@@ -149,6 +149,24 @@ describe('attachmentStore', () => {
     expect(store.pendingById[id2]).toBeDefined()   // 上传中禁止移除
   })
 
+  it('remove：非上传中清 kindByLocalId/fileByLocalId（单个移除即时释放强引用）', async () => {
+    mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
+      files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' }) as FileValidationResult))
+    const store = useAttachmentStore()
+    store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
+    const id = store.order[0]
+    await vi.waitFor(() => { expect(store.kindByLocalId[id]).toBe('image') })   // validateAll → kind
+    expect(store.fileByLocalId[id]).toBeDefined()   // bytes 引用存在
+    store.remove(id)
+    expect(store.pendingById[id]).toBeUndefined()   // 队列清
+    expect(store.kindByLocalId[id]).toBeUndefined() // 新增：kind 清
+    expect(store.fileByLocalId[id]).toBeUndefined() // 新增：file/bytes 引用清
+    // 不清其它 localId
+    store.addFiles([{ name: 'b.png', size: 10, mediaType: 'image/png', source: 'paste', bytes: new ArrayBuffer(2) }])
+    const id2 = store.order.find((x) => x !== id)!
+    expect(store.fileByLocalId[id2]).toBeDefined()
+  })
+
   it('hasFailed 阻断发送（canSend.blockReason）', async () => {
     mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: Array<{ localId: string }> }) =>
       files.map((f) => ({ localId: f.localId, ok: false, reason: 'too_large', message: '超限' }) as FileValidationResult))
