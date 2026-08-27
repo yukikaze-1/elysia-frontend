@@ -11,6 +11,13 @@
  *  'high'→'quality'、'low'→'low_power' 由 schema 归一函数处理。帧率/降帧消费归批次 C。 */
 export type PerformanceMode = 'auto' | 'quality' | 'balanced' | 'low_power'
 
+/** Live2D 性能读数（7D）：FrameBudget 帧耗时 EMA + 目标帧率 + 模式——诊断页「Live2D 性能」数据源。 */
+export interface Live2dFrameStats {
+  emaCostMs: number
+  autoTargetFps: number | null
+  mode: PerformanceMode
+}
+
 /** 本地设置（D5B-08 全量 10 字段）。enabled 语义：缺省 true；与 G1 布局折叠标志 live2dShown（布局级隐藏）正交；
  *  modelId 为已加载模型 id（null = 未选择/默认首个可用）；scale∈[0.5,3]、offsetX/Y∈[-2,2] 安全钳制。 */
 export interface Live2DSettings {

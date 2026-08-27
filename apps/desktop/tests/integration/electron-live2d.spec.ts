@@ -878,3 +878,25 @@ describe('阶段5批次C Live2D Electron 集成（收口回归：恢复默认 �
     } finally { await closeApp(launched) }
   })
 })
+
+// —— 阶段 7 批次 D（Task 4）：Live2D 数值读数接入诊断页（FrameBudget.getStats 透传，闭合 D7A-06）——
+
+describe('阶段7批次D Live2D Electron 集成（7D：Live2D 数值读数接入诊断页）', () => {
+  it('诊断页 Live2D 性能：设置打开时显示「未启动」（Live2D 被 settings 卸载 → status unloaded → getStats null）', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page) // chat 视图 Live2D 就绪（settings 未打开）
+      // 打开设置 → 开发与诊断 → 开开发者模式（confirm 处理）
+      page.on('dialog', (d) => d.accept())
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await expect.poll(() => page.locator('.cy-settings').count(), POLL).toBe(1)
+      await page.locator('.cy-settings-nav-item', { hasText: '开发与诊断' }).click()
+      await expect.poll(() => page.locator('.cy-l2d-pane').count(), POLL).toBe(1)
+      await page.locator('button[data-testid="diag-dev-toggle"]').click()
+      // 设置打开 → chat（Live2D）已 unmount → status unloaded → getStats null → 显示未启动
+      await expect.poll(() => page.getByTestId('diag-dev-perf').textContent(), POLL).toMatch(/未启动|无读数/)
+    } finally { await closeApp(launched) }
+  })
+})

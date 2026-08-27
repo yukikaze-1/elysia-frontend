@@ -16,6 +16,19 @@ import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.t
 import type { DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState } from '@shared/contracts'
 import type { PublicToolEvent } from '@shared/contracts/tool'
 
+// —— Core 全局桩（本 spec 经 useLive2dStore → controller → adapter → @framework 模块作用域枚举在 import 时
+//   访问 Live2DCubismCore；happy-dom 无该全局——与 live2d-panel.spec 同款先例）——
+vi.hoisted(() => {
+  const names = [
+    'Normal', 'AddGlow', 'Add', 'Darken', 'Multiply', 'ColorBurn', 'LinearBurn', 'Lighten', 'Screen',
+    'ColorDodge', 'Overlay', 'SoftLight', 'HardLight', 'LinearLight', 'Hue', 'Color',
+    'AddCompatible', 'MultiplyCompatible'
+  ] as const
+  const ColorBlendType: Record<string, number> = {}
+  names.forEach((n, i) => { ColorBlendType[`ColorBlendType_${n}`] = i })
+  ;(globalThis as Record<string, unknown>).Live2DCubismCore = { ColorBlendType }
+})
+
 /** 开发者模式二次确认固定文案（brief/spec §6.4——必须逐字逐标点相同，防误触边界说明收紧的回归哨兵） */
 const DEV_MODE_CONFIRM = 'DevTools 可查看当前页面 DOM 与正在输入的内容；已保存凭据不可读回；远程调试端口始终关闭；重启后自动关闭'
 
@@ -186,8 +199,8 @@ describe('CyDiagnosticsPane 四分区（日志管理/开发者模式/连接诊�
     expect(w.find('[data-testid="diag-store-messages"]').text()).toBe('2')
     expect(w.find('[data-testid="diag-store-voice"]').text()).toBe('空闲')
     expect(w.find('[data-testid="diag-dev-tools"]').text()).toContain('desktop.file.read')
-    // Live2D 性能读数：确定性口径「不可用」（frame budget 读数未导出，归 7C）——占位注记展示
-    expect(w.find('[data-testid="diag-dev-perf"]').text()).toContain('不可用')
+    // Live2D 性能读数：空态（happy-dom 未挂 Live2D controller → getStats null → 显示未启动）
+    expect(w.find('[data-testid="diag-dev-perf"]').text()).toContain('未启动')
   })
 
   it('导出成功 → 结果（displayPath）提示显示；cancelled 分支无提示', async () => {

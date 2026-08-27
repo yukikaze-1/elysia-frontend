@@ -70,4 +70,18 @@ describe('FrameBudget（C2 四值降帧；首帧必画，lastDrawMs 初值=构�
     expect(b.shouldDraw(60)).toBe(false) // 60-40=20 < 33.33
     expect(b.shouldDraw(74)).toBe(true) // 74-40=34 ≥ 33.33
   })
+
+  it('getStats（7D）：暴露 emaCostMs/autoTargetFps/mode（auto 模式目标帧率；非 auto 为 null）', () => {
+    const b = new FrameBudget('auto', 0)
+    b.shouldDraw(0) // 首帧
+    for (let i = 0; i < 12; i++) b.feedCost(20) // 持续高耗时 → 降 30fps
+    const s = b.getStats()
+    expect(s.mode).toBe('auto')
+    expect(s.autoTargetFps).toBe(30)
+    expect(s.emaCostMs).toBeGreaterThan(0)
+    b.setMode('balanced')
+    const s2 = b.getStats()
+    expect(s2.mode).toBe('balanced')
+    expect(s2.autoTargetFps).toBeNull() // 非 auto 为 null
+  })
 })

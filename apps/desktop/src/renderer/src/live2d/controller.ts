@@ -279,6 +279,11 @@ export class Live2DController {
     return this.perfMode
   }
 
+  /** 性能读数（7D）：透传 FrameBudget.getStats——budget 恒构造非空，未 ready 时为构造默认值（诊断页在 store 层判 status）。 */
+  getStats(): { emaCostMs: number; autoTargetFps: number | null; mode: PerformanceMode } {
+    return this.budget.getStats()
+  }
+
   // —— 批次 B（Task 3，B1/B2/B4 真实实现；Task 4 接调度与 state source）——
 
   /** 服务状态机命令：喂 CharacterStateMachine（source/外部已仲裁的最终态，机器直接采纳，见 state-machine 注）。

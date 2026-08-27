@@ -91,4 +91,9 @@ export class FrameBudget {
     this.fastStreak = 0
     this.first = true
   }
+
+  /** 性能读数（7D）：暴露帧耗时 EMA + 目标帧率 + 模式——诊断页「Live2D 性能」数据源。 */
+  getStats(): { emaCostMs: number; autoTargetFps: number | null; mode: PerformanceMode } {
+    return { emaCostMs: this.emaCost, autoTargetFps: this.mode === 'auto' ? this.autoTarget : null, mode: this.mode }
+  }
 }

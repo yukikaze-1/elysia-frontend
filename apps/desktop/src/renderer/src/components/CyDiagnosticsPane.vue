@@ -11,6 +11,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../stores/desktop-api'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
+import { useLive2dStore } from '../stores/live2d.store'
 import { useMessageStore } from '../stores/message.store'
 import { useVoiceStore } from '../stores/voice.store'
 import type { DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState } from '@shared/contracts'
@@ -25,6 +26,7 @@ const DEV_EVENT_CAP = 200
 
 const conn = useConnectionStore()
 const conversation = useConversationStore()
+const live2dStore = useLive2dStore()
 const message = useMessageStore()
 const voice = useVoiceStore()
 
@@ -166,6 +168,8 @@ const cleanupText = computed(() => {
   if (!c) return ''
   return `已清理 ${c.removedFiles} 个文件，释放 ${fmtBytes(c.freedBytes)}`
 })
+/** Live2D 性能读数（7D）：读取时取值——诊断页打开时读当前值（Live2D 因 settings 卸载 chat 恒 unloaded → null → 未启动） */
+const live2dStats = computed(() => live2dStore.getStats())
 </script>
 
 <template>
@@ -238,7 +242,12 @@ const cleanupText = computed(() => {
         </dl>
 
         <h5 class="cy-diagnostic-dev-subtitle">Live2D 性能</h5>
-        <p class="cy-security-empty" data-testid="diag-dev-perf">不可用——帧耗时统计未导出（FrameBudget 读数为 controller 私有，本批不做 API 扩展——确定性口径，归 7C 性能批次）。</p>
+        <p v-if="live2dStats" class="cy-diagnostic-line" data-testid="diag-dev-perf">
+          帧耗时（EMA）：<span class="cy-diagnostic-val">{{ live2dStats.emaCostMs.toFixed(1) }} ms</span>
+          <template v-if="live2dStats.autoTargetFps">&nbsp;·&nbsp;目标帧率：{{ live2dStats.autoTargetFps }} fps</template>
+          &nbsp;·&nbsp;模式：{{ live2dStats.mode }}
+        </p>
+        <p v-else class="cy-security-empty" data-testid="diag-dev-perf">Live2D 未启动（无读数）</p>
 
         <h5 class="cy-diagnostic-dev-subtitle">详细前端日志</h5>
         <button type="button" class="cy-security-btn" data-testid="diag-dev-log-link" @click="onOpenDir">打开日志目录</button>

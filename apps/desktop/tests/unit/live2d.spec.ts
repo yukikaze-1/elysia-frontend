@@ -434,7 +434,9 @@ function installEffectiveController(effectiveFor: Record<string, string>) {
     playMotion: vi.fn(() => true),
     // C2：可见性接线（D5C-05）与 GPU 重建 reset（D5C-04）
     setVisibility: vi.fn(),
-    reset: vi.fn(async () => { state.id = 'haru' })
+    reset: vi.fn(async () => { state.id = 'haru' }),
+    // 7D：性能读数透传（FrameBudget.getStats；store 仅判 status）
+    getStats: vi.fn(() => ({ emaCostMs: 0, autoTargetFps: 60, mode: 'auto' }))
   }
   setLive2dControllerFactory(() => ctrl as unknown as Live2DController)
   return ctrl
@@ -845,6 +847,28 @@ function injectCompletedMessage(emotion: string | undefined): void {
   }
   msg.order.push('m-1')
 }
+
+describe('live2dStore 7D（getStats：FrameBudget 读数透传，status 判 null）', () => {
+  beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
+  afterEach(() => { vi.useRealTimers() })
+
+  it('getStats：status==ready && controller → 返回读数；status!==ready → null', async () => {
+    const ctrl = installEffectiveController({})
+    const getStatsFn = ctrl.getStats as ReturnType<typeof vi.fn>
+    getStatsFn.mockReturnValue({ emaCostMs: 12.3, autoTargetFps: 60, mode: 'auto' })
+    mockApi.listLive2dModels.mockResolvedValue([MODEL_HARU]) // 自包含：listLive2dModels 不依赖跨用例残留
+    const { store } = freshStore()
+    expect(store.status).toBe('unloaded') // 未 init
+    expect(store.getStats()).toBeNull() // 未 ready → null
+    await store.init(fakeCanvas)
+    expect(store.status).toBe('ready')
+    expect(store.getStats()).toEqual({ emaCostMs: 12.3, autoTargetFps: 60, mode: 'auto' })
+    expect(getStatsFn).toHaveBeenCalledTimes(1)
+    store.dispose()
+    expect(store.status).toBe('unloaded')
+    expect(store.getStats()).toBeNull() // dispose → unloaded → null
+  })
+})
 
 describe('live2dStore 批次 C（C3）：handleDirective 指令消费（live2d.directive）', () => {
   beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })

@@ -24,7 +24,7 @@ import { useVoiceStore } from './voice.store'
 import { useLayoutStore } from './layout.store'
 import { useToolStore } from './tool.store'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
-import type { DirectiveState, Live2DDirectiveEvent, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
+import type { DirectiveState, Live2DDirectiveEvent, Live2dFrameStats, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
 
 /** C3：DirectiveState 七值（剔除 error——error=3 必须 client 驱动，D5C-07）；越界（如 'error'/'working'）丢弃 */
 const DIRECTIVE_STATES: ReadonlySet<string> = new Set<DirectiveState>([
@@ -478,9 +478,15 @@ export const useLive2dStore = defineStore('live2d', () => {
     }
   }
 
+  /** 性能读数（7D）：仅在 ready 态返回（否则 null——诊断页无读数）。controller 缺失/未 ready → null（M-1：无读数判定唯一来源 = status）。 */
+  function getStats(): Live2dFrameStats | null {
+    if (status.value !== 'ready' || !controller) return null
+    return controller.getStats()
+  }
+
   return {
     models, status, modelId, error, live2dSettings, characterState, mouthLevel, mouthSourceKind, mouthMoved, mouthSettled,
-    init, switchModel, restoreDefaults, dispose, tick, handleDirective,
+    init, switchModel, restoreDefaults, dispose, tick, handleDirective, getStats,   // 7D getStats
     setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
   }
 })
