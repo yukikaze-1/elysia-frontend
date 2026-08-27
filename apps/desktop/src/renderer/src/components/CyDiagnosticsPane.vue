@@ -168,7 +168,7 @@ const cleanupText = computed(() => {
   if (!c) return ''
   return `已清理 ${c.removedFiles} 个文件，释放 ${fmtBytes(c.freedBytes)}`
 })
-/** Live2D 性能读数（7D）：读取时取值——诊断页打开时读当前值（Live2D 因 settings 卸载 chat 恒 unloaded → null → 未启动） */
+/** Live2D 性能读数（7D）：读取时取值——诊断页打开时读当前值（面板 7D 起常驻挂载，settings 打开仍保持 ready → 显示真实帧读数） */
 const live2dStats = computed(() => live2dStore.getStats())
 </script>
 

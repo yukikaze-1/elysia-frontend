@@ -2,7 +2,8 @@
 // 阶段 3 G1（spec §4.6，决策 D10）：布局宿主——消费 layoutStore，绑定 grid-template-columns/areas，
 // 挂 ResizeObserver 喂 viewportWidth（P2-2 首帧已由 store 播种）；隐藏区 v-show + 网格列不生成。
 // 阶段 4 批次 A：视图切换——chat 四区（v-if）/ tasks 占位（v-else-if）/ settings 全窗 overlay（v-else）；
-// NavRail 常驻（settings 关闭回焦目标）；CyLive2DPanel 高频渲染 gate（非 chat 视图不渲染）。
+// NavRail 常驻（settings 关闭回焦目标）；CyLive2DPanel 移到 chat 分支外常驻挂载（7D 真机前置修复）——
+// settings 打开时仅 v-show 隐藏 + 面板内 currentView gate 停 rAF，不 dispose，诊断页才能读到 ready 态帧读数。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CyRendererCrashBanner from './components/CyRendererCrashBanner.vue'
 import CyTitleBar from './components/CyTitleBar.vue'
@@ -63,7 +64,9 @@ watch(() => layout.notice, (n) => {
 <template>
   <!-- 四区布局:导航 / 会话列表 / 聊天 / Live2D 右栏（角色栏是布局列，不覆盖聊天）。grid-template-* 由有效布局驱动（D10）。
        阶段 4 批次 A：Chat 视图整体 v-if；Tasks 占位；Settings 全窗 overlay（fixed，覆盖标题栏以下全部区域）。
-       阶段 7 批次 B（Task 3）：CyRendererCrashBanner 全局挂载（不随 view 切换）——reload 后 getLastCrash 读 marker 提示。 -->
+       阶段 7 批次 B（Task 3）：CyRendererCrashBanner 全局挂载（不随 view 切换）——reload 后 getLastCrash 读 marker 提示。
+       7D：CyLive2DPanel 常驻挂载（不随 chat v-if 卸载）——settings 打开时 v-show 隐藏但保留 ready 态，
+       rAF 由面板内 currentView gate 停止；诊断页 Live2D 性能读数因此可读到真实帧耗时/帧率。 -->
   <CyRendererCrashBanner />
   <div ref="rootRef" class="cy-app" :style="gridStyle">
     <CyTitleBar />
@@ -73,7 +76,6 @@ watch(() => layout.notice, (n) => {
       <main class="cy-main">
         <CyChatView />
       </main>
-      <CyLive2DPanel v-show="layout.effective.live2dShown && app.currentView === 'chat'" />
       <div v-if="layout.notice" class="cy-layout-toast" role="status">{{ layout.notice }}</div>
       <CyHistoryViewer />
     </template>
@@ -81,6 +83,7 @@ watch(() => layout.notice, (n) => {
       任务中心 · 阶段 6 落地
     </div>
     <CySettingsView v-else @close="app.setView('chat')" />
+    <CyLive2DPanel v-show="layout.effective.live2dShown && app.currentView === 'chat'" />
   </div>
 </template>
 

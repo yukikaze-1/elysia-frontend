@@ -1,14 +1,16 @@
 <script setup lang="ts">
 // 阶段 3 G1 角色栏：聊天右侧的布局列扩展（不覆盖聊天）；折叠按钮接线 toggleLive2d + 左缘拖拽手柄（role=separator）。
 // 阶段 5 批次 A（A6，spec §3.6/D5A-10）：把 stage 占位替换为 live2d 渲染面——canvas + 模型下拉 + 状态文案；
-// 保留 G1 的 resizer/折叠/状态栏与 grid-area: live（App.vue:73 已 v-show 挂载，不动挂载点）。
-// 渲染循环：仅 live2dShown（布局级可见）&& settings.live2d.enabled（设置级开关）&& status=ready 时跑 rAF →
-// store.tick()（controller.tick → adapter.update+draw）；隐藏/关闭/回退即停（不渲染空白画布）；
+// 保留 G1 的 resizer/折叠/状态栏与 grid-area: live（7D 起 App.vue 常驻挂载，不随 chat v-if 卸载——
+// settings/tasks 打开时 v-show 隐藏但保留 ready 态，诊断页才能读到真实帧读数）。
+// 渲染循环：chat 视图 + live2dShown（布局级可见）+ settings.live2d.enabled（设置级开关）+ status=ready 时跑 rAF →
+// store.tick()（controller.tick → adapter.update+draw）；隐藏/切视图/关闭/回退即停（不渲染空白画布）；
 // canvas 尺寸随 stage 变化（ResizeObserver 重设自缓冲）；onBeforeUnmount → store.dispose()（全量释放无残留）。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useLayoutStore } from '../stores/layout.store'
 import { useLive2dStore } from '../stores/live2d.store'
 import { useSettingsStore } from '../stores/settings.store'
+import { useAppStore } from '../stores/app.store'
 import { LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH } from '../layout/constants'
 import type { CharacterState } from '../live2d/state-machine'
 import type { PerformanceMode } from '@shared/contracts'
@@ -16,6 +18,7 @@ import type { PerformanceMode } from '@shared/contracts'
 const layout = useLayoutStore()
 const store = useLive2dStore()
 const settings = useSettingsStore()
+const app = useAppStore()
 
 const dragging = ref(false)
 
@@ -45,10 +48,10 @@ const badgeClass = computed(() => {
   return ''
 })
 
-// 渲染循环 gate：布局级可见（v-show 折叠/窄窗）且设置级启用且已 ready（仅 ready 有可绘制帧；
-// loading/failed/fallback 静态态不跑空循环）。
+// 渲染循环 gate：chat 视图（7D：settings 打开时面板常驻挂载但 v-show 隐藏，必须停 rAF 防后台空转）
+// + 布局级可见（v-show 折叠/窄窗）+ 设置级启用 + 已 ready（仅 ready 有可绘制帧；loading/failed/fallback 静态态不跑空循环）。
 const active = computed(
-  () => layout.effective.live2dShown && settings.live2d.enabled && store.status === 'ready'
+  () => app.currentView === 'chat' && layout.effective.live2dShown && settings.live2d.enabled && store.status === 'ready'
 )
 
 const statusText = computed(() => {
@@ -81,6 +84,7 @@ let lookY = 0
 /** 跟随/点击作用域门（D5B-09）：mouseTracking + !reduceMotion + 设置级启用 + 已 ready + 布局级可见 */
 const lookAllowed = computed(
   () =>
+    app.currentView === 'chat' &&   // 7D：settings/tasks 下面板 v-show 隐藏，视线跟随一并停
     settings.live2d.mouseTracking &&
     !settings.live2d.reduceMotion &&
     settings.live2d.enabled &&

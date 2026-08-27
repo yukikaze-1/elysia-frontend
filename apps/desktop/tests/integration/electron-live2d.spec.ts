@@ -863,8 +863,8 @@ describe('阶段5批次C Live2D Electron 集成（收口回归：恢复默认 �
       await page.locator('select[aria-label="选择 Live2D 模型"]').selectOption(WANKO_ID)
       await expect.poll(() => statusText(page), POLL).toContain('Wanko')
       await expect.poll(() => readSettingsL2d(ud)?.modelId ?? null, POLL).toBe(WANKO_ID)
-      // 打开设置子页 → 恢复默认设置（store.restoreDefaults：置 DEFAULT_LIVE2D + 面板已 dispose → 显式持久化
-      // 首个可用；关闭设置后 panel 重挂载 init 读 modelId 加载首个可用）
+      // 打开设置子页 → 恢复默认设置（7D 起面板常驻挂载且 ready → store.restoreDefaults 走 controller 存活
+      // 分支：settings 打开时即 switchModel 首个可用；关闭设置后画布/select/持久化一致）
       await openCharacterPane(page)
       await page.getByRole('button', { name: '恢复默认设置' }).click()
       await page.getByRole('button', { name: '关闭设置' }).click()
@@ -882,7 +882,7 @@ describe('阶段5批次C Live2D Electron 集成（收口回归：恢复默认 �
 // —— 阶段 7 批次 D（Task 4）：Live2D 数值读数接入诊断页（FrameBudget.getStats 透传，闭合 D7A-06）——
 
 describe('阶段7批次D Live2D Electron 集成（7D：Live2D 数值读数接入诊断页）', () => {
-  it('诊断页 Live2D 性能：设置打开时显示「未启动」（Live2D 被 settings 卸载 → status unloaded → getStats null）', async () => {
+  it('诊断页 Live2D 性能：Live2D 面板常驻挂载，设置打开仍显示真实帧耗时/帧率读数', async () => {
     const ud = freshUserData()
     const launched = await launchL2d(ud)
     try {
@@ -892,11 +892,16 @@ describe('阶段7批次D Live2D Electron 集成（7D：Live2D 数值读数接入
       page.on('dialog', (d) => d.accept())
       await page.getByRole('button', { name: '设置', exact: true }).click()
       await expect.poll(() => page.locator('.cy-settings').count(), POLL).toBe(1)
+      // 7D：面板不随 chat 卸载——设置打开后仍 ready，但 v-show 隐藏（rAF 由 currentView gate 停止）
+      await expect.poll(() => page.locator('.cy-live').count(), POLL).toBe(1)
+      await expect(page.locator('.cy-live').isVisible()).resolves.toBe(false)
+      await expect.poll(() => statusText(page), POLL).toContain('就绪')
       await page.locator('.cy-settings-nav-item', { hasText: '开发与诊断' }).click()
       await expect.poll(() => page.locator('.cy-l2d-pane').count(), POLL).toBe(1)
       await page.locator('button[data-testid="diag-dev-toggle"]').click()
-      // 设置打开 → chat（Live2D）已 unmount → status unloaded → getStats null → 显示未启动
-      await expect.poll(() => page.getByTestId('diag-dev-perf').textContent(), POLL).toMatch(/未启动|无读数/)
+      // settings 打开但 store 保持 ready → getStats 非 null → 显示真实帧读数（模式/帧耗时 EMA）
+      await expect.poll(() => page.getByTestId('diag-dev-perf').textContent(), POLL).toMatch(/帧耗时（EMA）：\d+(\.\d+)? ms/)
+      expect(await page.getByTestId('diag-dev-perf').textContent()).toContain('模式：')
     } finally { await closeApp(launched) }
   })
 })
