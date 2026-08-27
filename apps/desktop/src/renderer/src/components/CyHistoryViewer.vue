@@ -67,10 +67,11 @@ type HistoryRow =
   | { kind: 'header'; key: string; date: string; label: string }
   | { kind: 'item'; key: string; hit: ChatHistoryItem }
 
-/** 历史行估算（完整 H-2/准确 M-4 修复）：header 固定 ~34px；item 单行 snippet ~72px，sticker 缩略图 +64px。
+/** 历史行估算（完整 H-2/准确 M-4 修复）：header 固定 ~34px；item 单行 snippet ~72px + 6px padding-bottom（F-1 修复），sticker 缩略图 +64px。
+ *  padding-bottom 计入 ResizeObserver border-box 高度，使 estimate 与实测一致（prefix math 不脱钩）。
  *  estimate 只作未实测行的近似，实测行高经 ResizeObserver 覆盖（估高误差由 pendingCompensation 补偿）。 */
 function estimateItemHeight(hit: ChatHistoryItem): number {
-  const BASE_ITEM = 72
+  const BASE_ITEM = 78   // 72 内容 + 6 padding-bottom（F-1：grid gap:6px 改为 padding，恢复同组 item 间距）
   if (hit.resource?.kind === 'sticker') return BASE_ITEM + 64
   return BASE_ITEM
 }
@@ -339,7 +340,7 @@ const announceText = computed(() => {
    否则 prefix 前缀和与真实布局不符、锚点恢复失效（<=1px 断言失败）。 */
 .cy-history-results { flex: 1 1 0; display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; overflow-y: auto; overflow-anchor: none; min-height: 120px; }
 .cy-history-day { display: block; padding: 4px 0 3px; margin: 0; color: var(--cy-muted); font-size: 12px; font-weight: 500; }
-.cy-vlist-row { display: block; padding: 0; }
+.cy-vlist-row { display: block; padding: 0 0 6px; }   /* F-1：grid gap:6px 改为 padding-bottom（计入 ResizeObserver border-box，恢复同组 item 间距） */
 .cy-vlist-pad { flex-shrink: 0; }
 .cy-history-footer { margin-top: 10px; text-align: center; }
 .cy-history-header, .cy-history-filters, .cy-history-tabs, .cy-live, .cy-history-error, .cy-history-state, .cy-history-footer { flex-shrink: 0; }
