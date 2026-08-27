@@ -154,6 +154,7 @@ describe('attachmentStore', () => {
       files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' }) as FileValidationResult))
     const store = useAttachmentStore()
     store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
+    store.addFiles([{ name: 'b.png', size: 10, mediaType: 'image/png', source: 'paste', bytes: new ArrayBuffer(2) }])
     const id = store.order[0]
     await vi.waitFor(() => { expect(store.kindByLocalId[id]).toBe('image') })   // validateAll → kind
     expect(store.fileByLocalId[id]).toBeDefined()   // bytes 引用存在
@@ -161,9 +162,10 @@ describe('attachmentStore', () => {
     expect(store.pendingById[id]).toBeUndefined()   // 队列清
     expect(store.kindByLocalId[id]).toBeUndefined() // 新增：kind 清
     expect(store.fileByLocalId[id]).toBeUndefined() // 新增：file/bytes 引用清
-    // 不清其它 localId
-    store.addFiles([{ name: 'b.png', size: 10, mediaType: 'image/png', source: 'paste', bytes: new ArrayBuffer(2) }])
+    // 不清其它 localId —— 关键：b 与 a 同时驻留再 remove(id)，断言 b 的引用仍 defined。
+    // 旧写法 b 在 remove 之后 add，remove 时刻 fileByLocalId 只有 a 一项，即便实现退化为整表 `= {}` 该断言仍 pass（结构性空转）。
     const id2 = store.order.find((x) => x !== id)!
+    expect(store.kindByLocalId[id2]).toBeDefined()
     expect(store.fileByLocalId[id2]).toBeDefined()
   })
 
