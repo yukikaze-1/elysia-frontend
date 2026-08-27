@@ -299,6 +299,8 @@ interface SecurityPolicy {
 >
 > **授权记录**：grants 存 `settings.json` 的 `tools: { grants: PermissionGrant[] }` 子树（`ToolsSettingsSchema.default({ grants: [] })`，**version 保持 1** 向后兼容；`SettingsService.save` 子树 merge 不 clobber voice/live2d；装载期逐条校验剔除畸形条目，N-8）；**grant 生命周期审计**：`tool:decision{permissionDecision:'allow_scoped', permissionGrantId}`（区分 allow_once——审批历史跳转撤销数据源）/ `grant:created`（**summary 不含目录绝对路径**，含 backendIdentity——目录仅存 settings.tools.grants 与 `tool:grants`，F-5）/ `grant:revoked` / `grant:expired`；设置页授权管理 = `tool:grants` 只读 + `tool:grant-revoke` 撤销（未知 id → `GRANT_NOT_FOUND`；已撤销/已过期 → no-op 幂等成功，V-28）。**决策链 step 8 grant 匹配**：read/write 且 realPath 存在时先查 `grants.matches(toolName, realPath)`——命中 → auto 执行（**grant 匹配优先于 selected-set 豁免**，双命中 → 审计 `allow_scoped`，F-8）；capture 恒强确认（无 grant 面）；黑名单优先（step 5 已拒，命中不弹窗不受 grant 影响）；**撤销/过期只影响后续匹配**（已授权进入 running 的请求继续执行至终态，F-13）。
 
+> **审批历史保留策略附录（2026-08-27，阶段 7 批次 D Task2，D7D-02）**：审批历史的数据源 = Main audit JSONL 回读（`main/tools/tool-history.ts`），其**读面**为由 `HISTORY_DAYS = 7` 约束的「设置页审批历史看最近 7 天」——这是**产品语义**；**存面**为审计磁盘 `audit-*.jsonl` 的 `AUDIT_RETENTION_DAYS = 30` 天——这是**审计合规**。两者目的不同，**不拉平**（产品显示与审计留存分离）：显示面另有合并结果总量上限 `HISTORY_MAX = 200` 条（逐文件流式读满即停）。
+
 ## 8. Desktop P0 工具定义
 
 ### 8.1 `desktop.file.select`

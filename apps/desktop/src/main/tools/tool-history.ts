@@ -7,8 +7,11 @@ import { join } from 'node:path'
 import type { HistoryEntry } from '@shared/contracts/tool'   // Task 6 类型镜像：契约类型上移 shared，preload/renderer 共用
 export type { HistoryEntry }
 
-export const HISTORY_DAYS = 7        // F-4：天数边界（readdir 按文件名倒序取最近 N 天）
-export const HISTORY_MAX = 200       // 合并结果总量上限（逐文件流式读满即停）
+// F-4：天数边界——读面「审批历史在设置页看最近 7 天」是产品语义；存面（audit-*.jsonl 磁盘保留 30 天、
+// diagnostics-service.ts AUDIT_RETENTION_DAYS=30）是审计合规。两者目的不同，不拉平（7D D7D-02）。
+export const HISTORY_DAYS = 7
+// 合并结果总量上限（逐文件流式读满即停）
+export const HISTORY_MAX = 200
 
 const AUDIT_DATE_RE = /^audit-(\d{4})-(\d{2})-(\d{2})\.jsonl$/
 
