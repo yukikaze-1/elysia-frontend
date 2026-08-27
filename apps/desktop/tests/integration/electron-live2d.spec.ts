@@ -904,4 +904,29 @@ describe('阶段7批次D Live2D Electron 集成（7D：Live2D 数值读数接入
       expect(await page.getByTestId('diag-dev-perf').textContent()).toContain('模式：')
     } finally { await closeApp(launched) }
   })
+
+  it('禁用/启用 Live2D：常驻面板立即 dispose/重载，诊断页读数随 status 切换（未启动 ↔ 帧读数）', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      await openCharacterPane(page)
+      // 关闭启用开关 → 面板常驻但立即 dispose（7D 补上的原「settings 卸载即释放」语义）
+      await page.locator('.cy-l2d-pane input[type="checkbox"]').first().uncheck()
+      await expect.poll(() => statusText(page), POLL).toContain('已关闭')
+      // 诊断页此刻应显示未启动（store.status=unloaded → getStats null）
+      await page.locator('.cy-settings-nav-item', { hasText: '开发与诊断' }).click()
+      await expect.poll(() => page.locator('.cy-l2d-pane').count(), POLL).toBe(1)
+      page.on('dialog', (d) => d.accept())
+      await page.locator('button[data-testid="diag-dev-toggle"]').click()
+      await expect.poll(() => page.getByTestId('diag-dev-perf').textContent(), POLL).toMatch(/未启动|无读数/)
+      // 重新启用 → 面板隐藏态也能 init → ready（关闭设置后 rAF 恢复、画布非空）
+      await page.locator('.cy-settings-nav-item', { hasText: '角色与外观' }).click()
+      await page.locator('.cy-l2d-pane input[type="checkbox"]').first().check()
+      await expect.poll(() => statusText(page), POLL).toContain('就绪')
+      await closeSettings(page)
+      await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 6000 }).toBeGreaterThan(0)
+    } finally { await closeApp(launched) }
+  })
 })

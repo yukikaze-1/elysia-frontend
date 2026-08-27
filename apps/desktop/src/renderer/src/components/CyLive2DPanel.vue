@@ -247,9 +247,14 @@ onMounted(() => {
     // 装载：list + 读 settings.enabled/modelId → load（enabled=false 只取清单不 load）
     void store.init(canvasRef.value).then(resizeCanvas)
   }
-  // settings 从 false → true（批次 B 设置页统一开关场景）→ 重新装载
+  // 设置页统一开关（批次 B）：false → 立即释放模型/GL（7D 常驻挂载下补上原「settings 卸载即 dispose」语义，
+  // 诊断页同步回到「未启动」）；true → 重新装载（面板隐藏时也能 init，回到 chat 由 startStop resize 并起 rAF）
   watch(() => settings.live2d.enabled, (enabled) => {
-    if (enabled && canvasRef.value && store.status === 'unloaded') void store.init(canvasRef.value)
+    if (!enabled && store.status !== 'unloaded') {
+      store.dispose()
+    } else if (enabled && canvasRef.value && store.status === 'unloaded') {
+      void store.init(canvasRef.value)
+    }
   })
 })
 
