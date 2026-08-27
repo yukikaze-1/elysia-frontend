@@ -3,6 +3,36 @@
 import { describe, expect, it } from 'vitest'
 import { MockBackend, parseMockMultiSegmentEnv } from '../../src/main/transport/mock-backend'
 
+describe('7D 视图感知 mock 种子补 markdown 段（seedSyntheticHistory，Step 3）', () => {
+  it('seedHistoryCount 长会话种子：assistant 消息补 assistantSegments 且 channel=public_reply+completed，content 兜底保留', async () => {
+    const mock = new MockBackend({ seedHistoryCount: 40 })
+    // conv-1001（i%2===0，i=0,2,4,...偶数 → conversationId=conv-1001；role=Math.floor(i/2)%2）——激活 conv-1001 得混合 user/assistant
+    const page = await mock.getConversationMessages({ conversationId: 'conv-1001' })
+    const assistants = page.items.filter((m) => m.role === 'assistant')
+    expect(assistants.length).toBeGreaterThan(0)   // conv-1001 含 assistant（Blocking1 修正：原 i%2 同定 conv+role 使其全 user）
+    for (const m of assistants) {
+      expect(m.assistantSegments?.length).toBe(1)
+      const seg = m.assistantSegments![0]
+      expect(seg.channel).toBe('public_reply')
+      expect(seg.completed).toBe(true)
+      expect(seg.kind).toBe('markdown')
+      expect(seg.text).toMatch(/^模拟命中文本 \d+$/)   // 确定性 mock 文本（避 base64 黑名单，安全 M-4）
+      expect(m.content).toBe(seg.text)                // content 保留作兜底（不删）
+    }
+    // 语义保持：conversation 仍按 i%2 均分（conv-1001 ~count/2 条，③「~100条/会话」前提不破坏）
+    expect(page.items.length).toBeGreaterThan(0)
+    expect(page.items.length).toBeLessThanOrEqual(40)
+  })
+  it('conv-1001/conv-1002 各含 assistant（conversation 与 role 解耦后不出现「某会话全 user」）', async () => {
+    const mock = new MockBackend({ seedHistoryCount: 40 })
+    for (const cid of ['conv-1001', 'conv-1002']) {
+      const page = await mock.getConversationMessages({ conversationId: cid })
+      expect(page.items.some((m) => m.role === 'assistant')).toBe(true)
+      expect(page.items.some((m) => m.role === 'user')).toBe(true)
+    }
+  })
+})
+
 describe('CYRENE_MOCK_MULTI_SEGMENT env 解析（Task 4）', () => {
   it('未设/空串/非法 → undefined（不注入）', () => {
     expect(parseMockMultiSegmentEnv(undefined)).toBeUndefined()

@@ -16,10 +16,14 @@
 // 阈值口径：launchWithSize 固定 1184×721 内容视口 + OVERSCAN_PX=400（virtual-window.ts）下，虚拟窗口上界
 // 保守 ≤60（L-4 修正，对齐 history-viewer-layout.spec.ts 的既有 ≤60 标定）。硬上限是结构性的，非基线×1.5 数值。
 //
-// 注意（与本批 spec §4D①/§1.2 L40 一致，见报告「偏差」）：100 分段回复的全部 N 个 segment 都渲染为
-// `.cy-segment` DOM（行内 segment 不经虚拟列表窗口裁剪——虚拟化只裁剪消息「行」，行内 segment 无条件渲染，
-// spec 记录为新观察项「视图感知暂停」）。故 ② 的 `.cy-segment` 断言为「等于 N（正确性，聚合计数）」而非
-// 「≤60（界）」，真正的「有界」断言落在 `.cy-vlist-row`（行级虚拟化）。断言仅计数，不读文本/长度。
+// 注意（阶段 7 批次 C §4D①/§1.2）：100 分段回复的全部 N 个 segment 都渲染为 `.cy-segment` DOM（行内 segment
+// 不经虚拟列表窗口裁剪——虚拟化只裁剪消息「行」，行内 segment 无条件渲染）。故 ② 的 `.cy-segment` 断言为
+// 「等于 N（正确性，聚合计数）」而非「≤60（界）」，真正的「有界」断言落在 `.cy-vlist-row`（行级虚拟化）。
+// 阶段 7 批次 D：视图感知暂停已落地——视口内完成态全量渲染，滚动出视口延迟（空 source），②该恒可视行不生效。
+// 断言仅计数，不读文本/长度。
+//
+// M-3 例外（阶段7批次D）：③尾差异化断言读 .cy-segment textContent——仅 mock 确定性文本（模拟命中文本 N，
+// seedSyntheticHistory 生成，非用户内容），不进日志/导出；非内容侧信道（perf-gate 只用于性能门禁，读的是 mock 种子）。
 import { describe, expect, it } from 'vitest'
 import { cpSync, mkdtempSync, chmodSync, readdirSync, lstatSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
@@ -124,7 +128,8 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       await expect.poll(() => page.evaluate(() => document.querySelector('.cy-response-cluster .cy-muted')?.textContent ?? ''), POLL).toMatch(/completed/)
       const r = await sample(page, '.cy-segment')
       // 正确性（聚合计数，M-3）：mock 生成恰 MULTI_SEGMENT_N 个 public_reply 分段，completed 后全部渲染为 .cy-segment。
-      // 注意：行内 segment 不经虚拟列表窗口裁剪（spec §1.2 观察项「视图感知暂停」）——故断言「==N 全量呈现」而非「≤60」。
+      // 视图感知暂停已落地（7D）：行内 segment 经 CyMessageBubble.needsDeferredRender 门控——视口内完成态全量渲染，
+      // 滚动出视口延迟（空 source）；本行所在回复恒跨视口（rowVisible 恒 true），视图感知不生效 → 断言「==N」保持不回退。
       // N 取自上方的 MULTI_SEGMENT_N，与 env 注入同源——seed 数变更此处自动同步，不硬编码 magic literal。
       expect(r.dom).toBe(MULTI_SEGMENT_N)
       // 真正的「有界」落在行级：100 分段挤在单条回复行，消息列表虚拟化后 .cy-vlist-row 恒 ≤60（实测 2）
@@ -172,6 +177,23 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         expect(pads!.scrollHeight).toBeGreaterThan(pads!.clientHeight)
         expect(Math.max(pads!.topHeight, pads!.bottomHeight)).toBeGreaterThan(0)
         console.log(`[perf-gate] long200 rows=${rows} padTop=${pads?.topHeight}px padBottom=${pads?.bottomHeight}px sh=${pads?.scrollHeight}`)
+        // MD-1：差异化断言——长会话 seed（大量短 markdown 回复，mock 补 markdown 段后）消息列表位于底部（最新在视口内，
+        // 上方 overscan 行视口外）。视图感知：视口外 completed segment 空 source → 其 .cy-segment 内容为空；视口内非空。
+        // 断言「存在内容为空的 .cy-segment」（视口外 overscan 行被门控）——恒全量渲染（视图感知失效）则 empty=0（fail）。
+        // 只读 mock 确定性文本（模拟命中文本，非用户内容），不引入内容侧信道（perf-gate 头部 M-3「仅聚合计数」例外已注明）。
+        const segs = await page.evaluate(() => {
+          const out = { total: 0, empty: 0, nonEmpty: 0 }
+          document.querySelectorAll('.cy-messages .cy-segment').forEach((s) => {
+            out.total++
+            if ((s.textContent ?? '').trim().length > 0) out.nonEmpty++; else out.empty++
+          })
+          return out
+        })
+        expect(segs.total).toBeGreaterThan(0)
+        expect(segs.empty).toBeGreaterThan(0)   // 视口外 overscan 行被门控（内容空）
+        // 视口内回复非空（门控只影响视口外行）
+        expect(segs.nonEmpty).toBeGreaterThan(0)
+        console.log(`[perf-gate] viewsense seg total=${segs.total} empty=${segs.empty} nonEmpty=${segs.nonEmpty}`)
     } finally { await closeApp(launched) }
   })
 

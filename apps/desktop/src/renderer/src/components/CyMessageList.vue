@@ -35,14 +35,22 @@ const isEmpty = computed(() => items.value.length === 0)
 
 const win = computed(() => {
   const w = computeWindow(prefix.value, scrollTop.value, viewportHeight.value, OVERSCAN_PX)
+  const strict = computeWindow(prefix.value, scrollTop.value, viewportHeight.value, 0)  // 7D：严格可见窗口（无 overscan）
   return {
     startIndex: w.startIndex,
     endIndex: w.endIndex,
     paddingTop: w.paddingTop,
     paddingBottom: w.paddingBottom,
-    visibleIds: items.value.slice(w.startIndex, w.endIndex + 1).map((m) => m.messageId)
+    visibleIds: items.value.slice(w.startIndex, w.endIndex + 1).map((m) => m.messageId),
+    strictStartIndex: strict.startIndex,   // 7D：真正可见行区间
+    strictEndIndex: strict.endIndex,
   }
 })
+
+/** 全球行 index 是否落在严格可见窗口（无 overscan）——直接比较循环内 index */
+function rowVisible(globalIdx: number): boolean {
+  return globalIdx >= win.value.strictStartIndex && globalIdx <= win.value.strictEndIndex
+}
 
 /** D6 恢复守卫：每会话激活只恢复一次（由 pendingRestoreId + items.length watch 承担） */
 
@@ -232,14 +240,14 @@ onMounted(() => {
     <template v-else>
       <div :style="{ height: win.paddingTop + 'px' }" class="cy-vlist-pad" />
       <div
-        v-for="id in win.visibleIds"
+        v-for="(id, i) in win.visibleIds"
         :key="id"
         :data-message-id="id"
         :ref="(el) => setRowEl(id, el as Element | null)"
         class="cy-vlist-row"
         :class="{ 'cy-highlighted': messageStore.highlightMessageId === id }"
       >
-        <CyMessageBubble :message="messageStore.byId[id]" />
+        <CyMessageBubble :message="messageStore.byId[id]" :visible="rowVisible(win.startIndex + i)" />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
       <div :style="{ height: win.paddingBottom + 'px' }" class="cy-vlist-pad" />

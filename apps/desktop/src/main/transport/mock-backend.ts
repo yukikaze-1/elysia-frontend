@@ -445,15 +445,25 @@ export class MockBackend implements BackendAdapter {
 
   /** 确定性合成历史（spec §4.3.1）：30 条/日 × 若干日、createdAt 单调、纯文本无 sticker */
   private seedSyntheticHistory(count: number): Message[] {
-    const mk = (messageId: string, conversationId: string, role: 'user' | 'assistant', createdAt: string, content: string): Message =>
-      ({ messageId, conversationId, role, createdAt, status: 'completed', content })
+    const mk = (messageId: string, conversationId: string, role: 'user' | 'assistant', createdAt: string, content: string): Message => {
+      const base: Message = { messageId, conversationId, role, createdAt, status: 'completed', content }
+      if (role !== 'assistant') return base
+      // 7D（spec §4C.3）：assistant 补 markdown 段——长会话成为「大量带 .cy-segment 的短 completed markdown 回复」，
+      // 滚动出视口后视图感知对其生效。content 保留作兜底（不删）。
+      return { ...base, assistantSegments: [{ segmentId: `run2-seg-${messageId}`, segmentIndex: 0, channel: 'public_reply', kind: 'markdown', text: content, completed: true }] }
+    }
     const DAY = 86_400_000, MIN = 60_000
     const base = new Date('2026-08-08T00:00:00.000Z').getTime()
     const out: Message[] = []
     for (let i = 0; i < count; i++) {
       const day = Math.floor(i / 30), minute = i % 30
       const createdAt = new Date(base + day * DAY + minute * MIN).toISOString()
-      out.push(mk(`run2-msg-${String(i + 1).padStart(4, '0')}`, i % 2 === 0 ? 'conv-1001' : 'conv-1002', i % 2 === 0 ? 'user' : 'assistant', createdAt, `模拟命中文本 ${i + 1}`))
+      // 7D（Blocking1 修正）：conversation 与 role 解耦——conversation 按 i%2 均分（各 ~count/2 条，③「~100条/会话」前提保留），
+      // role 按 Math.floor(i/2)%2 交替（conv-1001 得 user/assistant 混合，含 markdown 段——视图感知才有可门控对象；
+      // 原「i%2 同时决定 conv 和 role」使 conv-1001 全 user、conv-1002 全 assistant，activate conv-1001 后 0 个 .cy-segment，断言必败）。
+      const conversationId = i % 2 === 0 ? 'conv-1001' : 'conv-1002'
+      const role = Math.floor(i / 2) % 2 === 0 ? 'user' : 'assistant'
+      out.push(mk(`run2-msg-${String(i + 1).padStart(4, '0')}`, conversationId, role, createdAt, `模拟命中文本 ${i + 1}`))
     }
     return out
   }
