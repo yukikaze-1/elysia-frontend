@@ -503,8 +503,12 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       rec.status = 'awaiting_permission'; awaitingQueue.push(rec.id)
       if (awaitingQueue.length === 1) emit(rec)
       // expiresAt 定时器（超时 → timeout + wire cancelled）；已过期（remaining<=0）→ 立即 expire（L2）
+      // C-08：非法 expiresAt（如 real-backend Date.parse('not-a-date') → NaN）显式走立即过期——
+      // 用 Number.isFinite 显式判非有限值，而非隐式依赖 `NaN > 0 === false` 的巧合（防未来改分支时 NaN 落入其他路径）。
+      // NaN 走立即 expire（安全默认 fail-closed），与「已过期」行为一致。
       const remaining = req.expiresAt - Date.now()
-      if (remaining > 0) timers.set(rec.id, setTimeout(() => expire(rec), remaining))
+      const expired = !Number.isFinite(req.expiresAt) || remaining <= 0
+      if (!expired) timers.set(rec.id, setTimeout(() => expire(rec), remaining))
       else expire(rec)
     }
   }

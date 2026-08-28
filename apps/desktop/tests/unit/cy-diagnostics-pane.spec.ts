@@ -58,6 +58,13 @@ let devHandler: ((ev: DiagnosticsDevEvent) => void) | undefined
 let devUnsub: (() => void) | undefined
 let confirmFn: ReturnType<typeof vi.fn>
 
+/** 可控 deferred（in-flight 挂起/恢复——诊断导出去重时序断言） */
+const deferred = <T,>() => {
+  let resolve!: (v: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
 /** 诊断六键 mock（desktopApi 六键全 mock；toolList 供 dev 工具清单元数据）——
  *  不在此断言 DesktopApiLike（保留 vi.fn 方法类型），setDesktopApi 处 cast（cy-security-pane 同款） */
 const api = {
@@ -225,6 +232,32 @@ describe('CyDiagnosticsPane 四分区（日志管理/开发者模式/连接诊�
     await w.find('[data-testid="diag-export"]').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="diag-export-result"]').text()).toContain('导出失败')
+  })
+
+  it('导出 in-flight 去重：导出进行中再次点击不触发第二次（C-15）+ 完成后按钮恢复可用', async () => {
+    // C-15：#onExport 原无 in-flight 锁——导出进行中再次点击会并发 diagnosticsExport。本用例：
+    // ① 首次点击 → diagnosticsExport 挂起（deferred）→ 按钮 disabled（:disabled="exporting"）；
+    // ② 挂起期间再次点击 → diagnosisExport 仅一次（去重）；
+    // ③ resolve 后按钮恢复 enabled，再点 → 第二次调用（证明 finally 释放 exporting）。
+    const d = deferred<DiagnosticsExportResult>()
+    api.diagnosticsExport.mockReturnValueOnce(d.promise)
+    const w = await mountPane()
+    const btn = w.find('[data-testid="diag-export"]')
+    await btn.trigger('click')
+    await flushPromises()
+    expect(api.diagnosticsExport).toHaveBeenCalledTimes(1)
+    expect((btn.element as HTMLButtonElement).disabled).toBe(true)   // in-flight 按钮禁用
+    // 挂起期间再次点击 → 去重（不触发第二次 diagnosticsExport）
+    await btn.trigger('click')
+    await flushPromises()
+    expect(api.diagnosticsExport).toHaveBeenCalledTimes(1)
+    // resolve → finally 释放 exporting → 按钮恢复可用，再点触发第二次
+    d.resolve({ cancelled: false, displayPath: '~/d.json', sizeBytes: 50, truncatedLog: false, truncatedAudit: false })
+    await flushPromises()
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)
+    await btn.trigger('click')
+    await flushPromises()
+    expect(api.diagnosticsExport).toHaveBeenCalledTimes(2)
   })
 
   it('连接诊断：只读渲染 status/endpoint/protocolVersion/lastError（connectionStore 值）', async () => {

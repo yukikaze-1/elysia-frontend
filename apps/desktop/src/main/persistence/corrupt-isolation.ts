@@ -4,7 +4,7 @@
 // 跨平台修正：pruneCorrupt 用 node:path 的 dirname/basename 替代 brief 的 lastIndexOf('/')（后者在 Windows 反斜杠路径下失效）。
 import { rename, readdir, unlink } from 'node:fs/promises'
 import { realpath } from 'node:fs/promises'
-import { dirname, basename, join } from 'node:path'
+import { dirname, basename, join, relative } from 'node:path'
 import type { Logger } from '../diagnostics/logger'
 
 export interface CorruptIsolationOpts {
@@ -19,9 +19,13 @@ export interface CorruptIsolation {
 }
 function nowIso(): string { return new Date().toISOString().replace(/[:.]/g, '-') }
 async function assertContained(file: string, safeRoot: string): Promise<void> {
-  const real = await realpath(file)
-  const rel = real.startsWith(safeRoot) ? real.slice(safeRoot.length) : real
-  if (rel.startsWith('..') || rel.includes('..') || !real.startsWith(safeRoot)) throw new Error(`isolate 目标逃逸安全根: ${file}`)
+  // C-13：原用 real.startsWith(safeRoot) 会把 /tmp/foo 判作在 /tmp/foobar 内（同前缀兄弟目录误判）。
+  // 对齐 safe-open.ts 的成熟实现：两侧都 realpath，用 relative(safeRootDir, fileReal) 判定，
+  // rel 不以 '..' 起始且不含 '..' 段才视为包含——消除同前缀兄弟误判（防御纵深，不改变主路径行为）。
+  const [safe, real] = await Promise.all([realpath(safeRoot), realpath(file)])
+    .catch(() => { throw new Error(`isolate 目标无法解析真实路径: ${file}`) })
+  const rel = relative(safe, real)
+  if (rel.startsWith('..') || rel.includes('..') || rel === '' ) throw new Error(`isolate 目标逃逸安全根: ${file}`)
 }
 export function createCorruptIsolation(deps: CorruptIsolationOpts): CorruptIsolation {
   return {

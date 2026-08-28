@@ -34,6 +34,7 @@ const voice = useVoiceStore()
 const state = ref<DiagnosticsState | null>(null)
 const loadError = ref(false)
 const exportMsg = ref<{ kind: 'ok' | 'err'; text: string } | null>(null)
+const exporting = ref(false)   // C-15：诊断导出 in-flight 锁——导出进行中禁再次触发（防并发导出/重复对话框）
 const devEvents = ref<DiagnosticsDevEvent[]>([])
 const tools = ref<PublicToolEvent[]>([])
 const toolsError = ref(false)
@@ -120,6 +121,8 @@ async function onOpenDir(): Promise<void> {
 }
 
 async function onExport(): Promise<void> {
+  if (exporting.value) return   // C-15：in-flight 去重——导出进行中再次点击直接忽略（并保持按钮禁用态）
+  exporting.value = true
   try {
     const r: DiagnosticsExportResult = await api.diagnosticsExport()
     if (r.cancelled) return   // 用户取消导出对话框：静默（保留上一次提示）
@@ -129,6 +132,8 @@ async function onExport(): Promise<void> {
     }
   } catch (e) {
     exportMsg.value = { kind: 'err', text: `导出失败：${e instanceof Error ? e.message : String(e)}` }
+  } finally {
+    exporting.value = false
   }
 }
 
@@ -268,7 +273,7 @@ const live2dStats = computed(() => live2dStore.getStats())
       <h4 class="cy-l2d-sub">脱敏诊断导出</h4>
       <p class="cy-security-empty">导出脱敏后的运行日志、审计与连接现场为单个 JSON 文件（机密字段与本地绝对路径已净化；用户自选保存位置）。</p>
       <div class="cy-diagnostic-actions">
-        <button type="button" class="cy-security-btn" data-testid="diag-export" @click="onExport">导出诊断包…</button>
+        <button type="button" class="cy-security-btn" data-testid="diag-export" :disabled="exporting" @click="onExport">导出诊断包…</button>
       </div>
       <p v-if="exportMsg" class="cy-security-empty" :class="{ 'cy-diagnostic-err': exportMsg.kind === 'err' }" data-testid="diag-export-result">{{ exportMsg.text }}</p>
     </div>

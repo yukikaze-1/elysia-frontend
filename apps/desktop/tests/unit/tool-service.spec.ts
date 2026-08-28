@@ -231,6 +231,15 @@ describe('幂等与状态机', () => {
     expect(events.at(-1)!.status).toBe('timeout')
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
   })
+  it('expiresAt 非法（NaN）→ 立即 timeout + wire cancelled（C-08：显式 Number.isFinite 守卫，非隐式 NaN>0 巧合）', async () => {
+    // C-08：#expiresAt 来自 real-backend Date.parse(frame.expiresAt)，非法字符串 → NaN。
+    // 当前 NaN > 0 为 false → 走 else expire(rec) 立即过期（行为正确）。本用例钉住该安全默认，
+    // 并用显式 Number.isFinite 守卫替代隐式 NaN 比较（防未来改分支时 NaN 落入其他路径）。
+    const { svc, events, submitStatus } = mkService()
+    await svc.handleRequest(mkReq({ expiresAt: NaN }))
+    expect(events.at(-1)!.status).toBe('timeout')
+    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'cancelled' }))
+  })
   it('outputSchema 校验失败 → failed + INVALID_OUTPUT（B1/M3：注入 executorOverride 返回非法输出）', async () => {
     const p = `${FIXTURES}/ok.txt`; writeFileSync(p, 'x')
     const { svc } = mkService({ executorOverride: async () => ({ output: 42, summary: 'bad' } as never) })   // 非 record → outputSchema 拒
