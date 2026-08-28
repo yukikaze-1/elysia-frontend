@@ -236,7 +236,11 @@ export const useLive2dStore = defineStore('live2d', () => {
       await ctrl.reset(ctrl.modelId)
       syncFromController()
       if (ctrl.status === 'ready') {
-        consecutiveLost = 0 // C-18：重建成功 → 连续失败计数清零（下次 lost 从 1 重新累计，不被历史累积误降级）
+        // C-18 设计修正：重建成功**不**重置 consecutiveLost——设备反复 GPU 丢失时每次 device_lost 都计数
+        //（崩溃即计数，重建成功仅恢复渲染不重置「崩溃次数」），达 GPU_LOST_MAX 才冻结。若重建成功就清零，
+        // 真实路径「每次重建成功→清零」使连续失败永远凑不够阈值；且重建失败一次 controller 非 ready，
+        // tick 不再驱动 device_lost 也不自然产生。
+
         // 重放 settings（与 init 尾部重放点同款）+ 视线目标 + CharacterState
         const l2d = useSettingsStore().live2d
         ctrl.setAutoMotions(l2d.autoMotions)

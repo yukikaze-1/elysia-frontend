@@ -25,7 +25,6 @@ app.use(createPinia())
 // 同时补 Vue 外的全局错误源：window 'error'（同步 JS）与 'unhandledrejection'（未处理 promise），
 // 三者统一接到 rendererError 记录，标注来源，错误仍会中断当前渲染帧/触发浏览器默认行为（不静默吞）。
 function rendererError(source: string, detail: unknown, extra?: unknown): void {
-  // eslint-disable-next-line no-console
   console.error(`[renderer:js-error:${source}]`, detail, extra)
 }
 app.config.errorHandler = (err, _instance, info) => rendererError('vue', err, info)

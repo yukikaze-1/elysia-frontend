@@ -451,13 +451,9 @@ describe('Live2DAdapter.createModel（cyrene:// 逐文件供给 + 装配）', ()
     // 原实现全程无 isContextLost 复查——模型会基于已丢 context 完成创建。本用例：model3 后 setContextLost，
     // 断言 createModel 在创建 GL 资源（renderer 构造）前抛 Live2DGpuLostError（复查拦截）。
     const { engine, canvas } = makeHarness()
-    const recorded: string[] = []
-    let lostMidCreate = false
     const fetchImpl = (async (url: string) => {
-      recorded.push(url)
       if (url.endsWith('model3.json')) {
-        lostMidCreate = true // model3 后模拟 context 丢失（mock 中段）
-        engine.setContextLost(true)
+        engine.setContextLost(true) // model3 后模拟 context 丢失（mock 中段）
         return jsonBody(MODEL3_HARU)
       }
       if (url.endsWith('.png')) return { ok: true, blob: async () => new Blob(['png-bytes']) }

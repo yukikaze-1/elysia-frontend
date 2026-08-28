@@ -828,6 +828,35 @@ describe('live2dStore 批次 C（C2）：GPU 重建一次（D5C-04，reset(当�
     expect(store.status).toBe('fallback')
   })
 
+  it('C-18：每次重建成功仍累积 device_lost → 连续 3 次冻结（真实路径：设备反复丢失但每次恢复 ready）', async () => {
+    // 设计修正：重建成功**不**清零 consecutiveLost——真实设备反复 GPU 丢失时，每次丢失都算一次崩溃
+    //（前次重建成功恢复 ready 后，下一次 tick 又触发丢），累积达 GPU_LOST_MAX 冻结。原「重建成功清零」
+    // 会让连续失败永远凑不够阈值（每次成功就清）；且若重建失败一次 controller 非 ready，tick 不再驱动。
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() }) // 每次 tick 都丢（设备不稳定）
+    // 第 1 次 device_lost → reconstruct → 重建成功恢复 ready
+    store.tick()
+    await vi.waitFor(() => expect(store.status).toBe('ready'))
+    expect(resetSpy).toHaveBeenCalledTimes(1)
+    // 第 2 次 → 重建成功
+    store.tick()
+    await vi.waitFor(() => expect(store.status).toBe('ready'))
+    expect(resetSpy).toHaveBeenCalledTimes(2)
+    // 第 3 次 → 达 GPU_LOST_MAX → 冻结（不再重建，固定 fallback）
+    store.tick()
+    await new Promise((r) => setTimeout(r, 5))
+    expect(resetSpy).toHaveBeenCalledTimes(2) // 第 3 次不触发 rebuild（冻结）
+    expect(store.status).toBe('fallback')
+    // 再 tick（第 4 次 lost）→ 已降级冻结：仍不 reset
+    store.tick()
+    await new Promise((r) => setTimeout(r, 5))
+    expect(resetSpy).toHaveBeenCalledTimes(2)
+    expect(store.status).toBe('fallback')
+  })
+
   it('C-18：降级冻结后切模型成功 → 清零（gpuDowngraded 重置，再次 device_lost 恢复重建）', async () => {
     const { adapter, ctrl } = installFakes({ models: [MODEL_HARU, MODEL_LIL] })
     const { store } = freshStore()

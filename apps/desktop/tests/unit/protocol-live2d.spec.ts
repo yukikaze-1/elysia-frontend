@@ -168,7 +168,7 @@ describe('白名单（resolveModelFile）+ 供给', () => {
 
   it('percent-encoded relPath → 解码透传 resolveModelFile（V-03：协议层端到端，非仅 registry 隔离）', async () => {
     // 路径源：live2d-path.ts parseLive2dPath 逐段 decodeURIComponent 后 join——%E8%A7%92 → 角色
-    const registry = makeFakeRegistry({ resolve: (id, relPath) => Promise.resolve(relPath === '角色.png' ? `/abs/haru/角色.png` : null) })
+    const registry = makeFakeRegistry({ resolve: (_id, relPath) => Promise.resolve(relPath === '角色.png' ? `/abs/haru/角色.png` : null) })
     await register(registry)
     const res = await dispatch('/__cyrene-live2d/haru/' + encodeURIComponent('角色.png'))
     expect(res.status).toBe(200)
@@ -190,7 +190,7 @@ describe('白名单（resolveModelFile）+ 供给', () => {
   it('percent-encoded 字面 % 文件名（50%.png）→ 解码透传 resolveModelFile 不报错（孤立 % 不重解）', async () => {
     // canonicalizeRelPathSegment（model-registry）仅当段含合法 %XX 才解码一次；'50%.png' 的孤立 % 是字面。
     // 请求侧 parseLive2dPath 已解码输出（% → 字面 '%'），此处断言 relPath = '50%.png' 原样透传。
-    const registry = makeFakeRegistry({ resolve: (id, relPath) => Promise.resolve(relPath === '50%.png' ? `/abs/haru/50%.png` : null) })
+    const registry = makeFakeRegistry({ resolve: (_id, relPath) => Promise.resolve(relPath === '50%.png' ? `/abs/haru/50%.png` : null) })
     await register(registry)
     const res = await dispatch('/__cyrene-live2d/haru/' + encodeURIComponent('50%.png'))
     expect(res.status).toBe(200)
