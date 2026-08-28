@@ -570,6 +570,9 @@ export class Live2DAdapter {
       const physicsName = setting.getPhysicsFileName()
       if (physicsName) {
         const physBuffer = await this.fetchBytes(modelFileUrl(modelId, baseDir, physicsName))
+        // C-04 ③：physics await 后的最终复查——此后 layout/shaders/handle 构造全同步（无更多 await 窗口），
+        // 此点已是最后一个可丢失窗口；丢失 → 抛 Live2DGpuLostError（不等 handle 构造/首 draw 才暴露）。
+        if (this.gpuLost || this.engine.isContextLost(gl)) throw new Live2DGpuLostError()
         physics = CubismPhysics.create(physBuffer, physBuffer.byteLength)
       }
 
@@ -713,6 +716,9 @@ export class Live2DAdapter {
     }
     const bitmap = await createBitmap(blob)
     try {
+      // C-04 ③：逐纹理 fetch/blob/createBitmap 解码期间 context 可能丢失——真正用 GPU（gl.createTexture）前补
+      // isContextLost 复查（外层 :bindTexture 前检查在 await 之前，捕获不到此处 await 期间丢失）。
+      if (this.gpuLost || this.engine.isContextLost(gl)) throw new Live2DGpuLostError()
       if (bitmap.width > maxTexSize || bitmap.height > maxTexSize) {
         throw new Live2DTextureError(
           `Live2D texture ${url} is ${bitmap.width}x${bitmap.height}, exceeds MAX_TEXTURE_SIZE=${maxTexSize}`

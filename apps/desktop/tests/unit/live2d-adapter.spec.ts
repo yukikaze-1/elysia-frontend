@@ -474,6 +474,52 @@ describe('Live2DAdapter.createModel（cyrene:// 逐文件供给 + 装配）', ()
     expect(shared.rendererInstances).toHaveLength(0)
   })
 
+  it('C-04 ③：纹理 fetch/解码期间 context 丢失 → loadTexture 内 gl.createTexture 前抛（不基于已丢 context 建纹理）', async () => {
+    // loadTexture 内多个 await（fetch → blob → createBitmap）期间 context 丢失，外层 bindTexture 前检查在
+    // await 之前捕获不到；loadTexture 内 gl.createTexture 前复查应捕获——不基于已丢 context 上传纹理。
+    const { engine, canvas } = makeHarness()
+    const fetchImpl = (async (url: string) => {
+      if (url.endsWith('.png')) {
+        engine.setContextLost(true) // 纹理 fetch 期间丢失
+        return { ok: true, blob: async () => new Blob(['png-bytes']) }
+      }
+      if (url.endsWith('model3.json')) return jsonBody(MODEL3_HARU)
+      if (url.endsWith('.moc3')) return { ok: true, arrayBuffer: async () => new Uint8Array([0, 1, 2, 3]).buffer }
+      if (url.endsWith('.json')) return jsonBody('{}')
+      throw new Error(`unexpected URL: ${url}`)
+    }) as unknown as typeof fetch
+    const adapter = new Live2DAdapter({ engine, fetchImpl })
+    adapter.initialize(canvas)
+    await expect(adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })).rejects.toBeInstanceOf(
+      Live2DGpuLostError
+    )
+    // renderer 已在纹理前创建；但未完成纹理上传（GL createTexture 前拦截）
+    expect(shared.rendererInstances).toHaveLength(1)
+    expect(shared.rendererInstances[0].bindTexture).not.toHaveBeenCalled()
+  })
+
+  it('C-04 ③：physics 异步加载后 context 丢失 → physics 后最终复查抛（最后可丢失窗口）', async () => {
+    // physics await fetchBytes 后、后续全同步（layout/shaders/handle 构造）——此点是最后一个 await 窗口。
+    const { engine, canvas } = makeHarness()
+    const fetchImpl = (async (url: string) => {
+      if (url.endsWith('model3.json')) return jsonBody(MODEL3_HARU)
+      if (url.endsWith('.moc3')) return { ok: true, arrayBuffer: async () => new Uint8Array([0, 1, 2, 3]).buffer }
+      if (url.endsWith('.png')) return { ok: true, blob: async () => new Blob(['png-bytes']) }
+      if (url.endsWith('.json')) { // physics.json
+        engine.setContextLost(true)
+        return jsonBody('{}')
+      }
+      throw new Error(`unexpected URL: ${url}`)
+    }) as unknown as typeof fetch
+    const adapter = new Live2DAdapter({ engine, fetchImpl })
+    adapter.initialize(canvas)
+    await expect(adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })).rejects.toBeInstanceOf(
+      Live2DGpuLostError
+    )
+    // 未构造 handle（最终复查拦截）
+    expect(shared.modelInstances).toHaveLength(1) // model 已建，但 handle 未返回
+  })
+
   it('未 initialize 就 createModel → 抛错（非 GPU/纹理错误类型）', async () => {
     const { adapter } = makeHarness()
     await expect(adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })).rejects.toThrow(
