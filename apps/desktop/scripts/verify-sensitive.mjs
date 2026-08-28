@@ -1230,6 +1230,31 @@ const ALLOWLIST = [
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 9 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores/attachment.store,stores/voice.store,stores/message.store,stores/live2d.store,utils/virtual-window,components/CyMessageBubble,components/CyDiagnosticsPane,live2d/perf,live2d/controller} 模块路径串的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
   },
+  {
+    path: 'apps/desktop/src/renderer/src/tokens.css', anchor: /C-14（#29）：补齐组件引用的未定义 cy-\* token/,
+    rules: ['base64-long-string'],
+    reason: 'C-14 注释散文（描述四组件 token 引用与映射，无高熵秘密）——已人工核对无真实凭据'
+  },
+  {
+    path: 'docs/review/2026-08-28-C星其余与D01取证台账.md', anchor: /tokens\.css:root` 未定义 `--cy-bg/,
+    rules: ['base64-long-string'],
+    reason: 'C-14 取证记录散文（列 5 个未定义 CSS token 名与修复说明，无高熵秘密）——已人工核对无真实凭据'
+  },
+  {
+    path: 'docs/review/2026-08-28-架构债务清单.md', anchor: /一个 `class RealBackend implements BackendAdapter` 同时承担/,
+    rules: ['base64-long-string'],
+    reason: 'D1 架构债务记录散文（描述 RealBackend 职责清单，无高熵秘密）——已人工核对无真实凭据'
+  },
+  {
+    path: 'docs/review/2026-08-28-架构债务清单.md', anchor: /`conversation\.store\.ts` 引 5 个外部 store/,
+    rules: ['base64-long-string'],
+    reason: 'D5 架构债务记录散文（store 耦合清单，无高熵秘密）——已人工核对无真实凭据'
+  },
+  {
+    path: 'docs/review/2026-08-28-架构债务清单.md', anchor: /顶层解析 \*\*18 个\*\* `parseMock\*Env` 桥/,
+    rules: ['base64-long-string'],
+    reason: 'D6 架构债务记录散文（组合根解析/装配清单，无高熵秘密）——已人工核对无真实凭据'
+  },
 ]
 let failed = false
 const ok = (m) => console.log(`✓ ${m}`)
