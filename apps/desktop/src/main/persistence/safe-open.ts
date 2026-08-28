@@ -1,6 +1,6 @@
 import { constants } from 'fs'
 import { lstat, open, realpath } from 'fs/promises'
-import { relative } from 'path'
+import { relative, isAbsolute } from 'path'
 import type { FileHandle } from 'fs/promises'
 
 export class SafeOpenError extends Error {
@@ -53,7 +53,9 @@ async function assertContained(filePath: string, safeRoot: string): Promise<void
   const [safe, real] = await Promise.all([realpath(safeRoot), realpath(filePath)])
     .catch(() => { throw new SafeOpenError(`${filePath} 无法解析真实路径`) })
   const rel = relative(safe, real)
-  if (rel.startsWith('..') || rel.includes('..')) throw new SafeOpenError(`${filePath} 逃逸安全根`)
+  // C-13（#28 复核）：Windows 跨盘符时 relative 返回绝对路径（startsWith('..')/includes('..') 均 false 会放行）——
+  // 补 isAbsolute(rel) 判定，一致收口（与 corrupt-isolation.ts 同款）。
+  if (isAbsolute(rel) || rel.startsWith('..') || rel.includes('..')) throw new SafeOpenError(`${filePath} 逃逸安全根`)
 }
 
 /** pre-open lstat（windows）：ENOENT 按模式分流、symlink 拒、其他转安全错误 */

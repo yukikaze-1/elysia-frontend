@@ -403,6 +403,27 @@ describe('Live2DAdapter.createModel（cyrene:// 逐文件供给 + 装配）', ()
     expect(() => adapter.update()).not.toThrow()
   })
 
+  it('createModel 失败（已有旧 handle）→ 保留旧 handle 供继续渲染（分叉修正：不置 null）', async () => {
+    // C-04 ② 复核：原 createModel 失败路径 `this.handle = null`（adapter.ts:633）会清空旧 handle——
+    // controller 失败时保留自己的旧 handle（status=ready），但 adapter.handle=null 使 adapter.update() 里
+    // `if (!h) return` 停止渲染 → 状态显示 ready、实际停止更新的分叉。本用例钉住：失败保留旧 handle 可继续 update。
+    const { engine, canvas, adapter } = makeHarness()
+    adapter.initialize(canvas)
+    // 首次 createModel 成功（建立旧 handle）
+    await adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })
+    const preUpdate = shared.modelInstances[0].update
+    // 二次 createModel 失败（纹理超限抛错）→ 失败路径不应清空旧 handle
+    engine.setMaxTextureSize(64) // 纹理 256x256 超限 → createModel 抛 Live2DTextureError
+    await expect(adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })).rejects.toBeInstanceOf(
+      Live2DTextureError
+    )
+    engine.setMaxTextureSize(2048) // 恢复
+    // 旧 handle 仍可 update（adapter.update() 走保留的旧 handle，渲染未停——旧 model.update 仍被驱动）
+    const beforeModelUpdate = preUpdate.mock.calls.length
+    expect(() => adapter.update()).not.toThrow()
+    expect(preUpdate.mock.calls.length).toBeGreaterThan(beforeModelUpdate)
+  })
+
   it('纹理超 maxTextureSize → Live2DTextureError；无悬挂 handle（已清理）', async () => {
     const { gl, canvas, engine, adapter } = makeHarness()
     adapter.initialize(canvas)

@@ -4,7 +4,7 @@
 // 跨平台修正：pruneCorrupt 用 node:path 的 dirname/basename 替代 brief 的 lastIndexOf('/')（后者在 Windows 反斜杠路径下失效）。
 import { rename, readdir, unlink } from 'node:fs/promises'
 import { realpath } from 'node:fs/promises'
-import { dirname, basename, join, relative } from 'node:path'
+import { dirname, basename, join, relative, isAbsolute } from 'node:path'
 import type { Logger } from '../diagnostics/logger'
 
 export interface CorruptIsolationOpts {
@@ -25,7 +25,10 @@ async function assertContained(file: string, safeRoot: string): Promise<void> {
   const [safe, real] = await Promise.all([realpath(safeRoot), realpath(file)])
     .catch(() => { throw new Error(`isolate 目标无法解析真实路径: ${file}`) })
   const rel = relative(safe, real)
-  if (rel.startsWith('..') || rel.includes('..') || rel === '' ) throw new Error(`isolate 目标逃逸安全根: ${file}`)
+  // C-13（#28 复核）：Windows 跨盘符时 path.relative 返回绝对路径（如 relative('C:\\safe','D:\\outside') =
+  // 'D:\\outside'），startsWith('..')/includes('..') 均 false —— 会放行越根路径。补 isAbsolute(rel) 判定：
+  // 相对结果若仍是绝对路径即跨盘符/越根，拒。
+  if (isAbsolute(rel) || rel.startsWith('..') || rel.includes('..') || rel === '') throw new Error(`isolate 目标逃逸安全根: ${file}`)
 }
 export function createCorruptIsolation(deps: CorruptIsolationOpts): CorruptIsolation {
   return {

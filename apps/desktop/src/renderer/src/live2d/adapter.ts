@@ -561,6 +561,8 @@ export class Live2DAdapter {
       for (let i = 0; i < texCount; i++) {
         const texName = setting.getTextureFileName(i)
         if (!texName) continue
+        // C-04 ③：逐纹理 await loadTexture 也可能跨越 GPU-lost 窗口——bindTexture 前复查（不同步检查，其余 await 类似）
+        if (this.gpuLost || this.engine.isContextLost(gl)) throw new Live2DGpuLostError()
         const tex = await this.loadTexture(gl, modelFileUrl(modelId, baseDir, texName), maxTexSize)
         renderer.bindTexture(i, tex)
       }
@@ -630,7 +632,9 @@ export class Live2DAdapter {
       return handle
     } catch (err) {
       releasePartial({ renderer, moc, model, physics, setting })
-      this.handle = null
+      // C-04 ② 复核：失败时**不清空旧 handle**（原 `this.handle = null`）——模型替换失败时旧模型应保留供继续渲染。
+      // 若置 null，adapter.update() 里 `if (!h) return` 停止渲染，但 controller 失败时保留自己的旧 handle（status=ready）→
+      // 状态显示 ready、实际停止更新的分叉。releasePartial 只释放本次新建的（renderer/moc/model/physics/setting），旧 handle 不动。
       this.lastTick = 0
       throw err
     }
