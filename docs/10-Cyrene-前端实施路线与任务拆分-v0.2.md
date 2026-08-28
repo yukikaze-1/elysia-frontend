@@ -1,12 +1,13 @@
 # Cyrene 前端实施路线与任务拆分
 
-**文档版本：** v0.2  
-**文档状态：** Review 修订 / 待结合现有仓库排期  
-**适用范围：** Electron Desktop Demo 前端实施  
-**文档日期：** 2026-08-03  
-**最后复核日期：** 2026-08-04
+**文档状态：** 维护中
+**最后核验：** 2026-08-29
+**适用阶段：** 阶段 0～8
+**权威范围：** 技术任务拆解与 Definition of Done；当前完成状态以 doc 16 为准
 
 > 本文是技术任务拆分，阶段编号与 `12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md` 保持一致。文档 12 决定进入条件和验收门槛，本文补充模块、依赖和工程任务；两份文档不再使用不同阶段含义。
+
+> 本文已有的带日期“状态注记”均为历史快照，不再作为项目当前状态。当前阶段、阻塞项和最新验证只读取 [doc 16](16-Cyrene-前端实施任务清单与进度跟踪.md)。
 
 ---
 
@@ -256,6 +257,10 @@
 > **状态注记（2026-08-28，阶段 7 批次 D 收口收敛已落地，真机联调通过，已真实联调）：** 批次 D（收口收敛）已落地并全量验证——**门禁：161 单测 files / 2016 passed + 7 expected-fail；22 集成 files / 138 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（605/368/1671/8）**。覆盖面：A 临时附件/录音/缓存上限确认（`attachment.store.remove()` 补清 `kindByLocalId`/`fileByLocalId` 即时释放强引用 + 无落盘/无 Blob URL 确认 + **缓存上限已落地确认**（草稿 100KB×50 + 离线 20 会话，阶段 3/4——无新增磁盘清理面））；B F-11 审批历史口径（读面 7 天产品语义 / 存面 30 天审计合规，不拉平；`tool-history.ts` 注释 + doc 04 §7.4 附录）；C 观察项重开（① 视图感知暂停——`needsDeferredRender` 视口外 completed segment 空 source 延迟渲染 + streaming 门控豁免 + mock 长会话种子 assistant 补 markdown 段 + perf-gate ③尾差异化断言；② Live2D 数值读数接入诊断页——`FrameBudget.getStats()` + `live2dStore.getStats()` status 判 null + `CyDiagnosticsPane:240-241` 占位替换，闭合 D7A-06）；D 阶段 7 收口（Blocker/Critical 为 0 + 安全发布清单通过，见 §10.2）。本批含文档同步（本 Task 6）。**三态 = 已真实联调**（2026-08-28 真机验收，见 `docs/review/2026-08-28-阶段7批次D-真实联调验收.md`；联调前置修复 `de4fcf8`/`fc38e7f`/`bdfbc57`/`e774195` + `612622d`）；决策见 `docs/review/2026-08-27-阶段7批次D-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-27-phase7-batchd-convergence-*`。
 
 ## 11. 阶段 8：打包、跨平台与 Demo 验收
+
+> **状态：暂缓，尚未进入。** 阶段 7 已通过，但 H-01 主验收平台、H-02 支持范围、H-04 签名证书、H-07 Demo 成功标准尚未形成完整决策。恢复条件和影响范围见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)，实时状态见 [doc 16](16-Cyrene-前端实施任务清单与进度跟踪.md)。
+
+本节定义恢复阶段 8 后要执行的技术任务，不表示这些任务已经排期或开工。
 
 ### 11.1 技术任务
 

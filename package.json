@@ -8,6 +8,8 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "check:node": "node apps/desktop/scripts/check-node-version.mjs",
+    "docs:index": "node scripts/docs-check.mjs --write-indexes",
+    "docs:check": "node scripts/docs-check.mjs",
     "dev": "pnpm --filter @cyrene/desktop dev",
     "build": "pnpm --filter @cyrene/desktop build",
     "typecheck": "pnpm --filter @cyrene/desktop typecheck",

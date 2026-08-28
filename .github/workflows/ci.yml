@@ -33,6 +33,9 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      - name: Documentation structure
+        run: pnpm docs:check
+
       # 敏感信息泄漏扫描（spec §5.1）：git ls-files 全量跟踪文件黑名单扫描 + 行级 allowlist——与 typecheck/lint 同 job（纯 node，无运行时依赖）
       - name: Sensitive info scan
         run: pnpm --filter @cyrene/desktop verify:sensitive

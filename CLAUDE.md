@@ -1,145 +1,129 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file contains durable repository guidance for coding agents. It must not contain machine-specific session state, current test totals, or a chronological project diary.
 
-## What this repository is
+## Repository purpose
 
-Cyrene — an Electron desktop AI-assistant chat app (Windows + Ubuntu) with Live2D character, streaming AI replies, voice input, and a desktop tool/authorization system. **This repo now contains code and design docs**: the implementation lives in `apps/desktop/` (Electron + Vue 3 + TypeScript + electron-vite, pnpm workspace), and phases 0–2 plus the 真实联调整改批次 A/B/C、阶段 0/1 整改批次 A/B/C/D and 首次真实联调整改、二次真实联调整改(Renderer 水合 + replay 身份 + 取消码)、三次真实联调整改(WS permessage-deflate 修复 + B-01 封口) are landed and fully verified (527 unit tests (47 files) / 23 integration tests (6 files)); **B-01 已真实联调通过（2026-08-14，Windows 真机十项复跑全绿）**; 阶段 3 四组（G1 布局响应式 / G2 历史聊天体验 / G3 附件多媒体 / G4 历史查看器+表情+无障碍）已落地并全量验证（904 unit tests (82 files) / 39 integration tests (10 files) + typecheck/lint/build + check:contract（WS 13/13 + REST 段 8/8）），阶段 3 真实联调前整改（2026-08-15，日期自然日 / webm kind hint / REST 跨仓门禁 / 贴图真实契约 / 删死代码 + B-02 验收口径）已落地，B-02/B-03 进入条件达成，阶段 3 真实联调复验整改（2026-08-15，P0-01 相对签名 URL / P0-02 ContentPart null / P0-03 StickerPart 恢复 / P1-01 搜索排序升序）已落地并全量验证，阶段 3 真实联调第二轮前端整改（2026-08-15，FE-S3-RUN2-P1-01 历史查看器布局/加载更多不可达）已修复并补真实 Electron 布局/点击集成测试（**944 unit tests (83 files) / 42 integration tests (11 files)** + typecheck/lint/build + check:contract（WS 13/13 + REST 段 8/8）），阶段 3 已真实联调通过（2026-08-15，真实 Windows Electron 历史查看器 50+50 短回归通过），阶段 3 整体「已真实联调」，阶段 2 主链保持「已真实联调」；阶段 4 批次 A（模型服务 Profile 管理 + TTS 试听 + 设置中心框架，2026-08-15）与批次 B（语音：普通录音 + 实时语音会话 + 输入法转写 + TTS 自动朗读 + 设置持久化，2026-08-16）已落地并全量验证（**1284 unit tests (100 files) / 73 integration tests (15 files)** + typecheck/lint/build + check:contract 全绿（待配套后端更新 `frontend_contract` discard 样例后复跑）），阶段 4 真实联调整改（普通录音异常清理 FE-S4-RUN-P0-01/P1-01/P1-02，2026-08-16）已落地——`voice.discard` 幂等语义对齐配套后端修订 BE-S4-RUN-P0-01（可取消任意未提交阶段 + IDLE 幂等成功）、录音取消收敛 `discardRecord()`、停后「正在识别…」等待态（45s 兜底「未识别，请重试」）、`voice.error` recording 态消费门控、mock 冻结契约五态建模 + `CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS` env、real-backend 协议桩漂移 canary，阶段 4 新功能（A/B）已于 2026-08-17 完成修复后真实 Windows Electron（REAL）复验并升「**已真实联调**」——验收见 `docs/review/2026-08-17-阶段4修复后真实联调验收.md`。`docs/` (all in Chinese, v0.2 as of 2026-08-04) is the engineering contract.
+Cyrene is an Electron desktop AI-assistant client for Windows and Ubuntu. The implementation lives in `apps/desktop/` and uses Electron, Vue 3, TypeScript, electron-vite, pnpm, Vitest, and Playwright.
 
-The docs are the engineering contract. Before writing code, read them; before changing behavior, update them (see "Document maintenance").
+The Renderer is untrusted. Main owns credentials, backend connections, filesystem access, tool execution, audit, logging, and raw protocol parsing. Preload exposes a narrow schema-checked API. Renderer owns presentation and UI state only.
 
-## Document set (all under `docs/`)
+## Read before changing code
 
-| Doc | Content |
+1. Read [doc 00](docs/00-Cyrene-前端文档索引与阅读顺序.md) for document roles and reading routes.
+2. Read [doc 16](docs/16-Cyrene-前端实施任务清单与进度跟踪.md) for the only current project status.
+3. Read [doc 17](docs/17-Cyrene-前端开发环境与依赖安装记录.md) for the current Windows/Linux environment baseline.
+4. Read the relevant maintained design document before changing behavior:
+   - 01 architecture
+   - 02 backend protocol and front-end domain contract
+   - 03 UI and interaction
+   - 04 desktop tools and permissions
+   - 05 Live2D
+   - 06 state and storage
+   - 07 security
+   - 08 tests and Demo acceptance
+   - 09 packaging and release
+   - 10 technical task breakdown
+   - 11 settings center
+   - 12 phase gates
+5. Use [review index](docs/review/README.md) and [spec/plan index](docs/superpowers/README.md) only when historical decisions or evidence are needed.
+
+## Sources of truth
+
+There is no single global priority for every kind of question:
+
+| Question | Authority |
 |---|---|
-| [00](docs/00-Cyrene-前端文档索引与阅读顺序.md) | Index, per-role reading routes, doc priority order |
-| 01 | Electron overall architecture (processes, modules, boundaries, flows) |
-| 02 | **Front-end ↔ backend communication protocol & data structures** (the domain contract) |
-| 03 | UI & interaction design |
-| 04 | Desktop tools & permission interaction |
-| 05 | Live2D integration |
-| 06 | State management & local storage |
-| 07 | **Electron security design** |
-| 08 | Test & Demo acceptance plan |
-| 09 | Build, packaging & release |
-| 10 | Implementation route & task breakdown (phases 0–8) |
-| 11 | Settings center detailed design |
-| 12 | **Kickoff checklist & phased plan** (authoritative entry conditions / gates) |
-| 13 | Cross-document review & harmonized conventions (R-01…R-24) |
-| 14, 15 | Backend-side adaptation task list / prompt pack |
-| 16 | Per-phase execution checklist & progress tracker (living tracker; 10/12 remain authoritative) |
-| 17 | Local dev environment baseline, install flow, Playwright/vision-MCP usage & pitfall log |
+| Current phase, blockers, latest verification, next action | doc 16 |
+| Product intent and confirmed scope | upstream requirement docs plus the latest explicit decision record |
+| Runtime behavior | executable code, runtime schemas, and tests |
+| Backend wire behavior | current backend contract plus Main-process adapter/schema code |
+| Phase entry and exit gates | doc 12 |
+| Technical task definition | doc 10 |
+| Historical proof | dated review/acceptance records |
 
-Upstream requirement docs (not numbered): `Cyrene-Desktop-Demo-产品需求文档-v0.2.md` (product scope) and `Cyrene-Agent-工具执行系统补充需求.md` (tool execution system).
+Dated status notes in design documents are historical snapshots. Do not update the same test totals or batch narrative in README, this file, doc 10, and doc 12.
 
-Read [00](docs/00-Cyrene-前端文档索引与阅读顺序.md) first — it maps which docs each role should read. [13](docs/13-Cyrene-前端文档交叉Review与修订记录-v0.1.md) records the harmonized conventions (统一口径) that all docs now share; these are the single-source-of-truth rules below.
+## Architecture invariants
 
-## Tech baseline (tooling exists — versions locked in repo)
+### Process boundary
 
-Electron + Vue 3 + TypeScript + Vite, Electron Forge, pnpm, Vitest, Playwright. Versions locked in the repo, not hardcoded in docs. Toolchain choices are confirmed and versions pinned (`package.json` / `pnpm-lock.yaml`); Electron Forge `make` and Playwright `test:e2e` are still placeholders for later phases (阶段 8 / 阶段 3).
+- Main owns secrets and privileged operations.
+- Preload exposes named, narrow, runtime-validated methods through `contextBridge`.
+- Renderer never receives plaintext credentials, absolute local paths, raw `ipcRenderer`, Node modules, or generic filesystem/shell methods.
+- Generic IPC such as `invoke(channel)`, `readFile(path)`, or `exec(command)` is forbidden.
+- Navigation, IPC sender origin, CSP, custom protocol, path containment, and Electron Fuses remain fail-closed.
 
-### Vision MCP (available in this environment)
+### Backend adapter
 
-The `mimo-vision` MCP server is connected and exposes **`analyze_image`** (visual inspection of one local screenshot) and **`compare_images`** (before/after or implementation-vs-reference comparison), powered by MiMo-V2.5. Use them to visually verify UI: read a Playwright MCP screenshot (saved under `.playwright-mcp/`), check layout/colors/overflow, or diff two renders. Details & usage pitfalls: docs 17.
+- Treat the backend as an external system; do not force it to adopt front-end domain names.
+- Raw wire schemas and REST mappers stay in Main.
+- Renderer consumes stable front-end domain events only.
+- Unknown or malformed external input fails explicitly; do not hide drift with `any`, permissive schemas, or silent field drops.
+- Record confirmed mappings in doc 02 and cover them with contract tests.
 
-## Architecture overview
+### Messages and streaming
 
-### Trust boundary (docs 01, 07)
-Three strict layers; **the Renderer is untrusted**:
+- One backend generation produces one assistant message containing ordered segments.
+- `generation.completed` is the parent terminal event; segment completion ends one segment only.
+- `assistantSegments` is the visible assistant-content source of truth.
+- Token/model/emotion data must preserve backend semantics and source labels; never estimate tokens from characters.
+- Replay, optimistic messages, and reconnect paths must retain stable identities and deduplicate safely.
 
-- **Main** owns everything sensitive: backend connection, credentials, raw protocol parsing, `BackendAdapter`, paths, file/screenshot tools, permission decisions, audit, logging. Never owns Vue UI state.
-- **Preload** exposes only a narrow, named, schema-checked `DesktopApi` via `contextBridge` — no raw `ipcRenderer`, no arbitrary channels, no Node modules.
-- **Renderer** (Vue) is pure UI: never connects to a credentialed backend, never touches filesystem/credentials/shell, never executes tools.
+### Tools and permissions
 
-Forbidden everywhere: `readFile(path)`, `exec(command)`, `invoke(channel)`-style generic IPC. Enforced Electron baseline: `nodeIntegration:false`, `contextIsolation:true`, `sandbox:true`, custom restricted protocol instead of arbitrary `file://`, CSP without `unsafe-eval`, remote debugging always off.
+- Backend tools are display-only in the client. Desktop/local-worker tools execute only in Main.
+- Recompute risk locally. Blacklists and invalid parameters override grants.
+- Renderer cannot construct or modify trusted tool metadata.
+- Side-effecting calls are idempotent by call ID; terminal states never re-enter execution.
+- Authorization, denial, timeout, cancellation, conflict, and audit paths require explicit tests.
 
-### BackendAdapter (docs 01, 02)
-The existing backend is an **external system** — do not redesign it. All protocol differences (URLs, field names, WS vs SSE, IDs) are confined to `BackendAdapter` in Main. UI consumes only stable front-end domain models. Backend field changes must never leak into Vue components; protocol mismatches error explicitly, never silently drop fields. Doc 02's alignment table (section 19) is where real backend mappings get recorded — it is currently **unfilled**, so the protocol contract is not yet finalized.
+### Voice, attachments, and Live2D
 
-### Message / streaming model (docs 01, 02, 06)
-- **One backend AI reply = one assistant `Message`** with an ordered `AssistantSegment[]`. Never split a reply into multiple messages because sentences stream.
-- `responseId` groups the parent reply; `segmentIndex` gives global display order across Inner Voice / Public Reply and media segments; `deltaSequence` only accumulates within a segment. `generation.segment.completed` completes one segment only; **`generation.completed` is the only event that ends the parent reply**.
-- `inner_voice` and `public_reply` are two display channels of the *same* message, interleavable, each independently foldable. P0 Inner Voice is text/markdown only.
-- `assistantSegments` is the **single source of truth** for assistant visible text — never also write the same text to `Message.content` (content is for user/system/tool messages; Adapter normalizes before entering the Store).
-- Token, actual model, and emotion are written at parent-reply completion. Distinguish per-generation `usage` vs server-aggregate `conversationUsage`; never count characters as tokens; dedupe by `generationId` for client-side sums and label the source (`provider_reported` / `server_aggregate` / `client_sum`).
-- Batched IPC delivery is allowed, but each event keeps its own `eventId/sequence` and Renderer processes them in order — never concatenate segments into undeduplicatable pseudo-events.
+- Recorded/realtime voice and dictation are separate flows; only dictation final text enters the draft.
+- Secrets and sensitive transcript/inner-voice content never enter logs or diagnostic exports.
+- Drag/drop creates pending attachments and never auto-sends.
+- Local absolute paths do not cross into Renderer stores or backend payloads.
+- Live2D is presentation-only and must degrade without blocking chat.
 
-### Tools & permissions (docs 04, 07, 10)
-- One static Tool Registry covering `backend` / `desktop` / `local_worker` runtimes. Demo P0 Desktop tools are exactly four, namespaced: `desktop.file.select`, `desktop.file.read`, `desktop.file.write`, `desktop.screen.capture`. `desktop.command.run` is **optional** — register only after explicit scope confirmation.
-- Backend Runtime tools are display-only; Desktop/Local Worker tools execute through Main with permission + audit. `approvalAuthority` must be `client` for desktop/local_worker; backend approvals never create or reuse local grants.
-- Risk is **recomputed locally** — the backend's declared risk is informational only. Decision precedence: prohibited/illegal params → path/domain blacklists → local risk forced-confirmation → valid scoped grants → sandbox defaults → user prompt. Blacklists always override sandbox and historical grants.
-- Side-effect tools are idempotent by `callId`; a rejected call stays rejected after reconnect. Tool lifecycle is single-direction: `requested → awaiting_permission → running → completed/failed/rejected/cancelled/timeout` (terminal states never re-enter execution).
+## Environment portability
 
-### Voice & model services (docs 02, 11, 13)
-- Model services are exactly **three** types: LLM, STT, TTS. Input-method dictation (按住说话转文字) is *not* a fourth service — it selects a compatible STT Profile via `dictationSttProfileId`.
-- Two strictly separate voice paths: **direct voice input** (recorded/realtime; STT partial/final are captions only and **never write to the text draft**) vs **dictation** (only its final text inserts into the current draft; no voice message created, no auto-send).
-- `ModelExecutionLocation` (`backend`/`desktop`/`local_worker`) is distinct from `ToolRuntime` — model execution does not enter the tool state machine.
-- Credentials: Main/system keystore owns secrets; Renderer sees only `credentialStatus`, never plaintext. Custom profile keys are one-shot form input, cleared immediately after submit. No auto-fallback from local to remote STT without user consent.
+Do not write session assertions into repository docs.
 
-### Attachments (docs 01, 02, 06)
-Drop/paste/picker share one validation+upload state machine (differing only by `source`). **Drag & drop never auto-uploads or auto-sends** — it creates a `PendingAttachment`. Renderer collects browser `File` objects; Preload uses `webUtils.getPathForFile()`; Main converts to opaque resource handles. Absolute local paths never reach the backend or Renderer stores. No "path-to-file" or "read-by-path" API exposed to the page.
-
-### Live2D (docs 05, 07)
-Pure presentation layer — never decides business results. The character pane is a **right-column layout extension** that never overlays chat (default ~1200px window; narrow-window auto-collapse rules are still open decisions). Loads only validated local models with `manifest.json` + `integrity.json` (SHA-256); rejects absolute paths, `..`, symlink escapes, and any backend-supplied path/URL/script. State mapping (idle/listening/thinking/speaking/waiting_permission/…) comes from local mapping tables; unknown emotion codes never become expression/motion names. Must degrade to a static avatar without blocking chat, and pause high-frequency rendering when hidden.
-
-### State & storage (docs 06)
-Pinia stores with explicit ownership (`appStore`, `connectionStore`, `conversationStore`, `messageStore`, `toolStore`, `live2dStore`, `settingsStore`, `modelServiceStore`, `voiceStore`, `searchStore`, `resourceStore`, `stickerStore`). Backend is the source of truth for conversations/messages; local cache is a recent snapshot only. Messages are normalized (byId/allIds); one entity stored once, lists reference IDs. Main is the persistence boundary for settings, credentials (system keystore), audit, and security policy. `inner_voice`/`public_reply` and transcription audio are treated as sensitive — never logged, never in diagnostic exports.
-
-## Development phases (docs 10, 12)
-
-Nine phases, **0 through 8** — docs 10 and 12 share the same numbering (doc 12's entry conditions & gates are authoritative; doc 10 is the technical task breakdown):
-
-```
-0 protocol & project baseline → 1 secure Electron shell → 2 core chat vertical slice
-→ {3 full chat/history/media, 4 model services & voice, 5 Live2D} → 6 tools/permissions/Desktop P0
-→ 7 security/stability/perf convergence → 8 packaging & Demo acceptance
-```
-
-Phases 3/4/5 interleave after phase 2. Phase 6's real Desktop execution requires phase 1's security boundary.
-
-Definition of Done (both docs): typecheck+format pass; runtime schemas for all external input; normal/failure/cancel/reject/timeout paths handled; unit tests for pure logic; integration tests across Main/Preload/Renderer or Adapter; E2E or manual record for user-visible flows; no plaintext secrets/unredacted logs/unauthorized assets; docs + alignment table updated; known limits recorded. **Work driven by Mock Backend only must be marked "已开发、未联调" (developed, not integrated) — never "已完成" until a real backend passes.**
-
-## Doc conflict priority (doc 00 §5)
-
-1. User's latest confirmed product decisions; 2. main PRD + confirmed tool semantics; 3. non-negotiable security/permission constraints; 4. backend contract confirmed by real integration; 5. other detailed designs; 6. implementation-route suggestions. Never lower security constraints to match a UI sketch; never force the existing backend to rename fields to match doc recommendations.
-
-## Document maintenance (doc 00 §7, doc 13)
-
-- Each doc tracks its own version/status; update the docs that changed behavior touches (e.g., permissions → 04/07/08; UI-visible features → PRD/03/08; Live2D resources → 05/07/09; release targets → 08/09/10; protocol changes → 02 alignment table + Adapter, never the UI directly).
-- Doc 02's section-19 alignment table is the only place backend field mappings live — no protocol guesses scattered in components.
-- Re-run cross-review (doc 13) when real protocol, Demo scope, voice/model semantics, Electron/Live2D/SDK, security policy, or phase gates change.
-- **Keep doc edits in Chinese** to match the set.
+- Detect GitHub authentication with `gh auth status`; never assume credentials are present or absent.
+- Detect available MCP/browser/visual tools from the current session; never claim a named server is connected.
+- Detect backend reachability and record the exact backend SHA for real integration.
+- Use the repository-pinned Node and pnpm versions.
+- Fixed remote-debugging ports are rejected by the application security policy. Use the project test harness or Playwright Electron flow when automation needs a debugging transport.
 
 ## Commands
 
-Run from the repo root (pnpm workspace shims; equivalently `pnpm -F @cyrene/desktop <script>`): `dev`, `typecheck`, `lint`, `test`, `test:integration`, `test:e2e`, `build`, `package`, `make`, `verify:artifact`. `test:e2e` (Playwright) and `make` (Electron Forge) are still placeholders for later phases. `check:contract` (no root shim — run as `pnpm -F @cyrene/desktop check:contract`) is the local cross-repo wire-contract check; `pnpm -F @cyrene/desktop verify:sensitive` is the repo-tree sensitive-info scan gate (blacklist + allowlist, exit 1 on violations): it reads `/home/yomu/elysia-agent/frontend_contract` when that repo is mounted (CI/other machines skip it).
+Run from the repository root:
 
-## Current status / open decisions
+```text
+pnpm dev
+pnpm build
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm test:integration
+pnpm package
+pnpm verify:artifact
+pnpm docs:check
+pnpm docs:index
+pnpm -F @cyrene/desktop check:contract
+pnpm -F @cyrene/desktop verify:sensitive
+```
 
-- Phases 0–2 landed and fully verified: **527 unit tests (47 files) / 23 integration tests (6 files)** + typecheck/lint/build + check:contract(13/13) + package + verify:artifact --smoke green. 真实联调整改批次 A/B/C 已落地（连接凭据安全与装配策略、真实连接编排与守卫、IPC/replay 运行时 Schema + 夹具跨仓库门禁）。阶段 0/1 整改批次 A（跨平台文件与退出地基）已落地：FE-S1-P0-01 Windows 安全文件首建/ENOENT 保留（safe-open 平台层可注入，`SafeOpenPlatform` posix/windows）、FE-S1-P1-02 非普通文件全拒（FIFO/socket/目录/device，POSIX `O_NONBLOCK` 防阻塞）、FE-S1-P2-02 `EMPTY_FILE` 工厂化（多 key 损坏重建不污染）、FE-S1-P1-03 CredentialStore `close()`/drain + 有序退出（凭据→adapter→diagnostics + 超时标记经同步审计落盘 + 统一 fatal 路径）。阶段 0/1 整改批次 B（Renderer 信任边界）已落地：FE-S1-P0-02 dev Renderer URL 回环白名单（localhost/127.0.0.0/8/[::1] + `CYRENE_DEV_RENDERER_ORIGINS` 附加 allowlist，非法 URL 启动报错退出，受信 URL 收敛为 Main 单一策略函数）+ 开发 CSP（`frame-ancestors 'none'` 经 Vite 中间件注入 + meta 收紧 `frame-src/form-action 'none'` + `connect-src` 去裸 ws:/wss:）+ FE-S1-P2-01 IPC 来源纵深（`senderFrame===mainFrame` + 当前 URL 受信校验）。**P0-02 关闭**（首次真实联调前最后 P0）。首次真实联调整改已落地：FE-INT-P1-01 后端合法 state/typing 帧建模为「已知但有意忽略的兼容帧」（不再 RAW_FRAME_INVALID，check:contract 13/13）+ FE-INT-RISK-01 单写者约束文档化（单写者，不纳入 B-01 门禁）。阶段 0/1 整改批次 C（审计与持续门禁）已落地：FE-S1-P1-01 审计接线（凭据生命周期 `credential:set/clear/status-change` + 连接生命周期 `connection:connect/disconnect/error` 接入 append-only audit；fail-open 语义 C1——审计失败不改变操作结果；真实应用装配集成测试：经 IPC set/clear 后 audit/ JSONL 出现预期行）+ FE-S1-P1-04 CI 持续门禁（新增 `artifact` job：clean + package + `verify:artifact --smoke` + SHA 证据；新增 `windows` job：构建级 typecheck/lint/unit/build，C3 不启动 Electron；POSIX 专属单测加平台守卫；CI 两个新 job 需 push 触发 GHA 验证，本机沙箱无 GHA）。
-- **三态状态源（见 README「真实模式联调」小节，单一来源）**：**已开发**（代码落地、Mock 驱动）/ **已验证**（typecheck/lint/test/build/package/verify:artifact 全绿、未真实联调）/ **已真实联调**（真实后端 B-01 验收通过）；阶段 0 标「**带已知豁免提前开发**」（非「已验证」）。所有 Mock 驱动工作标记「已开发、未联调」，真实后端通过前不得标「已完成」。首次真实联调（2026-08-13，确认 P1/RISK）、二次真实联调（2026-08-13，确认 P0/P1/RISK 问题并修复，见 `docs/review/2026-08-13-Windows-Electron-二次真实联调前端整改清单.md`）与三次真实联调（2026-08-14，确认空闲压缩断连 P0 并修复，见 `docs/review/2026-08-14-Windows-Electron-第三次真实联调前端阻断.md`）均已执行；**B-01 已真实联调通过（2026-08-14，十项复跑全绿）**。
-- Doc 02 §19 alignment table is filled (backend contract confirmed via the handoff package `frontend-handoff-v2`).
-- **阶段通过门禁的外部依赖清单**：H-01（主验收平台）、H-07（Demo 演示脚本/P0/P1 范围与成功标准）、G-01/G-02（Live2D SDK 许可与合法模型）、H-04（签名证书）。（B-01 真实后端环境已到位，2026-08-14 联调通过后已关闭。）Batch C turns B-01 into a gated integration: on arrival, ≥3 real raw frames (covering `server_info` / session / `user_message.ack` / generation) must pass `parseRawFrame` + mapper + `parseBackendEvent` assertions before 联调 is considered passed. **首次联调 = Linux 本机文本聊天最小闭环**（13 项用例：启动 / 设置 Token / 连接 / 列会话 / 激活新建 / 发送 / ACK / 双通道流式 / completed / 取消 / 断线重连 / 错误展示 / 日志定位）。**Windows 冒烟已通过**（B-01 十项复跑在真 Windows Electron 43.3.0 上全绿，2026-08-14）；批次 C 的构建级 `windows` job（不启动 Electron，C3）继续保留。
-- **CI 版本同源声明**：CI 各 job 用 `actions/setup-node` 的 `node-version-file: .nvmrc`（22.23.0）+ pnpm-workspace.yaml `engineStrict: true`，与 engines `>=22.23.0 <23` 一致（单一版本来源：`.nvmrc`）。
-- 首次真实联调（2026-08-13）确认单写者口径（FE-INT-RISK-01 决策）：单活动桌面客户端/单写者，多客户端同会话不支持；后端合法 `state`/`typing` 帧已建模为「已知但有意忽略的兼容帧」（不再 `RAW_FRAME_INVALID`，check:contract 13/13）。527 单测（47 files）+ 23 集成 + typecheck/lint/build 全绿。**B-01 已真实联调通过（2026-08-14，十项复跑全绿）**，阶段 2 主链由「已开发、未联调」转「已真实联调」；阶段 3 转为主线。
-- **阶段 3 四组已落地并全量验证（2026-08-14）**：G1 布局响应式（四区布局、会话栏 260 可折叠 / Live2D 右栏默认显示 340 可调（[300,420]）、断点 1200/736/520/320、最小窗口 1100×700、布局记忆 Renderer localStorage `cyrene.layout.v1`）；G2 历史聊天体验（CyMessageList 自研虚拟列表 + 锚点捕获/恢复/补偿 + 回到底部、draftStore 草稿 50 会话×100KB 超限提示、离线缓存最近 20 会话、草稿/滚动锚点归 Main 持久化、代码块仅复制按钮+基础样式不引高亮库）；G3 附件多媒体（附件内嵌 Message + ContentPart 映射、通用媒体代理 `cyrene://renderer/__cyrene-media/{mediaType}/{id}`（attachment 签名+Range/206、sticker 静态白名单）、原生预览+图标卡、拖拽不自动上传发送）；G4 历史查看器+表情+无障碍（CyHistoryViewer 全窗覆盖式查看器、只内置 `st_` 表情包、搜索项文本展示（P0-1 缩略图缺口待后端确认）、现代 QQ/微信风格、IME/焦点/键盘无障碍）。**904 单测（82 files）+ 39 集成（10 files）+ typecheck/lint/build + check:contract（WS 13/13 + REST 段 8/8）全绿**；阶段 3 真实联调前整改（2026-08-15）落地并全量验证，B-02/B-03 进入条件达成；**阶段 3 真实联调复验整改（2026-08-15）落地并全量验证**（P0-01 相对签名 URL 基于 endpoint 解析 / P0-02 ContentPart null 归一化 + REST/WS replay wire 边界放行 duration_ms null / P0-03 StickerPart 恢复 / P1-01 搜索排序统一升序，新增真实相对签名 URL / ContentPart null / StickerPart replay / 两页排序 fixture）；**阶段 3 真实联调第二轮前端整改（2026-08-15，FE-S3-RUN2-P1-01 历史查看器布局/加载更多不可达）落地并全量验证（944 单测（83 files）+ 42 集成（11 files）+ typecheck/lint/build + check:contract（WS 13/13 + REST 段 8/8）全绿）**（纯 CSS 容器约束 / loadMore 锚点补偿 / mock 大 seed（CYRENE_MOCK_HISTORY_LARGE）分页语义对齐 real / 真实 Electron 布局+点击集成测试三用例）；阶段 3 已真实联调通过（2026-08-15，真实 Windows Electron 历史查看器 50+50 短回归：普通点击加载第二页 100 条顺序/去重/来源跳转正常），阶段 3 整体升「已真实联调」，阶段 2 主链保持「已真实联调」（B-01 封口）。
-- **阶段 4 批次 A（模型服务 Profile 管理 + TTS 试听 + 设置中心框架）已落地并全量验证（2026-08-15）**：决策 D1（阶段 4 分两块，P4-A = Profile 管理 + TTS 试听 / P4-B = 语音）/ D3（TTS 自动朗读归 P4-B）/ D4（backend 为主，desktop/local_worker 展示不可用态）用户敲定；契约→Schema→real/mock backend→MediaService 一次性 `tts-preview` 媒体路由→IPC→preload→store→设置 UI→集成测试全链路落地（`ModelProfile` / `UpsertModelProfileCommand` / `ModelProfileTestCommand` / `ActivateModelProfileCommand` / `TtsVoice` / `TtsPreviewCommand` / `SetTtsVoiceCommand` / `ActiveModelSelection`）；当前激活来源 `server_info.services` + `switch_model_result`/`set_tts_voice_result` 事件（无 `model.profile.changed` wire 事件）；`credentialStatus` 两态、凭据一次性提交不回显；切换只影响新请求；WS result 帧单 in-flight 按回显 service/model/voice 关联（10s 超时）；**D-8 关闭**（后端 `556117a` 为 `dictation.start` 增加 `sttProfileId`，`<provider>/<model>` 缺省用全局活动 STT，E-07 契约已确认）；final review 修复 wave（capabilities dict wire / set_tts_voice 失败结算 / baseUrl 全量携带 / test 传 baseUrl / check:contract 覆盖扩展 / 空音频 guard / mock 有效 WAV / doc13 D-8 同步）后 **1003 单测（88 files）+ 55 集成（13 files）** + typecheck/lint/build + check:contract（WS 15/15 + REST 15/15）全绿；阶段 4 新功能已于 2026-08-17 升「已真实联调」（修复后 R1-R4 真实复验通过）；验收记录见 `docs/review/2026-08-15-阶段4批次A-验收记录.md`；阶段 3 保持「已真实联调」，阶段 2 主链保持「已真实联调」（B-01 封口）。
-- **阶段 4 批次 B（语音：普通录音 + 实时语音会话 + 输入法转写 + TTS 自动朗读 + 设置持久化）已落地并全量验证（2026-08-16，Tasks 1~15 + 文档同步）**：领域契约（`shared/contracts/voice.ts` 新 + BackendEvent +13 事件 + zod schema 镜像）→ raw 帧/mapper `stampEvent`（envelope 单调，emit 时打戳）→ real-backend 三模式命令（`voice.record.*`/`voice_session.*`/`dictation.*`）+ `sendAudioBytes` BINARY 上行（连接 + 活动会话双 guard）+ TTS base64 帧（`audio_start/audio/audio_end/audio_cancelled`，MediaService `tts-live` 路由）+ `voice.error` 语音族错误路由（D-P15，connectionStore 对 `VOICE_ERROR_CODES` 横幅抑制）→ mock 语音/TTS 模拟（`commitVoice` 返回 serverMessageId 对齐；envelope 交错单调）→ Main 设置持久化（`dirs.config/settings.json` 原子写 + zod + 版本化 + 损坏隔离，D-P6）→ `voice:audio-chunk` 单向守卫（`registerOneWayHandler`，`isTrustedSender` + zod，1 MiB 上限，D-P18）+ 麦克风权限处理器（`decideMicrophoneAllow`/`registerMicrophonePermission`，仅 media+audio+受信 origin，D-P7）→ Renderer `PcmCapture`（AudioWorklet/ScriptProcessor 降级，16k mono 20ms=320 样本=640B；`assetsInlineLimit:0` 防 worklet 内联 data: URL 被 CSP 拦）→ `voiceStore`（三模式编排 + 背压窗口 200 帧/5s 兜底 + TTS 播放门 + consent）+ `settingsStore`（500ms 防抖持久化 + `applyDictationInsert`）+ `messageStore`（`voice_session.turn` + `sendVoiceCommit`）→ UI（CyChatInput 🎤/🔊/⌨️ 三入口 + CyVoicePending/CyRealtimeBar/CyDictationHint + CyTtsPlayer + 语音子页 CyVoicePane + 后端 STT 一次性同意 D-P16 + 会话切换守卫 D-P5）；控制帧先于采集（D-P19）、录音字幕终态等 `voice.transcript`/`voice.error` + 45s 兜底「未识别」（D-P17）、转写 STT 独立选择为本地设置（D-P14）；**1284 单测（100 files）+ 73 集成（15 files）** + typecheck/lint/build + check:contract 全绿（待配套后端更新 `frontend_contract` discard 样例后复跑）；阶段 4 真实联调整改（普通录音异常清理 FE-S4-RUN-P0-01/P1-01/P1-02，2026-08-16）已落地——`voice.discard` 语义对齐配套后端修订 **BE-S4-RUN-P0-01**（可取消任意未提交阶段 RECORDING/TRANSCRIBING/PENDING + IDLE 迟到/重复幂等成功）、录音取消收敛 `discardRecord()`（recordingId 保留至取消帧发送完成）、`record.awaitingTranscript` 等待态（停后「正在识别…」→ 仅 45s 超时兜底「未识别，请重试」；等待期试听/删除/重录可用、确认发送禁用）、`voice.error` recording 态消费门控（R-S4-06）、`MockBackend.discardVoice` 冻结契约五态建模 + `CYRENE_MOCK_VOICE_TRANSCRIPT_DELAY_MS` env（stopRecordVoice 立即 resolve、仅 transcript emit fire-and-forget 延迟，R-S4-08）、real-backend 有状态协议桩（冻结契约序列 + 漂移 canary）；阶段 4 新功能（A/B）已于 2026-08-17 完成修复后真实 Windows Electron（REAL）复验并升「已真实联调」；决策见 `docs/review/2026-08-16-阶段4批次B-决策记录.md`；阶段 3 保持「已真实联调」，阶段 2 主链保持「已真实联调」（B-01 封口）。
-- **阶段 5（Live2D）已真实联调通过（2026-08-19）**：真实 Windows Electron 43.3.0（REAL）+ Ubuntu 后端 `0.1.0+0a4058e` / protocol 2.0；C1/C2/C3 与真机 deferred 结论见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`（真机修复 commit `da7f617`）。
-- **阶段 5 批次 C（Live2D 收口代码批次）已落地并全量验证（2026-08-18；2026-08-19 真实联调通过，升「已真实联调」）**：单测 **1599（119 files）** + 集成 **97（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿；批次范围 = C1 TTS 口型数据源（`mouth-level.ts` `computeMouthLevel` 包络纯函数（噪声门/attack~50ms/release~250ms 攻放不对称/最大变化率/归零）+ `tts-mouth-source.ts`（MediaElementSource→Analyser fftSize=256→RMS，每元素 createMediaElementSource 终生一次 F1）+ 口部写出**通用化**（`updateAnimation` 对所有 ready 模型写 `ParamMouthOpenY`，门=`autoMotions ∧ lipSync`，B3 动作后写自然覆盖；lipSync 门定案 Task5 M3 关闭——只门控参数级电口，B3 动作口部不受门）+ `voiceStore.ttsAudioEl`/CyTtsPlayer 挂接 + `tick()` 采样 + mock env 桥 `CYRENE_MOCK_MOUTH_LEVEL`（step/sine 合成包络经 getRuntimeInfo 水合，renderer 不读 env））+ C2 性能降级（`perf.ts` `FrameBudget` 四值真实降帧（quality 恒满帧 / low_power 30fps 封顶 / balanced 按 EMA 帧耗时 60↔30 / auto 迟滞升降档）+ `reset(modelId?)` GPU 丢失**一次重建**（rebuildGuard finally 复位非永久；成功恢复 ready + 重放 settings/CharacterState；失败 → 静态头像）+ `setVisibility` 接线进 tick 门（消除 Task5 M4 死面）+ `adapter.initialize` 半初始化 try/catch 兜底（批次 A Task5 P3））+ C3 后端 `live2d.directive` 扁平冻结契约四件套（`raw-types.ts` 类型 + `raw-schemas.ts` `.strict()` 未知字段整帧拒 + `FrameMapper.mapFrame` 分支 + `BackendEventSchema` 镜像；**`state` 七值** `idle/listening/thinking/speaking/happy/sad/surprised`（**剔除 error**——client 派生态不可注入，偏离 doc 02 §12 见决策记录）+ priority clamp ≤1 建议强度 + durationMs min(motion,15s) + `pushDirective` 建议强度仲裁（永不覆盖 client 2/3 级现实态）+ `setExpression`/`playMotion` 返回 boolean + `playMotion` 第三参 durationMs + 指令>emotion + 脱敏日志 + mock `CYRENE_MOCK_DIRECTIVE`/real 解析桩；`live2dStateSource` 返回 `{unsub, recompose}`）+ 防御加固收口（M1 resolveModelFile `%` 同口径（`canonicalizeRelPathSegment` 含合法 `%XX` 才解码一次，`%25` 放行 / `%2F`/`%252F`/非法序列拒）/ M2 registry 强制 `manifest.id===dirname` / M3 integrity 空数组视为不完整（列表/请求/verify 三方一致）/ M4 `reason` 闭合枚举 `missing_file|size_mismatch|hash_mismatch` / F2 blink 速率调制（thinking/speaking rate=2）/ F3 expressions 空→B4 参数级近似 / Task5 M2 restore 分叉 `restoreDefaults()`（面板存活 switchModel 首个可用、已 dispose 显式持久化）/ 批次 A F2/F3/F4 关单（无实害）、N1/N3 批次 B 已完成不重复收口）；画布分辨率降级与系统低电量降级显式 defer（决策记录承接）；**2026-08-19 真实 Windows Electron（REAL）联调通过并升「已真实联调」**（C1 口型肉眼 / C2 四值降帧实测 + GPU-lost 重建 / C3 真实 emotion→情绪→表情 + 未知帧忽略不崩 + 指令防御路径 + 归真机 deferred + 自动化门禁复跑；验收见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`）；决策见 `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）。
-- **阶段 5 批次 B（Live2D 表现）已落地并全量验证（2026-08-18，已开发、未联调）**：单测 **1508（114 files）** + 集成 **90（16 files）** + typecheck/lint/build 全绿；批次范围 = 状态机收敛表（thinking→speaking→idle、error 打断、低优先不打断 3 级、同态幂等、结束回正确回退态，`state-machine.ts`）+ 待机眨眼/呼吸参数纯函数（B2，`param-anim.ts`）+ B3 动作/表情白名单调度（低不打断 3 级态、同动作去抖、长动作超时、切换清队列、点击不打断 speaking/thinking）+ B4 无动作模型参数级回退（thinking 摆头/speaking 口型+轻头/happy 笑眼/surprised 瞪眼/error 歪头）+ `live2dStateSource` 薄状态编排（connection/message/voice 读值组合，D5B-04；情绪/error N1 超时回退）+ 情绪态→表情本地映射（happy/f01、sad/f02、surprised/f06，不命中落 B4）+ `Live2DSettings` 全量 10 字段 + `PerformanceMode` 四值统一（旧三值 `high/low` 读回归一，schema `normalizePerformanceMode`）+ settings patch 无默认子 schema（IP-1 防单字段 patch clobber）+ 「角色与外观」设置子页 CyLive2DPane（模型/表现/互动/性能四组 + 恢复默认）+ CyLive2DPanel 状态徽标/缩放偏移手柄/鼠标跟随点击回正 + `switchModel` 返回生效 id（D5B-10：守卫丢弃时持久化旧 id）；Electron 集成新增 7 用例（状态驱动徽标「思考中→说话中→空闲」/ Haru B3 动作播放 + lil B4 优雅降级 / 情绪 happy→表情 / 设置子页即时生效+重启持久化 / 性能模式四值+旧值回归不 corrupt / 布局画幅 / 切换竞态三方一致）+ mock env 桥 `CYRENE_MOCK_EMIT_DELAY_MS`（放宽 replay 间隔供状态断言）+ `CYRENE_MOCK_GENERATION_EMOTION`（generation.completed 情绪注入）；**集成修复（B7 发现）**：`live2dStore.currentGenHasContent` 补认 `public_reply` 的 `markdown` kind（默认夹具 public 正文为 markdown，仅认 `text` 会让「说话中」永不触发）；**2026-08-19 随阶段 5 升「已真实联调」**（验收见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`）；决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`（主会话落文）。
-- **阶段 5 批次 A（Live2D 地基）已落地并全量验证（2026-08-17，已开发、未联调）**：单测 **1400（106 files）** + 集成 **83（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿；批次范围 = SDK vendoring（Cubism Web SDK 5-r.5，`third_party/CubismSdkForWeb-5-r.5/`，Framework 源码 vendored + Core asm.js 全局 script + 13 shaders，CSP 不放宽）+ Main 模型注册表/intergity（manifest+integrity 两级可用性 + fail-closed verify + 会话内 verified 短路）+ cyrene:// `__cyrene-live2d` 供给分支（containment + 白名单 + fail-closed hash + dev CORS）+ 装配 CLI（`live2d:install`，manifest/integrity/license note 拷贝装机）+ Live2DAdapter/CubismGL（WebGL1，GPU-lost/纹理超限失败路径）+ Live2DController/live2dStore + settings `live2d` 契约（`.default(DEFAULT_LIVE2D)` 兼容旧设置）+ CyLive2DPanel 最小面 + Electron 集成（首帧非空像素/切换/失败回退/设备丢失/折叠/持久化）；本机已装配 haru/lil/wanko 到 `userData/models/`；**2026-08-19 随阶段 5 升「已真实联调」**（验收见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`）；决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
-- **阶段 6 工具双轨统筹决策（2026-08-19，方案 B 已定案；2026-08-20 后端 B-6 批已落地，前端代码批未开始）**：核对结论——backend 工具实发 `action{tool_executing/tool_done}` 但前端 raw schema 未收录（真机会 `RAW_FRAME_INVALID`）；一个用户回合只有一个 generation 且 `generation.completed` 无 `tool_calls`；`tool.request.callId`（桥 `call_*`）与归档 `tool_call_id`（LLM id）双轨无关联。方案 B 定案：wire 双轨（Desktop `tool.request/tool.status`；Backend 新增 `tool.started/tool.completed`），前端领域层统一 `ToolCallRecord`，权威键 `sourceCallId`（LLM `tool_call_id`）；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义；实时 `toolStore` 易失、归档为历史/回放持久权威。**后端现状**：B-6-01~09 已全部落地（后端本地 HEAD `03a6e882`，领先 origin 13 未 push；契约 `tool.started/tool.completed` + `tool.request.sourceCallId` 必填已合并，v2 停发工具 `action`，`outputSummary` 2000 截断；门禁 test-quick 3652 / ruff / pyright 0 / check-types 全绿）。**F-6 批次 A（工具契约与领域层，2026-08-20 已落地并全量验证，三态=已开发、未联调）**：raw wire 四件套（`tool.request/started/completed` + `action` 兼容帧 + client `tool.status`，`.strict()` 镜像契约，WS 28→32/未纳 8）+ 领域事件三件套（`BackendEvent` + `BackendEventSchema` 镜像，`tool.request` 经 `redactToolArguments` 脱敏——原始 arguments/安全元数据永不进 Renderer）+ `ToolCallRecord`（`id=sourceCallId` 权威键，展示 8 态/协议 6 态分离）+ 归档配对（`pairToolCalls` → `Message.toolCalls`，REST 历史 + WS 回放双路径，缺配对安全降级）+ mock 场景（`CYRENE_MOCK_TOOL_FLOW` 两 kind + `submitToolResult` 实装 + `CYRENE_MOCK_TOOL_HISTORY` seed）；门禁 **1639 单测（124 files）** + typecheck/lint + check:contract（WS 32/32 + 8 未纳 warn + REST 15/15）全绿；spec/plan 各 2 轮 code-review APPROVE（commit `56ddce6`/`e43ae5a`），Task1~6 提交链 `319d8cf`→`c95b9c9`→`8cda431`→`b92d6f5`→`2d8e337`→`f9d4af5a`；决策 `docs/review/2026-08-20-阶段6批次A-决策记录.md`。**F-6 批次 B（Main 工具服务/权限/四执行器/UI，2026-08-20 已落地并全量验证，三态=已开发、未联调）**：预检拍板 F-06（仅黑名单、零预授权——`PATH_BLACKLIST_DEFAULTS` realpath 后段边界匹配含 /tmp 与用户敏感面，fixture 经 `CYRENE_MOCK_TOOL_ALLOW_ROOT` 注入）/F-07（仅一次/拒绝最小闭环，allow_scoped+管理页归批次 C）/F-09（jsdiff `diff@^9.0.0`，行级 Diff+totalLines+格式元信息条）/F-10（Win+X11 desktopCapturer，Wayland 授权前拒）；tool-service 决策链 15 步（注册表+平台/参数 schema/幂等 canonical 比对/paramHash 重算校验/realpath+黑名单不弹窗/Wayland 门禁/write 授权前预读+Diff/accepted 先于预读/授权判定（selected-set 豁免+awaiting FIFO）/执行 running→result/outputSchema/状态机/重连重发（附件复用 URL）/shutdown/串行锁）+ 四执行器（select 取消非错误+黑名单复核伪装/read 2MiB+64KiB 内联+附件/写前哈希 FILE_CONFLICT+atomicWriteFile 权限保留+capture 子状态机钉死（TTL 120s））+ tool-status-sender + tool-audit（summary 显式禁止 output 摘要）+ IPC 六通道（PushChannels.toolEvent + 5 invoke，createIpcHandler 双端 zod）+ toolStore 三来路归一化 + CyToolCard/CyToolApproval/CyLiveToolCards + Live2D waiting_permission + mock 改接（toolRequestSink 构造注入/id 自增/通用映射）+ `__cyreneMainProbe`；门禁 **1772 单测（136 files）/ 104 集成（17 files）** + typecheck/lint/build + check:contract（WS 32/32 + 8 未纳 warn + REST 15/15，manifest 未刷新）全绿；spec/plan 各 2 轮 code-review APPROVE（commit `5aa5e03`/`6952409`），Task1~8 提交链 `ea5ab81`→…→`1c79d9b`+lint 清零 `c0e1167`；决策 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。**批次 C 前置**：真实 Windows Electron 联调（三态升「已真实联调」）+ allow_scoped/授权管理页/命令模板空态 + `GET /api/tools/calls/{callId}` + action 移除评估 + 跨页配对 + Main 侧原生确认对话框评估（M-8 残余风险）。F-6-01~25 更新点与后端同步详情见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent 同名校验记录）。**F-6 批次 C（allow_scoped 目录授权 + 设置页「安全与权限」子页（授权管理/审批历史/命令模板空态）+ settings.tools grants 子树 + L-1~L-8 收口 + GET /api/tools/calls/{callId} real/mock，2026-08-21 已落地并全量验证，三态=已开发、未联调）**：门禁计数最终值以主会话统一更新为准（本处实测 **1849 单测（142 files）/ 111 集成（17 files）**）；真实 Windows Electron 联调由开发者批次后执行，通过后升「已真实联调」；决策见 `docs/review/2026-08-20-阶段6批次C-决策记录.md`。
-- **阶段 6 已真实联调（2026-08-21）**：真实 Windows Electron + 后端 `03a6e882` 已完成主链闭环（backend 只读卡片 / select·read·write·capture / 权限·黑名单·Diff·冲突 / 目录授权·撤销·历史 / 重连·幂等·超时 / 审计脱敏 / Live2D waiting_permission）；8.3 语音三项已真机 PASS，1.5/2.8/4.5 可选项 DEFERRED；本轮修复——`corsEnabled` 回退 `false`（联调期曾临时打开，违反阶段 5 D-4 安全结论；剩余真机必须 preview/prod 同源）+ 实时工具卡会话隔离（`conversationId` 经 `DesktopToolRequest/ToolRecord/PublicToolEvent` 从 Main 贯通到 `toolStore`，`setActiveConversationId`/`visibleLiveOrder` 过滤，`waitingForApproval` 只统计当前会话）；门禁 **1867 单测（143 files）/ 111 集成（17 files）** + typecheck/lint/build + check:contract（WS 35/35 + 5 未纳 warn + REST 16/16）全绿；真机复验补齐 8.3 三项语音（普通录音/实时语音/输入法转写真实人声），可选项 1.5/4.5 按 DEFERRED 记录（2.8 已补测 PASS）；**三态升「已真实联调」**（阶段 2/3/4/5 保持）。验收记录 `docs/review/2026-08-21-阶段6-真实联调验收.md`。
+`test:e2e` and `make` are deliberate non-zero placeholders until their phase-8 work is implemented. Do not report them as passing or implemented.
 
-- **阶段 7 批次 A（安全收敛）已落地并全量验证（2026-08-22）**：DOMPurify 3.4.14 Markdown DOM 级净化（显式 ALLOWED_* 无 USE_PROFILES + 回溯安全形态 URI 正则 + 真实 Chromium markdown-xss 集成门禁）/ IPC 攻击面（ipc-limit 核对表 maxLength 补全 + ipc-security 扩展含未知通道/超大对象/类型混淆 + 白名单 67→73）/ `verify:sensitive` 常驻门禁（黑名单 8 规则 + third_party/live2d vendor 两树 + 扫描器自排除 + 行级/类别级 allowlist fail-loud + 规则域限定）/ 「开发与诊断」设置页 CyDiagnosticsPane 四分区（日志管理/开发者模式（二次确认+会话态+重启恢复禁用+远程调试恒关——**对 doc 16 §4.0 2026-08-08 前置决策的拍板修订**）/连接诊断/脱敏诊断导出单 JSON+段级 sha256+二次脱敏）/ `BackendAdapter.subscribe` 多槽语义升级（mock Set 化对齐 real）/ Electron Fuses 三项关闭（electron-builder.yml electronFuses + verify:artifact 静态读回 DISABLE×3 + smoke flip-back 副本）/ doc 07 §17 发布安全门槛 20 项逐条核对（第 11 项 Endpoint SSRF=后端职责、第 18 项来源完整性=阶段 8 签名联动——证据缺口+影响面见核对文档）；**门禁实测：1959 单测（151 files，含 7 expected-fail——happy-dom canary 维持态）/ 127 集成（19 files）+ typecheck/lint/build + check:contract（WS 35/35 + 5 未纳 warn + REST 16/16）+ verify:sensitive（574 扫/368 排除/1609 放行/8 规则）+ verify:artifact（DISABLE×3）全绿**；spec/plan 见 `docs/superpowers/specs|plans/2026-08-22-phase7-batcha-security-convergence-*`；**三态=已真实联调**（2026-08-22 真实 Windows Electron 联调通过，见 `docs/review/2026-08-22-阶段7批次A-真实联调验收.md`——发现并修复 D7A-27 开发态远程调试漏门）；决策见 `docs/review/2026-08-22-阶段7批次A-决策记录.md`，核对见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md`；阶段 6/5/4/3/2 保持「已真实联调」。
-- **阶段 7 批次 B（稳定性收敛）已落地并全量验证（2026-08-25；2026-08-26 真实联调通过，三态=已真实联调）**：用户拍板 4 项——① 临时附件/录音磁盘清理→**7D**（不在 7B）；② 崩溃恢复深度 = **检测+提示+安全失败 reload**（不做免损）；③ 缓存损坏统一层 = **统一骨架+语义可配**（各 store 声明 fail-open/fail-closed，**凭据 fail-closed 不拉平**——credentials 不纳入统一层，主会话裁决，见决策记录）；④ 网络回归新能力 = **断线浏览历史+草稿自动保存**（不改发送状态机）。7B 四面：A Renderer 崩溃恢复 / B 网络中断回归+新能力 / C 缓存损坏统一层 / D GPU 上下文恢复（阶段5批次C已落地+进程级兜底）。**Task 1~7**：契约层（`RendererCrashEvent` schema + `getLastCrash` invoke + preload）→ 主进程崩溃监听（**render-process-gone 为 2 参 `(_, details)`——真实 WebContents 签名，spec/plan 的「3 参」为 H-1 定位偏差，Task 2 已按 2 参纠正** + crashMarker + `getCrashMarker` + `handleChildProcessGone(details, deps)` 抽函数）→ 崩溃提示 UI（CyRendererCrashBanner，reload 后读 marker）→ 网络（`messageStore.handleConnectionStateChange` 断线补 `flush(cid)` 草稿自动保存 + mock `disconnectAfterMs` + error→connected 恢复 + `CYRENE_MOCK_DISCONNECT_AFTER_MS` env 桥）→ 缓存损坏统一层（`createCorruptIsolation(deps)` 返回 `{ isolate(file, tag, safeRoot?), dropInvalid(code), pruneCorrupt(file, tag) }` + settings/session-store 采用，**credentials 不纳入**）→ GPU 进程级兜底（`child-process-gone` GPU 分支 `gpu:crash`）+ Renderer 崩溃/提示集成门禁 → 集成+全量门禁（ipc-security 白名单 73→74 + `diagnostics:last-crash` 纯 invoke 断言 + `renderer:crash` 纯 push 占位断言）。**门禁终计数：159 单测 files / 1995 passed + 7 expected-fail；21 集成 files / 131 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（590 文件扫 / allowlist 放行 1624 行 / 黑名单 8 规则）**；spec/plan 见 `docs/superpowers/specs|plans/2026-08-25-phase7-batchb-stability-convergence-*`；提交链 spec `2cb76ab` + plan `1b24ffe` + Task 1 (`3d5aceb`+`5a64069`)/Task 2 (`7cbe1a9`)/Task 3 (`5c6ccc8`)/Task 4 (`9e6a377`)/Task 5 (`de3b80e`)/Task 6 (`4e974b2`)/Task 7 (`4ffce89`)/Task 8 文档同步 (`c31e4ba`)，HEAD `e059a52`（含收尾措辞 `a5e61c0` + final review 修 spec/plan「3 参」口径 `e059a52`）；决策见 `docs/review/2026-08-25-阶段7批次B-决策记录.md`；**真实联调验收（2026-08-26）见 `docs/review/2026-08-26-阶段7批次B-真实联调验收.md`**——A `Page.crash`→reload+banner+`renderer:crash` 审计 / B 停后端→草稿 flush→离线只读→重启后端重连并端到端发送 / C 写坏 settings+message-cache→隔离备份各 1 份+默认值恢复 / D 杀 GPU 进程→不 reload+`gpu:crash` 审计+连接不丢；真机观察项：Live2D 本轮前置 `Failed to fetch`（D 验进程级兜底，视觉级恢复以阶段 5 批次 C 真机验收为准）与 MiniMax TTS RPM 限流（文本链路不受影响），均非 7B 阻塞；阶段 7 批次 A 及阶段 6/5/4/3/2 保持「已真实联调」。
-- **阶段 7 批次 C（性能收敛）已落地并全量验证（2026-08-26；2026-08-27 全量验证并真实联调通过，三态=已真实联调）**：对靶 doc16 §10 四项性能目标（长会话/长流式/历史资源列表/Live2D 性能、200 条混合消息/100 多分段回复/500 项历史资源、长时间运行无明显持续内存增长、Live2D 关闭后 CPU/GPU 下降）。① **历史查看器虚拟化**（头号）——`CyHistoryViewer` 的 `groupedItems` 扁平化为虚拟行 `rows`（`DayHeaderRow | ResultRow`，day header 为虚拟行），泛型化 `virtual-window` 数学内核（`buildPrefix<T>`/`captureAnchor<T>`/`restoreScrollTop<T>` 注入 estimate/keyFor/isAnchorable；`estimateHeight` 泛型签名 + `Message` 重载并存，**消息列表调用处零改动**）+ data 层锚点补偿（`.cy-history-item` DOM 选择器 → 扁平行索引 + `captureAnchor` `isAnchorable` 谓词跳过 header）+ `estimateItemHeight`（header 34/item 72/sticker +64）+ ResizeObserver 实测覆盖，500 项历史资源不再全量 DOM（`.cy-history-item` 有界 ≤60，不随 500 线性）；② **CyMarkdown 渲染缓存**——`utils/markdown.ts` 模块级 `Map<string,string>`（source→HTML，D7C-08 取 Map——string 键不可 weak，WeakMap 无回收增益）+ `clearMarkdownCache()` 挂 `resetConversation`（单一挂载点覆盖全部会话切换路径），完成态 segment 命中免 `marked.parse`+`DOMPurify.sanitize`（多分段/长流式副收益；§4C 增量合并降级观察项，用户拍板）；③ **性能测量常驻门禁**——`perf-gate.spec.ts`（真实 Electron，断言仅聚合计数，安全 M-3）：历史查看器 500 项 DOM 节点有界（硬失败 ≤60）+ 100 分段全量呈现（`.cy-segment`=N，正确性）+ 长会话（seed≥100）消息列表行有界 + Live2D 折叠 rAF 停复核（维持现状不 dispose）+ JS 堆上限（**告警非硬失败**，采样≥3 次取稳定值，`app.commandLine.appendSwitch('enable-precise-memory-info')`；性能阈值松阈值×1.5 防 CI 抖动，`performance.memory` 非标准 API 若移除退化为仅 DOM 断言）；④ **mock 多分段种子**——`CYRENE_MOCK_MULTI_SEGMENT` env（**useMock 门控** + `parseMockMultiSegmentEnv` 正整数/0/负/NaN/空串→undefined）+ `MockBackend.generateMultiSegmentEvents` 纯方法（**取代而非追加**夹具 public_reply 段 + `segmentIndex` 0..N-1 有序 + 每段 deltaSequence 从 0 累计 + `generation.completed` 居末 + 文本「模拟命中文本 N」避 base64 黑名单）+ `getConversationMessages` seed 返回 messageRecords（长会话 200 条前提）。**门禁终计数（2026-08-27）：161 单测 files / 2011 passed + 7 expected-fail；22 集成 files / 135 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（598 文件扫 / 368 排除 / allowlist 放行 1642 行 / 黑名单 8 规则——新增 2 条目为 spec/plan 新落文档 base64-long-string 误报，逐行人工核对非高熵秘密）**；spec/plan 见 `docs/superpowers/specs|plans/2026-08-26-phase7-batchc-perf-convergence-*`；提交链 spec `73a1b03` + plan `bd3e155` + Task 1 (`0b96d5c`)/Task 2 (`727a472`)/Task 3 (`78f57d9`)/Task 4 (`ec60b06`)/Task 5 (`4059556`)/Task 6 文档同步（本批）；决策见 `docs/review/2026-08-26-阶段7批次C-决策记录.md`；**三态=已真实联调**（2026-08-27 真实 Windows Electron 生产构建同源 `cyrene://renderer` + 后端 `0.1.0+9548d100` 联调通过；发现并修复真机缺陷 `c21413a`——`CyMessageList` `.cy-vlist-pad` 缺 `flex-shrink:0` 致长会话滚不到底部新消息，修复后最新回复 13 个 `.cy-segment` 真实渲染；验收见 `docs/review/2026-08-27-阶段7批次C-真实联调验收.md`）；阶段 7 批次 A/B 及阶段 6/5/4/3/2 保持「已真实联调」。
-- **阶段 7 批次 D（收口收敛）已落地并全量验证（2026-08-27 代码批；2026-08-28 真机联调通过，三态=已真实联调）**：7D 为阶段 7 最末批，**收口批**（接收 7A/7B/7C 在「不在范围」段推给 7D 的候选），**现状核实后发现绝大部分候选已由 7A/6C 落地，真正缺的是「策略确认 + 少量真实改良 + 收口记录」**。五面：**A 临时附件/录音/缓存上限确认**——`attachment.store.remove()` 补清 `kindByLocalId`/`fileByLocalId`（非上传中即时释放 File/ArrayBuffer 强引用，Task 1；上传中仍短路由 `clearOnSent`/`clear` 兜底）+ 无落盘/无 Blob URL 确认（附件/录音均不经 `__cyrene-media`/`createObjectURL`）+ **缓存上限已落地确认**（草稿 100KB×50 + 离线 20 会话，阶段 3/4——无新增磁盘清理面，仅文档化 + doc16 行 420 `[~]`→`[x]`）；**B F-11 审批历史口径**——读面 7 天（产品语义 `HISTORY_DAYS=7`）/ 存面 30 天（审计合规 `AUDIT_RETENTION_DAYS=30`）**不拉平**（容量上限 200 条 `HISTORY_MAX=200`，Task 2）；**C 观察项重开（真实改良×2）**——① **视图感知暂停**（Task 3）：`CyMessageList` 严格窗口下传 `rowVisible`（循环内 index 判定，`computeWindow(...,0)` 无 overscan）+ `CyMessageBubble` `needsDeferredRender(seg)`（视口外 `completed` segment 空 source 延迟渲染 + `streaming` 门控豁免）+ mock 长会话种子 assistant 补 `assistantSegments`（markdown 段）+ perf-gate ③尾差异化断言 + **D7D-05 价值域澄清**（视图感知价值域 = 「长会话多短 markdown 回复滚动」而非「单条 100 分段」——后者恒跨视口 `rowVisible()` 恒 true 特性不生效）；② **Live2D 数值读数接入诊断页**（Task 4，闭合 D7A-06）：`FrameBudget.getStats()` → `Live2DController.getStats()` 透传 → `live2dStore.getStats()`（`status !== 'ready' || !controller` → null，M-1 唯一来源 = status）→ `CyDiagnosticsPane:240-241` 占位替换（读取时取值，v-if 显示读数 / v-else 显示「未启动」）+ `Live2dFrameStats` 契约（`shared/contracts/live2d.ts`，帧耗时/帧率/降帧计数元数据无正文敏感面）；**D 阶段 7 收口**——Blocker/Critical 为 0 确认（阶段 7 全程（7A/7B/7C 真机验收通过）+ 7D 无新 Blocker/Critical，历史遗留 `message_id=""`/`Failed to fetch`/`.corrupt-*` 登记但不算，D7D-04）+ 安全发布清单通过（7A 核对表 20 项，第 11 项 Endpoint SSRF=后端职责、第 18 项发布包完整性=阶段 8 签名联动为证据缺口，其余 18 项通过，Task 5）；**E 文档同步**（本 Task 6：doc 10/12/16 + doc 04/05/06/07 + README/CLAUDE）。
-- **阶段 7 批次 D 真机联调（2026-08-28，PASS，验收见 `docs/review/2026-08-28-阶段7批次D-真实联调验收.md`）**：真实 Windows Electron 生产构建 + 后端 `0.1.0+9548d100`。真机验证：A 附件 remove 只清目标 localId（`pendingById`/`kindByLocalId`/`fileByLocalId` 三方断言）；C① 50 条真实会话 wheel 12 步 `visibleEmpty=0`、真实连续 17/21/42/52/83/103 分段 completed 视口外延迟、滚入恢复；C② Live2D 真机 `getStats` 0.8ms/60fps/auto、settings 打开 tick 0/s、诊断页显示真实读数、禁用→未启动、启用→ready、tick 恢复 248/s；全程 heap 31.7~38.3 MB。**真机发现并修复**：① D7D-05③ 正 path 不可达（`de4fcf8` 面板常驻挂载 + `fc38e7f` 生命周期回归）；② strict 窗口 `contentRect` 逐行欠估 12px 致半可见空行（`e774195` borderBox 实测高 + perf-gate ③回归）；③ 恰 1MiB 单测 flaky（`bdfbc57` 单列 10s）；④ `612622d` perf-gate ②b 钉住 streaming 豁免全生命周期。最终门禁：**161/2016+7xfail 单测、22/138 集成、typecheck/lint/build、check:contract、verify:sensitive 全绿**；阶段 7 四批全部「已真实联调」，阶段 7 收口完成。
+## Documentation maintenance
 
-**阶段 7 收口完成 → 阶段 8 暂缓。** 阶段 1-7 的待修缮项已系统性盘点为 `docs/review/2026-08-28-阶段1-7修缮候清单.md`（45 决策/验收文档、122 条：**纯前端可修 39 / 需外部 29 / 明确不做 54**）。**阶段 8（打包/跨平台/Demo）被 doc12 H 组产品决策（H-01 主验收平台、H-07 Demo 标准、H-02 Win10/Ubuntu 范围、H-04 签名证书）卡住**——这些是外部拍板 + 阶段 8 承接（7A 第 18 项发布包完整性→阶段 8 签名联动）。**下一步 = 从修缮候清单「纯前端可修」组挑高价值项（C1 CI 失败 / JS error boundary 悬置 / 设置页模型切换真机复测 / make·test:e2e 地基 / assertContained·expiresAt 防御补丁）进修缮批次，而非直接进阶段 8**。
-- **阶段 1-7 修缮批次（2026-08-28）已落地并真机联调通过**：清洗 122 个历史编号为 117 条台账，15 条已处理（C-04②③ adapter 边界销毁+异步期 GPU-lost 复查 / C-08 expiresAt `Number.isFinite` / C-10 非 Error 抛掷归一 / C-13 corrupt+safe-open 跨盘 `isAbsolute` 收口 / C-14 `cy-*` token 补齐 / C-15 诊断导出 in-flight 锁 / C-17 Renderer 全局错误兜底（vue errorHandler+window error+unhandledrejection）/ C-18 连续 3 次 GPU lost 冻结 fallback）+ V 类补测/注释/归档 + D-01 文档措辞；13 条归档，V-02/V-08 留 CI 观察。门禁 **162 单测 files / 2049 passed + 7 expected-fail；22 集成 files / 138 passed** + typecheck/lint/build/check:contract/verify:sensitive 全绿。真机 Windows Electron 复测：V-01 设置页模型按钮 Haru↔Wanko 切换+持久化+画布恢复、真实 `WEBGL_lose_context` 单次 ready→fallback→ready 自动重建、C-17 注入错误 console 前缀正确且应用 alive、C-14 token 实值解析、真实后端 3 段回复 completed（验收见 `docs/review/2026-08-28-阶段1-7修缮批次-真实联调验收.md`）。
-
-**提交链**：spec `b1fb55a` + plan `7eab3b9`（4 轮 review 清洗 blocking 全清）+ Task 1 (`eb88f5a`)/Task 2 (`0eebed9`)/Task 3 (`ab90423`)/Task 4 (`2828c02`)/Task 5 (`3588943` 决策记录 + doc 10/16 收口勾选)/Task 6 文档同步（本批）。**门禁终计数（2026-08-27）：161 单测 files / 2016 passed + 7 expected-fail；22 集成 files / 136 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（604/368/1671/8）**；决策见 `docs/review/2026-08-27-阶段7批次D-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-27-phase7-batchd-convergence-*`；**三态=已开发、未联调**（真实 Windows Electron 联调为批次后独立项——阶段 7 批次 A/B/C 保持「已真实联调」；阶段 7 全流程四批已完成）。
-
+- Keep maintained documentation in Chinese.
+- Update doc 16 once for project status; other surfaces link to it.
+- Put durable roadmap decisions in doc 12 and a dated decision record.
+- Update behavior documents when code behavior changes.
+- Preserve historical review/spec/plan files; supersede them with new records instead of rewriting their historical claims.
+- Run `pnpm docs:index` after adding or removing review/spec/plan files.
+- Run `pnpm docs:check` before committing documentation changes.
+- Filename policy is defined in doc 00. Do not rename existing core documents casually because external and historical links may depend on them.

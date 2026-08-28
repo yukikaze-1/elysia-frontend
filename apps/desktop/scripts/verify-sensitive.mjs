@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // apps/desktop/scripts/verify-sensitive.mjs
-// 敏感信息泄漏扫描门禁（spec §5.1，D7A-14）：`git ls-files` 全量跟踪文件 → 黑名单 → 行级 allowlist。
+// 敏感信息泄漏扫描门禁（spec §5.1，D7A-14）：默认扫描 `git ls-files` 全量跟踪文件；
+// 本地提交前可传 `--include-untracked`，把未忽略的新文件一并纳入 → 黑名单 → 行级 allowlist。
 //  - 排除：third_party/（vendor，见 core 注释）+ vendored live2d 两树 + 扫描器自身三文件（HIGH-1/R2 备注：
 //    自排除名单是恒定盲区——任何变更（增删文件/加通配）须过 review）；out//dist/ 未跟踪天然不扫；.playwright-mcp/ 未跟踪同不扫。
 //  - allowlist 为行级锚定（path 精确 + anchor 正则 + 人核理由）；fail-loud——锚定不命中任何行即报错。
@@ -137,7 +138,7 @@ const ALLOWLIST = [
     reason: '阶段 6 批次 C 实现注记散文（GET + Bearer + safeParse 描述）——已人工核对无真实秘密'
   },
   {
-    path: 'docs/16-Cyrene-前端实施任务清单与进度跟踪.md', anchor: /静态 Bearer \+ `AGENT_ACCESS_TOKEN`/,
+    path: 'docs/review/2026-08-29-doc16实施进度历史归档.md', anchor: /静态 Bearer \+ `AGENT_ACCESS_TOKEN`/,
     reason: 'B-02 条目散文（契约描述「静态 Bearer + AGENT_ACCESS_TOKEN」）——无赋值形态，无秘密实例'
   },
   {
@@ -146,7 +147,7 @@ const ALLOWLIST = [
     reason: '7C 验收记录 HEAD 提交 SHA（40 hex，公开 git 对象标识，确定性非秘密）——已人工核对无真实凭据'
   },
   {
-    path: 'docs/16-Cyrene-前端实施任务清单与进度跟踪.md', anchor: /激活 \+ Bearer \+ 错误映射/,
+    path: 'docs/review/2026-08-29-doc16实施进度历史归档.md', anchor: /激活 \+ Bearer \+ 错误映射/,
     reason: '阶段 2 块 B 落地记录散文（REST 方法清单）——已人工核对无真实秘密'
   },
   {
@@ -233,12 +234,7 @@ const ALLOWLIST = [
 // 夹具 schemaHash 14 文件 / 词表·路径长串 165 文件），无真实凭据。
 // 「逐文件命中行数 = reason 声明数」校验经 R2 审计 0 错配；新文件命中 base64-long-string 无条目 → 违规 fail。
   {
-    path: "CLAUDE.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 7 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "README.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    path: "docs/review/2026-08-29-README状态历史归档.md", anchor: /[A-Za-z0-9+/]{40,}/,
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
   },
@@ -693,7 +689,7 @@ const ALLOWLIST = [
     reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
   },
   {
-    path: "docs/16-Cyrene-前端实施任务清单与进度跟踪.md", anchor: /[A-Za-z0-9+/]{40,}/,
+    path: "docs/review/2026-08-29-doc16实施进度历史归档.md", anchor: /[A-Za-z0-9+/]{40,}/,
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中本文件 9 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
   },
@@ -834,12 +830,12 @@ const ALLOWLIST = [
     // —— 阶段 7 批次 A 文档（Task 8b 提交 67b263d 后续迭代，门禁收口再核对）——
     // docs/17 两条为流程说明散文行（扫描器排除目录/规则自引用说明——Task 7 报告「黑名单正则自引用」同族）；
     // 决策记录 D7A-14 行为黑名单正则字面量文本（规则自引用——同族放行，见 Task 7 首跑清单第 3 类）。
-    path: "docs/17-Cyrene-前端开发环境与依赖安装记录.md", anchor: /排除目录：`third_party\/`/,
+    path: "docs/review/2026-08-29-doc17环境记录历史归档.md", anchor: /排除目录：`third_party\/`/,
     rules: ['base64-long-string'],
     reason: `base64-long-string 命中 1 行——排除目录说明散文（vendor 排除理由行，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
   },
   {
-    path: "docs/17-Cyrene-前端开发环境与依赖安装记录.md", anchor: /对散文「Bearer \+ 词」天然高误报/,
+    path: "docs/review/2026-08-29-doc17环境记录历史归档.md", anchor: /对散文「Bearer \+ 词」天然高误报/,
     rules: ['bearer-token'],
     reason: `bearer-token 命中 1 行——黑名单规则自引用说明散文（「Bearer + 词」误报说明——规则本体引用，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
   },
@@ -857,7 +853,7 @@ const ALLOWLIST = [
     reason: `base64-long-string 命中 1 行——Fuses/verify:artifact 说明行（长标识符/路径串，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
   },
   {
-    path: "docs/17-Cyrene-前端开发环境与依赖安装记录.md", anchor: /黑名单 8 规则：Bearer token/,
+    path: "docs/review/2026-08-29-doc17环境记录历史归档.md", anchor: /黑名单 8 规则：Bearer token/,
     rules: ['bearer-token', 'agent-access-token-assign', 'account-token-assign'],
     reason: `黑名单规则列示行（规则名/赋值形态字面量自引用——「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
   },
@@ -1261,12 +1257,15 @@ const ok = (m) => console.log(`✓ ${m}`)
 const fail = (m) => { console.error(`✗ ${m}`); failed = true }
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
+const includeUntracked = process.argv.includes('--include-untracked')
 let repoRoot
 let trackedFiles
 try {
   repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: scriptDir, encoding: 'utf8' }).trim()
   // -z：NUL 分隔原始字节路径（core.quotepath=false 双保险——默认下 CJK 路径被 C 转义加引号）
-  trackedFiles = execFileSync('git', ['-c', 'core.quotepath=false', 'ls-files', '-z'], {
+  const lsFilesArgs = ['-c', 'core.quotepath=false', 'ls-files', '-z']
+  if (includeUntracked) lsFilesArgs.push('--cached', '--others', '--exclude-standard')
+  trackedFiles = execFileSync('git', lsFilesArgs, {
     cwd: repoRoot, encoding: 'utf8'
   }).split('\0').filter(Boolean)
 } catch (e) {
