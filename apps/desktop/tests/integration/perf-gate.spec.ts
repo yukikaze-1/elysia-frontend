@@ -143,6 +143,107 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
     } finally { await closeApp(launched) }
   })
 
+  it('②b 流式分段豁免：streaming（completed=false）滚动出视口仍渲染；completed 后视口外才延迟', async () => {
+    // 同时注入长会话种子：上滚 300px 需要上方有足够历史内容（默认夹具会话只有 2 条，scrollTop 会被钳到 0）
+    const launched = await launchWithSize({ CYRENE_MOCK_MULTI_SEGMENT: '60', CYRENE_MOCK_EMIT_DELAY_MS: '40', CYRENE_MOCK_HISTORY_LARGE: '200' })
+    try {
+      const page = launched.page
+      await connectAndActivateFirst(page)
+      await page.locator('textarea[aria-label="消息输入框"]').fill('测试 60 分段流式豁免')
+      await page.getByRole('button', { name: '发送', exact: true }).click()
+      /** 找 streaming assistant 行（DOM 状态文案为 streaming；不含正文内容） */
+      const sampleStreaming = () => page.evaluate(() => {
+        const cont = document.querySelector<HTMLElement>('.cy-messages')
+        if (!cont) return null
+        const cRect = cont.getBoundingClientRect()
+        const row = [...cont.querySelectorAll<HTMLElement>(':scope > .cy-vlist-row')]
+          .find((r) => r.querySelector('.cy-response-head .cy-muted')?.textContent?.includes('streaming'))
+        if (!row) return null
+        const rect = row.getBoundingClientRect()
+        const segs = [...row.querySelectorAll<HTMLElement>('.cy-segment')].map((s) => (s.textContent ?? '').trim())
+        return {
+          id: row.getAttribute('data-message-id') ?? '',
+          status: 'streaming',
+          top: Math.round(rect.top - cRect.top),
+          clientH: Math.round(cont.clientHeight),
+          segs: segs.length,
+          nonEmpty: segs.filter((t) => t.length > 0).length,
+          empty: segs.length - segs.filter((t) => t.length > 0).length
+        }
+      })
+      // 等 active assistant 行已渲染且至少 1 个 .cy-segment（emit delay 40ms × 60 → 流式窗口 ~2.4s）
+      await expect.poll(async () => {
+        const r = await sampleStreaming()
+        return r !== null && r.segs > 0
+      }, POLL).toBe(true)
+      // 第一段刚出现时行高仍小：立刻把该行滚到视口下方 ~120px（< 400px overscan，保持渲染）
+      await page.evaluate(() => {
+        const cont = document.querySelector<HTMLElement>('.cy-messages')
+        if (!cont) throw new Error('no .cy-messages')
+        const cRect = cont.getBoundingClientRect()
+        const row = [...cont.querySelectorAll<HTMLElement>(':scope > .cy-vlist-row')]
+          .find((r) => r.querySelector('.cy-response-head .cy-muted')?.textContent?.includes('streaming'))
+        if (!row) throw new Error('streaming row not rendered')
+        const top = row.getBoundingClientRect().top - cRect.top
+        const delta = Math.max(0, cont.clientHeight - top + 120)
+        cont.scrollTop = Math.max(0, cont.scrollTop - delta)
+        cont.dispatchEvent(new Event('scroll'))
+      })
+      await page.waitForTimeout(150)   // 滚动后让 visible prop 更新 + CyMarkdown 80ms 尾沿防抖稳定
+      const streamingOff = await sampleStreaming()
+      expect(streamingOff).not.toBeNull()
+      expect(streamingOff!.top).toBeGreaterThanOrEqual(streamingOff!.clientH)   // 完全在视口下方（strict 外）
+      expect(streamingOff!.segs).toBeGreaterThan(0)
+      expect(streamingOff!.nonEmpty).toBeGreaterThan(0)   // streaming 豁免：不因 visible=false 而全部空 source
+      // 后续新 segment 有 CyMarkdown 80ms 尾沿防抖，采样瞬间可存在少数临时空段——只要非全空即证未门控
+      const mid = streamingOff!.id
+      // 等 completed：仍保持视口外 → completed segment 才被延迟（空 source）
+      await expect.poll(() => page.evaluate((id) => {
+        const cont = document.querySelector<HTMLElement>('.cy-messages')
+        if (!cont) return false
+        const row = cont.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+        return row?.querySelector('.cy-response-head .cy-muted')?.textContent?.includes('completed') ?? false
+      }, mid), POLL).toBe(true)
+      await page.waitForTimeout(150)
+      const completedOff = await page.evaluate((id) => {
+        const cont = document.querySelector<HTMLElement>('.cy-messages')
+        if (!cont) throw new Error('no .cy-messages')
+        const cRect = cont.getBoundingClientRect()
+        const row = cont.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+        if (!row) throw new Error('row not rendered')
+        const rect = row.getBoundingClientRect()
+        const segs = [...row.querySelectorAll<HTMLElement>('.cy-segment')].map((s) => (s.textContent ?? '').trim())
+        return { top: Math.round(rect.top - cRect.top), clientH: Math.round(cont.clientHeight), segs: segs.length, empty: segs.filter((t) => t.length === 0).length }
+      }, mid)
+      expect(completedOff.top).toBeGreaterThanOrEqual(completedOff.clientH)
+      expect(completedOff.segs).toBeGreaterThan(0)
+      expect(completedOff.empty).toBe(completedOff.segs)   // completed + 视口外 → 延迟渲染
+      // 滚回底部 → 全部恢复非空（正确性不回退）
+      await page.evaluate(() => {
+        const c = document.querySelector<HTMLElement>('.cy-messages')
+        if (!c) throw new Error('no .cy-messages')
+        c.scrollTop = c.scrollHeight
+        c.dispatchEvent(new Event('scroll'))
+      })
+      await expect.poll(() => page.evaluate((id) => {
+        const cont = document.querySelector<HTMLElement>('.cy-messages')
+        const row = cont?.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+        return row?.querySelectorAll('.cy-segment').length ?? 0
+      }, mid), POLL).toBe(60)
+      await page.waitForTimeout(150)
+      const visibleFull = await page.evaluate((id) => {
+        const cont = document.querySelector<HTMLElement>('.cy-messages')
+        if (!cont) throw new Error('no .cy-messages')
+        const row = cont.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+        if (!row) throw new Error('row not rendered')
+        const segs = [...row.querySelectorAll<HTMLElement>('.cy-segment')].map((s) => (s.textContent ?? '').trim())
+        return { segs: segs.length, empty: segs.filter((t) => t.length === 0).length }
+      }, mid)
+      expect(visibleFull.segs).toBe(60)
+      expect(visibleFull.empty).toBe(0)
+    } finally { await closeApp(launched) }
+  })
+
   it('③ 长会话（seed ≥100）：消息列表可视行有界 + 虚拟垫片不收缩（真机修复回归门禁）', async () => {
     const launched = await launchWithSize({ CYRENE_MOCK_HISTORY_LARGE: '200' })
     try {
