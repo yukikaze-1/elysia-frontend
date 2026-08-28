@@ -64,6 +64,7 @@ pnpm --filter @cyrene/desktop start
 - [doc 17：环境基线](docs/17-Cyrene-前端开发环境与依赖安装记录.md)——Windows/Linux 安装、启动与联调环境。
 - [Review 与验收索引](docs/review/README.md)——按日期检索决策、整改、联调和验收证据。
 - [Spec、Plan 与 Final Report 索引](docs/superpowers/README.md)——历史设计和实施计划。
+- [UI 精修整改清单](docs/2026-08-29-UI精修整改清单.md)——阶段 8 前 UI/布局/风格改动的规则与限制。
 - [UI 原型](ref/cyrene-ui-preview-v5.html)——界面设计参考。
 
 ## 技术基线

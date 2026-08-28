@@ -76,6 +76,10 @@
 - [Review、决策与验收索引](review/README.md)：覆盖 `docs/review/` 下的全部 Markdown 记录。
 - [Spec、Plan 与 Final Report 索引](superpowers/README.md)：覆盖 `docs/superpowers/` 下的全部 Markdown 记录。
 
+### 5.1 专项清单
+
+- [UI 精修整改清单](2026-08-29-UI精修整改清单.md)：阶段 8 前 UI/布局/风格精修批次的规则与限制（布局硬值、虚拟列表红线、滚动条、token、无障碍、验证清单）。
+
 新增、删除或重命名这些目录中的文档后运行：
 
 ```text
