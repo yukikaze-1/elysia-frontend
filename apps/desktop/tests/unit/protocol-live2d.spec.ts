@@ -165,6 +165,38 @@ describe('白名单（resolveModelFile）+ 供给', () => {
     expect(res.status).toBe(403)
     expect(registry.resolveModelFile).toHaveBeenCalledWith('haru', 'secret.txt')
   })
+
+  it('percent-encoded relPath → 解码透传 resolveModelFile（V-03：协议层端到端，非仅 registry 隔离）', async () => {
+    // 路径源：live2d-path.ts parseLive2dPath 逐段 decodeURIComponent 后 join——%E8%A7%92 → 角色
+    const registry = makeFakeRegistry({ resolve: (id, relPath) => Promise.resolve(relPath === '角色.png' ? `/abs/haru/角色.png` : null) })
+    await register(registry)
+    const res = await dispatch('/__cyrene-live2d/haru/' + encodeURIComponent('角色.png'))
+    expect(res.status).toBe(200)
+    // parseLive2dPath 已解码 → resolveModelFile 收到的是解码后的 relPath，非原始 %XX 串
+    expect(registry.resolveModelFile).toHaveBeenCalledWith('haru', '角色.png')
+    expect(res.headers.get('Content-Type')).toContain('image/png')
+    await res.text()
+  })
+
+  it('percent-encoded %2F 走私段 → 协议层拒（解码成 / 的段被 parseLive2dPath 拒）→ 403，resolver 未触达', async () => {
+    const registry = makeFakeRegistry()
+    await register(registry)
+    // %2F 解码为 '/' → 段内非法字符 → parseLive2dPath 返回 null → handler 403（在 resolveLive2d 之前）
+    const res = await dispatch('/__cyrene-live2d/haru/' + encodeURIComponent('a') + '%2F' + encodeURIComponent('b'))
+    expect(res.status).toBe(403)
+    expect(registry.resolveModelFile).not.toHaveBeenCalled()
+  })
+
+  it('percent-encoded 字面 % 文件名（50%.png）→ 解码透传 resolveModelFile 不报错（孤立 % 不重解）', async () => {
+    // canonicalizeRelPathSegment（model-registry）仅当段含合法 %XX 才解码一次；'50%.png' 的孤立 % 是字面。
+    // 请求侧 parseLive2dPath 已解码输出（% → 字面 '%'），此处断言 relPath = '50%.png' 原样透传。
+    const registry = makeFakeRegistry({ resolve: (id, relPath) => Promise.resolve(relPath === '50%.png' ? `/abs/haru/50%.png` : null) })
+    await register(registry)
+    const res = await dispatch('/__cyrene-live2d/haru/' + encodeURIComponent('50%.png'))
+    expect(res.status).toBe(200)
+    expect(registry.resolveModelFile).toHaveBeenCalledWith('haru', '50%.png')
+    await res.text()
+  })
 })
 
 describe('dev CORS（ACAO 成功与错误响应均回补；非受信不加）', () => {

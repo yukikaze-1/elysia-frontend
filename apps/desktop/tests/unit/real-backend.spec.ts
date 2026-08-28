@@ -618,7 +618,7 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
     toolWss.close(); toolServer.close()
   })
 
-  it('L-4：case tool.request mapper 抛错 → logger.warn + 丢帧不崩溃 + onToolRequest 不触发', async () => {
+  it('L-4：case tool.request mapper 抛错 → logger.warn + 丢帧不崩溃 + onToolRequest 不触发 + 后续有效帧仍正常', async () => {
     const logger = { warn: vi.fn() }
     const onToolRequest = vi.fn()
     const b = new RealBackend(makeOpts({ logger }))
@@ -634,6 +634,28 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
     spy.mockRestore()
     expect(onToolRequest).not.toHaveBeenCalled()   // 帧被丢弃
     expect(logger.warn).toHaveBeenCalledWith('tool.request:parse-failed', expect.objectContaining({ message: expect.any(String) }))
+    // V-06 续帧：坏帧后注入后续**有效** tool.request 帧 → onToolRequest 被调用（证循环继续处理，丢帧不传染）
+    b['handleFrame'](JSON.stringify({ type: 'tool.request', callId: 'call_ok', toolName: 'desktop.file.read', toolVersion: '1.0',
+      runtime: 'desktop', sourceCallId: 'tc_ok', arguments: { path: '/y' }, riskLevel: 'medium',
+      permissionRequired: true, approvalAuthority: 'client', paramHash: 'a'.repeat(64), expiresAt: '2026-08-20T00:00:00.000Z' }))
+    expect(onToolRequest).toHaveBeenCalledTimes(1)
+    expect(onToolRequest).toHaveBeenCalledWith(expect.objectContaining({ callId: 'call_ok' }))
+  })
+
+  it('L-4 断线后：handleFrame 仍路由 tool.request（V-06 记录现状——handleFrame 不按 disconnected 拒帧）', async () => {
+    // 取证发现：handleFrame 的 case 'tool.request' 分支（real-backend.ts:290-307）不检查 this.disconnected
+    // ——断线后注入合法帧仍会路由 onToolRequest。这是如实记录当前行为，不是断言"断线拒帧"
+    // （后者在当前实现下不存在，属设计上可有可无的纵深，非 V-06 覆盖缺口）。
+    const onToolRequest = vi.fn()
+    const b = new RealBackend(makeOpts())
+    b.onToolRequest = onToolRequest
+    await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' })
+    await b.disconnect()
+    expect(b.getConnectionState().status).toBe('disconnected')
+    b['handleFrame'](JSON.stringify({ type: 'tool.request', callId: 'call_dc', toolName: 'desktop.file.read', toolVersion: '1.0',
+      runtime: 'desktop', sourceCallId: 'tc_dc', arguments: { path: '/z' }, riskLevel: 'medium',
+      permissionRequired: true, approvalAuthority: 'client', paramHash: 'a'.repeat(64), expiresAt: '2026-08-20T00:00:00.000Z' }))
+    expect(onToolRequest).toHaveBeenCalledWith(expect.objectContaining({ callId: 'call_dc' }))   // 当前实现：断线不拒帧
   })
 
   it('submitToolResult → wire 发送 tool.status 帧（六态 + runtime str + paramHash 原样）', async () => {

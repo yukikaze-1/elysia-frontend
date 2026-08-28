@@ -570,7 +570,13 @@ describe('批次 C：grant 目录授权', () => {
     expect(recs.filter((r) => r.status === 'awaiting_permission')).toHaveLength(3)   // awaiting 永不逐出
     expect(recs.length).toBeLessThanOrEqual(200 + 3)   // 终态被逐至 ~200，awaiting 保留
   })
-  it('L-3 run 入口守卫：已终态记录直接拒绝（N-1——终态复活防护，F-6 修复：真实触达守卫；LOW-4：直接断言守卫拒绝而非 .catch 吞掉）', async () => {
+  it('L-3 终态复活防护：已终态记录经 grantDirectory 入口守卫拒绝（N-1；V-07 修正——本用例测的是 grantDirectory 入口守卫，见注）', async () => {
+    // V-07 修正：#记录原题为「L-3 run 入口守卫」，但本用例实际触达的是 grantDirectory 入口守卫
+    // （tool-service.ts:346 rec.status !== 'awaiting_permission' → TOOL_STATE_INVALID），在 run() 之前同步 throw。
+    // run() 的 L-3 守卫（:376 rec.status !== 'requested' && !== 'awaiting_permission' → return）是**纯纵深防御**——
+    // 三条公开调用路径（handleRequest auto 分支 / decide / grantDirectory）都在调 run() 前有同步前置状态校验
+    // （handleRequest 记录刚创建即 requested；decide/grantDirectory 校验 status==='awaiting_permission'），中间无 await 间隙，
+    // 因此 run() 的 :376 守卫在当前 API 下从公开路径不可达，属防未来改动的纵深，无需强行导出 run() 直测（导出改生产 API 违背"不为清单改代码"）。
     const exec = vi.fn().mockResolvedValue({ output: { cancelled: true }, summary: 'x' })
     const g = { id: 'grant-l3', toolName: 'desktop.file.read', scope: { directory: FIXTURES }, backendIdentity: 'http://h', expiresAt: Date.now() + 1000, createdAt: 'x', source: 'directory' as const }
     // N-2 修复：matches 恒 undefined（记录先停 awaiting + expiresAt 定时器设置——grant 命中会即 auto 执行，timeout 永不发生）

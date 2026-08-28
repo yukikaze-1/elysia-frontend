@@ -126,6 +126,10 @@ async function connectAndActivateFirst(page: Page): Promise<void> {
 }
 
 /** 采样画布非透明像素数（WebGL canvas 经 2D drawImage 读回；rAF 双帧后读，尽量避开 preserveDrawingBuffer 时序）。-1 = 无法采样 */
+// V-04 说明：-1 是"采样失败"哨兵（无 .cy-live-canvas / 零尺寸 / getContext('2d') 为 null），与 "真空白 0" 是两种不同信号。
+// 但所有消费方都用 `expect.poll(() => countNonTransparentPx(page), POLL).toBeGreaterThan(0)` ——-1 被 `toBeGreaterThan(0)`
+// 折叠，采样失败与真空白不可区分（poll 不失败）。这是有意容忍：无 canvas 时等待中的就绪态不应误判为空画布失败。
+// 若未来需要区分"采样失败"与"画布真空白"，应改用断言值 !== -1 或单独哨兵断言，而非现在的 toBeGreaterThan(0)。
 async function countNonTransparentPx(page: Page): Promise<number> {
   return page.evaluate(async () => {
     const canvas = document.querySelector<HTMLCanvasElement>('.cy-live-canvas')
@@ -341,6 +345,11 @@ describe('阶段5批次A Live2D Electron 集成（A7）', () => {
   })
 
   it('9.appData 恒等（I2）：app.getPath(appData) → CLI resolveModelsDir 同 env 对齐', async () => {
+    // V-04 说明：本用例是"镜像自检"（mirror self-check）——resolveModelsDir（scripts/live2d-install.mjs）是
+    // expectedUserDataBase() 的镜像，platformEnv 也是 installModels() 装配夹具时用的同一 env 选择器。
+    // 因此它验证的是两**镜像副本之间**的一致，而非独立验证真实 appData 路径——若 expectedUserDataBase 漂移
+    // 但该镜像同步更新，本用例不会红。existsSync(haru/manifest.json) 是真实的文件系统事实，但该路径
+    // 由同公式重算得出。读此 canary 的人不应误以为它能捕获真实 appData 路径漂移（只捕获镜像间漂移）。
     const ud = freshUserData()
     const launched = await launchL2d(ud)
     try {
@@ -632,6 +641,10 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       // B4 滑块以 evaluate 合成事件（直接置 value + dispatch input/change）驱动——headless SwiftShader 下
       // Playwright 的 range 真实拖拽（dragTo/键盘箭头）依赖可见指针命中测试且帧时序不可控，合成事件与真实
       // 滑块在 Vue 的 @input 绑定上等价（同一 setLive2d patch 路径），足够断言「即时预览 + 持久化」链路。
+      // V-05 补注：① 组件（CyLive2DPane.vue）故意用 `:value` + `@input` 而非 v-model——因此裸 evaluate 置 value 后
+      // 必须显式 dispatch 'input' 才会走 onSlider → setLive2d 即时预览；② 'input' 与 'change' 是两个不同监听器：
+      // 'input' 满足 @input（即时预览，onSlider），'change' 满足即时预览之外的持久化/失焦路径——两者都 dispatch 才能
+      // 覆盖「即时生效」与「落盘持久化」两条链（单发 'input' 或单发 'change' 都会漏另一条链）。
       await page.locator('.cy-l2d-pane input[type="range"]').first().evaluate((el) => {
         const input = el as HTMLInputElement
         input.value = '1.5'

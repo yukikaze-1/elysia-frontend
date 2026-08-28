@@ -12,6 +12,10 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'   // re
 import { launchApp, closeApp } from './helpers/app'
 
 const POLL = { timeout: 5000, interval: 200 }
+// V-12（#39）：grant-dir 闭环 poll 超时对齐 electron-live2d 先例（:450 扩到 15s）——SwiftShader 渲染饱和
+// renderer 主线程时 page.evaluate 慢到 ~3.75s/次，5s 窗口只够约 1 次读值；15s 保证慢环境也能读到
+// （对齐 electron-live2d.spec.ts:450 `{ ...POLL, timeout: 15000 }` 的慢渲染放宽）。
+const SLOW_POLL = { timeout: 15000, interval: 200 }
 const FIXTURE_ROOT = '/tmp/cyrene-fixtures'
 const FIXTURE = `${FIXTURE_ROOT}/note.txt`
 const FLOW_READ = JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: FIXTURE } } })
@@ -140,12 +144,12 @@ describe('阶段 6 批次 B 工具流', () => {
  *  grant 匹配目录 = mock env CYRENE_MOCK_GRANT_DIRECTORY（F-9 单个 JSON 字符串路径）；默认 TTL 24h（F-18）。 */
 async function grantDirFlow(page: import('playwright').Page): Promise<void> {
   await sendMessage(page)
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __cyreneTest: { getPermissionPending(): unknown } }).__cyreneTest.getPermissionPending()), POLL).not.toBeNull()
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __cyreneTest: { getPermissionPending(): unknown } }).__cyreneTest.getPermissionPending()), SLOW_POLL).not.toBeNull()
   await page.getByTestId('tool-approve').click()           // 卡片授权入口 → 权限窗（四问）
-  await expect.poll(() => page.getByTestId('approval-grant-dir').count(), POLL).toBe(1)
+  await expect.poll(() => page.getByTestId('approval-grant-dir').count(), SLOW_POLL).toBe(1)
   await page.getByTestId('approval-grant-dir').click()     // 第三入口「允许指定目录」（仅 read/write 显示）
   await page.getByTestId('approval-grant-confirm').click() // 确认授权（默认 24h）
-  await expect.poll(() => probeStatus(page), POLL).toBe('completed')   // grant 命中 → 自动执行
+  await expect.poll(() => probeStatus(page), SLOW_POLL).toBe('completed')   // grant 命中 → 自动执行
 }
 
 /** 打开设置中心 → 「安全与权限」子页（批次 C 无 settings-open/nav-security testid——沿用套件先例：
