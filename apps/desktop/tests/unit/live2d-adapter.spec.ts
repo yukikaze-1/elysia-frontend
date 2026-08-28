@@ -384,6 +384,25 @@ describe('Live2DAdapter.createModel（cyrene:// 逐文件供给 + 装配）', ()
     expect(shared.rendererInstances[0].bindTexture).toHaveBeenCalledTimes(1)
   })
 
+  it('createModel 重复调用（calls 前 destroy 旧 handle 预留口）→ 前一个 moc 被释放（C-04 ② 边界纵深）', async () => {
+    // C-04 ②：#adapter.createModel 原在 `this.handle = handle`（adapter.ts:622）直接覆盖旧 handle 未先 destroy——
+    // controller.switchModel 先 destroy 兜底，但 adapter 边界缺纵深（若未来调用方绕过 controller 直调 adapter 会泄漏）。
+    // 本用例钉住：再次 createModel 时旧 handle 的 destroy 被调（moc.deleteModel + moc.release）。
+    const { canvas, adapter } = makeHarness()
+    adapter.initialize(canvas)
+    await adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })
+    expect(shared.mocCreates).toHaveLength(1)
+    const firstMoc = shared.mocCreates[0]
+    expect(firstMoc.deleteModel).not.toHaveBeenCalled() // 首次 createModel 尚未释放
+    // 二次 createModel → this.handle?.destroy() 触发旧 handle 释放
+    await adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })
+    expect(shared.mocCreates).toHaveLength(2)
+    expect(firstMoc.deleteModel).toHaveBeenCalled() // 前一个 model 已被 destroy
+    expect(firstMoc.release).toHaveBeenCalled()
+    // 新 handle 可正常使用（更新无残留）
+    expect(() => adapter.update()).not.toThrow()
+  })
+
   it('纹理超 maxTextureSize → Live2DTextureError；无悬挂 handle（已清理）', async () => {
     const { gl, canvas, engine, adapter } = makeHarness()
     adapter.initialize(canvas)
@@ -404,6 +423,34 @@ describe('Live2DAdapter.createModel（cyrene:// 逐文件供给 + 装配）', ()
     await expect(adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })).rejects.toBeInstanceOf(
       Live2DGpuLostError
     )
+  })
+
+  it('C-04 ③：createModel 异步期（await 中）context 丢失 → GL 资源创建前抛 Live2DGpuLostError', async () => {
+    // 入口检查（adapter.ts:521/527）通过后、多个 await（model3/moc/纹理）期间 context 若丢失，
+    // 原实现全程无 isContextLost 复查——模型会基于已丢 context 完成创建。本用例：model3 后 setContextLost，
+    // 断言 createModel 在创建 GL 资源（renderer 构造）前抛 Live2DGpuLostError（复查拦截）。
+    const { engine, canvas } = makeHarness()
+    const recorded: string[] = []
+    let lostMidCreate = false
+    const fetchImpl = (async (url: string) => {
+      recorded.push(url)
+      if (url.endsWith('model3.json')) {
+        lostMidCreate = true // model3 后模拟 context 丢失（mock 中段）
+        engine.setContextLost(true)
+        return jsonBody(MODEL3_HARU)
+      }
+      if (url.endsWith('.png')) return { ok: true, blob: async () => new Blob(['png-bytes']) }
+      if (url.endsWith('.moc3')) return { ok: true, arrayBuffer: async () => new Uint8Array([0, 1, 2, 3]).buffer }
+      if (url.endsWith('.json')) return jsonBody('{}')
+      throw new Error(`unexpected URL: ${url}`)
+    }) as unknown as typeof fetch
+    const adapter = new Live2DAdapter({ engine, fetchImpl })
+    adapter.initialize(canvas)
+    await expect(adapter.createModel({ modelId: 'haru', model3Path: 'model3.json' })).rejects.toBeInstanceOf(
+      Live2DGpuLostError
+    )
+    // 未创建 renderer（GL 资源创建前即拦截）
+    expect(shared.rendererInstances).toHaveLength(0)
   })
 
   it('未 initialize 就 createModel → 抛错（非 GPU/纹理错误类型）', async () => {

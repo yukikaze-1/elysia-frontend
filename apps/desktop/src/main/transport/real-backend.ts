@@ -302,7 +302,8 @@ export class RealBackend implements BackendAdapter {
             conversationId: this.state.activeConversationId,
           })
         } catch (e) {
-          this.options.logger?.warn('tool.request:parse-failed', { message: (e as Error).message })
+          // C-10（#18）：非 Error 抛掷归一——`(e as Error).message` 对非 Error 得 undefined，改用 instanceof 判
+          this.options.logger?.warn('tool.request:parse-failed', { message: e instanceof Error ? e.message : String(e) })
         }
         return
       }

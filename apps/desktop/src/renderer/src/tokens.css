@@ -18,6 +18,13 @@
   --cy-surface-hover: light-dark(#e7edf7, #303a4a);
   --cy-text: light-dark(#1f2938, #eef3fb);
   --cy-muted: light-dark(#6b7687, #a9b4c5);
+  /* C-14（#29）：补齐组件引用的未定义 cy-* token——四组件（CyToolCard/CyToolApproval/CySecurityPane/CyDiagnosticsPane）
+     沿用同款写法宜收口。映射到既有 token（surface 系/文本系），light-dark 一致，消除组件引用落空。 */
+  --cy-bg: var(--cy-surface);
+  --cy-bg-sub: var(--cy-surface-soft);
+  --cy-bg-muted: var(--cy-surface-hover);
+  --cy-text-muted: var(--cy-muted);
+  --cy-text-secondary: var(--cy-muted);
   --cy-border: light-dark(#d7deea, #333d4d);
   --cy-accent: light-dark(#dce8ff, #294466);
   --cy-accent-strong: light-dark(#4b75ca, #7da8ff);

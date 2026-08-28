@@ -545,6 +545,11 @@ export class Live2DAdapter {
       model = moc.createModel()
       if (!model) throw new Error(`Failed to create CubismModel for model ${modelId}`)
 
+      // C-04 ③：异步期 GPU-lost 复查——入口检查（:521/:527）通过后，model3/moc 多个 await 期间 context 若丢失，
+      // 原实现全程无复查，模型会基于已丢 context 完成创建。此处（创建 GL 资源前）补 isContextLost 检查，
+      // 丢失 → 抛 Live2DGpuLostError（上层落 fallback，行为与入口检查一致）。
+      if (this.gpuLost || this.engine.isContextLost(gl)) throw new Live2DGpuLostError()
+
       renderer = new CubismRenderer_WebGL(canvas.width, canvas.height)
       renderer.initialize(model, 1)
       renderer.startUp(gl)
@@ -619,6 +624,7 @@ export class Live2DAdapter {
         expressionWhitelist,
         layoutMvp
       })
+      this.handle?.destroy() // C-04 ②：覆盖前释放旧 handle——adapter 边界纵深（controller 层 switchModel 先 destroy 兜底，此处防直调 adapter 泄漏）
       this.handle = handle
       this.lastTick = 0
       return handle
