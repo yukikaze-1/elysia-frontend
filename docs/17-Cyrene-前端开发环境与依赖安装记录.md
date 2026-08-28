@@ -106,6 +106,17 @@ CYRENE_BACKEND=mock pnpm dev
 
 Real 模式启动后，在连接面板设置 Endpoint 和 Token，再发起连接。Token 与 Endpoint origin 绑定；修改 origin 会清除旧 Token。
 
+### 4.1 完整同源运行（Live2D / 媒体 / 真实联调）
+
+`pnpm dev` 的 Renderer 是 `http://localhost`，适合界面与逻辑开发；Live2D 与媒体资源按安全策略走 `cyrene://` 同源供给，`http://localhost` 跨源访问会被 `corsEnabled:false` 拒绝。需要 Live2D、媒体或正式联调时使用生产构建的 preview：
+
+```powershell
+pnpm build
+pnpm --filter @cyrene/desktop start
+```
+
+`electron-vite preview` 加载 `cyrene://renderer/index.html`，与 Live2D/媒体代理同源。产物直启的等价方式：`cd apps\desktop` 后运行 `..\..\node_modules\electron\dist\electron.exe .`。自动化调试需要 CDP 时使用项目测试 harness，或显式传 `--remote-debugging-port=0`（随机端口；固定端口仍被安全门拒绝），实际端口从 `%APPDATA%\Cyrene\DevToolsActivePort` 读取。
+
 ## 5. 团队当前真实后端环境
 
 > 这是带核验日期的团队联调记录，不是通用产品配置。

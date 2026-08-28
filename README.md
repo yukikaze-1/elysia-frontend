@@ -44,6 +44,19 @@ Remove-Item Env:CYRENE_BACKEND
 
 固定远程调试端口不属于正常启动参数；当前安全策略会拒绝 `--remote-debugging-port=9223` 等固定端口。自动化调试应使用项目测试 harness 或 Playwright Electron 启动方式。
 
+## 完整同源运行（Live2D / 媒体 / 真实联调）
+
+`pnpm dev` 的 Renderer 运行在 `http://localhost`，适合界面与逻辑开发；Live2D 和媒体资源走 `cyrene://` 且安全策略禁止跨源，因此这类验证必须使用同源运行形态：
+
+```powershell
+pnpm build
+pnpm --filter @cyrene/desktop start
+```
+
+等价方式：`cd apps\desktop` 后直接运行 `..\..\node_modules\electron\dist\electron.exe .`。
+
+`electron-vite preview` / 产物直启加载的是 `cyrene://renderer/index.html`，与 Live2D、媒体代理同源。需要自动化调试通道时使用项目测试 harness，或显式传随机端口 `--remote-debugging-port=0`（固定端口仍被安全门拒绝）。
+
 ## 文档入口
 
 - [doc 00：文档索引与阅读顺序](docs/00-Cyrene-前端文档索引与阅读顺序.md)——文档地图、职责和维护规则。
