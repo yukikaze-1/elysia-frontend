@@ -18,6 +18,14 @@ import { createRendererBootstrap } from './bootstrap'
 const app = createApp(App)
 app.use(createPinia())
 
+// C-17（#35）：Renderer JS 全局错误兜底（可观测性加固，非修复屏）——捕获组件渲染/生命周期未处理错误，
+// 归集记录到 console.error，避免组件错误导致白屏却无痕（7B 覆盖的是进程崩溃 render-process-gone → reload + banner，
+// JS 异常是独立候选）。仅记录不改 UI（不吞错误、不降级渲染），错误仍按 Vue 默认传播（未捕获的错误在 dev 下可见）。
+app.config.errorHandler = (err, _instance, info) => {
+  // eslint-disable-next-line no-console
+  console.error('[renderer:js-error]', err, info)
+}
+
 // G1（spec §4.5/P2-2）：createPinia 之后、mount 之前同步 hydrate 布局偏好，避免首帧闪默认布局
 useLayoutStore().hydrate()
 
