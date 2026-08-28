@@ -799,6 +799,64 @@ describe('live2dStore 批次 C（C2）：GPU 重建一次（D5C-04，reset(当�
     expect(resetSpy).toHaveBeenCalledTimes(2)
   })
 
+  it('C-18：连续 device_lost 达 3 次仍重建失败 → 冻结降级不再自动重建（固定 fallback）；再 lost 不触发 reset', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    // controller 失败态后 tick 不再驱动 device_lost（failed 态 update 不抛），故用 direct emit 触发连续 lost。
+    // createModel 恒失败使每次重建都失败（accumulate consecutiveLost）；每次 emitLost 后 flush 让前次
+    // rebuildAfterLost 的 reset promise 完全 settle（rebuildGuard finally 复位），下一次 lost 才重新计数。
+    adapter.createModel.mockRejectedValue(new Error('gpu lost persist'))
+    const emitLost = () => (ctrl as unknown as { emit: (e: string, p?: unknown) => void }).emit('device_lost')
+    const flushRebuild = () => new Promise((r) => setTimeout(r, 5)) // flush createModel reject + catch + finally
+    // 第 1 次 → rebuildAfterLost（reset 1 次）→ 失败 fallback
+    emitLost(); await flushRebuild()
+    await vi.waitFor(() => expect(resetSpy).toHaveBeenCalledTimes(1))
+    expect(store.status).toBe('fallback')
+    // 第 2 次 → rebuildAfterLost（reset 2 次）→ 失败 fallback
+    emitLost(); await flushRebuild()
+    await vi.waitFor(() => expect(resetSpy).toHaveBeenCalledTimes(2))
+    expect(store.status).toBe('fallback')
+    // 第 3 次 → 达 GPU_LOST_MAX → gpuDowngraded 冻结：不再 rebuild，固定 fallback（reset 不增）
+    emitLost(); await flushRebuild()
+    expect(resetSpy).toHaveBeenCalledTimes(2) // 第 3 次不触发 rebuildAfterLost
+    expect(store.status).toBe('fallback')
+    // 再 device_lost（第 4 次）→ 已降级冻结：仍不触发 reset
+    emitLost(); await flushRebuild()
+    expect(resetSpy).toHaveBeenCalledTimes(2)
+    expect(store.status).toBe('fallback')
+  })
+
+  it('C-18：降级冻结后切模型成功 → 清零（gpuDowngraded 重置，再次 device_lost 恢复重建）', async () => {
+    const { adapter, ctrl } = installFakes({ models: [MODEL_HARU, MODEL_LIL] })
+    const { store } = freshStore()
+    await store.init(fakeCanvas)
+    const resetSpy = vi.spyOn(ctrl, 'reset')
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    adapter.createModel.mockRejectedValue(new Error('gpu lost persist'))
+    const emitLost = () => (ctrl as unknown as { emit: (e: string, p?: unknown) => void }).emit('device_lost')
+    const flushRebuild = () => new Promise((r) => setTimeout(r, 5))
+    // 连续 3 次触发 → 冻结降级
+    emitLost(); await flushRebuild()
+    emitLost(); await flushRebuild()
+    emitLost(); await flushRebuild()
+    expect(store.status).toBe('fallback')
+    const beforeReset = resetSpy.mock.calls.length // 冻结时 reset 已触发 2 次
+    // 降级后切模型（主动恢复入口）：先恢复 adapter（update 不再抛、createModel 返回合法 handle）→ switchModel 成功清零
+    adapter.update.mockImplementation(() => {}) // 不再抛（恢复可用）
+    adapter.createModel.mockImplementation(async () => {   // 返回合法 handle（对齐 makeFakeAdapter 默认形态）
+      const h = { update: vi.fn(), draw: vi.fn(), destroy: vi.fn(), getParameterIdList: vi.fn(() => []), getMotionFileWhitelist: vi.fn(() => []), getExpressionFileWhitelist: vi.fn(() => []), setParam: vi.fn(), setViewTransform: vi.fn(), startMotion: vi.fn(async () => {}), startExpression: vi.fn(async () => {}), stopMotion: vi.fn(), stopAll: vi.fn() }
+      return h
+    })
+    await store.switchModel('lil')
+    expect(store.status).toBe('ready')
+    // 清零后再 device_lost → 恢复重建（reset 再次触发）
+    adapter.update.mockImplementation(() => { throw new Live2DGpuLostError() })
+    store.tick()
+    await vi.waitFor(() => expect(resetSpy.mock.calls.length).toBeGreaterThan(beforeReset))
+  })
+
   it('重建后 stateSource 接线仍有效：重建成功后续源变化仍 push controller.setState（CharacterState 编排不中断）', async () => {
     const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
     const { store } = freshStore()

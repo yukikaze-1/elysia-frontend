@@ -82,6 +82,11 @@ export const useLive2dStore = defineStore('live2d', () => {
   // lastLookTarget 记录最近视线目标（重建后重放，unload 会清 controller 侧目标）
   let rebuildGuard = false
   let lastLookTarget: NormalizedPoint | null = null
+  // C-18（#37）：重复 GPU 崩溃降级——连续 device_lost 达 GPU_LOST_MAX 仍重建失败后，停止自动重建，固定 fallback
+  //（静态头像，不阻塞聊天）；consecutiveLost 在重建成功/切模型/重启用/init 成功时清零，gpuDowngraded 为冻结态。
+  const GPU_LOST_MAX = 3
+  let consecutiveLost = 0
+  let gpuDowngraded = false
   // C1：口部数据源 + 采样接线（TTS 播放时 attach，停止/取消 detach 归零）
   let mouthSource: MouthLevelSource | null = null
   let mouthAttached = false
@@ -188,8 +193,20 @@ export const useLive2dStore = defineStore('live2d', () => {
     const ctrl = buildController()
     controller = ctrl
     // device_lost（adapter 渲染 tick 抛 Live2DGpuLostError）→ C2 重建一次（rebuildAfterLost；失败镜像 fallback）
+    // C-18：连续 device_lost 达 GPU_LOST_MAX → 停止自动重建，固定 fallback（gpuDowngraded 冻结）。
+    // 每次 lost 前检查——已降级则不再触发（用户切模型/重启用/init 成功清零 gpuDowngraded）。
     unsubDevice = ctrl.on('device_lost', () => {
-      void rebuildAfterLost()
+      if (gpuDowngraded) {
+        status.value = 'fallback' // 已降级冻结：不再自动重建，固定静态头像
+        return
+      }
+      consecutiveLost++
+      if (consecutiveLost >= GPU_LOST_MAX) {
+        gpuDowngraded = true
+        status.value = 'fallback' // 连续失败达阈值 → 停止自动重建（不阻塞聊天，静态头像兜底）
+      } else {
+        void rebuildAfterLost()
+      }
     })
     // state（Task 5）：controller.setXxx 期间引出的状态变更经 'state' 事件镜像 characterState（Panel 状态徽标）
     unsubState = ctrl.on('state', (s) => {
@@ -219,6 +236,7 @@ export const useLive2dStore = defineStore('live2d', () => {
       await ctrl.reset(ctrl.modelId)
       syncFromController()
       if (ctrl.status === 'ready') {
+        consecutiveLost = 0 // C-18：重建成功 → 连续失败计数清零（下次 lost 从 1 重新累计，不被历史累积误降级）
         // 重放 settings（与 init 尾部重放点同款）+ 视线目标 + CharacterState
         const l2d = useSettingsStore().live2d
         ctrl.setAutoMotions(l2d.autoMotions)
@@ -310,6 +328,7 @@ export const useLive2dStore = defineStore('live2d', () => {
     ctrl.setPerformanceMode(l2d.performanceMode)
     ctrl.setViewTransform(l2d.scale, l2d.offsetX, l2d.offsetY)
     ready = true
+    consecutiveLost = 0; gpuDowngraded = false // C-18：init 成功（含重启用）→ 连续失败计数/降级冻结清零
     setupMouthWatch() // C1：口部接线（TTS 播放 → attach → tick 采样）
     setupStateSource(ctrl)
   }
@@ -325,6 +344,7 @@ export const useLive2dStore = defineStore('live2d', () => {
     try {
       const effective = await ctrl.switchModel(next)
       syncFromController()
+      consecutiveLost = 0; gpuDowngraded = false // C-18：用户主动切模型成功 → 连续失败/降级清零（主动恢复入口）
       // D5B-10/T6：持久化「实际生效 id」而非无条件 next——守卫丢弃（切换中/同模型幂等）时持久化旧 id，消除
       // 「已加载 a 却持久化 b」窄竞态
       useSettingsStore().setLive2d({ modelId: effective })
