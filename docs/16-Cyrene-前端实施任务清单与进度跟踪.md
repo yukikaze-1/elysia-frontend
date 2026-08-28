@@ -191,7 +191,7 @@
 
 - [~] 全新环境按 README 能安装依赖并启动（沙箱内 dev 冒烟通过；窗口需在本机确认）
 - [x] 类型检查、格式检查与最小测试命令通过（typecheck/lint/test 19 项通过）——2026-08-08
-- [~] 真实事件不经 UI 组件即可映射为前端领域事件（Mock 事件经 Schema 后由 Adapter 消费；真实事件待后端提供）
+- [x] 真实事件不经 UI 组件即可映射为前端领域事件（真实后端 2-7 全「已真实联调」；`main/transport/protocol-v2/frame-mapper.ts` `RawFrame→BackendEvent` 在 Main 无 UI；**已落地**）
 - [x] Mock 能重放 Inner Voice / Public Reply 多句流（mock-replay 单测覆盖）——2026-08-08
 - [x] 未确认字段集中登记在 02 对齐表（§19 + §19.1 字段差异表），无散落代码猜测——2026-08-08
 - [x] 仓库中不存在明文凭据——2026-08-08
@@ -216,8 +216,8 @@
 
 - [x] 落地 Main / Preload / Renderer 进程边界与推荐目录结构（文档 01 §5）
 - [x] 开启 Context Isolation、Renderer Sandbox、导航与新窗口限制
-- [~] 让 Main 持有后端 Transport、认证凭据与原始协议解析（**凭据存储已落地**：`safeStorage` 加密 `config/credentials.json` + `credentialStatus` 4 值 IPC，Renderer 只经 IPC 见状态；真实 Token 供给/Transport 连接属阶段 2）
-- [~] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）（具名 Schema 校验 IPC 与 Preload DesktopApi 已落地；公开事件订阅/取消函数属阶段 2，待后续块）
+- [x] 让 Main 持有后端 Transport、认证凭据与原始协议解析（`main/transport/real-backend.ts` transport + `main/transport/protocol-v2/*` raw 解析 + `safeStorage` 加密凭据在 Main；真实联调 2-7 全绿；**已落地**）
+- [x] 建立具名、可校验的 IPC API（Preload `DesktopApi`）与公开事件订阅（取消函数）（具名 Schema 校验 IPC + Preload DesktopApi + IPC handler zod；订阅返回取消函数（如 `controller.on` 返回 unsub、`chat:state` 等）；**已落地**）
 - [x] 实现窗口、单实例、外部链接拦截与应用生命周期
 - [x] 建立普通设置、系统安全凭据、日志、诊断与临时目录（config/app-cache/logs/audit/temp/models/sandbox；**app-cache 避开 Chromium 的 Cache**，决策见 spec P-8）
 - [x] 建立开发/测试/生产配置与最小打包流程（`__APP_MODE__` 烘焙 + `resolveAppConfig` 三 mode、生产安全默认恒关；electron-builder `dir` 未分发包 + `verify:artifact` 静态/冒烟）——2026-08-09
@@ -226,11 +226,11 @@
 
 ### 验收门槛
 
-- [~] Renderer 无 Node、任意 IPC、系统凭据或带凭据后端直连（结构保证 sandbox/contextIsolation/不暴露 ipcRenderer + 冒烟确认普通浏览器 `window.desktopApi` 为 undefined；完整安全测试套件后续块）
+- [x] Renderer 无 Node、任意 IPC、系统凭据或带凭据后端直连（sandbox + contextIsolation + 不暴露 ipcRenderer；普通浏览器 `window.desktopApi` 为 undefined；凭据仅经 status IPC；阶段 7 批次 A `verify:sensitive`；**已落地**）
 - [x] 非白名单通道、非法参数与超大输入被 Main 拒绝（块 C 集成测试：desktopApi 面恰为白名单 + setBackendToken 4097/空串 → SCHEMA_VALIDATION_FAILED + 隐藏窗来源校验被拒）——2026-08-10
 - [x] Token/密钥只显示状态，不能从 Renderer 读回（块 B 凭据 IPC：`credentials:get-status/set/clear` 统一返回 `{status,key}`，preload 只解包 `.status`、无明文读取通道；key 白名单单一来源 `shared/contracts/credentials.ts`）——2026-08-10
 - [x] 外部链接通过受控接口打开（块 C 集成测试：window.open/location 外部 → shell.openExternal + deny 不导航）——2026-08-10
-- [~] Windows 与目标 Ubuntu 开发环境各启动一次（**Ubuntu(Wayland)已冒烟通过**：Playwright `_electron` 启动构建产物，`getAppInfo` 返回 `{Cyrene, 0.1.0, linux}`、七目录 0700、四栏 UI 渲染；Windows 待验证）
+- [x] Windows 与目标 Ubuntu 开发环境各启动一次（Ubuntu(Wayland)冒烟通过 + Windows 在阶段 2-7 已反复真实启动（阶段 5 2026-08-19 Windows 43.3.0、阶段 7 各批真机验收）；**已落地**）
 - [x] 生产配置默认关闭开发者模式与 DevTools，远程调试端口始终关闭（`devToolsAllowed = !isPackaged` 恒关 + `Menu.setApplicationMenu(null)` 无加速键路径；远程调试门 main() 顶部同步拒绝显式端口/裸开关/pipe，`=0` 仅测试 harness 放行；verify:artifact 负路径冒烟验证拒绝生效）——2026-08-09；**【阶段 7 批次 A 修订（2026-08-22，D7A-04/05）**：开发者模式打开策略变更——设置页「开发与诊断」二次确认开关（会话态、重启恢复禁用、不写 settings.json），webPreferences 改 `devTools: true`（开关为唯一开启路径），F12 门 = `config.devToolsAllowed || isDevMode()`（getter 注入，main-window.ts）；远程调试恒关不变（rejectForbiddenDebugSwitches 不动）；「无开启路径」结论已被 2026-08-21 用户拍板修订（见 §4.0）】
 
 ---
@@ -248,18 +248,18 @@
 - [x] 按 `responseId` 归并有序 `AssistantSegment[]`——2026-08-11（2A Accumulator 权威 content 规则 + segmentIndex 排序；2C 渲染；**已开发、未联调**）
 - [x] Inner Voice / Public Reply 全局分段顺序与独立展示（可折叠）——2026-08-11（2C CyMessageBubble 双通道渲染：inner_voice 折叠 + public_reply markdown，segmentIndex 全局排序；**已开发、未联调**）
 - [x] 回复级/会话级 Token、实际模型与心情落位——2026-08-11（2A 逻辑层映射 + Accumulator 写入；2C UI chips 落位（completed 后显示）；**已开发、未联调**）
-- [~] Markdown、代码块、复制、停止生成与基础断线恢复——2026-08-11（2C 已落地 Markdown 渲染（marked+消毒）、停止生成（乐观 interrupted + `generation.failed{CANCELLED}` 幂等）、断线提示（chat:state 推送 + in-flight interrupted）；**代码块复制/语法高亮与基础断线恢复 UX 属阶段 3**）
+- [x] Markdown、代码块、复制、停止生成与基础断线恢复——2026-08-11（2C 已落地 Markdown 渲染（marked+DOMPurify 消毒）、停止生成（乐观 interrupted + `generation.failed{CANCELLED}` 幂等）、断线恢复（指数退避重连 B-01 真实验收）；**代码块复制按钮 + 样式由 G2/D7 落地**（`CyMarkdown.vue` `.cy-code-block`/`.cy-code-copy`）；语法高亮（无高亮库，仅基础样式）为既定取舍；**已落地**）
 - [x] Adapter、流式累加器与 Store 的契约测试——2026-08-11（2A mapper/Accumulator/wire-fixtures 两层校验 + 2C 三 store 单测（mock desktopApi）+ IPC 链路；**已开发、未联调**）
 
 ### 验收门槛
 
 - [x] 使用真实后端完成“新建会话 → 发送 → 流式回复”——2026-08-14（B-01 十项复跑通过：文本 ACK/流式/completed + 真实 `get_time` 工具 + 取消 `GENERATION_CANCELLED`；阶段 2 主链转「已真实联调」）
-- [ ] 同一回复只显示一组头像、时间与操作区
-- [ ] 分段完成不提前结束父回复（只有 `generation.completed` 结束）
-- [ ] 重复、乱序与迟到增量不产生重复或污染
-- [ ] 停止与断线保留已生成内容
-- [ ] Inner Voice 缺失时不显示空区域
-- [ ] UI 组件不引用后端原始字段
+- [x] 同一回复只显示一组头像、时间与操作区（`CyMessageBubble.vue` 每条 assistant 消息渲染**一个** `.cy-message-avatar` + **一个** `.cy-response-cluster` head，全 segment 在同一 `.cy-dual-message` 气泡内；**已落地**）
+- [x] 分段完成不提前结束父回复（只有 `generation.completed` 结束）（`stream-accumulator.ts` `applySegmentCompleted` 只置 `segment.completed` 不改 status；`message.store.ts` 仅 `generation.completed` 调 `finalizeAssistant`；**已落地**）
+- [x] 重复、乱序与迟到增量不产生重复或污染（`stream-accumulator.ts` `deltaSequence < expectedSequence` 去重 + `pendingChunks` 缺口缓冲 + authoritative 后迟到忽略+告警；单测 `stream-accumulator.spec.ts` 覆盖；**已落地**）
+- [x] 停止与断线保留已生成内容（`message.store.ts` `cancel()`/`handleConnectionStateChange` 置 `interrupted` 不清 segments；B-01 十项含取消+断线；**已落地**）
+- [x] Inner Voice 缺失时不显示空区域（`CyMessageBubble.vue` `v-if="innerVoiceSegments.length"`——无段则 `<details>` 不渲染；**已落地**）
+- [x] UI 组件不引用后端原始字段（全 renderer grep `RawFrame`/`raw-types` 零命中；映射只在 Main `frame-mapper.ts` `RawFrame→BackendEvent`，UI 只消费 `@shared/contracts` 域类型；**已落地**）
 
 ---
 
@@ -345,11 +345,11 @@
 
 ### 验收门槛
 
-- [ ] 两个已安装模型可加载与切换；切换失败保留当前模型与聊天状态
-- [ ] 角色栏作为右侧布局列展开，不覆盖消息或输入区
-- [ ] 非白名单动作、参数与资源路径被拒绝
-- [ ] 隐藏后停止高频渲染
-- [ ] GPU/资源异常不影响聊天与权限操作
+- [x] 两个已安装模型可加载与切换；切换失败保留当前模型与聊天状态（2026-08-19 真实 Windows Electron 43.3.0 联调通过：haru/wanko/lil 三模型装机切换（D-3 lil 8192 纹理）；`controller.ts` `switchModel` try/catch 失败保留旧 handle/currentId，`live2d.store.ts` catch 保留原 modelId+置 error 聊天不受阻；**已真实联调**。**注：F-后续-1「设置页模型列表为空」已被 7D `de4fcf8` 解决**——`App.vue` CyLive2DPanel 移出 chat v-if 改常驻挂载 v-show，settings 打开不 dispose，`CyLive2DPane` 能读模型列表并切换）
+- [x] 角色栏作为右侧布局列展开，不覆盖消息或输入区（`effective-layout.ts` `gridTemplateAreas` 含 `live` 为 grid 列 + `CyLive2DPanel.vue` `grid-area: live`；非 overlay；**已落地**）
+- [x] 非白名单动作、参数与资源路径被拒绝（`controller.ts` `setExpression`/`playMotion` 遇白名单外 return false；Main `model-registry.ts` `resolveModelFile` realpath containment + `live2d-path.ts` percent-decode 逐段拒编码走私 + integrity fail-closed；**已落地**）
+- [x] 隐藏后停止高频渲染（`controller.ts` `tick()` `!visible` 早退 + `setVisibility`；`CyLive2DPanel.vue` `startStop` 停 rAF；2026-08-19 真机 C2-3 折叠→0 draw，展开→2s 108 draw；**已真实联调**）
+- [x] GPU/资源异常不影响聊天与权限操作（`controller.ts` `tick()` catch GPU-lost→fallback 静态头像，其他异常仅 emit 不崩循环；2026-08-19 真机 C2-2 `webglcontextlost`→ready→fallback→ready ~146ms 零 console error，聊天/连接不受影响；**已真实联调**）
 
 > **规划注记（2026-08-18，批次 A/B/C 已落地）：** 阶段 5 评估为 **3 批次 18 task**，批次 A（地基，2026-08-17）、批次 B（表现，2026-08-18）与批次 C（收口，2026-08-18）均已落地并全量验证（批次 C 门禁 **1599 单测（119 files）+ 97 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿，**已开发、未联调**）。资源状态：**Web SDK 5-r.5 已入仓库** `third_party/CubismSdkForWeb-5-r.5/`（commit `22993e5`，含 Core/Framework/Samples/13 shaders 与许可文件，A1 从此 vendoring）；**用户 3 模型仍在 `tmp/live2d/`，未入 git**（免费版个人开发验证，A5 装配工具注入 license note 后装入 `userData/models`，装配时生成 manifest + integrity.json）。批次 A 范围已落地：A1 SDK vendoring + CSP（asm.js 不放开 wasm）/ A2 Live2DAdapter（GL 抽象，WebGL1）/ A3 Main 模型注册表 + integrity 校验 + IPC / A4 cyrene:// live2d 专用供给分支 / A5 模型装配 dev 工具 / A6 Live2DController + live2dStore + 最小切换 + settings `live2d` 契约 / A7 Electron 集成。**批次 B 已落地**：状态机收敛表 / 待机眨眼呼吸 / 动作表情白名单调度 / 无动作参数级回退 / `live2dStateSource` 状态编排 / 情绪态→表情 / 设置子页（`Live2DSettings` 全量 10 字段 + `performanceMode` 四值）/ Panel 状态徽标缩放偏移鼠标点击回正 / `switchModel` 生效 id 竞态硬化 / Electron 集成 7 用例（spec/plan `docs/superpowers/specs|plans/2026-08-18-phase5-live2d-batchb-expression-*`）。**批次 C（收口）已落地**：TTS 口型数据源（C1）/ 性能降级 + GPU 重建 + 可见性收口（C2）/ 后端 `live2d.directive` 扁平冻结契约四件套 + 七值 + 建议强度仲裁（C3）/ 防御加固收口（M1-M4/F2/F3/restore 分叉，批次 A F2-F4 关单）/ 文档 + 决策记录 + 联调清单（spec/plan `docs/superpowers/specs|plans/2026-08-18-phase5-live2d-batchc-closure-*`；决策 `docs/review/2026-08-18-阶段5批次C-决策记录.md`；联调清单 `docs/review/2026-08-18-阶段5批次C-联调清单.md`）。**真实 Windows Electron（REAL）联调**为代码批次后的验收方，由开发者事后凭联调清单执行（C1 口型肉眼 / C2 四值降帧实测 + GPU-lost 重建 / C3 真实 emotion→情绪→表情 + 未知帧忽略不崩 + 指令防御路径 + 归真机 deferred 项 + 自动化门禁复跑），通过后三态升「已真实联调」。已拍板：管理范围 P0 原样（doc 05，无导入/卸载 UI）；模型免费版个人开发验证；模型放 `userData/models` + Main 校验 + cyrene:// 供给。完整评估与决策点见 spec/plan + `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）与 `docs/review/2026-08-18-阶段5批次B-决策记录.md`、`docs/review/2026-08-17-阶段5批次A-决策记录.md`。
 
