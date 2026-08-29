@@ -232,10 +232,12 @@ async function onJump(hit: ChatHistoryItem): Promise<void> {
 }
 
 const announceText = computed(() => {
+  // UII-QQ 设置页批次：区分「聊天记录」与「图片/视频」两种视图的空态/播报文案
+  const noun = store.category === 'image_video' ? '相关图片/视频资源' : '相关聊天记录'
   if (store.loading) return '正在搜索聊天记录'
   if (store.error) return `搜索失败:${store.error.message}`
-  if (store.hasSearched && store.items.length === 0) return '没有找到相关聊天记录'
-  if (store.hasSearched) return `找到 ${store.items.length} 条相关聊天记录`
+  if (store.hasSearched && store.items.length === 0) return `没有找到${noun}`
+  if (store.hasSearched) return `找到 ${store.items.length} 条${noun}`
   return ''
 })
 </script>
@@ -276,7 +278,7 @@ const announceText = computed(() => {
         </div>
 
         <div v-if="store.loading" class="cy-history-state">正在搜索…</div>
-        <div v-else-if="store.hasSearched && store.items.length === 0" class="cy-history-state">没有找到相关聊天记录</div>
+        <div v-else-if="store.hasSearched && store.items.length === 0" class="cy-history-state">{{ store.category === 'image_video' ? '没有找到相关图片/视频资源' : '没有找到相关聊天记录' }}</div>
         <ul v-else ref="resultsEl" class="cy-history-results" @scroll.passive="onScroll">
           <div :style="{ height: win.paddingTop + 'px' }" class="cy-vlist-pad" />
           <template v-for="row in win.visibleRows" :key="row.key">
@@ -301,7 +303,7 @@ const announceText = computed(() => {
 <style scoped>
 .cy-history-overlay {
   position: fixed;
-  inset: 36px 0 0 60px;   /* 保留标题栏(36px)与导航栏(60px,NAV_WIDTH) */
+  inset: 0 0 0 60px;   /* UII-QQ：应用内标题栏移除；保留导航栏(60px,NAV_WIDTH)——历史查看器不全宽盖导航 */
   z-index: 50;
   display: flex;           /* grid → flex：max-height 百分比恢复确定性（spec §4.1 方案 A） */
   align-items: center;

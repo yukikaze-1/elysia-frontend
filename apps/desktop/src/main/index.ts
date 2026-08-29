@@ -380,6 +380,15 @@ async function main(): Promise<void> {
       },
       (e) => { audit({ type: 'endpoint:set', summary: e.origin }) }
     )
+    // UII-QQ 设置页批次：开发模式默认 Endpoint——仅「未打包（dev）+ 真实模式」且当前会话尚未配置时注入
+    // http://127.0.0.1:8765（http 回环，setEndpoint 校验通过）；打包/production 构建不注入；mock 演示模式不注入
+    //（mock 连接不经 endpoint，且 protocol-media-handler 套件依赖「base 未配置」分支）。
+    // 用户本次会话保存的其他地址不会被覆盖——本默认只在应用启动期 getEndpoint() 为空时执行一次。
+    if (!app.isPackaged && !useMock && !connConfig.getEndpoint()) {
+      await connConfig.setEndpoint('http://127.0.0.1:8765').catch((e) => {
+        diagnostics?.logger.warn('endpoint:dev-default-failed', { message: sanitize(e instanceof Error ? e.message : String(e)) })
+      })
+    }
     // 阶段 3 G2 SessionStore（Main 持久化边界，docs/06 §14）：必须在 createChatService 之前装配（chat-service 钩子需要它）。
     // getActiveConversationId 闭包引用 chatBridge.svc（此时未赋值，但只在 connect 后的 persistSession 才调用，懒绑定安全）。
     const sessionStore = new SessionStore({

@@ -203,25 +203,26 @@ describe('computeEffectiveLayout 宽度扫描不变式（W=320..1600 步进10 ×
 })
 
 describe('gridTemplateFor（D10：grid-template-areas 按有效布局切换，spec §4.6）', () => {
+  // UII-QQ 设置页批次：应用内标题栏移除——areas 仅主行（原生系统标题栏承担窗口标题）
   it('会话栏 + Live2D 均显（W=1160 默认）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1160, prefs(), overrides(), C))
     expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr) 340px')
-    expect(g.gridTemplateAreas).toBe('"title title title title" "nav conv chat live"')
+    expect(g.gridTemplateAreas).toBe('"nav conv chat live"')
   })
   it('仅会话栏（W=1200、live2dVisible=false）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1200, prefs({ live2dVisible: false }), overrides(), C))
     expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr)')
-    expect(g.gridTemplateAreas).toBe('"title title title" "nav conv chat"')
+    expect(g.gridTemplateAreas).toBe('"nav conv chat"')
   })
   it('仅 Live2D（W=1100 默认：会话栏被自动折叠）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1100, prefs(), overrides(), C))
     expect(g.gridTemplateColumns).toBe('60px minmax(0, 1fr) 340px')
-    expect(g.gridTemplateAreas).toBe('"title title title" "nav chat live"')
+    expect(g.gridTemplateAreas).toBe('"nav chat live"')
   })
   it('均隐藏（W=320 防御档）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(320, prefs(), overrides(), C))
     expect(g.gridTemplateColumns).toBe('60px minmax(0, 1fr)')
-    expect(g.gridTemplateAreas).toBe('"title title" "nav chat"')
+    expect(g.gridTemplateAreas).toBe('"nav chat"')
   })
   it('live2dWidth=420 时列宽用有效栏宽（W=1240、宽度 420 全四区）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1240, prefs({ live2dWidth: 420 }), overrides(), C))

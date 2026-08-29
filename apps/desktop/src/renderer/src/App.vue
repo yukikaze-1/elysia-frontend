@@ -4,9 +4,9 @@
 // 阶段 4 批次 A：视图切换——chat 四区（v-if）/ tasks 占位（v-else-if）/ settings 全窗 overlay（v-else）；
 // NavRail 常驻（settings 关闭回焦目标）；CyLive2DPanel 移到 chat 分支外常驻挂载（7D 真机前置修复）——
 // settings 打开时仅 v-show 隐藏 + 面板内 currentView gate 停 rAF，不 dispose，诊断页才能读到 ready 态帧读数。
+// UII-QQ 设置页批次：应用内标题栏移除（原生系统标题栏承担窗口标题）——网格单行，折叠会话栏按钮移入 NavRail 顶部。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CyRendererCrashBanner from './components/CyRendererCrashBanner.vue'
-import CyTitleBar from './components/CyTitleBar.vue'
 import CyNavRail from './components/CyNavRail.vue'
 import CyConversationList from './components/CyConversationList.vue'
 import CyChatView from './components/CyChatView.vue'
@@ -69,7 +69,6 @@ watch(() => layout.notice, (n) => {
        rAF 由面板内 currentView gate 停止；诊断页 Live2D 性能读数因此可读到真实帧耗时/帧率。 -->
   <CyRendererCrashBanner />
   <div ref="rootRef" class="cy-app" :style="gridStyle">
-    <CyTitleBar />
     <CyNavRail />
     <template v-if="app.currentView === 'chat'">
       <CyConversationList v-show="layout.effective.conversationShown" />
@@ -90,8 +89,7 @@ watch(() => layout.notice, (n) => {
 <style scoped>
 .cy-app {
   display: grid;
-  /* 行高 36px = layout/constants.ts TITLEBAR_HEIGHT（D1 单一事实来源） */
-  grid-template-rows: 36px 1fr;
+  /* UII-QQ 设置页批次：应用内标题栏移除——网格单行（原生系统标题栏承担窗口标题） */
   width: 100%;
   height: 100%;
   overflow: hidden;

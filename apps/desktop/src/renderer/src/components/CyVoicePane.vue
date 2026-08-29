@@ -10,6 +10,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSettingsStore } from '../stores/settings.store'
 import { useModelServiceStore } from '../stores/model-service.store'
 import { useVoiceStore } from '../stores/voice.store'
+import CySwitch from './CySwitch.vue'
 
 const settings = useSettingsStore()
 const modelStore = useModelServiceStore()
@@ -37,10 +38,10 @@ function onMicDeviceChange(e: Event): void {
   settings.setVoice({ micDeviceId: v || undefined })
 }
 
-// —— 开关 ——
+// —— 开关（UII-QQ 设置页批次：CySwitch 统一布尔开关，handler 收布尔） ——
 type VoiceToggleKey = 'enabled' | 'realtimeEnabled' | 'autoReadReply' | 'showCaptions'
-function onToggle(key: VoiceToggleKey, e: Event): void {
-  settings.setVoice({ [key]: (e.target as HTMLInputElement).checked })
+function onToggle(key: VoiceToggleKey, checked: boolean): void {
+  settings.setVoice({ [key]: checked })
 }
 
 // —— 转写 STT Profile 下拉（D-P20：desktop/local_worker 会 STT_PROFILE_NOT_FOUND，不列） ——
@@ -148,24 +149,24 @@ onBeforeUnmount(() => {
 
     <div class="cy-vp-group">
       <label class="cy-vp-row">
-        <input type="checkbox" :checked="settings.voice.enabled" @change="onToggle('enabled', $event)" />
+        <CySwitch :model-value="settings.voice.enabled" aria-label="启用语音输入" @change="(v) => onToggle('enabled', v)" />
         <span class="cy-vp-label">启用语音输入<small>普通录音 + 输入法转写入口</small></span>
       </label>
       <label class="cy-vp-row">
-        <input
-          type="checkbox"
-          :checked="settings.voice.realtimeEnabled"
+        <CySwitch
+          :model-value="settings.voice.realtimeEnabled"
           :disabled="!settings.voice.enabled"
-          @change="onToggle('realtimeEnabled', $event)"
+          aria-label="启用实时语音会话"
+          @change="(v) => onToggle('realtimeEnabled', v)"
         />
         <span class="cy-vp-label">启用实时语音会话</span>
       </label>
       <label class="cy-vp-row">
-        <input type="checkbox" :checked="settings.voice.autoReadReply" @change="onToggle('autoReadReply', $event)" />
+        <CySwitch :model-value="settings.voice.autoReadReply" aria-label="TTS 自动朗读 AI 回复" @change="(v) => onToggle('autoReadReply', v)" />
         <span class="cy-vp-label">TTS 自动朗读 AI 回复</span>
       </label>
       <label class="cy-vp-row">
-        <input type="checkbox" :checked="settings.voice.showCaptions" @change="onToggle('showCaptions', $event)" />
+        <CySwitch :model-value="settings.voice.showCaptions" aria-label="显示直接语音字幕" @change="(v) => onToggle('showCaptions', v)" />
         <span class="cy-vp-label">显示直接语音字幕</span>
       </label>
     </div>

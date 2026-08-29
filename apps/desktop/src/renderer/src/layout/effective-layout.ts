@@ -100,10 +100,10 @@ export function gridTemplateFor(effective: EffectiveLayout): GridTemplate {
   const conv = effective.conversationShown ? `${effective.conversationWidth}px` : null
   const live = effective.live2dShown ? `${effective.live2dWidth}px` : null
   const cols = [`${effective.navWidth}px`, ...(conv ? [conv] : []), 'minmax(0, 1fr)', ...(live ? [live] : [])]
-  const rowTitle = Array(cols.length).fill('title').join(' ')
+  // UII-QQ 设置页批次：应用内标题栏移除——网格仅剩主行（原生系统标题栏承担窗口标题）
   const rowMain = ['nav', ...(conv ? ['conv'] : []), 'chat', ...(live ? ['live'] : [])].join(' ')
   return {
     gridTemplateColumns: cols.join(' '),
-    gridTemplateAreas: `"${rowTitle}" "${rowMain}"`
+    gridTemplateAreas: `"${rowMain}"`
   }
 }

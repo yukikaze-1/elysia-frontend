@@ -1,7 +1,7 @@
 // src/renderer/src/layout/constants.ts
 // 阶段 3 G1（spec §4.1，决策 D1）：区宽/断点/保护阈值——布局单一事实来源。
 // App.vue 不再硬编码列宽；CSS 如需引用区宽经 :style 内联或 CSS 变量注入，不复制数值。
-export const TITLEBAR_HEIGHT = 36
+// UII-QQ 设置页批次：应用内标题栏移除（原生系统标题栏承担），TITLEBAR_HEIGHT 删除。
 export const NAV_WIDTH = 60
 export const CONVERSATION_WIDTH = 260
 export const LIVE2D_DEFAULT_WIDTH = 340      // PRD §6.1「默认 340」

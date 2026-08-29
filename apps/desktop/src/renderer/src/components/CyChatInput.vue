@@ -358,15 +358,16 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
             <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
           </button>
           <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
-          <!-- UII-QQ IA：右侧会话入口（聊天记录/资源）——从聊天头部移入；不 gating，离线可打开查看器 -->
+          <!-- UII-QQ IA：右侧会话入口——「聊天记录」（当前会话历史）与「图片/视频」（媒体资源视图）语义分开；
+               不 gating，离线可打开查看器 -->
           <span class="cy-composer-toolbar-spacer" />
           <button class="cy-history-btn" title="聊天记录" aria-label="聊天记录" @click="historyStore.openViewer()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
             <span class="cy-entry-label">聊天记录</span>
           </button>
-          <button class="cy-history-btn" title="资源" aria-label="资源" @click="historyStore.openViewer('image_video')">
+          <button class="cy-history-btn" title="图片/视频" aria-label="图片/视频" @click="historyStore.openViewer('image_video')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 15 5-5 4 4 3-3 6 6" /><circle cx="9" cy="9.5" r="1.4" /></svg>
-            <span class="cy-entry-label">资源</span>
+            <span class="cy-entry-label">图片/视频</span>
           </button>
         </div>
 

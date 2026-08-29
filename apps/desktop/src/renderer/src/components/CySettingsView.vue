@@ -120,7 +120,7 @@ onBeforeUnmount(() => { triggerElement = null })
 <style scoped>
 .cy-settings-overlay {
   position: fixed;
-  inset: 36px 0 0 0;   /* 保留标题栏(36px,TITLEBAR_HEIGHT)；全宽覆盖导航栏——设置中心为全窗 overlay */
+  inset: 0;   /* UII-QQ：应用内标题栏移除——全窗 overlay，全宽覆盖导航栏 */
   z-index: 50;
   display: flex;           /* flex 居中面板，min(920px, 92vw) / min(640px, 84vh) 定高不溢出窗口 */
   align-items: center;

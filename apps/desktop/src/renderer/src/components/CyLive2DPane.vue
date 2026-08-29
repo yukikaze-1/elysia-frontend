@@ -16,6 +16,7 @@ import { computed } from 'vue'
 import type { Live2DModelSummary, PerformanceMode } from '@shared/contracts'
 import { useSettingsStore } from '../stores/settings.store'
 import { useLive2dStore } from '../stores/live2d.store'
+import CySwitch from './CySwitch.vue'
 
 const settings = useSettingsStore()
 const live2d = useLive2dStore()
@@ -49,12 +50,13 @@ function onModelSelect(id: string): void {
 }
 
 type L2DToggleKey = 'mouseTracking' | 'autoMotions' | 'lipSync' | 'reduceMotion'
-function onToggle(key: L2DToggleKey, e: Event): void {
-  settings.setLive2d({ [key]: (e.target as HTMLInputElement).checked })
+// UII-QQ 设置页批次：CySwitch 统一布尔开关（handler 收布尔）
+function onToggle(key: L2DToggleKey, checked: boolean): void {
+  settings.setLive2d({ [key]: checked })
 }
 
-function onEnabled(e: Event): void {
-  settings.setLive2d({ enabled: (e.target as HTMLInputElement).checked })
+function onEnabled(checked: boolean): void {
+  settings.setLive2d({ enabled: checked })
 }
 
 function onSlider(key: 'scale' | 'offsetX' | 'offsetY', e: Event): void {
@@ -87,7 +89,7 @@ const statusText = computed(() => {
 
     <div class="cy-l2d-group">
       <label class="cy-l2d-row">
-        <input type="checkbox" :checked="settings.live2d.enabled" @change="onEnabled" />
+        <CySwitch :model-value="settings.live2d.enabled" aria-label="启用 Live2D 角色" @change="onEnabled" />
         <span class="cy-l2d-label">启用 Live2D 角色<small>加载模型并显示在聊天右侧角色栏</small></span>
       </label>
     </div>
@@ -168,38 +170,38 @@ const statusText = computed(() => {
     <div class="cy-l2d-group">
       <h4 class="cy-l2d-sub">互动</h4>
       <label class="cy-l2d-row">
-        <input
-          type="checkbox"
-          :checked="settings.live2d.mouseTracking"
+        <CySwitch
+          :model-value="settings.live2d.mouseTracking"
           :disabled="!settings.live2d.enabled"
-          @change="onToggle('mouseTracking', $event)"
+          aria-label="鼠标跟随"
+          @change="(v) => onToggle('mouseTracking', v)"
         />
         <span class="cy-l2d-label">鼠标跟随<small>视线随光标移动，离开后平滑回正</small></span>
       </label>
       <label class="cy-l2d-row">
-        <input
-          type="checkbox"
-          :checked="settings.live2d.autoMotions"
+        <CySwitch
+          :model-value="settings.live2d.autoMotions"
           :disabled="!settings.live2d.enabled"
-          @change="onToggle('autoMotions', $event)"
+          aria-label="自动动作"
+          @change="(v) => onToggle('autoMotions', v)"
         />
         <span class="cy-l2d-label">自动动作<small>待机眨眼/呼吸与状态动画调度</small></span>
       </label>
       <label class="cy-l2d-row">
-        <input
-          type="checkbox"
-          :checked="settings.live2d.lipSync"
+        <CySwitch
+          :model-value="settings.live2d.lipSync"
           :disabled="!settings.live2d.enabled"
-          @change="onToggle('lipSync', $event)"
+          aria-label="口型同步"
+          @change="(v) => onToggle('lipSync', v)"
         />
         <span class="cy-l2d-label">口型同步<small>说话时嘴部随内容开合（与自动动作共同控制）</small></span>
       </label>
       <label class="cy-l2d-row">
-        <input
-          type="checkbox"
-          :checked="settings.live2d.reduceMotion"
+        <CySwitch
+          :model-value="settings.live2d.reduceMotion"
           :disabled="!settings.live2d.enabled"
-          @change="onToggle('reduceMotion', $event)"
+          aria-label="减少动态"
+          @change="(v) => onToggle('reduceMotion', v)"
         />
         <span class="cy-l2d-label">减少动态<small>禁用鼠标跟随与点击动作（减轻晕动）</small></span>
       </label>

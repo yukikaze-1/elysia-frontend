@@ -3,9 +3,11 @@
 // - 装配模式(MOCK/REAL)来自 chat:get-runtime-info;Mock 模式隐藏 Endpoint/Token 输入;
 // - Endpoint 经 setEndpoint 规范化(origin 变化自动清 token 绑定);Token 密码框提交后立即清空明文(spec 3.2.2);
 // - connect 无参:endpoint/token 由 Main 侧 connection-config 持有。
-// UII-QQ IA：从聊天头部移入 NavRail 底部——32×32 全局连接钮（插头图标 + 右下角状态点），
-// hover tooltip 显示完整状态；`.cy-status-text` 保留（sr-only 视觉隐藏但 textContent 可读——5 个集成测试轮询契约）；
-// 点击展开连接配置浮层（连接/断开、Endpoint、Token、版本、错误；Esc/点外部关闭），从按钮右侧展开不被裁切。
+// UII-QQ 设置页批次：浮层重设计为「状态摘要 + 展开的连接设置」两级结构——
+// 摘要态：状态点/状态文字、Endpoint 安全摘要（仅 host）、后端与协议版本、「连接设置」入口、已连接时的次要「断开」；
+// 编辑态：Endpoint / Token（密码型 + 显示切换；已配置显示「已配置」不回填原值）/ 主按钮「保存并连接」/
+// 次要危险「断开」/ 表单内错误与可执行提示。自动重连、Token 保存/清除与连接状态逻辑不变；
+// `.cy-status-text` 为集成测试轮询锚点，Esc/点外部关闭。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import type { CredentialStatus } from '@shared/contracts'
@@ -19,13 +21,15 @@ const tokenInput = ref('')
 const tokenStatus = ref<CredentialStatus>('empty')
 const endpointErr = ref<string>()
 const tokenErr = ref<string>()
+const connectErr = ref<string>()
 const busy = ref(false)
+const tokenVisible = ref(false)
+const editing = ref(false)
 const serverVersion = computed(() => connection.state.serverVersion)
 const protocolVersion = computed(() => connection.state.protocolVersion)
 const connected = computed(() => connection.state.status === 'connected')
-const tokenLabel = computed(() => ({ available: 'Token 已设置', empty: 'Token 未设置', unavailable: '凭据存储不可用', locked: '凭据已锁定' }[tokenStatus.value] ?? ''))
+const tokenLabel = computed(() => ({ available: '已配置', empty: '未配置', unavailable: '凭据存储不可用', locked: '凭据已锁定' }[tokenStatus.value] ?? ''))
 
-/** 徽标文案：mode + 连接状态（`.cy-status-text` sr-only 承载——textContent 含 REAL/MOCK 与状态，测试契约不变） */
 const modeLabel = computed(() => (mode.value === 'mock' ? 'MOCK' : 'REAL'))
 const statusLabel = computed(() => {
   switch (connection.state.status) {
@@ -36,7 +40,7 @@ const statusLabel = computed(() => {
     case 'reconnecting':
       return '重连中…'
     case 'error':
-      return '连接错误'
+      return '连接失败'
     default:
       return '未连接'
   }
@@ -53,6 +57,13 @@ const statusTone = computed(() => {
     default:
       return 'is-offline'
   }
+})
+
+/** Endpoint 安全摘要：仅展示 host（不含协议路径参数）；未配置显示占位说明 */
+const endpointSummary = computed(() => {
+  const raw = endpointInput.value.trim()
+  if (!raw) return '未配置（开发模式默认 http://127.0.0.1:8765）'
+  try { return new URL(raw).host } catch { return raw }
 })
 
 // —— popover 开合（Esc / 点击外部关闭；从按钮右侧向上展开，z-index 高于聊天内容、低于设置 overlay） ——
@@ -93,8 +104,9 @@ async function applyEndpoint(): Promise<void> {
   try {
     const r = await api.setEndpoint(endpointInput.value.trim())
     endpointInput.value = r.endpoint
-    // origin 变化 → Main 已自动清 token+binding,chip 同步刷新(最终 review 修复)
+    // origin 变化 → Main 已自动清 token+binding,状态同步刷新(最终 review 修复)
     tokenStatus.value = await api.getCredentialStatus()
+    return
   } catch (e: unknown) {
     endpointErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
   }
@@ -119,9 +131,31 @@ async function clearToken(): Promise<void> {
 
 async function toggleConnect(): Promise<void> {
   busy.value = true
+  connectErr.value = undefined
   try {
     if (connected.value) await connection.disconnect()
     else await connection.connect()
+  } catch (e: unknown) {
+    connectErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
+  } finally {
+    busy.value = false
+  }
+}
+
+/** 编辑态主按钮「保存并连接」：先落 Endpoint/Token（有输入才提交），再发起连接；错误落表单内 */
+async function saveAndConnect(): Promise<void> {
+  connectErr.value = undefined
+  if (!endpointInput.value.trim() && !tokenInput.value.trim()) {
+    endpointErr.value = '请先填写后端地址'
+    return
+  }
+  busy.value = true
+  try {
+    if (endpointInput.value.trim()) await applyEndpoint()
+    if (endpointErr.value) return   // endpoint 失败即停（token 绑定 origin，先修地址）
+    if (tokenInput.value.trim()) await applyToken()
+    if (tokenErr.value) return
+    if (!connected.value) await toggleConnect()
   } finally {
     busy.value = false
   }
@@ -131,8 +165,7 @@ async function toggleConnect(): Promise<void> {
 <template>
   <div ref="rootRef" class="cy-connection-panel">
     <!-- NavRail 全局连接钮：插头图标 + 右下角状态点（绿/黄/红/灰）。
-         不设 aria-label——可见内容即可达名：sr-only 文本含 REAL/MOCK 与状态（/REAL|MOCK/ 测试契约保持），
-         hover tooltip = 完整状态 -->
+         可达名 = sr-only 文本（含 REAL/MOCK 与状态，/REAL|MOCK/ 测试契约保持），hover tooltip = 完整状态 -->
     <button
       class="cy-conn-badge"
       :aria-expanded="open"
@@ -144,37 +177,93 @@ async function toggleConnect(): Promise<void> {
       <span class="cy-status-text cy-sr-only">{{ modeLabel }} · {{ statusLabel }}</span>
     </button>
 
-    <!-- 配置浮层：从按钮右侧向上展开（NavRail 60px 内不裁切）；能力全保留 -->
-    <div v-if="open" class="cy-conn-pop" role="dialog" aria-label="连接设置">
-      <button class="cy-btn cy-connect-btn" :disabled="busy" @click="toggleConnect">
-        {{ connected ? '断开' : '连接' }}
-      </button>
-
-      <template v-if="mode !== 'mock'">
-        <div class="cy-pop-field">
-          <label class="cy-pop-label" for="cy-conn-endpoint">Endpoint</label>
-          <div class="cy-row cy-row-form">
-            <input id="cy-conn-endpoint" v-model="endpointInput" class="cy-input" type="text" placeholder="https://… 或回环 http://127.0.0.1:8765" />
-            <button class="cy-btn" :disabled="busy" @click="applyEndpoint">设置</button>
-          </div>
-          <div v-if="endpointErr" class="cy-err">{{ endpointErr }}</div>
+    <!-- 连接浮层：状态摘要 + 展开的连接设置（从按钮右侧向上展开，NavRail 内不裁切） -->
+    <div v-if="open" class="cy-conn-pop" role="dialog" aria-label="后端连接">
+      <!-- 摘要态 -->
+      <div v-if="!editing" class="cy-conn-summary">
+        <div class="cy-conn-status-row">
+          <span class="cy-conn-dot" :class="statusTone" aria-hidden="true" />
+          <span class="cy-status-text">{{ statusLabel }}</span>
         </div>
-        <div class="cy-pop-field">
-          <label class="cy-pop-label" for="cy-conn-token">Token</label>
-          <div class="cy-row cy-row-form">
-            <span class="cy-token-label">{{ tokenLabel }}</span>
-            <input id="cy-conn-token" v-model="tokenInput" class="cy-input" type="password" placeholder="Token" @keyup.enter="applyToken" />
-            <button class="cy-btn" :disabled="busy" @click="applyToken">设置</button>
-            <button v-if="tokenStatus === 'available'" class="cy-btn" :disabled="busy" @click="clearToken">清除</button>
+        <dl class="cy-conn-facts">
+          <div class="cy-conn-fact">
+            <dt>地址</dt>
+            <dd>{{ endpointSummary }}</dd>
           </div>
-          <div v-if="tokenErr" class="cy-err">{{ tokenErr }}</div>
+          <div v-if="serverVersion || protocolVersion" class="cy-conn-fact">
+            <dt>版本</dt>
+            <dd>后端 {{ serverVersion || '—' }} · 协议 {{ protocolVersion || '—' }}</dd>
+          </div>
+        </dl>
+        <div class="cy-conn-summary-actions">
+          <button class="cy-btn cy-btn-secondary" @click="editing = true">连接设置</button>
+          <button v-if="connected" class="cy-btn cy-btn-danger" :disabled="busy" @click="toggleConnect">断开</button>
+          <button v-else class="cy-btn cy-btn-primary" :disabled="busy" @click="toggleConnect">连接</button>
         </div>
-      </template>
-
-      <div v-if="serverVersion || protocolVersion" class="cy-server-info">
-        后端 {{ serverVersion }} · 协议 {{ protocolVersion }}
+        <div v-if="connection.error" class="cy-conn-error">
+          {{ connection.error.message }}
+          <span class="cy-conn-error-hint">可展开「连接设置」检查地址与 Token。</span>
+        </div>
       </div>
-      <div v-if="connection.error" class="cy-conn-error">{{ connection.error.message }}</div>
+
+      <!-- 编辑态 -->
+      <form v-else class="cy-conn-edit" @submit.prevent="saveAndConnect">
+        <div class="cy-conn-edit-title">连接设置</div>
+
+        <template v-if="mode !== 'mock'">
+          <label class="cy-pop-field">
+            <span class="cy-pop-label">后端地址（Endpoint）</span>
+            <input v-model="endpointInput" class="cy-input" type="text" placeholder="https://… 或 http://127.0.0.1:8765" autocomplete="off" spellcheck="false" />
+            <span v-if="endpointErr" class="cy-err">
+              {{ endpointErr }}
+              <span class="cy-conn-error-hint">http 仅允许回环地址（127.x / localhost / ::1）；https 可为任意主机。</span>
+            </span>
+          </label>
+
+          <label class="cy-pop-field">
+            <span class="cy-pop-label">
+              Token
+              <span class="cy-token-chip" :class="{ ok: tokenStatus === 'available' }">{{ tokenLabel }}</span>
+            </span>
+            <span class="cy-token-row">
+              <input
+                v-model="tokenInput"
+                class="cy-input"
+                :type="tokenVisible ? 'text' : 'password'"
+                :placeholder="tokenStatus === 'available' ? '已配置——输入新值可更换' : '粘贴后端 Token'"
+                autocomplete="new-password"
+              />
+              <button
+                type="button"
+                class="cy-token-eye"
+                :aria-pressed="tokenVisible"
+                :aria-label="tokenVisible ? '隐藏 Token' : '显示 Token'"
+                :title="tokenVisible ? '隐藏 Token' : '显示 Token'"
+                @click="tokenVisible = !tokenVisible"
+              >
+                <svg v-if="!tokenVisible" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></svg>
+                <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><path d="m4 4 16 16" /></svg>
+              </button>
+            </span>
+            <span v-if="tokenErr" class="cy-err">{{ tokenErr }}</span>
+            <span v-if="tokenStatus === 'available'" class="cy-token-actions">
+              <span class="cy-token-hint">已保存于系统凭据库（不回显原值）。</span>
+              <button type="button" class="cy-token-clear" :disabled="busy" @click="clearToken">清除已存 Token</button>
+            </span>
+          </label>
+        </template>
+        <div v-else class="cy-server-info">MOCK 演示模式：无需后端地址与 Token。</div>
+
+        <div class="cy-conn-edit-actions">
+          <button type="submit" class="cy-btn cy-btn-primary" :disabled="busy">{{ connected ? '保存并重新连接' : '保存并连接' }}</button>
+          <button v-if="connected" type="button" class="cy-btn cy-btn-danger" :disabled="busy" @click="toggleConnect">断开</button>
+          <button type="button" class="cy-btn cy-btn-secondary" :disabled="busy" @click="editing = false">返回摘要</button>
+        </div>
+        <div v-if="connectErr" class="cy-conn-error">
+          {{ connectErr }}
+          <span class="cy-conn-error-hint">请确认后端已启动、地址与 Token 正确后重试。</span>
+        </div>
+      </form>
     </div>
   </div>
 </template>
@@ -187,7 +276,7 @@ async function toggleConnect(): Promise<void> {
   place-items: center;
 }
 
-/* NavRail 全局连接钮：32×32 图标钮，右下角状态点 */
+/* NavRail 全局连接钮：32+ 图标钮，右下角状态点 */
 .cy-conn-badge {
   position: relative;
   display: grid;
@@ -235,7 +324,7 @@ async function toggleConnect(): Promise<void> {
   white-space: nowrap;
 }
 
-/* 配置浮层：从 NavRail 按钮右侧向上展开（bottom 对齐按钮底），不受 60px 栏宽裁切 */
+/* 连接浮层：从 NavRail 按钮右侧向上展开（bottom 对齐按钮底），不受 60px 栏宽裁切 */
 .cy-conn-pop {
   position: absolute;
   left: calc(100% + 10px);
@@ -243,7 +332,7 @@ async function toggleConnect(): Promise<void> {
   z-index: 45;
   display: flex;
   flex-direction: column;
-  gap: 9px;
+  gap: 10px;
   width: 320px;
   padding: 12px;
   background: var(--cy-surface);
@@ -253,71 +342,71 @@ async function toggleConnect(): Promise<void> {
   font-size: 12px;
 }
 
-.cy-connect-btn {
-  padding: 7px 0;
-  color: var(--cy-accent-text);
-  background: var(--cy-accent-strong);
-  border: 0;
-  border-radius: 9px;
-  font-size: 12px;
-  font-weight: 500;
+/* —— 摘要态 —— */
+.cy-conn-status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.cy-connect-btn:hover:not(:disabled) {
-  filter: brightness(1.06);
+.cy-conn-status-row .cy-conn-dot {
+  position: static;
+  box-shadow: none;
 }
 
-.cy-pop-field {
+.cy-conn-status-row .cy-status-text {
+  color: var(--cy-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cy-conn-facts {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  margin: 0;
 }
 
-.cy-pop-label {
-  color: var(--cy-muted);
-  font-size: 11px;
-}
-
-.cy-row {
+.cy-conn-fact {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
 }
 
-.cy-token-label {
+.cy-conn-fact dt {
   flex: 0 0 auto;
   color: var(--cy-muted);
-  font-size: 11px;
 }
 
-.cy-input {
-  flex: 1;
-  min-width: 0;
-  padding: 5px 8px;
+.cy-conn-fact dd {
+  margin: 0;
   color: var(--cy-text);
-  background: var(--cy-pane);
-  border: 1px solid var(--cy-border);
-  border-radius: 8px;
-  outline: 0;
-  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
-.cy-input:focus {
-  border-color: var(--cy-accent-strong);
+.cy-conn-summary-actions,
+.cy-conn-edit-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.cy-conn-edit-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .cy-btn {
-  flex: 0 0 auto;
-  padding: 5px 9px;
-  color: var(--cy-muted);
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 8px;
-  font-size: 11px;
+  flex: 1 1 auto;
+  padding: 7px 10px;
+  border-radius: 9px;
+  font-size: 12px;
   white-space: nowrap;
+  background: var(--cy-surface-soft);
+  color: var(--cy-text);
+  border: 1px solid var(--cy-border);
 }
 
-.cy-btn:hover {
+.cy-btn:hover:not(:disabled) {
   background: var(--cy-surface-hover);
 }
 
@@ -326,9 +415,149 @@ async function toggleConnect(): Promise<void> {
   cursor: not-allowed;
 }
 
-.cy-err {
+.cy-btn-primary {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent-strong);
+  border-color: var(--cy-accent-strong);
+  font-weight: 500;
+}
+
+.cy-btn-primary:hover:not(:disabled) {
+  background: var(--cy-accent-strong);
+  filter: brightness(1.06);
+}
+
+.cy-btn-danger {
+  color: var(--cy-danger);
+  border-color: var(--cy-danger);
+  background: transparent;
+}
+
+.cy-btn-danger:hover:not(:disabled) {
+  color: var(--cy-accent-text);
+  background: var(--cy-danger);
+}
+
+.cy-btn-secondary {
+  background: transparent;
+  color: var(--cy-muted);
+}
+
+/* —— 编辑态 —— */
+.cy-conn-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cy-conn-edit-title {
+  color: var(--cy-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cy-pop-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.cy-pop-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--cy-muted);
+  font-size: 11px;
+}
+
+.cy-token-chip {
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--cy-muted);
+  background: var(--cy-surface-soft);
+  border: 1px solid var(--cy-border);
+  font-size: 10px;
+}
+
+.cy-token-chip.ok {
+  color: var(--cy-success);
+  border-color: var(--cy-success);
+}
+
+.cy-token-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cy-token-eye {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--cy-muted);
+  background: transparent;
+  border: 1px solid var(--cy-border);
+}
+
+.cy-token-eye:hover {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-token-eye[aria-pressed='true'] {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
+}
+
+.cy-token-hint {
+  color: var(--cy-muted);
+  font-size: 10px;
+}
+
+.cy-token-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cy-token-clear {
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--cy-danger);
   font-size: 11px;
+  cursor: pointer;
+}
+
+.cy-token-clear:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.cy-token-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cy-input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--cy-text);
+  background: var(--cy-pane);
+  border: 1px solid var(--cy-border);
+  border-radius: 8px;
+  outline: 0;
+  font-size: 12px;
+}
+
+.cy-input:focus {
+  border-color: var(--cy-accent-strong);
 }
 
 .cy-server-info {
@@ -336,10 +565,26 @@ async function toggleConnect(): Promise<void> {
   font-size: 11px;
 }
 
-/* trust-boundary.spec 断言类名：连接错误经 onChatError → connectionStore.setError → 本元素渲染 */
-.cy-conn-error {
+.cy-err {
   color: var(--cy-danger);
   font-size: 11px;
+}
+
+/* trust-boundary.spec 断言类名：连接错误经 onChatError → connectionStore.setError → 本元素渲染 */
+.cy-conn-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  color: var(--cy-danger);
+  background: var(--cy-surface-soft);
+  border: 1px dashed var(--cy-danger);
+  border-radius: 8px;
+  font-size: 11px;
   overflow-wrap: anywhere;
+}
+
+.cy-conn-error-hint {
+  color: var(--cy-muted);
 }
 </style>

@@ -1,13 +1,18 @@
 <script setup lang="ts">
 // 阶段 4 批次 A：NavRail active 上提——局部 ref 删除，改由 appStore.currentView 驱动（doc 06 §3.1）。
-// 布局折叠按钮保留（layoutStore 原有语义不变）。
-// UI 问题 10/11：折叠开关上移到标题栏左上（替代装饰三点），设置按钮沉底（VS Code/Discord 惯例）；
-// 删除纯装饰 Cy 徽标（形似按钮但不可点，制造误导）。
-// UII-QQ IA：连接状态入口移入 NavRail 底部（设置上方）——连接是全局运行状态，不属于单个会话。
+// UI 问题 10/11：设置按钮沉底（VS Code/Discord 惯例）；删除纯装饰 Cy 徽标。
+// UII-QQ 设置页批次：应用内标题栏移除——「折叠/展开会话栏」按钮从标题栏移到导航栏顶部；
+// 仅聊天视图显示（任务页无会话栏）；折叠后按钮仍可见可展开；
+// hover 修复：pressed 态 hover 不再被浅色前景覆盖（图标恒保持对比度），补齐 active/focus-visible/disabled。
+import { computed } from 'vue'
 import { useAppStore, type AppView } from '../stores/app.store'
+import { useLayoutStore } from '../stores/layout.store'
 import CyConnectionPanel from './CyConnectionPanel.vue'
 
 const app = useAppStore()
+const layout = useLayoutStore()
+
+const collapseLabel = computed(() => (layout.effective.conversationShown ? '折叠会话列表' : '展开会话列表'))
 
 const items: Array<{ key: AppView; label: string; icon: string }> = [
   {
@@ -34,6 +39,19 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
 
 <template>
   <nav class="cy-nav" aria-label="主导航">
+    <!-- 折叠/展开会话栏：仅聊天视图显示（会话栏仅 chat 存在）；折叠后按钮仍在导航栏内可展开 -->
+    <button
+      v-if="app.currentView === 'chat'"
+      class="cy-nav-collapse"
+      :aria-pressed="layout.effective.conversationShown"
+      :aria-label="collapseLabel"
+      :title="collapseLabel"
+      @click="layout.toggleConversation()"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 5h7v14H4zM15 9l3 3-3 3" />
+      </svg>
+    </button>
     <button
       v-for="item in items"
       :key="item.key"
@@ -93,22 +111,54 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
   border-right: 1px solid var(--cy-border);
 }
 
-.cy-nav-button {
+.cy-nav-button,
+.cy-nav-collapse {
   display: grid;
   place-items: center;
   width: 40px;
   min-height: 40px;
   border-radius: 12px;
   color: var(--cy-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
-.cy-nav-button:hover {
+.cy-nav-button:hover,
+.cy-nav-collapse:hover {
+  color: var(--cy-accent);
   background: var(--cy-surface-hover);
 }
 
-.cy-nav-button[aria-pressed='true'] {
+.cy-nav-button:active,
+.cy-nav-collapse:active {
+  transform: translateY(1px);
+}
+
+.cy-nav-button:focus-visible,
+.cy-nav-collapse:focus-visible {
+  outline: 2px solid var(--cy-accent-strong);
+  outline-offset: 2px;
+}
+
+/* pressed 态：hover/active 均保持 accent-text 前景在 accent 底上——图标对比度恒定（修复原 hover 图标消失） */
+.cy-nav-button[aria-pressed='true'],
+.cy-nav-collapse[aria-pressed='true'] {
   color: var(--cy-accent-text);
   background: var(--cy-accent);
+  border-color: var(--cy-accent);
+}
+
+.cy-nav-button[aria-pressed='true']:hover,
+.cy-nav-collapse[aria-pressed='true']:hover {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent-strong);
+  border-color: var(--cy-accent-strong);
+}
+
+.cy-nav-collapse:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .cy-nav-spacer {

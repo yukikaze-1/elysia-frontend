@@ -153,27 +153,42 @@ function onKeydown(e: KeyboardEvent): void {
             <option value="tts">TTS（语音合成）</option>
           </select>
         </label>
-        <label class="cy-field">
-          <span>名称 <em class="cy-req">*</em></span>
-          <input ref="nameInput" v-model="nameModel" type="text" placeholder="例如 my-llm" />
-        </label>
-        <label class="cy-field">
-          <span>Endpoint（baseUrl）<em class="cy-req">*</em></span>
-          <input v-model="baseUrlModel" type="text" placeholder="https://" />
-        </label>
-        <label class="cy-field">
-          <span>模型 ID（逗号分隔，可选）</span>
-          <input v-model="modelsText" type="text" placeholder="model-a, model-b" />
-        </label>
-        <label class="cy-field">
-          <span>apiKey（一次性提交，不保存不回显）</span>
-          <input v-model="apiKeyRef" type="password" placeholder="sk-…" autocomplete="off" />
-        </label>
-        <p v-if="isEditMode" class="cy-wizard-crednote">{{ credNote }}</p>
-        <label class="cy-field">
-          <span>capabilities（逗号分隔，可选）</span>
-          <input v-model="capsText" type="text" placeholder="auth=api_key, stream" />
-        </label>
+
+        <!-- UII-QQ 设置页批次：表单按「Provider 连接信息 / 模型信息 / capabilities」分区——
+             在线获取模型、协议（Chat Completions/Responses）选择等待后端正式契约，本轮不做假实现 -->
+        <div class="cy-wizard-group" role="group" aria-label="Provider 连接信息">
+          <div class="cy-wizard-group-title">Provider 连接信息</div>
+          <label class="cy-field">
+            <span>Endpoint（baseUrl）<em class="cy-req">*</em></span>
+            <input v-model="baseUrlModel" type="text" placeholder="https://" />
+          </label>
+          <label class="cy-field">
+            <span>apiKey（一次性提交，不保存不回显）</span>
+            <input v-model="apiKeyRef" type="password" placeholder="sk-…" autocomplete="off" />
+          </label>
+          <p v-if="isEditMode" class="cy-wizard-crednote">{{ credNote }}</p>
+        </div>
+
+        <div class="cy-wizard-group" role="group" aria-label="模型信息">
+          <div class="cy-wizard-group-title">模型信息</div>
+          <label class="cy-field">
+            <span>名称 <em class="cy-req">*</em></span>
+            <input ref="nameInput" v-model="nameModel" type="text" placeholder="例如 my-llm" />
+          </label>
+          <label class="cy-field">
+            <span>模型 ID（逗号分隔，可选）</span>
+            <input v-model="modelsText" type="text" placeholder="model-a, model-b" />
+          </label>
+          <p class="cy-wizard-note">在线获取 Provider 支持的模型列表需要后端正式契约，暂未开放——当前请手动填写模型 ID。</p>
+        </div>
+
+        <div class="cy-wizard-group" role="group" aria-label="能力声明">
+          <div class="cy-wizard-group-title">能力声明</div>
+          <label class="cy-field">
+            <span>capabilities（逗号分隔，可选）</span>
+            <input v-model="capsText" type="text" placeholder="auth=api_key, stream" />
+          </label>
+        </div>
 
         <div class="cy-wizard-actions">
           <button type="button" class="cy-profile-btn" @click="closeWizard()">取消</button>
@@ -216,7 +231,11 @@ function onKeydown(e: KeyboardEvent): void {
 .cy-wizard-header strong { font-size: 15px; }
 .cy-close-btn { padding: 4px 10px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-muted); }
 .cy-ms-error { display: flex; align-items: center; gap: 8px; padding: 8px 11px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
-.cy-wizard-form { display: flex; flex-direction: column; gap: 10px; }
+ .cy-wizard-form { display: flex; flex-direction: column; gap: 10px; }
+/* UII-QQ 设置页批次：表单分区（Provider 连接 / 模型信息 / 能力声明） */
+.cy-wizard-group { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: 10px; }
+.cy-wizard-group-title { color: var(--cy-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+.cy-wizard-note { margin: 0; font-size: 11px; color: var(--cy-muted); }
 .cy-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--cy-muted); }
 .cy-field input, .cy-field select { padding: 7px 9px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-surface); color: var(--cy-text); font-size: 13px; }
 .cy-field select:disabled { opacity: 0.6; }

@@ -4,13 +4,11 @@ import { describe, expect, it } from 'vitest'
 import {
   BREAKPOINTS, CHAT_MIN_WIDTH, CONVERSATION_WIDTH, LAYOUT_CONSTANTS,
   LIVE2D_DEFAULT_WIDTH, LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH,
-  MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, NAV_WIDTH, TITLEBAR_HEIGHT
+  MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, NAV_WIDTH
 } from '../../src/renderer/src/layout/constants'
 
 describe('layout/constants（D1 单一事实来源）', () => {
-  it('区宽/保护阈值与 spec §4.1 锁定值一致', () => {
-    expect(TITLEBAR_HEIGHT).toBe(36)
-    expect(NAV_WIDTH).toBe(60)
+  it('区宽/保护阈值与 spec §4.1 锁定值一致', () => {    expect(NAV_WIDTH).toBe(60)
     expect(CONVERSATION_WIDTH).toBe(260)
     expect(LIVE2D_DEFAULT_WIDTH).toBe(340)
     expect(LIVE2D_MIN_WIDTH).toBe(300)
