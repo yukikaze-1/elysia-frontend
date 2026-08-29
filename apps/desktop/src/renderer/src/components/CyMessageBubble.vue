@@ -8,12 +8,7 @@ import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
 import CyToolCard from './CyToolCard.vue'   // 阶段 6 批次 B（Task 7）：归档工具卡片（只读）
 
-const props = defineProps<{ message: Message; visible?: boolean }>()   // 不传 = undefined → 视为可见（不延迟）；父级显式传 false 才延迟
-
-/** 7D 视图感知暂停：视口外 completed segment 空 source 延迟渲染（streaming/mock 恒实时）。 */
-function needsDeferredRender(seg: AssistantSegment): boolean {
-  return props.visible === false && seg.completed === true
-}
+const props = defineProps<{ message: Message }>()   // UI 问题 1 修复：不再按 visible 延迟渲染——虚拟窗口/overscan 内全量渲染真实内容，消除「完整↔骨架」几何切跳
 
 /** G4：贴图渲染 URL（复用 G3 通用媒体代理；id 缺失返回 undefined → 占位） */
 function stickerSrc(id?: string): string | undefined { return id ? stickerRenderUrl(id) : undefined }
@@ -102,10 +97,8 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
           <!-- 阶段 6 批次 B（Task 7）：归档工具卡片（Message.toolCalls，REST 历史 + WS 回放双路径配对产物；只读） -->
           <CyToolCard v-for="tc in message.toolCalls" :key="tc.id" :record="tc" readonly />
           <template v-for="seg in publicSegments" :key="seg.segmentId">
-            <!-- UI 问题 2：延迟态仍渲染 .cy-segment（perf-gate ②b/③ 断言「视口外 completed 段空 source」的契约），
-                 但加 .cy-segment-deferred 类——视觉上是中性骨架（浅色、无 accent 药丸底），不是误导性空 accent 药丸。
-                 滚入真正可见窗口后再渲染实文。 -->
-            <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :class="{ 'cy-segment-deferred': needsDeferredRender(seg) }" :source="needsDeferredRender(seg) ? '' : segmentText(seg)" />
+            <!-- UI 问题 1 修复：全量渲染真实内容（虚拟窗口/overscan 已限制 DOM 行数），不再有「完整↔骨架」几何切跳 -->
+            <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :source="segmentText(seg)" />
             <!-- G4：sticker 分段渲染（wire seg.stickerId，复用通用媒体代理） -->
             <img v-else-if="seg.kind === 'sticker' && seg.stickerId" :src="stickerSrc(seg.stickerId)" class="cy-sticker-img" alt="表情" />
             <!-- G3：assistant 媒体分段（attachmentId 存在时渲染媒体组件；实时流式分段无 attachmentId 仍走占位，P2-5 wire 契约） -->
@@ -242,22 +235,6 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border-left: 2px solid var(--cy-accent-strong);
-}
-
-/* UI 问题 2：延迟态（completed + 视口外）——保留 .cy-segment 契约（perf-gate ②b/③ 断言空 source），
-   但视觉改为中性骨架（surface-soft 底、muted、无 accent 药丸底 + 轻微脉冲），消除空 accent 药丸的误导。
-   滚入真正可见窗口后去掉该类，恢复 accent 药丸渲染实文。 */
-.cy-segment.cy-segment-deferred {
-  color: var(--cy-muted);
-  background: var(--cy-surface-soft);
-  border-left-color: var(--cy-border);
-  min-height: 20px;
-  animation: cy-segment-deferred-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes cy-segment-deferred-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
 }
 
 .cy-media-placeholder {

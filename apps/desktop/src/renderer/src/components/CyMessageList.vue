@@ -6,7 +6,7 @@ import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import { useDraftStore } from '../stores/draft.store'
 import CyMessageBubble from './CyMessageBubble.vue'
-import { buildPrefix, captureAnchor, computeWindow, estimateHeight, restoreScrollTop, OVERSCAN_PX } from '../utils/virtual-window'
+import { buildPrefix, captureAnchor, computeWindow, restoreScrollTop, OVERSCAN_PX } from '../utils/virtual-window'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
@@ -31,7 +31,6 @@ const prefix = computed(() => buildPrefix(items.value, heights.value))
 const scrollTop = ref(0)
 const viewportHeight = ref(600)
 const atBottom = ref(true)
-const pendingCompensation = ref(0)
 
 /** 连续维护的锚点（scroll/窗口变化时更新；切会话时「先捕获后 flush」用它） */
 const lastAnchor = ref<{ conversationId: string; anchor: ReturnType<typeof captureAnchor> }>()
@@ -43,22 +42,14 @@ const isEmpty = computed(() => items.value.length === 0)
 
 const win = computed(() => {
   const w = computeWindow(prefix.value, scrollTop.value, viewportHeight.value, OVERSCAN_PX)
-  const strict = computeWindow(prefix.value, scrollTop.value, viewportHeight.value, 0)  // 7D：严格可见窗口（无 overscan）
   return {
     startIndex: w.startIndex,
     endIndex: w.endIndex,
     paddingTop: w.paddingTop,
     paddingBottom: w.paddingBottom,
     visibleIds: items.value.slice(w.startIndex, w.endIndex + 1).map((m) => m.messageId),
-    strictStartIndex: strict.startIndex,   // 7D：真正可见行区间
-    strictEndIndex: strict.endIndex,
   }
 })
-
-/** 全球行 index 是否落在严格可见窗口（无 overscan）——直接比较循环内 index */
-function rowVisible(globalIdx: number): boolean {
-  return globalIdx >= win.value.strictStartIndex && globalIdx <= win.value.strictEndIndex
-}
 
 /** D6 恢复守卫：每会话激活只恢复一次（由 pendingRestoreId + items.length watch 承担） */
 
@@ -88,23 +79,28 @@ function onScroll(): void {
   }
 }
 
-/** UI 问题 1：滚动停止——把滚动中累积的 pendingHeights 一次性合并进 heights，
- *  触发一次窗口重算/padding 修正，替代滚动中逐条修正（thumb 稳定，停稳后一次对齐）。
- *  同时应用滚动中累积的锚点补偿（loadOlder 前插/估→实测差），一次性落到 scrollTop。 */
+/** UI 问题 1 修复（②）：滚动停止——先捕获顶部锚点 → 合并 pendingHeights 进 heights → DOM 更新后
+ *  精确恢复锚点scroll位置（无累计 delta 补偿）。滚动中不 jump，停稳后一次对齐，且不放大。 */
 function commitScrollHeights(): void {
   if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
   isScrolling.value = false
   const hasPending = Object.keys(pendingHeights.value).length > 0
-  if (hasPending) {
-    const next = { ...heights.value, ...pendingHeights.value }
-    heights.value = next
-    pendingHeights.value = {}
-  }
-  if (container.value && pendingCompensation.value !== 0) {
-    container.value.scrollTop += pendingCompensation.value
+  if (!hasPending) return
+  const el = container.value
+  if (!el) { pendingHeights.value = {}; return }
+  // ② 捕获当前可视顶部锚点（用旧 prefix——合并前的布局）；offset = scrollTop - prefix[锚点]
+  const anchor = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
+  // 合并 pending 高进 heights → prefix 重算
+  heights.value = { ...heights.value, ...pendingHeights.value }
+  pendingHeights.value = {}
+  // ③ 恢复锚点：DOM 更新后按新 prefix 定位 anchor，使可视位置不变（无累计 delta，不放大）
+  void nextTick(() => {
+    if (!container.value) return
+    const target = restoreScrollTop(items.value, prefix.value, anchor)
+    container.value.scrollTop = target
     scrollTop.value = container.value.scrollTop
-    pendingCompensation.value = 0
-  }
+    atBottom.value = container.value.scrollTop + container.value.clientHeight >= container.value.scrollHeight - 40
+  })
 }
 
 /** 评审 P1-2：loadOlder 有序插入后恢复锚点可视位置（restoreScrollTop 让前缀和含前插高度；估高误差由 onRowResized 补偿） */
@@ -131,36 +127,21 @@ function captureCurrent(): void {
   if (a.messageId) lastAnchor.value = { conversationId: conversationStore.currentId ?? '', anchor: a }
 }
 
-/** 行实测：写 heights 并补偿锚点上方变化（D5，防估→实测推走锚点；评审 P1-2 前插行首测按实测-估高补差）。
- *  UI 问题 1：滚动中实测先写 pendingHeights（不立即改 padding/scrollHeight），滚动停后一次合并，
- *  避免滚动中 thumb 因估→实测修正而跳。非滚动态走既有立即路径（流式/初始加载）。 */
+/** 行实测：记录实测高（锚点行也记——③）。滚动中写 pendingHeights，滚动停 commit 时锚点恢复。
+ *  比较基线用 pendingHeights[id] ?? heights[id]（③：pending 最新值作下次基线，避免重复测量按旧高度累计放大）。
+ *  不再做累计 delta 补偿（② 改用锚点捕获→恢复）。非滚动态（流式/初始加载）直接写 heights。 */
 function onRowResized(id: string, entry: ResizeObserverEntry): void {
   // 7D 真机修复：用 border-box 实际高度（同 CyHistoryViewer）。contentRect 不含 .cy-vlist-row 的
-  // 上下 padding（6+6=12px/行），长列表前缀和会逐行欠估 → strict 可见窗口偏前 → 视口边缘出现「半可见但空 source」的 completed 行。
+  // 上下 padding（6+6=12px/行），长列表前缀和会逐行欠估。
   const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
-  const prev = heights.value[id]
+  const prev = pendingHeights.value[id] ?? heights.value[id]
   if (prev === h) return
-  const anchorId = lastAnchor.value?.anchor.messageId ?? pendingLoadAnchor.value?.messageId
-  if (anchorId === id) return
-  const anchorIdx = anchorId ? items.value.findIndex((m) => m.messageId === anchorId) : -1
-  const idx = items.value.findIndex((m) => m.messageId === id)
-  if (anchorIdx > 0 && idx >= 0 && idx < anchorIdx) {
-    // P1-2：前插行首测（prev undefined，此前用估高渲染）按「实测-估高」补差，防估高误差把锚点推走；
-    // 已测行按实测增量（既有 D5 语义）
-    const delta = prev !== undefined ? h - prev : h - estimateHeight(items.value[idx])
-    pendingCompensation.value += delta
-  }
-  // UI 问题 1：滚动中只写 pendingHeights（并累积补偿不立即应用），滚动停 commitScrollHeights 一次合并 + 补偿
+  // ③：始终记录锚点行实测高（不再 if (anchorId===id) return 跳过）——锚点行高也写入，供 prefix/恢复用
   if (isScrolling.value) {
     pendingHeights.value[id] = h
     return
   }
   heights.value[id] = h
-  if (container.value && pendingCompensation.value !== 0) {
-    container.value.scrollTop += pendingCompensation.value
-    scrollTop.value = container.value.scrollTop
-    pendingCompensation.value = 0
-  }
 }
 
 /** 切会话：先捕获（持续维护的 lastAnchor）再 flush 旧会话草稿+锚点（D6 时序定死）；
@@ -175,7 +156,6 @@ watch(() => conversationStore.currentId, (id, oldId) => {
   if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
   isScrolling.value = false
   pendingHeights.value = {}
-  pendingCompensation.value = 0
   heights.value = {}
   scrollTop.value = 0
   atBottom.value = true
@@ -289,14 +269,14 @@ onMounted(() => {
     <template v-else>
       <div :style="{ height: win.paddingTop + 'px' }" class="cy-vlist-pad" />
       <div
-        v-for="(id, i) in win.visibleIds"
+        v-for="id in win.visibleIds"
         :key="id"
         :data-message-id="id"
         :ref="(el) => setRowEl(id, el as Element | null)"
         class="cy-vlist-row"
         :class="{ 'cy-highlighted': messageStore.highlightMessageId === id }"
       >
-        <CyMessageBubble :message="messageStore.byId[id]" :visible="rowVisible(win.startIndex + i)" />
+        <CyMessageBubble :message="messageStore.byId[id]" />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
       <div :style="{ height: win.paddingBottom + 'px' }" class="cy-vlist-pad" />
@@ -314,7 +294,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%); }
+.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; overflow-anchor: none; background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%); }   /* overflow-anchor:none：禁浏览器原生滚动锚定，避免与手工锚点恢复重复工作（问题1修复④） */
 .cy-vlist-row { display: flex; flex-direction: column; gap: 9px; padding: 6px 0; }
 .cy-vlist-pad { flex-shrink: 0; }   /* 7C 真机修复：flex 列内垫片必须禁收缩，否则 paddingTop/Bottom 被压成 0，长会话滚不到底部新消息 */
 .cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: 12px; }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */

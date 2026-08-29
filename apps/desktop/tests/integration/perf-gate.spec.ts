@@ -143,7 +143,7 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
     } finally { await closeApp(launched) }
   })
 
-  it('②b 流式分段豁免：streaming（completed=false）滚动出视口仍渲染；completed 后视口外才延迟', async () => {
+  it('②b 流式分段全量渲染：streaming 与 completed 滚动出视口均仍渲染（UI 问题1 修复——无几何折叠）', async () => {
     // 同时注入长会话种子：上滚 300px 需要上方有足够历史内容（默认夹具会话只有 2 条，scrollTop 会被钳到 0）
     const launched = await launchWithSize({ CYRENE_MOCK_MULTI_SEGMENT: '60', CYRENE_MOCK_EMIT_DELAY_MS: '40', CYRENE_MOCK_HISTORY_LARGE: '200' })
     try {
@@ -192,12 +192,12 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       await page.waitForTimeout(150)   // 滚动后让 visible prop 更新 + CyMarkdown 80ms 尾沿防抖稳定
       const streamingOff = await sampleStreaming()
       expect(streamingOff).not.toBeNull()
-      expect(streamingOff!.top).toBeGreaterThanOrEqual(streamingOff!.clientH)   // 完全在视口下方（strict 外）
+      expect(streamingOff!.top).toBeGreaterThanOrEqual(streamingOff!.clientH)   // 完全在视口下方（overscan 内）
       expect(streamingOff!.segs).toBeGreaterThan(0)
-      expect(streamingOff!.nonEmpty).toBeGreaterThan(0)   // streaming 豁免：不因 visible=false 而全部空 source
-      // 后续新 segment 有 CyMarkdown 80ms 尾沿防抖，采样瞬间可存在少数临时空段——只要非全空即证未门控
+      expect(streamingOff!.nonEmpty).toBeGreaterThan(0)   // UI 问题1 修复：视口外也全量渲染真实内容（无骨架/空 source）
+      // 后续新 segment 有 CyMarkdown 80ms 尾沿防抖，采样瞬间可存在少数临时空段——只要非全空即证全量渲染
       const mid = streamingOff!.id
-      // 等 completed：仍保持视口外 → completed segment 才被延迟（空 source）
+      // 等 completed：仍保持视口外 → 内容仍非空（全量渲染，不再折叠/空 source）
       await expect.poll(() => page.evaluate((id) => {
         const cont = document.querySelector<HTMLElement>('.cy-messages')
         if (!cont) return false
@@ -217,7 +217,9 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       }, mid)
       expect(completedOff.top).toBeGreaterThanOrEqual(completedOff.clientH)
       expect(completedOff.segs).toBeGreaterThan(0)
-      expect(completedOff.empty).toBe(completedOff.segs)   // completed + 视口外 → 延迟渲染
+      // UI 问题1 修复：视口外 completed 段不再延迟渲染为「空 source」——虚拟窗口/overscan 内全量渲染真实内容，
+      // 消除「完整↔骨架」几何切跳。故视口外行内容仍非空（empty=0）。
+      expect(completedOff.empty).toBe(0)
       // 滚回底部 → 全部恢复非空（正确性不回退）
       await page.evaluate(() => {
         const c = document.querySelector<HTMLElement>('.cy-messages')
@@ -278,10 +280,8 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         expect(pads!.scrollHeight).toBeGreaterThan(pads!.clientHeight)
         expect(Math.max(pads!.topHeight, pads!.bottomHeight)).toBeGreaterThan(0)
         console.log(`[perf-gate] long200 rows=${rows} padTop=${pads?.topHeight}px padBottom=${pads?.bottomHeight}px sh=${pads?.scrollHeight}`)
-        // MD-1：差异化断言——长会话 seed（大量短 markdown 回复，mock 补 markdown 段后）消息列表位于底部（最新在视口内，
-        // 上方 overscan 行视口外）。视图感知：视口外 completed segment 空 source → 其 .cy-segment 内容为空；视口内非空。
-        // 断言「存在内容为空的 .cy-segment」（视口外 overscan 行被门控）——恒全量渲染（视图感知失效）则 empty=0（fail）。
-        // 只读 mock 确定性文本（模拟命中文本，非用户内容），不引入内容侧信道（perf-gate 头部 M-3「仅聚合计数」例外已注明）。
+        // UI 问题1 修复：视口外行不再延迟渲染（无「空 source .cy-segment」）——虚拟窗口/overscan 内全量渲染真实内容。
+        // 断言：所有已渲染 .cy-segment 皆非空（无几何折叠），视口内/外一致。
         const segs = await page.evaluate(() => {
           const out = { total: 0, empty: 0, nonEmpty: 0 }
           document.querySelectorAll('.cy-messages .cy-segment').forEach((s) => {
@@ -291,11 +291,12 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
           return out
         })
         expect(segs.total).toBeGreaterThan(0)
-        expect(segs.empty).toBeGreaterThan(0)   // 视口外 overscan 行被门控（内容空）
+        expect(segs.empty).toBe(0)   // 全量渲染：视口外无「空 source」段（几何稳定，不折叠）
         // 视口内回复非空（门控只影响视口外行）
         expect(segs.nonEmpty).toBeGreaterThan(0)
         // 7D 真机回归：border-box 实测高修复前，前缀和每行欠估 12px（padding 未计）→ strict 窗口偏前，
-        // 视口边缘出现「行已与视口相交但 completed segment 仍空 source」。断言：任何与视口相交的 .cy-vlist-row 内不得有空 .cy-segment。
+        // 视口边缘出现「行已与视口相交但 completed segment 仍空 source」。UI 问题1 修复后全量渲染，
+        // 任何与视口相交的 .cy-vlist-row 内不得有空 .cy-segment（无几何折叠）。
         await page.waitForTimeout(150)   // CyMarkdown 80ms 尾沿防抖 + ResizeObserver 实测高写入 → 让可见性翻转/行高补偿先稳定
         const visibleBlank = await page.evaluate(() => {
           const el = document.querySelector('.cy-messages')
