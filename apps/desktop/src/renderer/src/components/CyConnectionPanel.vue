@@ -142,24 +142,37 @@ async function toggleConnect(): Promise<void> {
   }
 }
 
-/** 编辑态主按钮「保存并连接」：先落 Endpoint/Token（有输入才提交），再发起连接；错误落表单内 */
+/** 编辑态主按钮「保存并连接」：先落 Endpoint/Token（有输入才提交），再发起连接；错误落表单内。
+ *  修复：同 origin 只换 Token 时 setEndpoint 不触发 D14 断开——凡有保存动作，已连接即先断开再连接，
+ *  新 Token 立即生效；连接失败经 connection.store 归档到 connection.error（store 不 rethrow），编辑态与
+ *  摘要态均直接展示 connection.error。 */
 async function saveAndConnect(): Promise<void> {
   connectErr.value = undefined
-  if (!endpointInput.value.trim() && !tokenInput.value.trim()) {
+  const wantsEndpoint = !!endpointInput.value.trim()
+  const wantsToken = !!tokenInput.value.trim()
+  if (!wantsEndpoint && !wantsToken) {
     endpointErr.value = '请先填写后端地址'
     return
   }
   busy.value = true
   try {
-    if (endpointInput.value.trim()) await applyEndpoint()
-    if (endpointErr.value) return   // endpoint 失败即停（token 绑定 origin，先修地址）
-    if (tokenInput.value.trim()) await applyToken()
-    if (tokenErr.value) return
-    if (!connected.value) await toggleConnect()
+    if (wantsEndpoint) {
+      await applyEndpoint()
+      if (endpointErr.value) return   // endpoint 失败即停（token 绑定 origin，先修地址）
+    }
+    if (wantsToken) {
+      await applyToken()
+      if (tokenErr.value) return
+    }
+    if (connected.value) await connection.disconnect()
+    await connection.connect()
   } finally {
     busy.value = false
   }
 }
+
+/** 编辑态错误：本地校验错误优先，其次 store 归档的连接错误（connect 失败不 rethrow） */
+const editError = computed(() => connectErr.value ?? connection.error?.message ?? null)
 </script>
 
 <template>
@@ -259,8 +272,8 @@ async function saveAndConnect(): Promise<void> {
           <button v-if="connected" type="button" class="cy-btn cy-btn-danger" :disabled="busy" @click="toggleConnect">断开</button>
           <button type="button" class="cy-btn cy-btn-secondary" :disabled="busy" @click="editing = false">返回摘要</button>
         </div>
-        <div v-if="connectErr" class="cy-conn-error">
-          {{ connectErr }}
+        <div v-if="editError" class="cy-conn-error">
+          {{ editError }}
           <span class="cy-conn-error-hint">请确认后端已启动、地址与 Token 正确后重试。</span>
         </div>
       </form>

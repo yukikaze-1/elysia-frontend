@@ -61,7 +61,7 @@ function onKeydown(e: KeyboardEvent): void {
   transition: background 0.18s ease, border-color 0.18s ease;
 }
 
-/* 滑块（白色圆点，左/右位移） */
+/* 滑块（白色圆点，左/右位移）——对勾 ::before 需 z-index 压过滑块（::after 后绘制会覆盖） */
 .cy-switch::after {
   content: '';
   position: absolute;
@@ -91,6 +91,7 @@ function onKeydown(e: KeyboardEvent): void {
   position: absolute;
   right: 5px;
   top: 50%;
+  z-index: 1;   /* 压过 ::after 滑块（后绘制者胜，必须显式提层） */
   transform: translateY(-50%);
   color: var(--cy-accent-strong);
   font-size: 10px;

@@ -72,3 +72,48 @@ describe('ConnectionConfig', () => {
     expect(await c.getTokenBinding()).toBeUndefined()
   })
 })
+
+// UII-QQ 设置页批次：开发默认地址守卫（评审修复 #1——默认注入绝不清除已持久化凭据）
+describe('ConnectionConfig.maybeApplyDevDefault', () => {
+  it('全新会话（无 endpoint/Token/绑定）→ 应用默认地址', async () => {
+    const { port, mem } = makePort(); const c = new ConnectionConfig(port)
+    expect(await c.maybeApplyDevDefault('http://127.0.0.1:8765')).toBe(true)
+    expect(c.getEndpoint()?.origin).toBe('http://127.0.0.1:8765')
+    // setEndpoint 只在 setBackendToken 时落绑定——此处绑定仍为空属预期（连接后 setBackendToken 才写）
+    expect(mem.get('binding')).toBeUndefined()
+  })
+  it('重启场景：绑定 origin === 默认 origin（Token+绑定）→ 恢复默认地址、凭据原样保留', async () => {
+    const { port, mem } = makePort(); const c = new ConnectionConfig(port)
+    await c.setEndpoint('http://127.0.0.1:8765'); await c.setBackendToken('local-token')
+    // 模拟重启：endpoint 内存态清空，Token+绑定仍持久化——同 port 新实例应恢复默认地址让已存凭据继续可用
+    const c2 = new ConnectionConfig(port)
+    expect(c2.getEndpoint()).toBeUndefined()
+    expect(await c2.maybeApplyDevDefault('http://127.0.0.1:8765')).toBe(true)
+    expect(c2.getEndpoint()?.origin).toBe('http://127.0.0.1:8765')
+    expect(mem.get('token')).toBe('local-token')
+    expect(mem.get('binding')).toBe('http://127.0.0.1:8765')
+  })
+  it('已持久化 Token+绑定（其他 origin）→ 不应用、凭据原样保留', async () => {
+    const { port, mem } = makePort(); const c = new ConnectionConfig(port)
+    await c.setEndpoint('https://prod.example'); await c.setBackendToken('prod-token')
+    // 模拟重启：内存 endpoint 随进程丢失，持久化凭据仍在——同 port 新实例
+    const c2 = new ConnectionConfig(port)
+    expect(c2.getEndpoint()).toBeUndefined()
+    expect(await c2.maybeApplyDevDefault('http://127.0.0.1:8765')).toBe(false)
+    expect(c2.getEndpoint()).toBeUndefined()
+    expect(mem.get('token')).toBe('prod-token')
+    expect(mem.get('binding')).toBe('https://prod.example')
+  })
+  it('仅 Token 无绑定 → 不应用（凭据存在即视为已配置过）', async () => {
+    const { port, mem } = makePort(); const c = new ConnectionConfig(port)
+    mem.set('token', 'orphan-token')
+    expect(await c.maybeApplyDevDefault('http://127.0.0.1:8765')).toBe(false)
+    expect(mem.get('token')).toBe('orphan-token')
+  })
+  it('会话内已配置 endpoint → 不应用、不改已有地址', async () => {
+    const { port } = makePort(); const c = new ConnectionConfig(port)
+    await c.setEndpoint('https://prod.example')
+    expect(await c.maybeApplyDevDefault('http://127.0.0.1:8765')).toBe(false)
+    expect(c.getEndpoint()?.origin).toBe('https://prod.example')
+  })
+})

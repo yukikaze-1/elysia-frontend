@@ -231,6 +231,9 @@ async function onJump(hit: ChatHistoryItem): Promise<void> {
   if (!ok && store.open) store.error = { code: 'JUMP_FAILED', message: '无法定位消息' }
 }
 
+// UII-QQ 设置页批次：弹窗标题/aria 按 category 区分两入口（聊天历史 vs 图片/视频）
+const viewerTitle = computed(() => (store.category === 'image_video' ? '图片/视频' : '聊天历史'))
+
 const announceText = computed(() => {
   // UII-QQ 设置页批次：区分「聊天记录」与「图片/视频」两种视图的空态/播报文案
   const noun = store.category === 'image_video' ? '相关图片/视频资源' : '相关聊天记录'
@@ -244,11 +247,11 @@ const announceText = computed(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="store.open" ref="overlay" class="cy-history-overlay" role="dialog" aria-modal="true" aria-label="聊天历史" @keydown="onKeydown">
+    <div v-if="store.open" ref="overlay" class="cy-history-overlay" role="dialog" aria-modal="true" :aria-label="viewerTitle" @keydown="onKeydown">
       <div class="cy-history">
         <header class="cy-history-header">
           <div class="cy-history-title">
-            <strong>聊天历史</strong>
+            <strong>{{ viewerTitle }}</strong>
             <span class="cy-muted">搜索不影响当前聊天</span>
           </div>
           <button class="cy-close-btn" aria-label="关闭历史查看器" @click="close">✕</button>

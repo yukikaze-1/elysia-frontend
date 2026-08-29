@@ -4,7 +4,9 @@
 // 编辑 custom 不回填已存密钥（仅显示 credentialStatus 提示）。
 // 草稿经 modelStore.drafts[draftKey] 读写（'new' 新建 / profile.model 编辑/复制）；关闭向导时 cancelEdit 清理草稿槽，
 // 防止 'new' 或重命名后旧 key 残留泄漏。后端 baseUrl 必填；desktop/local_worker 不提供（P4-A 仅 backend）。
-import { computed, nextTick, onMounted, ref } from 'vue'
+// UII-QQ 修缮批次：向导 Teleport 到 body——设置内容区 transform(translateZ(0)) 会把 position:fixed 退化为
+// 局部定位，向导被内容区裁切且与内容区滚动叠成双滚动；焦点陷阱/关闭回焦同 CyHistoryViewer 模式。
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { ModelProfile, ModelServiceType } from '@shared/contracts'
 import { useModelServiceStore } from '../stores/model-service.store'
 
@@ -66,8 +68,14 @@ function splitList(v: string): string[] { return v.split(',').map((s) => s.trim(
 // —— apiKey 一次性输入：组件局部 ref，绝不入 store ——
 const apiKeyRef = ref('')
 
+const overlay = ref<HTMLElement>()
 const nameInput = ref<HTMLInputElement>()
-onMounted(() => { void nextTick(() => nameInput.value?.focus()) })
+let triggerElement: Element | null = null   // 打开前的活动元素(关闭后回焦点)
+onMounted(() => {
+  triggerElement = document.activeElement
+  void nextTick(() => nameInput.value?.focus())
+})
+onUnmounted(() => { if (triggerElement instanceof HTMLElement) triggerElement.focus() })
 
 const testBusy = computed(() => {
   const d = draft.value
@@ -127,81 +135,90 @@ function closeWizard(): void {
   emit('close')
 }
 
-/** Esc 关闭；stopPropagation 防止冒泡到设置 overlay（先关向导，不关整个设置中心） */
+/** Esc 关闭；Tab 焦点陷阱循环回拦（焦点圈定在向导内）；stopPropagation 防止冒泡到设置 overlay（先关向导，不关整个设置中心） */
 function onKeydown(e: KeyboardEvent): void {
   e.stopPropagation()
-  if (e.key === 'Escape') { e.preventDefault(); closeWizard() }
+  if (e.key === 'Escape') { e.preventDefault(); closeWizard(); return }
+  if (e.key !== 'Tab' || !overlay.value) return
+  const focusables = overlay.value.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+  if (focusables.length === 0) return
+  const first = focusables[0]
+  const last = focusables[focusables.length - 1]
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
 }
 </script>
 
 <template>
-  <div class="cy-wizard-overlay" role="dialog" aria-modal="true" aria-label="自定义模型向导" @keydown="onKeydown">
-    <div class="cy-wizard">
-      <header class="cy-wizard-header">
-        <strong>{{ profile ? (copyMode ? '复制自定义模型' : '编辑自定义模型') : '添加自定义模型' }}</strong>
-        <button class="cy-close-btn" aria-label="关闭向导" @click="closeWizard">✕</button>
-      </header>
+  <Teleport to="body">
+    <div ref="overlay" class="cy-wizard-overlay" role="dialog" aria-modal="true" aria-label="自定义模型向导" @keydown="onKeydown">
+      <div class="cy-wizard">
+        <header class="cy-wizard-header">
+          <strong>{{ profile ? (copyMode ? '复制自定义模型' : '编辑自定义模型') : '添加自定义模型' }}</strong>
+          <button class="cy-close-btn" aria-label="关闭向导" @click="closeWizard">✕</button>
+        </header>
 
-      <div v-if="modelStore.error" class="cy-ms-error" role="alert">{{ modelStore.error.message }}</div>
+        <div v-if="modelStore.error" class="cy-ms-error" role="alert">{{ modelStore.error.message }}</div>
 
-      <form class="cy-wizard-form" @submit.prevent="onTestAndSave()">
-        <label class="cy-field">
-          <span>类型</span>
-          <select v-model="typeModel" :disabled="isEditMode" aria-label="模型服务类型">
-            <option value="llm">LLM（大语言模型）</option>
-            <option value="stt">STT（语音识别）</option>
-            <option value="tts">TTS（语音合成）</option>
-          </select>
-        </label>
-
-        <!-- UII-QQ 设置页批次：表单按「Provider 连接信息 / 模型信息 / capabilities」分区——
-             在线获取模型、协议（Chat Completions/Responses）选择等待后端正式契约，本轮不做假实现 -->
-        <div class="cy-wizard-group" role="group" aria-label="Provider 连接信息">
-          <div class="cy-wizard-group-title">Provider 连接信息</div>
+        <form class="cy-wizard-form" @submit.prevent="onTestAndSave()">
           <label class="cy-field">
-            <span>Endpoint（baseUrl）<em class="cy-req">*</em></span>
-            <input v-model="baseUrlModel" type="text" placeholder="https://" />
+            <span>类型</span>
+            <select v-model="typeModel" :disabled="isEditMode" aria-label="模型服务类型">
+              <option value="llm">LLM（大语言模型）</option>
+              <option value="stt">STT（语音识别）</option>
+              <option value="tts">TTS（语音合成）</option>
+            </select>
           </label>
-          <label class="cy-field">
-            <span>apiKey（一次性提交，不保存不回显）</span>
-            <input v-model="apiKeyRef" type="password" placeholder="sk-…" autocomplete="off" />
-          </label>
-          <p v-if="isEditMode" class="cy-wizard-crednote">{{ credNote }}</p>
-        </div>
 
-        <div class="cy-wizard-group" role="group" aria-label="模型信息">
-          <div class="cy-wizard-group-title">模型信息</div>
-          <label class="cy-field">
-            <span>名称 <em class="cy-req">*</em></span>
-            <input ref="nameInput" v-model="nameModel" type="text" placeholder="例如 my-llm" />
-          </label>
-          <label class="cy-field">
-            <span>模型 ID（逗号分隔，可选）</span>
-            <input v-model="modelsText" type="text" placeholder="model-a, model-b" />
-          </label>
-          <p class="cy-wizard-note">在线获取 Provider 支持的模型列表需要后端正式契约，暂未开放——当前请手动填写模型 ID。</p>
-        </div>
+          <!-- UII-QQ 设置页批次：表单按「Provider 连接信息 / 模型信息 / capabilities」分区——
+               在线获取模型、协议（Chat Completions/Responses）选择等待后端正式契约，本轮不做假实现 -->
+          <div class="cy-wizard-group" role="group" aria-label="Provider 连接信息">
+            <div class="cy-wizard-group-title">Provider 连接信息</div>
+            <label class="cy-field">
+              <span>Endpoint（baseUrl）<em class="cy-req">*</em></span>
+              <input v-model="baseUrlModel" type="text" placeholder="https://" />
+            </label>
+            <label class="cy-field">
+              <span>apiKey（一次性提交，不保存不回显）</span>
+              <input v-model="apiKeyRef" type="password" placeholder="sk-…" autocomplete="off" />
+            </label>
+            <p v-if="isEditMode" class="cy-wizard-crednote">{{ credNote }}</p>
+          </div>
 
-        <div class="cy-wizard-group" role="group" aria-label="能力声明">
-          <div class="cy-wizard-group-title">能力声明</div>
-          <label class="cy-field">
-            <span>capabilities（逗号分隔，可选）</span>
-            <input v-model="capsText" type="text" placeholder="auth=api_key, stream" />
-          </label>
-        </div>
+          <div class="cy-wizard-group" role="group" aria-label="模型信息">
+            <div class="cy-wizard-group-title">模型信息</div>
+            <label class="cy-field">
+              <span>名称 <em class="cy-req">*</em></span>
+              <input ref="nameInput" v-model="nameModel" type="text" placeholder="例如 my-llm" />
+            </label>
+            <label class="cy-field">
+              <span>模型 ID（逗号分隔，可选）</span>
+              <input v-model="modelsText" type="text" placeholder="model-a, model-b" />
+            </label>
+            <p class="cy-wizard-note">在线获取 Provider 支持的模型列表需要后端正式契约，暂未开放——当前请手动填写模型 ID。</p>
+          </div>
 
-        <div class="cy-wizard-actions">
-          <button type="button" class="cy-profile-btn" @click="closeWizard()">取消</button>
-          <button type="submit" class="cy-profile-btn cy-profile-primary" :disabled="testBusy">
-            测试并保存
-          </button>
-          <button type="button" class="cy-profile-btn cy-profile-activate" :disabled="saveActiveBusy" @click="onSaveAndActivate()">
-            保存并设为当前
-          </button>
-        </div>
-      </form>
+          <div class="cy-wizard-group" role="group" aria-label="能力声明">
+            <div class="cy-wizard-group-title">能力声明</div>
+            <label class="cy-field">
+              <span>capabilities（逗号分隔，可选）</span>
+              <input v-model="capsText" type="text" placeholder="auth=api_key, stream" />
+            </label>
+          </div>
+
+          <div class="cy-wizard-actions">
+            <button type="button" class="cy-profile-btn" @click="closeWizard()">取消</button>
+            <button type="submit" class="cy-profile-btn cy-profile-primary" :disabled="testBusy">
+              测试并保存
+            </button>
+            <button type="button" class="cy-profile-btn cy-profile-activate" :disabled="saveActiveBusy" @click="onSaveAndActivate()">
+              保存并设为当前
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>

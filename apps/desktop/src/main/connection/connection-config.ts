@@ -73,6 +73,27 @@ export class ConnectionConfig {
 
   getEndpoint(): NormalizedEndpoint | undefined { return this.endpoint }
 
+  /**
+   * UII-QQ 设置页批次：开发默认地址守卫注入。
+   * 会话内未配置 endpoint 时：无任何持久化凭据 → 直接应用；已有凭据 → 仅当持久化绑定 origin
+   * 与默认地址一致才恢复（覆盖重启场景：endpoint 内存态清空、本机 Token 仍在，恢复默认地址
+   * 已存凭据才能继续可用）。绑定其他 origin / 仅 Token 无绑定一律不动——setEndpoint 对 origin
+   * 变化会清凭据（见上），默认注入绝不得触发该清除路径。
+   * @returns 是否实际应用
+   */
+  async maybeApplyDevDefault(rawUrl: string): Promise<boolean> {
+    if (this.endpoint) return false
+    const [binding, token] = await Promise.all([this.port.loadBinding(), this.port.loadToken()])
+    if (binding || token) {
+      if (!binding) return false
+      let e: NormalizedEndpoint
+      try { e = this.normalizeEndpoint(rawUrl) } catch { return false }
+      if (binding !== e.origin) return false
+    }
+    await this.setEndpoint(rawUrl)
+    return true
+  }
+
   /** 未设 endpoint → CREDENTIAL_UNAVAILABLE；saveToken + saveBinding(currentOrigin) */
   async setBackendToken(token: string): Promise<void> {
     const e = this.endpoint

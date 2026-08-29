@@ -380,12 +380,13 @@ async function main(): Promise<void> {
       },
       (e) => { audit({ type: 'endpoint:set', summary: e.origin }) }
     )
-    // UII-QQ 设置页批次：开发模式默认 Endpoint——仅「未打包（dev）+ 真实模式」且当前会话尚未配置时注入
-    // http://127.0.0.1:8765（http 回环，setEndpoint 校验通过）；打包/production 构建不注入；mock 演示模式不注入
-    //（mock 连接不经 endpoint，且 protocol-media-handler 套件依赖「base 未配置」分支）。
-    // 用户本次会话保存的其他地址不会被覆盖——本默认只在应用启动期 getEndpoint() 为空时执行一次。
-    if (!app.isPackaged && !useMock && !connConfig.getEndpoint()) {
-      await connConfig.setEndpoint('http://127.0.0.1:8765').catch((e) => {
+    // UII-QQ 设置页批次：开发模式默认 Endpoint——仅「未打包（dev）+ 真实模式」且会话内未配置 endpoint 时注入
+    // http://127.0.0.1:8765；打包/production 与 mock 演示模式不注入。守卫在 ConnectionConfig.maybeApplyDevDefault：
+    // 无凭据直接应用；已有凭据仅当绑定 origin 与默认地址一致时恢复（重启后 endpoint 内存清空的本机场景），
+    // 绑定其他 origin / 仅 Token 无绑定一律不动，绝不清除已存凭据；用户本次会话保存的其他地址也不会被覆盖
+    //（启动期 getEndpoint() 为空才尝试）。
+    if (!app.isPackaged && !useMock) {
+      await connConfig.maybeApplyDevDefault('http://127.0.0.1:8765').catch((e) => {
         diagnostics?.logger.warn('endpoint:dev-default-failed', { message: sanitize(e instanceof Error ? e.message : String(e)) })
       })
     }
