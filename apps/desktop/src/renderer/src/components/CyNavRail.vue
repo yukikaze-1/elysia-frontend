@@ -1,14 +1,11 @@
 <script setup lang="ts">
 // 阶段 4 批次 A：NavRail active 上提——局部 ref 删除，改由 appStore.currentView 驱动（doc 06 §3.1）。
 // 布局折叠按钮保留（layoutStore 原有语义不变）。
-import { computed } from 'vue'
-import { useLayoutStore } from '../stores/layout.store'
+// UI 问题 10/11：折叠开关上移到标题栏左上（替代装饰三点），设置按钮沉底（VS Code/Discord 惯例）；
+// 删除纯装饰 Cy 徽标（形似按钮但不可点，制造误导）。
 import { useAppStore, type AppView } from '../stores/app.store'
 
 const app = useAppStore()
-const layout = useLayoutStore()
-
-const collapseLabel = computed(() => layout.effective.conversationShown ? '折叠会话列表' : '展开会话列表')
 
 const items: Array<{ key: AppView; label: string; icon: string }> = [
   {
@@ -20,7 +17,11 @@ const items: Array<{ key: AppView; label: string; icon: string }> = [
     key: 'tasks',
     label: '任务',
     icon: '<rect x="4" y="4" width="16" height="16" rx="2" /><path d="M9 12l2 2 4-4" />'
-  },
+  }
+]
+
+/** 设置按钮沉底（问题 10）：与聊天/任务分开，置于 spacer 之下。 */
+const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
   {
     key: 'settings',
     label: '设置',
@@ -31,7 +32,6 @@ const items: Array<{ key: AppView; label: string; icon: string }> = [
 
 <template>
   <nav class="cy-nav" aria-label="主导航">
-    <div class="cy-brand" aria-hidden="true">Cy</div>
     <button
       v-for="item in items"
       :key="item.key"
@@ -55,15 +55,25 @@ const items: Array<{ key: AppView; label: string; icon: string }> = [
     </button>
     <span class="cy-nav-spacer" />
     <button
-      class="cy-nav-button cy-nav-collapse"
-      :aria-pressed="layout.effective.conversationShown"
-      :aria-label="collapseLabel"
-      :title="collapseLabel"
-      @click="layout.toggleConversation()"
+      v-for="item in bottomItems"
+      :key="item.key"
+      class="cy-nav-button"
+      :aria-pressed="app.currentView === item.key"
+      :aria-label="item.label"
+      :title="item.label"
+      @click="app.setView(item.key)"
     >
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M4 5h7v14H4zM15 9l3 3-3 3" />
-      </svg>
+      <svg
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.6"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        v-html="item.icon"
+      />
     </button>
   </nav>
 </template>
@@ -78,18 +88,6 @@ const items: Array<{ key: AppView; label: string; icon: string }> = [
   padding: 14px 7px;
   background: var(--cy-nav);
   border-right: 1px solid var(--cy-border);
-}
-
-.cy-brand {
-  display: grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  margin-bottom: 6px;
-  border-radius: 13px;
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
-  font-weight: 500;
 }
 
 .cy-nav-button {
@@ -112,10 +110,5 @@ const items: Array<{ key: AppView; label: string; icon: string }> = [
 
 .cy-nav-spacer {
   flex: 1;
-}
-
-.cy-nav-collapse[aria-pressed='true'] {
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
 }
 </style>

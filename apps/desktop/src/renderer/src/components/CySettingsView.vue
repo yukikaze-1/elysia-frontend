@@ -24,12 +24,14 @@ watch(() => voiceStore.notice, (n) => {
 })
 onBeforeUnmount(() => { if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer) })
 
+// 问题 9：nav note（阶段4 P4-A 等）是开发期占位标签泄漏，子页全实现后未清理——删除 note 列；
+// 面包屑去「· 阶段 N」。placeholder 仅占位兜底（五项都已实现，实际不触发）。
 const NAV_ITEMS = [
-  { key: 'model', label: '模型服务', note: '阶段4 P4-A', placeholder: '' },
-  { key: 'voice', label: '语音', note: '阶段4 P4-B', placeholder: '普通录音/实时语音会话/输入法转写/TTS 自动朗读' },
-  { key: 'security', label: '安全与权限', note: '阶段6', placeholder: '安全策略/权限审批/已授权命令' },
-  { key: 'character', label: '角色与外观', note: '阶段5', placeholder: 'Live2D 角色与外观' },
-  { key: 'diagnostics', label: '开发与诊断', note: '阶段7', placeholder: '开发者模式/日志' }
+  { key: 'model', label: '模型服务', placeholder: '' },
+  { key: 'voice', label: '语音', placeholder: '普通录音/实时语音会话/输入法转写/TTS 自动朗读' },
+  { key: 'security', label: '安全与权限', placeholder: '安全策略/权限审批/已授权命令' },
+  { key: 'character', label: '角色与外观', placeholder: 'Live2D 角色与外观' },
+  { key: 'diagnostics', label: '开发与诊断', placeholder: '开发者模式/日志' }
 ] as const
 
 type NavKey = (typeof NAV_ITEMS)[number]['key']
@@ -42,7 +44,6 @@ let triggerElement: Element | null = null   // 打开前的活动元素（关闭
 
 const currentNavItem = computed(() => NAV_ITEMS.find((n) => n.key === activeNav.value) ?? NAV_ITEMS[0])
 const currentNavLabel = computed(() => currentNavItem.value.label)
-const currentNavNote = computed(() => currentNavItem.value.note)
 const currentNavPlaceholder = computed(() => currentNavItem.value.placeholder)
 
 onMounted(() => {
@@ -76,7 +77,7 @@ onBeforeUnmount(() => { triggerElement = null })
       <header class="cy-settings-header">
         <div class="cy-settings-title">
           <strong>设置</strong>
-          <span class="cy-muted">模型服务 · 阶段 4</span>
+          <span class="cy-muted">{{ currentNavLabel }}</span>
         </div>
         <button ref="closeBtn" class="cy-close-btn" aria-label="关闭设置" @click="close">✕</button>
       </header>
@@ -92,7 +93,6 @@ onBeforeUnmount(() => { triggerElement = null })
             @click="activeNav = item.key"
           >
             <span>{{ item.label }}</span>
-            <span v-if="item.note" class="cy-settings-nav-note">{{ item.note }}</span>
           </button>
         </nav>
 
@@ -104,7 +104,6 @@ onBeforeUnmount(() => { triggerElement = null })
           <CyDiagnosticsPane v-else-if="activeNav === 'diagnostics'" />
           <div v-else class="cy-settings-placeholder" role="status">
             <strong>{{ currentNavLabel }}功能页</strong>
-            <span>占位：{{ currentNavNote }} 落地</span>
             <span v-if="currentNavPlaceholder" class="cy-muted">{{ currentNavPlaceholder }}</span>
           </div>
         </div>
@@ -177,12 +176,14 @@ onBeforeUnmount(() => { triggerElement = null })
 }
 .cy-settings-nav-item:hover { background: var(--cy-surface-hover); }
 .cy-settings-nav-item.active { color: var(--cy-accent-text); background: var(--cy-accent); }
-.cy-settings-nav-note { font-size: 10px; opacity: 0.75; }
 .cy-settings-body {
   flex: 1 1 0;
   min-width: 0;
   overflow-y: auto;   /* 内容区内部滚动，面板不溢出窗口 */
   padding: 16px 18px;
+  /* 问题 7（字型级重渲染）：hover 重绘时字形在合成层边界/亚像素相位间重光栅化产生 ~1px 上移。
+     内容包装层提升为稳定合成层，消除 hover 重绘引起的相位翻转（transform/opacity only，§10 合规；缓解非根除）。 */
+  transform: translateZ(0);
 }
 .cy-settings-placeholder {
   display: flex;
