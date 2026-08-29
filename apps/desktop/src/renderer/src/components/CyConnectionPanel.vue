@@ -3,8 +3,9 @@
 // - 装配模式(MOCK/REAL)来自 chat:get-runtime-info;Mock 模式隐藏 Endpoint/Token 输入;
 // - Endpoint 经 setEndpoint 规范化(origin 变化自动清 token 绑定);Token 密码框提交后立即清空明文(spec 3.2.2);
 // - connect 无参:endpoint/token 由 Main 侧 connection-config 持有。
-// UII-QQ 重构:常驻 260px 连接卡 → 紧凑状态徽标（REAL·已连接）+ 点击 popover 展开
-// （Endpoint/Token/版本/连接错误/连接·断开，Esc/点外部关闭）。能力不删，只调入口与视觉层级（任务约束 3）。
+// UII-QQ IA：从聊天头部移入 NavRail 底部——32×32 全局连接钮（插头图标 + 右下角状态点），
+// hover tooltip 显示完整状态；`.cy-status-text` 保留（sr-only 视觉隐藏但 textContent 可读——5 个集成测试轮询契约）；
+// 点击展开连接配置浮层（连接/断开、Endpoint、Token、版本、错误；Esc/点外部关闭），从按钮右侧展开不被裁切。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useConnectionStore } from '../stores/connection.store'
 import type { CredentialStatus } from '@shared/contracts'
@@ -24,7 +25,7 @@ const protocolVersion = computed(() => connection.state.protocolVersion)
 const connected = computed(() => connection.state.status === 'connected')
 const tokenLabel = computed(() => ({ available: 'Token 已设置', empty: 'Token 未设置', unavailable: '凭据存储不可用', locked: '凭据已锁定' }[tokenStatus.value] ?? ''))
 
-/** 徽标文案：mode + 连接状态（.cy-status-text 保留精确状态文本——5 个集成测试轮询该类名） */
+/** 徽标文案：mode + 连接状态（`.cy-status-text` sr-only 承载——textContent 含 REAL/MOCK 与状态，测试契约不变） */
 const modeLabel = computed(() => (mode.value === 'mock' ? 'MOCK' : 'REAL'))
 const statusLabel = computed(() => {
   switch (connection.state.status) {
@@ -54,7 +55,7 @@ const statusTone = computed(() => {
   }
 })
 
-// —— popover 开合（Esc / 点击外部关闭；面板不被滚动区裁切——header 非 scroll 容器，absolute 锚定徽标） ——
+// —— popover 开合（Esc / 点击外部关闭；从按钮右侧向上展开，z-index 高于聊天内容、低于设置 overlay） ——
 const open = ref(false)
 const rootRef = ref<HTMLElement>()
 function onDocPointerDown(e: PointerEvent): void {
@@ -129,21 +130,21 @@ async function toggleConnect(): Promise<void> {
 
 <template>
   <div ref="rootRef" class="cy-connection-panel">
-    <!-- 紧凑状态徽标：REAL·已连接 / MOCK·未连接 …（点击开 popover；窄容器缩为点+mode）。
-         不设 aria-label——可见文本即可达名（读屏读出 mode+状态），aria-expanded 表达开合 -->
+    <!-- NavRail 全局连接钮：插头图标 + 右下角状态点（绿/黄/红/灰）。
+         不设 aria-label——可见内容即可达名：sr-only 文本含 REAL/MOCK 与状态（/REAL|MOCK/ 测试契约保持），
+         hover tooltip = 完整状态 -->
     <button
       class="cy-conn-badge"
       :aria-expanded="open"
-      title="连接设置"
+      :title="`${modeLabel} · ${statusLabel}`"
       @click="open = !open"
     >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22v-5" /><path d="M9 8V2" /><path d="M15 8V2" /><path d="M18 8v3a6 6 0 0 1-12 0V8z" /></svg>
       <span class="cy-conn-dot" :class="statusTone" aria-hidden="true" />
-      <span class="cy-conn-mode">{{ modeLabel }}</span>
-      <span class="cy-conn-sep" aria-hidden="true">·</span>
-      <span class="cy-status-text">{{ statusLabel }}</span>
+      <span class="cy-status-text cy-sr-only">{{ modeLabel }} · {{ statusLabel }}</span>
     </button>
 
-    <!-- 配置 popover：Endpoint / Token / 后端与协议版本 / 连接错误 / 连接·断开（能力不删，任务约束 3） -->
+    <!-- 配置浮层：从按钮右侧向上展开（NavRail 60px 内不裁切）；能力全保留 -->
     <div v-if="open" class="cy-conn-pop" role="dialog" aria-label="连接设置">
       <button class="cy-btn cy-connect-btn" :disabled="busy" @click="toggleConnect">
         {{ connected ? '断开' : '连接' }}
@@ -182,59 +183,64 @@ async function toggleConnect(): Promise<void> {
 .cy-connection-panel {
   position: relative;
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
 }
 
-/* 紧凑徽标：一个入口同时表达 mode + 状态（替代原「绿点+已连接」+260px 连接卡双份表达） */
+/* NavRail 全局连接钮：32×32 图标钮，右下角状态点 */
 .cy-conn-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--cy-border);
-  border-radius: 999px;
-  background: var(--cy-surface);
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   color: var(--cy-muted);
-  font-size: 12px;
-  white-space: nowrap;
+  background: transparent;
+  border: 0;
 }
 
 .cy-conn-badge:hover {
+  color: var(--cy-accent);
   background: var(--cy-surface-hover);
 }
 
 .cy-conn-badge[aria-expanded='true'] {
-  background: var(--cy-surface-hover);
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
 }
 
 .cy-conn-dot {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--cy-muted);
+  box-shadow: 0 0 0 2px var(--cy-nav);
 }
 
 .cy-conn-dot.is-connected { background: var(--cy-success); }
 .cy-conn-dot.is-connecting { background: var(--cy-warning); }
 .cy-conn-dot.is-error { background: var(--cy-danger); }
 
-.cy-conn-mode {
-  color: var(--cy-muted);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-
-.cy-status-text {
-  color: var(--cy-text);
-  /* 问题 6/附注 B：状态文字不折行 */
+/* 集成测试契约（.cy-status-text textContent 轮询）：sr-only 视觉隐藏但可访问 */
+.cy-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
   white-space: nowrap;
 }
 
-/* popover：锚定徽标右对齐，不被裁切（header 非 scroll 容器）；层级高于消息区 */
+/* 配置浮层：从 NavRail 按钮右侧向上展开（bottom 对齐按钮底），不受 60px 栏宽裁切 */
 .cy-conn-pop {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 40;
+  left: calc(100% + 10px);
+  bottom: 0;
+  z-index: 45;
   display: flex;
   flex-direction: column;
   gap: 9px;
@@ -335,16 +341,5 @@ async function toggleConnect(): Promise<void> {
   color: var(--cy-danger);
   font-size: 11px;
   overflow-wrap: anywhere;
-}
-
-/* G1 容器查询（容器 = .cy-chat-header）：窄聊天把徽标缩为「点 + mode」（状态细节在 popover 内仍完整可达） */
-@container (max-width: 419px) {
-  .cy-conn-sep,
-  .cy-status-text {
-    display: none;
-  }
-  .cy-conn-pop {
-    width: 260px;
-  }
 }
 </style>

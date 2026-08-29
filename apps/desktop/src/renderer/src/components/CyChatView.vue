@@ -1,20 +1,18 @@
 <script setup lang="ts">
-// CyChatView:聊天主区——头部 + CyMessageList(自研虚拟列表,窗口化渲染)+ CyChatInput。
-// conversationStore 激活/新建(F1:create 不 reset messageStore,新建后须显式 activate(c.id));
-// 连接装配(Endpoint/Token/连接按钮)在 CyConnectionPanel(UII-QQ:紧凑连接入口 + popover)。
+// CyChatView:聊天主区——头部(仅会话标题) + CyMessageList(自研虚拟列表,窗口化渲染)+ CyChatInput。
+// conversationStore 激活/新建(F1:create 不 reset messageStore,新建后须显式 activate(c.id))。
+// UII-QQ IA 调整：头部只保留会话标题——聊天记录/资源移入 Composer 工具栏（CyChatInput），
+// 连接状态移入 NavRail 底部（CyConnectionPanel），角色开关改为聊天区右缘折叠把手（仅面板隐藏时显示）。
 import { computed } from 'vue'
 import { useConversationStore } from '../stores/conversation.store'
 import { useLayoutStore } from '../stores/layout.store'
-import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
-import CyConnectionPanel from './CyConnectionPanel.vue'
 import CyTtsPlayer from './CyTtsPlayer.vue'
 import CyLiveToolCards from './CyLiveToolCards.vue'   // 阶段 6 批次 B（Task 7）：工具实时区（消息列表与输入区之间）
 
 const conversationStore = useConversationStore()
 const layout = useLayoutStore()
-const historyStore = useHistoryViewerStore()
 
 const convTitle = computed(() => {
   const c = conversationStore.items.find((i) => i.id === conversationStore.currentId)
@@ -26,27 +24,12 @@ const convTitle = computed(() => {
 </script>
 
 <template>
-  <section class="cy-chat">
+  <section class="cy-chat" :class="{ 'cy-live2d-off': !layout.effective.live2dShown }">
     <header class="cy-chat-header">
-      <!-- UII-QQ：标题是头部主体；连接状态收敛到右侧 CyConnectionPanel 紧凑入口（不再「绿点+已连接」与连接卡双份表达） -->
+      <!-- UII-QQ IA：头部仅会话标题（左对齐可省略）。全局连接状态在 NavRail 底部；
+           聊天记录/资源在 Composer 工具栏；角色开关在右缘把手（面板隐藏时显示） -->
       <div class="cy-chat-heading">
         <h2>{{ convTitle }}</h2>
-      </div>
-      <div class="cy-header-actions">
-        <!-- P2-1：查看器入口不 gating（spec §4.8）——未连接时打开查询经 Main 失败，在查看器错误区展示 -->
-        <button class="cy-action-button" title="聊天记录" @click="historyStore.openViewer()">聊天记录</button>
-        <button class="cy-action-button" title="资源" @click="historyStore.openViewer('image_video')">资源</button>
-        <!-- 角色：紧凑图标钮（live2dShown 时是唯一可再展开的入口——面板折叠后 v-show 隐藏但其 toggle 不可点） -->
-        <button
-          class="cy-action-button cy-action-icon"
-          :aria-pressed="layout.effective.live2dShown"
-          title="显示/隐藏角色"
-          aria-label="显示/隐藏角色"
-          @click="layout.toggleLive2d()"
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M15 3v18" /></svg>
-        </button>
-        <CyConnectionPanel />
       </div>
     </header>
 
@@ -55,11 +38,24 @@ const convTitle = computed(() => {
     <CyChatInput />
     <!-- P4-B TTS 播放宿主：隐藏 <audio>，由 voiceStore.tts.url 驱动（spec §5.12 / D-P8） -->
     <CyTtsPlayer />
+
+    <!-- UII-QQ IA：角色栏折叠把手——仅面板隐藏时显示；点击 toggleLive2d（layoutStore 语义不变）。
+         位于聊天区右缘，.cy-live2d-off 时消息区让出 16px 边条，不遮挡滚动条/回到底部/输入区 -->
+    <button
+      v-if="!layout.effective.live2dShown"
+      class="cy-live2d-handle"
+      title="展开角色栏"
+      aria-label="展开角色栏"
+      @click="layout.toggleLive2d()"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M15 3v18" /></svg>
+    </button>
   </section>
 </template>
 
 <style scoped>
 .cy-chat {
+  position: relative;   /* 右缘把手定位锚点 */
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -70,13 +66,11 @@ const convTitle = computed(() => {
 .cy-chat-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   min-height: 50px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--cy-border);
   background: var(--cy-surface);
-  container-type: inline-size; /* 连接入口据此容器查询降级 */
   min-width: 0;
 }
 
@@ -94,41 +88,33 @@ const convTitle = computed(() => {
   text-overflow: ellipsis;
 }
 
-.cy-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto; /* 极端窄聊天下不收缩，给标题省略留空间 */
+/* 角色栏折叠态：消息区让出 16px 右边条给把手——滚动条随之左移，不被遮挡 */
+.cy-chat.cy-live2d-off .cy-messages {
+  border-right: 16px solid var(--cy-pane);
 }
 
-.cy-action-button {
-  padding: 7px 11px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--cy-muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.cy-action-button:hover {
-  color: var(--cy-text);
-  background: var(--cy-surface-hover);
-}
-
-.cy-action-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* 角色紧凑图标钮（降低视觉权重，但保 live2dShown 时可再展开的入口） */
-.cy-action-icon {
+.cy-live2d-handle {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
   display: grid;
   place-items: center;
-  padding: 7px 9px;
+  width: 16px;
+  height: 56px;
+  padding: 0;
+  color: var(--cy-muted);
+  background: var(--cy-surface);
+  border: 1px solid var(--cy-border);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  box-shadow: -2px 0 6px rgb(0 0 0 / 0.06);
 }
-.cy-action-icon[aria-pressed='true'] {
+
+.cy-live2d-handle:hover {
   color: var(--cy-accent-text);
   background: var(--cy-accent);
+  border-color: var(--cy-accent);
 }
 </style>

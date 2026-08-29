@@ -3,7 +3,9 @@
 // 布局折叠按钮保留（layoutStore 原有语义不变）。
 // UI 问题 10/11：折叠开关上移到标题栏左上（替代装饰三点），设置按钮沉底（VS Code/Discord 惯例）；
 // 删除纯装饰 Cy 徽标（形似按钮但不可点，制造误导）。
+// UII-QQ IA：连接状态入口移入 NavRail 底部（设置上方）——连接是全局运行状态，不属于单个会话。
 import { useAppStore, type AppView } from '../stores/app.store'
+import CyConnectionPanel from './CyConnectionPanel.vue'
 
 const app = useAppStore()
 
@@ -20,7 +22,7 @@ const items: Array<{ key: AppView; label: string; icon: string }> = [
   }
 ]
 
-/** 设置按钮沉底（问题 10）：与聊天/任务分开，置于 spacer 之下。 */
+/** 设置按钮沉底（问题 10）：与聊天/任务分开，置于 spacer 之下。连接入口在其上方（IA 调整）。 */
 const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
   {
     key: 'settings',
@@ -54,6 +56,7 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
       />
     </button>
     <span class="cy-nav-spacer" />
+    <CyConnectionPanel />
     <button
       v-for="item in bottomItems"
       :key="item.key"

@@ -12,6 +12,7 @@ import { useDraftStore } from '../stores/draft.store'
 import { useAttachmentStore } from '../stores/attachment.store'
 import { useVoiceStore } from '../stores/voice.store'
 import { useSettingsStore } from '../stores/settings.store'
+import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import CyAttachmentQueue from './CyAttachmentQueue.vue'
 import CyDropOverlay from './CyDropOverlay.vue'
 import CyEmojiPicker from './CyEmojiPicker.vue'
@@ -27,6 +28,7 @@ const draftStore = useDraftStore()
 const attachmentStore = useAttachmentStore()
 const voiceStore = useVoiceStore()
 const settingsStore = useSettingsStore()
+const historyStore = useHistoryViewerStore()   // UII-QQ IA：聊天记录/资源入口移入 Composer 工具栏（离线可用，不 gating）
 const fileInput = ref<HTMLInputElement>()
 const dragActive = ref(false)
 let dragDepth = 0
@@ -356,6 +358,16 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
             <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
           </button>
           <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
+          <!-- UII-QQ IA：右侧会话入口（聊天记录/资源）——从聊天头部移入；不 gating，离线可打开查看器 -->
+          <span class="cy-composer-toolbar-spacer" />
+          <button class="cy-history-btn" title="聊天记录" aria-label="聊天记录" @click="historyStore.openViewer()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
+            <span class="cy-entry-label">聊天记录</span>
+          </button>
+          <button class="cy-history-btn" title="资源" aria-label="资源" @click="historyStore.openViewer('image_video')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 15 5-5 4 4 3-3 6 6" /><circle cx="9" cy="9.5" r="1.4" /></svg>
+            <span class="cy-entry-label">资源</span>
+          </button>
         </div>
 
         <textarea
@@ -470,6 +482,44 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 
 .cy-composer-toolbar-spacer {
   flex: 1;
+}
+
+/* UII-QQ IA：右侧会话入口（聊天记录/资源）——图标 + 文字，窄 Composer 隐藏文字只留图标 */
+.cy-history-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 9px;
+  color: var(--cy-muted);
+  background: transparent;
+  border: 1px solid transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cy-history-btn:hover {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-entry-label {
+  min-width: 0;
+}
+
+/* 窄 Composer：入口文字隐藏（按钮仍可点，tooltip 保留）——与快捷键提示同一阈值 */
+@container (max-width: 639px) {
+  .cy-composer-hint,
+  .cy-entry-label {
+    display: none;
+  }
+
+  .cy-history-btn {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
 }
 
 /* 中部：多行 textarea，自适应高度（autoGrow），空闲紧凑 */

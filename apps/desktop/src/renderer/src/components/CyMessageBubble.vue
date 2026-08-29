@@ -29,8 +29,9 @@ const publicSegments = computed(() =>
     .sort((a, b) => a.segmentIndex - b.segmentIndex)
 )
 
-/** 父回复完成后 usage/model/emotion 才写入(messageStore.finalizeAssistant),因此有 meta 即"completed 后" */
-const hasMeta = computed(() => !!(props.message.usage || props.message.model || props.message.emotion))
+/** 父回复完成后 usage/model 才写入(messageStore.finalizeAssistant);emotion 同期写入但独立展示(UII-QQ IA:
+ *  心情是人格化旁白,技术元数据是运维信息,两者分行) */
+const hasTechMeta = computed(() => !!(props.message.model || props.message.usage))
 
 /** 非完成态可见提示(failed/interrupted);正常 completed 不展示(UII-QQ:状态噪音清零) */
 const terminalNote = computed(() => {
@@ -113,11 +114,12 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
         />
         <span v-else class="cy-media-placeholder cy-bubble">[{{ seg.kind }} 分段]</span>
       </template>
-      <!-- 消息元数据：低权重单行小字，不抢正文（数据保留不删） -->
-      <div v-if="hasMeta" class="cy-msg-meta">
+      <!-- UII-QQ IA：心情独立行（人格化旁白，♡ 轻量字符不使用彩色 Emoji；自然换行不挤出消息列）；
+           技术元数据（model/tokens）单独一行低权重展示，数据与后端契约不变 -->
+      <span v-if="message.emotion" class="cy-msg-emotion"><span class="cy-msg-emotion-heart" aria-hidden="true">♡</span>{{ message.emotion }}</span>
+      <div v-if="hasTechMeta" class="cy-msg-meta">
         <span v-if="message.model">{{ message.model }}</span>
         <span v-if="message.usage">{{ message.usage.total }} tokens</span>
-        <span v-if="message.emotion">{{ message.emotion }}</span>
       </div>
       <span v-if="terminalNote" class="cy-status-note">{{ terminalNote }}</span>
     </div>
@@ -247,7 +249,23 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   font-size: 12px;
 }
 
-/* 元数据：低权重单行（model · tokens · emotion），小字弱于正文 */
+/* UII-QQ IA：心情旁白——独立于技术元数据，小字斜体、柔和但可读，自然换行不挤出消息列 */
+.cy-msg-emotion {
+  max-width: 100%;
+  color: var(--cy-muted);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.cy-msg-emotion-heart {
+  margin-right: 5px;
+  color: var(--cy-accent-strong);
+  font-style: normal;
+}
+
+/* 技术元数据：仅 model/tokens，低权重灰色单行；多项间以中点分隔 */
 .cy-msg-meta {
   display: flex;
   flex-wrap: wrap;
@@ -256,6 +274,11 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   color: var(--cy-muted);
   font-size: 11px;
   opacity: 0.85;
+}
+
+.cy-msg-meta span + span::before {
+  content: '·';
+  margin-right: 8px;
 }
 
 .cy-status-note {
