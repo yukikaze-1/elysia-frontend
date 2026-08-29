@@ -46,3 +46,6 @@ Thumbs.db
 *.tsbuildinfo
 
 tmp/
+
+# UI 走查临时产物（截图 + 后台工具脚本；正式归档时再移入 docs/ 并移除本条）
+tmp-ui-walkthrough/

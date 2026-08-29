@@ -2,7 +2,7 @@
 // CyChatInput:输入区。回车发送/Shift+Enter 换行;发送按钮;sending 期间禁用(F3,Task 4 review);
 // 停止按钮(activeGenerationId 存在时);断线横幅(connectionStore.state.status 为 reconnecting/error)。
 // G2(§4.4.1):草稿源改 draftStore(内存态 + 防抖持久化归 Main);发送成功清草稿、失败保留;超限/淘汰横幅。
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { isCompositionEnter } from '@shared/domain'
 import type { PendingSticker } from '@shared/contracts/attachments'
 import { useConnectionStore } from '../stores/connection.store'
@@ -131,6 +131,18 @@ const draft = computed({
   set: (v: string) => { if (currentId.value) draftStore.saveDraft(currentId.value, v) }
 })
 const overLimit = computed(() => (currentId.value ? !!draftStore.overLimit[currentId.value] : false))
+
+// —— UII-QQ Composer：textarea 自适应高度（空闲紧凑 1 行，长文本增高，上限后内部滚动）。
+//    只改自身高度（触发消息列表 viewportResize 重算窗口切分），不涉滚动/锚点机制 ——
+const TEXTAREA_MAX_H = 160
+function autoGrow(): void {
+  const ta = textareaRef.value
+  if (!ta) return
+  ta.style.height = 'auto'
+  ta.style.height = `${Math.min(ta.scrollHeight, TEXTAREA_MAX_H)}px`
+}
+watch(draft, () => { void nextTick(autoGrow) })
+onMounted(autoGrow)
 
 const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
@@ -312,93 +324,99 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       <CyAttachmentQueue />
       <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" @leave="dragActive = false" />
 
-      <div class="cy-composer-box">
-        <!-- batch02rev：工具键如 QQ 桌面端上移——输入框上方一排（＋ 附件 / 😊 表情 / 🎙️ 独立录音），
-             输入框内只留 textarea + 停止 + 转录主键 + 发送。 -->
-        <!-- ＋ 附件：直接打开文件选择器（去掉 ▾ 下拉菜单） -->
-        <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" :disabled="voiceActive" @click="fileInput?.click()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-        </button>
-        <!-- 😊 表情/表情包：点击弹出面板（Esc 关闭——window capture 兜底） -->
-        <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 7.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM8.5 9.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM12 17c-2.5 0-4.5-1.5-5-3.5h10c-.5 2-2.5 3.5-5 3.5z"/></svg>
-        </button>
-        <!-- 表情面板：紧跟 😊 锚定（position relative），向上弹出；absolute 脱离 flex 流不占位 -->
-        <div v-if="showPicker" class="cy-picker-wrap" @keydown="onPickerKeydown">
-          <CyEmojiPicker class="cy-emoji-pop" @select-emoji="insertEmoji" @select-sticker="onSelectSticker" @close="showPicker = false" />
+      <!-- UII-QQ：单一 Composer 容器——上工具栏（＋/😊/🎙️）/ 中 textarea 自适应 / 底栏（实时语音 | 提示+转写+停止+发送）。
+           所有事件函数、disabled 条件、录音计时、按住转写、上滑取消语义不变（红线：业务行为不回退） -->
+      <div class="cy-composer-shell">
+        <div class="cy-composer-toolbar">
+          <!-- ＋ 附件：直接打开文件选择器 -->
+          <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" :disabled="voiceActive" @click="fileInput?.click()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <!-- 😊 表情/表情包：点击弹出面板（Esc 关闭——window capture 兜底） -->
+          <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 7.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM8.5 9.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM12 17c-2.5 0-4.5-1.5-5-3.5h10c-.5 2-2.5 3.5-5 3.5z"/></svg>
+          </button>
+          <!-- 表情面板：紧跟 😊 锚定（toolbar relative），向上弹出；absolute 脱离 flex 流不占位 -->
+          <div v-if="showPicker" class="cy-picker-wrap" @keydown="onPickerKeydown">
+            <CyEmojiPicker class="cy-emoji-pop" @select-emoji="insertEmoji" @select-sticker="onSelectSticker" @close="showPicker = false" />
+          </div>
+          <!-- 🎙️ 独立录音按钮（toggle）：录音中红点+计时 → 变「停止录音」 -->
+          <button
+            class="cy-record-btn"
+            :class="{ recording: voiceStore.mode === 'recording' }"
+            :disabled="recordDisabled"
+            :title="voiceStore.mode === 'recording' ? '停止录音' : '录制语音消息'"
+            :aria-label="voiceStore.mode === 'recording' ? '停止录音' : '普通录音'"
+            @click="onToggleRecord"
+          >
+            <template v-if="voiceStore.mode === 'recording'">
+              <i class="cy-rec-dot" aria-hidden="true" />
+              <span class="cy-rec-timer">{{ formatElapsed(voiceStore.record.elapsedMs) }}</span>
+            </template>
+            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
+          </button>
+          <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
         </div>
-        <!-- 🎙️ 独立录音按钮（不做 ▾ 下拉）：toggle 录音，录音中变「停止录音」 -->
-        <button
-          class="cy-record-btn"
-          :class="{ recording: voiceStore.mode === 'recording' }"
-          :disabled="recordDisabled"
-          :title="voiceStore.mode === 'recording' ? '停止录音' : '录制语音消息'"
-          :aria-label="voiceStore.mode === 'recording' ? '停止录音' : '普通录音'"
-          @click="onToggleRecord"
-        >
-          <template v-if="voiceStore.mode === 'recording'">
-            <i class="cy-rec-dot" aria-hidden="true" />
-            <span class="cy-rec-timer">{{ formatElapsed(voiceStore.record.elapsedMs) }}</span>
-          </template>
-          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
-        </button>
-        <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
-        <span class="cy-composer-toolbar-spacer" />
-      </div>
-      <!-- 文本输入行：textarea + 停止 + 转录主键(hold) + 发送 -->
-      <div class="cy-composer-box cy-input-row">
+
         <textarea
           ref="textareaRef"
           v-model="draft"
+          class="cy-composer-textarea"
           :disabled="messageStore.sending || voiceActive"
           placeholder="输入消息，Enter 发送"
           rows="1"
           aria-label="消息输入框"
           @keydown.enter.exact="onEnter"
         />
-        <button
-          v-if="hasActiveGeneration"
-          class="cy-stop-btn"
-          title="停止生成"
-          aria-label="停止生成"
-          @click="stop"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="6" y="6" width="12" height="12" rx="2" />
-          </svg>
-        </button>
-        <!-- 🎙️ 转录主键(hold)：按住说→进草稿。与独立录音按钮分开（上游 batch02rev 决策）。 -->
-        <button
-          class="cy-voice-btn cy-voice-main"
-          :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel }"
-          :disabled="dictationDisabled"
-          :title="'转写（按住说话）'"
-          aria-label="输入法转写（按住说话）"
-          @pointerdown="onVoicePointerDown"
-          @pointermove="onDictationPointerMove"
-          @pointerup="onDictationPointerUp"
-          @pointercancel="onDictationPointerCancel"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h4M12 20h6" /><path d="M8 4h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
-        </button>
-        <button class="cy-send-btn" :disabled="!canSend" title="发送" aria-label="发送" @click="send">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M5 12h14M13 6l6 6-6 6" />
-          </svg>
-        </button>
+
+        <div class="cy-composer-footer">
+          <!-- UII02 实时语音入口：footer 左侧低权重 chip（替代原框外大胶囊）；isRealtime 时整区被 CyRealtimeBar 替换 -->
+          <button
+            class="cy-realtime-chip"
+            :disabled="realtimeDisabled"
+            :aria-pressed="voiceStore.mode === 'realtime'"
+            title="实时语音会话"
+            aria-label="实时会话"
+            @click="onToggleRealtime"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 010 7" /><path d="M18.5 5.5a9 9 0 010 13" /></svg>
+            <span>实时语音</span>
+          </button>
+          <span class="cy-composer-footer-spacer" />
+          <span class="cy-composer-hint">Enter 发送 · Shift+Enter 换行</span>
+          <!-- 🎙️ 转录主键(hold)：按住说→进草稿。上滑取消语义不变 -->
+          <button
+            class="cy-voice-btn"
+            :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel }"
+            :disabled="dictationDisabled"
+            :title="'转写（按住说话）'"
+            aria-label="输入法转写（按住说话）"
+            @pointerdown="onVoicePointerDown"
+            @pointermove="onDictationPointerMove"
+            @pointerup="onDictationPointerUp"
+            @pointercancel="onDictationPointerCancel"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h4M12 20h6" /><path d="M8 4h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+          </button>
+          <button
+            v-if="hasActiveGeneration"
+            class="cy-stop-btn"
+            title="停止生成"
+            aria-label="停止生成"
+            @click="stop"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="6" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+          <button class="cy-send-btn" :disabled="!canSend" title="发送" aria-label="发送" @click="send">
+            <span>发送</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </button>
+        </div>
       </div>
-      <!-- UII02 实时语音：独立 accent 胶囊（框外、模式入口）。点击 startRealtime；isRealtime 时整区被 CyRealtimeBar 替换 -->
-      <button
-        class="cy-realtime-capsule"
-        :disabled="realtimeDisabled"
-        :aria-pressed="voiceStore.mode === 'realtime'"
-        title="实时语音会话"
-        aria-label="实时会话"
-        @click="onToggleRealtime"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 010 7" /><path d="M18.5 5.5a9 9 0 010 13" /></svg>
-        <span>实时语音</span>
-      </button>
     </template>
     <!-- P4-B 实时会话：输入区替换为实时状态条（聆听 + 字幕 + 轮次 + 停止） -->
     <CyRealtimeBar v-else />
@@ -410,9 +428,6 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
         <button :aria-label="`移除 ${s.stickerId}`" @click="removeSticker(s.stickerId)">✕</button>
       </span>
     </div>
-    <div class="cy-composer-status">
-      <span class="cy-muted">Enter 发送 · Shift+Enter 换行</span>
-    </div>
 
     <!-- P4-B consent（D-P16）：首个 backend-STT 语音操作前确认对话框 -->
     <CyVoiceConsentDialog />
@@ -422,9 +437,87 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 <style scoped>
 .cy-composer {
   position: relative;   /* G3 CyDropOverlay absolute 定位锚点 */
-  padding: 10px 14px 14px;
+  /* UII-QQ P2：本组件自身的 inline-size 容器——底部 @container（隐藏快捷键提示）据此生效。
+     原 bug：规则写在本组件却依赖兄弟子树（.cy-chat-header）作容器祖先，永不匹配。
+     inline-size containment 只锁宽度计算（footer 宽由父 flex 决定），不影响高度布局 */
+  container-type: inline-size;
+  padding: 10px 16px 12px;
   background: var(--cy-pane);
   border-top: 1px solid var(--cy-border);
+}
+
+/* —— UII-QQ：单一 Composer 容器（合并原「工具框 + 输入框」双框结构）—— */
+.cy-composer-shell {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 8px;
+  background: var(--cy-surface);
+  border: 1px solid var(--cy-border);
+  border-radius: 14px;
+}
+
+.cy-composer-shell:focus-within {
+  border-color: var(--cy-accent-strong);
+}
+
+/* 上工具栏：＋ 附件 / 😊 表情 / 🎙️ 录音（QQ 桌面端同款顶部工具条） */
+.cy-composer-toolbar {
+  position: relative;   /* emoji pop 锚点 */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cy-composer-toolbar-spacer {
+  flex: 1;
+}
+
+/* 中部：多行 textarea，自适应高度（autoGrow），空闲紧凑 */
+.cy-composer-textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
+  resize: none;
+  padding: 4px 4px 6px;
+  color: var(--cy-text);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  line-height: 1.55;
+  overflow-y: auto;
+}
+
+.cy-composer-textarea:disabled {
+  color: var(--cy-muted);
+  cursor: not-allowed;
+}
+
+/* 底栏：左=实时语音入口；右=快捷键提示 + 转写 + 停止 + 发送 */
+.cy-composer-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+}
+
+.cy-composer-footer-spacer {
+  flex: 1;
+}
+
+.cy-composer-hint {
+  color: var(--cy-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* 窄 Composer：提示先收敛（红线 §5——不出现横滚、发送不消失）。
+   阈值 640：布局算法保护聊天区后 composer 实测最窄 ≈668（单栏）/508（1200 窗双栏全开，正是挤压风险场景）；
+   底栏元素总宽 ≈408（含停止钮），640 以上永远放得下，640 以下先让提示让位 */
+@container (max-width: 639px) {
+  .cy-composer-hint {
+    display: none;
+  }
 }
 
 .cy-banner {
@@ -461,44 +554,6 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   margin-left: auto;
 }
 
-.cy-composer-box {
-  /* UI精修 01：grid 列数改为 flex——组内含分隔线 span，硬编码列数会因元素增删而脆 */
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 8px;
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 14px;
-}
-
-/* batch02rev：toolbar 行（＋ 😊 🎙️ 录音）右侧留白，emoji pop 锚定此行；input 行紧凑 */
-.cy-composer-toolbar-spacer {
-  flex: 1;
-}
-
-.cy-input-row {
-  margin-top: 7px;
-}
-
-.cy-composer textarea {
-  flex: 1;
-  min-width: 0;
-  min-height: 40px;
-  max-height: 72px;
-  resize: none;
-  padding: 7px 4px;
-  color: var(--cy-text);
-  background: transparent;
-  border: 0;
-  outline: 0;
-}
-
-.cy-composer textarea:disabled {
-  color: var(--cy-muted);
-  cursor: not-allowed;
-}
-
 .cy-stop-btn,
 .cy-send-btn,
 .cy-voice-btn {
@@ -509,9 +564,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   border-radius: 9px;
 }
 
-/* P4-B 语音三入口：与 attach 同尺寸；录音中红点 + 计时高亮；转写按住高亮/上滑取消变体 */
 .cy-voice-btn {
-  gap: 4px;
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid var(--cy-border);
@@ -528,6 +581,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-voice-btn.active {
+  width: auto;
+  min-width: 32px;
+  padding: 0 9px;
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border-color: var(--cy-accent);
@@ -537,12 +593,6 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   color: var(--cy-danger);
   background: var(--cy-surface-soft);
   border-color: var(--cy-danger);
-}
-
-.cy-voice-btn.active {
-  width: auto;
-  min-width: 32px;
-  padding: 0 9px;
 }
 
 .cy-rec-dot {
@@ -576,12 +626,17 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   border-radius: 9px;
   color: var(--cy-muted);
   background: transparent;
-  border: 1px solid var(--cy-border);
+  border: 1px solid transparent;
 }
 
-.cy-attach-btn:hover {
+.cy-attach-btn:hover:not(:disabled) {
   color: var(--cy-accent);
   background: var(--cy-surface-hover);
+}
+
+.cy-attach-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .cy-stop-btn {
@@ -594,9 +649,23 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   background: var(--cy-surface-hover);
 }
 
+/* 发送：明确主按钮（文字 + 图标），不再是淡色箭头 */
 .cy-send-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  min-width: 64px;
+  height: 32px;
+  padding: 0 12px;
   color: var(--cy-accent-text);
-  background: var(--cy-accent);
+  background: var(--cy-accent-strong);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cy-send-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
 }
 
 .cy-send-btn:disabled {
@@ -604,40 +673,27 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   cursor: not-allowed;
 }
 
-.cy-composer-status {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 7px;
-  color: var(--cy-muted);
-  font-size: 11px;
-}
-
-/* UII02 实时语音独立 capsule：框外、accent 填充凸显「核心模式入口」；isRealtime 时整区被替换成 CyRealtimeBar */
-.cy-realtime-capsule {
+/* UII02 实时语音：footer 低权重 chip 入口 */
+.cy-realtime-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 7px 14px;
-  border: 0;
+  gap: 5px;
+  padding: 5px 10px;
   border-radius: 999px;
-  background: var(--cy-accent);
-  color: var(--cy-accent-text);
+  color: var(--cy-muted);
+  background: transparent;
+  border: 1px solid var(--cy-border);
   font-size: 12px;
-  cursor: pointer;
-}
-.cy-realtime-capsule:hover:not(:disabled) {
-  filter: brightness(0.94);
-}
-.cy-realtime-capsule:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
-/* batch02rev：表情面板锚点——pop 相对 .cy-composer-box（toolbar）定位，向上弹出 */
-.cy-composer-box {
-  position: relative;   /* emoji pop 锚点 */
+.cy-realtime-chip:hover:not(:disabled) {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-realtime-chip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* 表情包按钮（toolbar 内） */
@@ -648,8 +704,8 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   height: 32px;
   border-radius: 9px;
   color: var(--cy-muted);
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
+  background: transparent;
+  border: 1px solid transparent;
 }
 
 .cy-emoji-btn:hover {
@@ -657,7 +713,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   background: var(--cy-surface-hover);
 }
 
-/* batch02rev：独立录音按钮（toggle，录音中红点+计时） */
+/* 独立录音按钮（toggle，录音中红点+计时） */
 .cy-record-btn {
   display: grid;
   place-items: center;
@@ -667,7 +723,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   border-radius: 9px;
   color: var(--cy-muted);
   background: transparent;
-  border: 1px solid var(--cy-border);
+  border: 1px solid transparent;
 }
 .cy-record-btn:hover:not(:disabled) {
   color: var(--cy-accent);

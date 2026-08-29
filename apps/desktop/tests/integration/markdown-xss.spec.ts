@@ -58,6 +58,8 @@ function writeFixture(): string {
 
 /** 「连接 + 激活首个会话 + UI 发送」——对齐 electron-live2d.spec 的 connectAndActivateFirst/sendChat 先例 */
 async function connectAndSend(page: Page, text: string): Promise<void> {
+  // UII-QQ：连接钮收进连接入口 popover——先点徽标（REAL/MOCK）展开，再点连接（能力不删，入口变更）
+  await page.getByRole('button', { name: /REAL|MOCK/ }).click()
   await page.getByRole('button', { name: '连接', exact: true }).click()
   await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), { timeout: 8000, interval: 200 })
     .toContain('已连接')
@@ -83,7 +85,7 @@ function collectDomFacts(): {
   // 归一化判别（对齐 DOMPurify ATTR_WHITESPACE 类集合）：剥前导字符再测 scheme——
   // 与 a[href^="javascript:"] 选择器互辅：选择器只测「无前导空白」原型，归一化扫描才是变体判别面（安全复核 R2-MED-1）。
   const schemeRe = /^[\u0000-\u0020\u00A0\u1680\u180E\u2000-\u2029\u205F\u3000]*(?:javascript|data|vbscript):/i
-  const scope = '.cy-public-reply'
+  const scope = '.cy-assistant-row'
   const container = document.querySelector(scope)
   const w = window as unknown as Record<string, unknown>
   const onattr: string[] = []
@@ -109,7 +111,8 @@ function collectDomFacts(): {
     badTags,
     imgDataSvg: document.querySelectorAll(`${scope} img[src^="data:image/svg"]`).length,
     url: location.href,
-    markdownRendered: (document.querySelector(`${scope} .cy-markdown`)?.textContent ?? '').includes('XSSFIX-START'),
+    // UII-QQ：assistant 行内首个 markdown 恒为内心独白——任一命中才算 fixture 已渲染
+    markdownRendered: [...document.querySelectorAll(`${scope} .cy-markdown`)].some((m) => (m.textContent ?? '').includes('XSSFIX-START')),
   }
 }
 
@@ -135,8 +138,11 @@ describe('Markdown XSS（真实 Chromium 安全门禁层——spec §3.4）', ()
     page.on('dialog', (d) => { void d.dismiss().catch(() => {}) })
     // 发送消息 → mock replyFixtureText 覆盖回复正文（真实 UI 流式渲染路径）
     await connectAndSend(page, 'xss-fixture')
+    // UII-QQ：无通道包装层后 assistant 行内有「内心独白 + 公开回复」两处 markdown——
+    // 标记检查必须是「任一 markdown 命中」（querySelector 首个匹配恒为内心独白，不含 fixture 标记）
     await expect.poll(
-      () => page.evaluate(() => (document.querySelector('.cy-public-reply .cy-markdown')?.textContent ?? '').includes('XSSFIX-START')),
+      () => page.evaluate(() => [...document.querySelectorAll('.cy-assistant-row .cy-markdown')]
+        .some((m) => (m.textContent ?? '').includes('XSSFIX-START'))),
       { timeout: 15_000, interval: 200 },
     ).toBe(true)
     const facts = await page.evaluate(collectDomFacts)
@@ -157,14 +163,14 @@ describe('Markdown XSS（真实 Chromium 安全门禁层——spec §3.4）', ()
     expect(facts.url).toMatch(/^cyrene:\/\//)
     // 7. 点击已渲染锚（首个 a[href]——安全链接 confirm 被 dismiss）→ URL 不变（CyMarkdown 点击层 + will-navigate 双保险）
     await page.evaluate(() => {
-      const a = document.querySelector<HTMLAnchorElement>('.cy-public-reply a[href]')
+      const a = document.querySelector<HTMLAnchorElement>('.cy-assistant-row a[href]')
       if (a) a.click()
     })
     await expect.poll(() => page.url(), { timeout: 5000, interval: 200 }).toMatch(/^cyrene:\/\//)
     // 8. 选择器原型面（无前导空白变体——变体判别已由 2 归一化面覆盖）
     const rawSelectors = await page.evaluate(() => ({
-      js: document.querySelectorAll('.cy-public-reply a[href^="javascript:"]').length,
-      data: document.querySelectorAll('.cy-public-reply a[href^="data:"]').length,
+      js: document.querySelectorAll('.cy-assistant-row a[href^="javascript:"]').length,
+      data: document.querySelectorAll('.cy-assistant-row a[href^="data:"]').length,
     }))
     expect(rawSelectors).toEqual({ js: 0, data: 0 })
   })

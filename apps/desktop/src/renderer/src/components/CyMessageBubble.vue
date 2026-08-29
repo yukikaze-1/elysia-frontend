@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// CyMessageBubble:单条消息气泡。user 右对齐纯文本;assistant 左对齐,按 assistantSegments(segmentIndex 排序)
-// 渲染 inner_voice 折叠(默认收起)+ public_reply CyMarkdown;usage/model/emotion chips(父回复完成后才写入并展示)。
+// CyMessageBubble:单条消息气泡。user 右对齐(「我」头像)+纯文本;assistant 左对齐(Cyrene 头像),
+// 按 assistantSegments(segmentIndex 排序)渲染:内心独白 details 折叠(默认收起,标题仅「内心独白」)+
+// public_reply 白色气泡 + 工具卡 + 元数据低权重行。UII-QQ 重构:去掉「外层大卡片+状态行+蓝色正文框」
+// 多层嵌套;completed 不展示,failed/interrupted 仍明确展示(inner_voice 数据不删,只改展示)。
 import { computed } from 'vue'
 import type { AssistantSegment, Message } from '@shared/contracts'
 import { stickerRenderUrl } from '@shared/domain'
@@ -30,13 +32,16 @@ const publicSegments = computed(() =>
 /** 父回复完成后 usage/model/emotion 才写入(messageStore.finalizeAssistant),因此有 meta 即"completed 后" */
 const hasMeta = computed(() => !!(props.message.usage || props.message.model || props.message.emotion))
 
-/** 非完成态可见提示(failed/interrupted),streaming/completed 不重复显示 */
+/** 非完成态可见提示(failed/interrupted);正常 completed 不展示(UII-QQ:状态噪音清零) */
 const terminalNote = computed(() => {
   const s = props.message.status
   if (s === 'failed') return '回复失败'
   if (s === 'interrupted') return '已中断'
   return ''
 })
+
+/** 纯贴图消息（content 空 + 仅 sticker）：贴图独立渲染,不加文字气泡底 */
+const stickerOnly = computed(() => isUser.value && !props.message.content && !!props.message.stickerId)
 
 function segmentText(seg: AssistantSegment): string {
   return seg.text ?? ''
@@ -54,32 +59,32 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 </script>
 
 <template>
-  <!-- user 消息:右对齐;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html)。failed 加错误角标(P2-4) -->
+  <!-- user 消息:右对齐 + 「我」头像;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html);failed 加错误角标(P2-4) -->
   <div v-if="isUser" class="cy-message-row cy-user-row">
-    <div class="cy-message cy-user-message">
-      <p v-if="message.content">{{ message.content }}</p>
-      <!-- G4：用户贴图消息（wire Message.stickerId；content 可空） -->
-      <img v-if="message.stickerId" :src="stickerSrc(message.stickerId)" class="cy-sticker-img" alt="表情" />
+    <div class="cy-msg-col cy-user-col">
+      <p v-if="message.content" class="cy-bubble cy-user-bubble">{{ message.content }}</p>
+      <!-- G4：用户贴图消息（wire Message.stickerId；content 可空）——纯贴图不加气泡底 -->
+      <img v-if="message.stickerId" :src="stickerSrc(message.stickerId)" class="cy-sticker-img" :class="{ 'cy-sticker-plain': stickerOnly }" alt="表情" />
       <!-- G3：user 消息附件（内嵌 Message.attachments） -->
       <div v-for="a in userAttachments()" :key="a.attachmentId" class="cy-user-attachments">
         <CyAttachmentMedia :kind="a.kind" :attachment-id="a.attachmentId" :media-type="a.mediaType" :name="a.name" :size="a.size" />
       </div>
       <span v-if="message.status === 'failed'" class="cy-user-error-badge" title="发送失败">发送失败</span>
     </div>
+    <span class="cy-avatar cy-avatar-user" aria-hidden="true">我</span>
   </div>
 
   <!-- tool 角色消息：不渲染空气泡（归档工具卡片在 assistant 消息内；tool 消息自身只留空占位） -->
   <div v-else-if="message.role === 'tool'" class="cy-tool-role-placeholder" />
 
-  <!-- assistant 消息:左对齐,avatar + 双通道(inner_voice / public_reply 同属一条消息) -->
-  <div v-else class="cy-message-row">
-    <span class="cy-message-avatar">Cy</span>
-    <div class="cy-dual-message">
+  <!-- assistant 消息:左对齐,Cyrene 头像 + 扁平列(名称一次/内心独白折叠/工具卡/白色气泡/低权重元数据) -->
+  <div v-else class="cy-message-row cy-assistant-row" :class="{ 'is-streaming': message.status === 'streaming' }">
+    <span class="cy-avatar cy-avatar-assistant" aria-hidden="true">Cy</span>
+    <div class="cy-msg-col">
+      <div class="cy-msg-name">Cyrene</div>
+      <!-- 内心独白：details 可访问折叠,默认收起,展开/收起高度变化经 ResizeObserver 实测进前缀和 -->
       <details v-if="innerVoiceSegments.length" class="cy-inner-voice">
-        <summary>
-          内心独白
-          <span class="cy-muted">inner_voice</span>
-        </summary>
+        <summary>内心独白</summary>
         <CyMarkdown
           v-for="seg in innerVoiceSegments"
           :key="seg.segmentId"
@@ -88,40 +93,33 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
         />
       </details>
 
-      <div class="cy-public-reply">
-        <div class="cy-response-cluster">
-          <div class="cy-response-head">
-            <strong>Cyrene</strong>
-            <span class="cy-muted">· {{ message.status }}</span>
-          </div>
-          <!-- 阶段 6 批次 B（Task 7）：归档工具卡片（Message.toolCalls，REST 历史 + WS 回放双路径配对产物；只读） -->
-          <CyToolCard v-for="tc in message.toolCalls" :key="tc.id" :record="tc" readonly />
-          <template v-for="seg in publicSegments" :key="seg.segmentId">
-            <!-- UI 问题 1 修复：全量渲染真实内容（虚拟窗口/overscan 已限制 DOM 行数），不再有「完整↔骨架」几何切跳 -->
-            <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :source="segmentText(seg)" />
-            <!-- G4：sticker 分段渲染（wire seg.stickerId，复用通用媒体代理） -->
-            <img v-else-if="seg.kind === 'sticker' && seg.stickerId" :src="stickerSrc(seg.stickerId)" class="cy-sticker-img" alt="表情" />
-            <!-- G3：assistant 媒体分段（attachmentId 存在时渲染媒体组件；实时流式分段无 attachmentId 仍走占位，P2-5 wire 契约） -->
-            <CyAttachmentMedia
-              v-else-if="seg.attachmentId"
-              :key="seg.segmentId"
-              class="cy-segment"
-              :kind="(seg.kind as 'image' | 'video' | 'audio' | 'file' | 'link')"
-              :attachment-id="seg.attachmentId"
-              :media-type="seg.mediaType"
-              :name="seg.name"
-              :size="seg.size"
-            />
-            <span v-else class="cy-media-placeholder">[{{ seg.kind }} 分段]</span>
-          </template>
-          <div v-if="hasMeta" class="cy-response-footer">
-            <span v-if="message.model" class="cy-meta-chip">{{ message.model }}</span>
-            <span v-if="message.usage" class="cy-meta-chip">{{ message.usage.total }} tokens</span>
-            <span v-if="message.emotion" class="cy-meta-chip">{{ message.emotion }}</span>
-          </div>
-          <span v-if="terminalNote" class="cy-status-note">{{ terminalNote }}</span>
-        </div>
+      <!-- 阶段 6 批次 B（Task 7）：归档工具卡片（Message.toolCalls，REST 历史 + WS 回放双路径配对产物；只读）——独立内容块，不压进气泡 -->
+      <CyToolCard v-for="tc in message.toolCalls" :key="tc.id" :record="tc" readonly />
+      <template v-for="seg in publicSegments" :key="seg.segmentId">
+        <!-- UI 问题 1 修复：全量渲染真实内容（虚拟窗口/overscan 已限制 DOM 行数），不再有「完整↔骨架」几何切跳。
+             .cy-segment 类名保留（perf-gate ②/③ 计数契约），视觉升为白色助手气泡 -->
+        <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment cy-bubble cy-assistant-bubble" :source="segmentText(seg)" />
+        <!-- G4：sticker 分段渲染（wire seg.stickerId，复用通用媒体代理） -->
+        <img v-else-if="seg.kind === 'sticker' && seg.stickerId" :src="stickerSrc(seg.stickerId)" class="cy-sticker-img" alt="表情" />
+        <!-- G3：assistant 媒体分段（attachmentId 存在时渲染媒体组件；实时流式分段无 attachmentId 仍走占位，P2-5 wire 契约） -->
+        <CyAttachmentMedia
+          v-else-if="seg.attachmentId"
+          class="cy-segment"
+          :kind="(seg.kind as 'image' | 'video' | 'audio' | 'file' | 'link')"
+          :attachment-id="seg.attachmentId"
+          :media-type="seg.mediaType"
+          :name="seg.name"
+          :size="seg.size"
+        />
+        <span v-else class="cy-media-placeholder cy-bubble">[{{ seg.kind }} 分段]</span>
+      </template>
+      <!-- 消息元数据：低权重单行小字，不抢正文（数据保留不删） -->
+      <div v-if="hasMeta" class="cy-msg-meta">
+        <span v-if="message.model">{{ message.model }}</span>
+        <span v-if="message.usage">{{ message.usage.total }} tokens</span>
+        <span v-if="message.emotion">{{ message.emotion }}</span>
       </div>
+      <span v-if="terminalNote" class="cy-status-note">{{ terminalNote }}</span>
     </div>
   </div>
 </template>
@@ -137,37 +135,82 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   justify-content: flex-end;
 }
 
-.cy-message-avatar {
+/* 头像：assistant 浅蓝方圆角 / user 中性（QQ 左右双头像结构） */
+.cy-avatar {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 10px;
+  font-size: 12px;
+  user-select: none;
+}
+
+.cy-avatar-assistant {
   color: var(--cy-accent-text);
   background: var(--cy-accent);
-  font-size: 13px;
 }
 
-.cy-message {
-  max-width: 86%;
-  padding: 10px 12px;
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 14px;
+.cy-avatar-user {
+  color: var(--cy-muted);
+  background: var(--cy-surface-hover);
 }
 
-.cy-message p {
+.cy-msg-col {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: min(72%, 620px);
+}
+
+.cy-user-col {
+  align-items: flex-end;
+}
+
+.cy-msg-name {
+  color: var(--cy-muted);
+  font-size: 12px;
+  line-height: 1.2;
+  padding-left: 2px;
+  user-select: none;
+}
+
+/* 气泡基座：白底 + 轻阴影（不叠多层描边）；user 用浅蓝。近头像角收窄（QQ 朝向感）。
+   margin: 0——user 气泡本身是 <p>，清 UA 默认外边距（否则气泡与头像基线错位） */
+.cy-bubble {
   margin: 0;
+  max-width: 100%;
+  padding: 9px 12px;
+  background: var(--cy-surface);
+  border-radius: 4px 14px 14px 14px;
+  box-shadow: var(--cy-shadow-soft);
 }
 
-.cy-user-message {
+.cy-user-bubble {
+  color: var(--cy-text);
   background: var(--cy-user);
+  border-radius: 14px 4px 14px 14px;
+  box-shadow: none;
+}
+
+.cy-bubble :deep(p:first-child) {
+  margin-top: 0;
+}
+
+.cy-bubble :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+/* 流式空段（80ms 防抖窗口内）不显示空气泡壳 */
+.cy-assistant-bubble:empty {
+  display: none;
 }
 
 .cy-user-error-badge {
   display: inline-block;
-  margin-top: 5px;
   padding: 1px 7px;
   border-radius: 999px;
   color: var(--cy-accent-text);
@@ -176,93 +219,43 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   line-height: 1.6;
 }
 
-.cy-dual-message {
-  display: grid;
-  gap: 9px;
-  max-width: 90%;
-  padding: 0;
-  overflow: hidden;
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
-  border-radius: 14px;
-}
-
+/* 内心独白：轻量次级区，弱于正式回复；标题仅「内心独白」 */
 .cy-inner-voice {
-  padding: 10px 12px;
+  align-self: stretch;
+  padding: 7px 10px;
   color: var(--cy-muted);
   background: var(--cy-surface-soft);
-  border-bottom: 1px solid var(--cy-border);
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 .cy-inner-voice summary {
-  display: flex;
-  align-items: center;
-  gap: 7px;
   cursor: pointer;
-  color: var(--cy-text);
-  font-weight: 500;
+  color: var(--cy-muted);
+  font-size: 12px;
+  user-select: none;
 }
 
 .cy-inner-voice-text {
-  margin-top: 8px;
-  font-size: 13px;
-  color: var(--cy-muted);
-}
-
-.cy-public-reply {
-  padding: 0 12px 12px;
-}
-
-.cy-response-cluster {
-  display: grid;
-  gap: 7px;
-}
-
-.cy-response-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  color: var(--cy-muted);
+  margin-top: 7px;
   font-size: 12px;
-}
-
-.cy-segment {
-  width: fit-content;
-  max-width: 100%;
-  padding: 8px 11px;
-  border-radius: 5px 13px 13px 13px;
-  color: var(--cy-accent-text);
-  background: var(--cy-accent);
-  border-left: 2px solid var(--cy-accent-strong);
+  color: var(--cy-muted);
 }
 
 .cy-media-placeholder {
-  padding: 8px 11px;
   color: var(--cy-muted);
   font-size: 12px;
-  background: var(--cy-surface-soft);
-  border-radius: 13px;
 }
 
-.cy-response-footer {
+/* 元数据：低权重单行（model · tokens · emotion），小字弱于正文 */
+.cy-msg-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-.cy-meta-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--cy-surface-soft);
-  border: 1px solid var(--cy-border);
+  gap: 8px;
+  padding-left: 2px;
   color: var(--cy-muted);
   font-size: 11px;
-  white-space: nowrap;
+  opacity: 0.85;
 }
 
 .cy-status-note {
@@ -273,14 +266,17 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 .cy-user-attachments {
   display: grid;
   gap: 6px;
-  margin-top: 6px;
   max-width: 100%;
 }
 
-/* G4：贴图（user 消息 + assistant sticker 分段共用） */
+/* G4：贴图（user 消息 + assistant sticker 分段共用）；纯贴图消息无气泡底 */
 .cy-sticker-img {
   width: 96px;
   height: 96px;
   object-fit: contain;
+}
+
+.cy-sticker-plain {
+  margin-right: 2px;
 }
 </style>

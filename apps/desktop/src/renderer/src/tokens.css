@@ -41,6 +41,16 @@
   --cy-glow: light-dark(#b9d2ff, #5c8bd8);
   --cy-overlay: light-dark(rgba(52, 62, 80, 0.36), rgba(0, 0, 0, 0.56));
   --cy-shadow: 0 18px 50px light-dark(rgba(52, 69, 98, 0.18), rgba(0, 0, 0, 0.38));
+  /* QQ 风格聊天重构（UII-QQ）：柔和选中底色 / 气泡轻阴影——与 accent 区分，选中态不再用过重纯 accent */
+  --cy-accent-tint: light-dark(#e9f1fd, #22334f);
+  --cy-shadow-soft: 0 1px 2px light-dark(rgba(31, 41, 56, 0.06), rgba(0, 0, 0, 0.3)),
+    0 2px 10px light-dark(rgba(31, 41, 56, 0.05), rgba(0, 0, 0, 0.22));
+}
+
+/* 键盘可达性（红线 §7）：统一 focus-visible 轮廓——hover/active 之外的可达性兜底 */
+:focus-visible {
+  outline: 2px solid var(--cy-accent-strong);
+  outline-offset: 2px;
 }
 
 * {

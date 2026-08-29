@@ -16,6 +16,7 @@ const container = ref<HTMLElement>()
 const heights = ref<Record<string, number>>({})          // 实测高（ResizeObserver，滚动提交后合并）
 const rowEls = new Map<string, HTMLElement>()            // messageId → 行元素
 const resizeObs = ref<ResizeObserver>()
+let viewportObs: ResizeObserver | undefined               // UII-QQ：viewport 高度跟随（只喂窗口切分）
 
 /** UI 问题 1：滚动中实测高先写 pendingHeights，滚动停（scrollend/150ms 空闲）才合并进 heights——
  *  避免滚动中每次估高→实测修正都改 paddingTop/Bottom → scrollHeight → thumb 跳。
@@ -39,6 +40,22 @@ const pendingLoadAnchor = ref<ReturnType<typeof captureAnchor>>()
 
 const isStreaming = computed(() => !!messageStore.activeGenerationId)
 const isEmpty = computed(() => items.value.length === 0)
+
+/** UII-QQ 轮次分组（纯展示）：与前一条「非 tool」消息角色不同的行为「轮首」。
+ *  tool 行是空占位（assistant→tool→assistant 是同一工具调用轮次），跳过不计轮；
+ *  预计算 Set（每 items 变化一次），模板按全局 index 查询——不加 class 不改虚拟列表数学
+ *  （padding 在 border-box 内，ResizeObserver 可测；estimate 误差由既有实测修正路径吸收） */
+const turnStartSet = computed(() => {
+  const s = new Set<number>()
+  let prevRole: string | undefined
+  for (let i = 0; i < items.value.length; i++) {
+    const role = items.value[i]?.role
+    if (role === 'tool') continue
+    if (prevRole !== undefined && role !== prevRole) s.add(i)
+    prevRole = role
+  }
+  return s
+})
 
 const win = computed(() => {
   const w = computeWindow(prefix.value, scrollTop.value, viewportHeight.value, OVERSCAN_PX)
@@ -246,6 +263,7 @@ function setRowEl(id: string, el: Element | null): void {
 onBeforeUnmount(() => {
   if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
   resizeObs.value?.disconnect()
+  viewportObs?.disconnect()
 })
 
 onMounted(() => {
@@ -258,6 +276,24 @@ onMounted(() => {
   const el = container.value
   if (el) viewportHeight.value = el.clientHeight
   if (el && !conversationStore.offlineView) el.scrollTop = el.scrollHeight
+  // UII-QQ：viewport 高度跟随（Composer 自适应增高/窗口变化）——只影响窗口切分（padding 总量恒定，scrollHeight 不变），
+  // 不触碰行高提交/锚点恢复机制。Composer 多行增高时窗口仍准确，避免底部空行。
+  viewportObs = new ResizeObserver(() => {
+    const c = container.value
+    if (!c) return
+    const wasAtBottom = atBottom.value
+    const prevH = viewportHeight.value
+    viewportHeight.value = c.clientHeight
+    // P1 修复：仅「增高前位于底部」且视口变矮（Composer 增高/窗口变小）时继续贴底——
+    // 否则最新消息会被挤出视口；用户已上翻则保持原 scrollTop（锚点不动）。
+    // 视口变高（发送清稿 Composer 收缩）时浏览器自动钳制 scrollTop 到新最大值，天然贴底，无需处理。
+    if (wasAtBottom && c.clientHeight < prevH) {
+      c.scrollTop = c.scrollHeight
+      scrollTop.value = c.scrollTop
+      atBottom.value = true
+    }
+  })
+  if (el) viewportObs.observe(el)
 })
 </script>
 
@@ -269,12 +305,12 @@ onMounted(() => {
     <template v-else>
       <div :style="{ height: win.paddingTop + 'px' }" class="cy-vlist-pad" />
       <div
-        v-for="id in win.visibleIds"
+        v-for="(id, i) in win.visibleIds"
         :key="id"
         :data-message-id="id"
         :ref="(el) => setRowEl(id, el as Element | null)"
         class="cy-vlist-row"
-        :class="{ 'cy-highlighted': messageStore.highlightMessageId === id }"
+        :class="{ 'cy-highlighted': messageStore.highlightMessageId === id, 'cy-turn-start': turnStartSet.has(win.startIndex + i), 'cy-first-row': win.startIndex + i === 0 }"
       >
         <CyMessageBubble :message="messageStore.byId[id]" />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
@@ -294,8 +330,13 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; overflow-anchor: none; background: linear-gradient(180deg, var(--cy-surface) 0%, var(--cy-pane) 100%); }   /* overflow-anchor:none：禁浏览器原生滚动锚定，避免与手工锚点恢复重复工作（问题1修复④） */
-.cy-vlist-row { display: flex; flex-direction: column; gap: 9px; padding: 6px 0; }
+/* UII-QQ：扁平中性底（去渐变）+ scrollbar-gutter stable（滚动条出现/消失不横跳）；
+   行居中为 940px 阅读轨道——行仍是 :scope 直接子元素（perf-gate/虚拟列表契约不变） */
+.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; scrollbar-gutter: stable; background: var(--cy-pane); }
+.cy-vlist-row { display: flex; flex-direction: column; gap: 9px; width: min(100%, 940px); margin-inline: auto; padding: 2px 0; }
+.cy-vlist-row.cy-turn-start { padding-top: 18px; }
+/* P3：全局首条消息 6px 顶距——不能用 :first-child（列表首位恒为 .cy-vlist-pad，永不匹配），用显式类 */
+.cy-vlist-row.cy-first-row { padding-top: 6px; }
 .cy-vlist-pad { flex-shrink: 0; }   /* 7C 真机修复：flex 列内垫片必须禁收缩，否则 paddingTop/Bottom 被压成 0，长会话滚不到底部新消息 */
 .cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: 12px; }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
 .cy-located-chip { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }
@@ -303,7 +344,7 @@ onMounted(() => {
 .cy-empty { display: grid; flex: 1; place-items: center; color: var(--cy-muted); font-size: 13px; }
 .cy-back-bottom { position: sticky; bottom: 12px; align-self: center; z-index: 2; padding: 6px 13px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
 .cy-back-bottom:hover { color: var(--cy-accent); background: var(--cy-surface-hover); }
-.cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: flex-start; gap: 8px; padding: 9px 13px; margin: 6px 0; color: var(--cy-muted); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 13px; font-size: 12px; }
+.cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: stretch; width: min(100%, 940px); margin-inline: auto; padding: 9px 13px 9px 41px; margin-top: 6px; color: var(--cy-muted); font-size: 12px; }
 .cy-typing-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cy-accent-strong); animation: cy-pulse 1s ease-in-out infinite; }
 @keyframes cy-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 </style>

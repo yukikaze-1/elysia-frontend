@@ -72,6 +72,8 @@ async function sample(page: LaunchedApp['page'], selector: string): Promise<{ he
 
 /** 连接 → 激活首个会话 → 输入框可用。cy-conversation-main 真点击（对齐 electron-live2d / markdown-xss 先例）。 */
 async function connectAndActivateFirst(page: Page): Promise<void> {
+  // UII-QQ：连接钮收进连接入口 popover——先点徽标（REAL/MOCK）展开，再点连接（能力不删，入口变更）
+  await page.getByRole('button', { name: /REAL|MOCK/ }).click()
   await page.getByRole('button', { name: '连接', exact: true }).click()
   await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('已连接')
   await expect.poll(() => page.locator('.cy-conversation').count(), POLL).toBeGreaterThan(0)
@@ -157,7 +159,7 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         if (!cont) return null
         const cRect = cont.getBoundingClientRect()
         const row = [...cont.querySelectorAll<HTMLElement>(':scope > .cy-vlist-row')]
-          .find((r) => r.querySelector('.cy-response-head .cy-muted')?.textContent?.includes('streaming'))
+          .find((r) => r.querySelector('.cy-assistant-row.is-streaming') !== null)
         if (!row) return null
         const rect = row.getBoundingClientRect()
         const segs = [...row.querySelectorAll<HTMLElement>('.cy-segment')].map((s) => (s.textContent ?? '').trim())
@@ -182,7 +184,7 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         if (!cont) throw new Error('no .cy-messages')
         const cRect = cont.getBoundingClientRect()
         const row = [...cont.querySelectorAll<HTMLElement>(':scope > .cy-vlist-row')]
-          .find((r) => r.querySelector('.cy-response-head .cy-muted')?.textContent?.includes('streaming'))
+          .find((r) => r.querySelector('.cy-assistant-row.is-streaming') !== null)
         if (!row) throw new Error('streaming row not rendered')
         const top = row.getBoundingClientRect().top - cRect.top
         const delta = Math.max(0, cont.clientHeight - top + 120)

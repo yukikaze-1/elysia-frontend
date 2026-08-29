@@ -51,6 +51,8 @@ describe('chat:error 纯 push 消费(I6)', () => {
       // 跨边界保真:捕获 handler 收到与注入完全一致的 payload
       await expect.poll(async () => page.evaluate(() => (window as unknown as { __chatError?: unknown }).__chatError), { timeout: 5000 }).toEqual(payload)
       // 写入 connectionStore:应用自身 onChatError 接线 → setError → CyConnectionPanel 渲染错误文案
+      // UII-QQ：错误文案在连接入口 popover 内——先点徽标展开再断言（入口变更，能力不删）
+      await page.getByRole('button', { name: /REAL|MOCK/ }).click()
       await expect.poll(async () => page.evaluate(() => document.querySelector('.cy-conn-error')?.textContent?.trim() ?? null), { timeout: 5000 }).toBe(payload.message)
     } finally {
       await closeApp(launched)

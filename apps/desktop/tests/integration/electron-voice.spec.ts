@@ -64,6 +64,8 @@ function readSettingsFile(userData: string): { voice?: Record<string, unknown> }
 
 /** 点连接 → 激活首个会话（conv-1001）→ 输入框就绪 */
 async function connectAndActivateFirst(page: Page): Promise<void> {
+  // UII-QQ：连接钮收进连接入口 popover——先点徽标（REAL/MOCK）展开，再点连接（能力不删，入口变更）
+  await page.getByRole('button', { name: /REAL|MOCK/ }).click()
   await page.getByRole('button', { name: '连接', exact: true }).click()
   await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('已连接')
   await expect.poll(() => page.locator('.cy-conversation').count(), POLL).toBeGreaterThan(0)
@@ -347,6 +349,8 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       const page = launched.page
       await connectAndActivateFirst(page)
       await startRecord(page)
+      // UII-QQ：断开钮在连接入口 popover 内——先点徽标展开
+      await page.getByRole('button', { name: /REAL|MOCK/ }).click()
       await page.getByRole('button', { name: '断开', exact: true }).click()
       await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('未连接')
       // voiceStore.reset 清态：录音入口回 idle（主键=转写 hold），无残留待发送条
@@ -362,6 +366,8 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await connectAndActivateFirst(page)
       await page.getByRole('button', { name: '实时会话', exact: true }).click()
       await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(1)
+      // UII-QQ：断开钮在连接入口 popover 内——先点徽标展开
+      await page.getByRole('button', { name: /REAL|MOCK/ }).click()
       await page.getByRole('button', { name: '断开', exact: true }).click()
       await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('未连接')
       await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(0)

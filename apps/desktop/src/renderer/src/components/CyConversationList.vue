@@ -54,6 +54,25 @@ function remove(c: Conversation): void {
   if (window.confirm(`删除会话「${c.title}」?`)) void conversationStore.remove(c.id)
 }
 
+/** UII-QQ：紧凑时间显示（updatedAt 展示层格式化，不改数据） */
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const now = new Date()
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  if (d.toDateString() === now.toDateString()) return hm
+  const yest = new Date(now)
+  yest.setDate(now.getDate() - 1)
+  if (d.toDateString() === yest.toDateString()) return '昨天'
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
+}
+
+/** UII-QQ：空标题回退「新会话」（不显示空串/下划线） */
+function displayTitle(c: Conversation): string {
+  return c.title || '新会话'
+}
+
 /** 离线视图：点击其他缓存会话 → activateLocal（P1-1 绕过 api.activate/getMessages）；在线 → 既有 activate */
 function activateConv(id: string): void {
   if (connectionStore.state.status === 'disconnected') void conversationStore.activateLocal(id)
@@ -92,14 +111,17 @@ function activateConv(id: string): void {
       >
         <!-- 常规态:整行可点激活;重命名态:标题换输入框(按钮内不放 input) -->
         <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" :disabled="!canOpen" @click="activateConv(c.id)">
-          <span class="cy-conversation-avatar">{{ c.title.slice(0, 1) }}</span>
+          <span class="cy-conversation-avatar">{{ (c.title || '新').slice(0, 1) }}</span>
           <span class="cy-conversation-copy">
-            <span class="cy-conversation-title">{{ c.title }}</span>
-            <span class="cy-conversation-preview">{{ c.preview || '—' }}</span>
+            <span class="cy-conversation-row1">
+              <span class="cy-conversation-title">{{ displayTitle(c) }}</span>
+              <span class="cy-conversation-time">{{ formatTime(c.updatedAt) }}</span>
+            </span>
+            <span class="cy-conversation-preview">{{ c.preview || '暂无消息' }}</span>
           </span>
         </button>
         <div v-else class="cy-conversation-main cy-conversation-renaming">
-          <span class="cy-conversation-avatar">{{ c.title.slice(0, 1) }}</span>
+          <span class="cy-conversation-avatar">{{ (c.title || '新').slice(0, 1) }}</span>
           <input
             v-model="renameDraft"
             class="cy-rename-input"
@@ -223,13 +245,19 @@ function activateConv(id: string): void {
   background: var(--cy-surface-hover);
 }
 
+/* UII-QQ：选中态用柔和 tint 底，不再依赖过重 accent 边框/色块 */
 .cy-conversation.is-active {
-  background: var(--cy-accent);
+  background: var(--cy-accent-tint);
+}
+
+.cy-conversation.is-active .cy-conversation-title {
+  color: var(--cy-text);
+  font-weight: 500;
 }
 
 .cy-conversation-main {
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
   gap: 9px;
   width: 100%;
   padding: 9px;
@@ -241,16 +269,26 @@ function activateConv(id: string): void {
 .cy-conversation-avatar {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
   color: var(--cy-accent-text);
-  background: var(--cy-surface);
-  border: 1px solid var(--cy-border);
+  background: var(--cy-accent);
+  font-size: 14px;
 }
 
 .cy-conversation-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+}
+
+.cy-conversation-row1 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .cy-conversation-title,
@@ -262,7 +300,15 @@ function activateConv(id: string): void {
 }
 
 .cy-conversation-title {
+  min-width: 0;
   font-size: 13px;
+}
+
+/* UII-QQ：紧凑时间（今天 HH:mm / 昨天 / M/D / YYYY/M/D） */
+.cy-conversation-time {
+  flex: 0 0 auto;
+  color: var(--cy-muted);
+  font-size: 11px;
 }
 
 .cy-conversation-preview {
@@ -276,7 +322,9 @@ function activateConv(id: string): void {
   padding-right: 6px;
 }
 
-.cy-conversation:hover .cy-conversation-actions {
+/* hover / 键盘聚焦（focus-within）都可达（红线 §7） */
+.cy-conversation:hover .cy-conversation-actions,
+.cy-conversation:focus-within .cy-conversation-actions {
   display: flex;
 }
 

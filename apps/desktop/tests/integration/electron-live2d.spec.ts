@@ -117,6 +117,8 @@ async function waitLive2dSettled(page: Page): Promise<string> {
 
 /** 连接 mock → 激活首个会话 → 输入框可用（「聊天可用」判据，对齐 electron-voice 先例） */
 async function connectAndActivateFirst(page: Page): Promise<void> {
+  // UII-QQ：连接钮收进连接入口 popover——先点徽标（REAL/MOCK）展开，再点连接（能力不删，入口变更）
+  await page.getByRole('button', { name: /REAL|MOCK/ }).click()
   await page.getByRole('button', { name: '连接', exact: true }).click()
   await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('已连接')
   await expect.poll(() => page.locator('.cy-conversation').count(), POLL).toBeGreaterThan(0)

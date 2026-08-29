@@ -75,7 +75,9 @@ const collapseLabel = computed(() => layout.effective.conversationShown ? '折�
   flex: 1;
   color: var(--cy-muted);
   text-align: center;
-  font-size: 12px;
+  /* UII-QQ：弱化应用内标题——系统标题栏已有「Cyrene」，避免双标题观感 */
+  font-size: 11px;
+  opacity: 0.65;
 }
 
 /* 右侧配平：原为三点配平，现为左侧折叠开关配平，标题保持居中 */
