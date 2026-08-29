@@ -16,6 +16,7 @@
 | 搭建 Windows/Linux 环境或连接真实后端 | [doc 17](17-Cyrene-前端开发环境与依赖安装记录.md) |
 | 理解总体架构和安全边界 | [doc 01](01-Cyrene-Electron-前端总体架构设计-v0.2.md)、[doc 07](07-Cyrene-Electron前端安全设计-v0.2.md) |
 | 修改后端协议或领域契约 | [doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) |
+| 理解任务系统和任务中心 | [任务系统总体架构](2026-08-29-task-system-overall-architecture-design.md)、[任务中心前端架构](2026-08-29-task-center-frontend-architecture-design.md) |
 | 判断阶段能否进入或完成 | [doc 12](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md) |
 | 查技术任务定义 | [doc 10](10-Cyrene-前端实施路线与任务拆分-v0.2.md) |
 | 查历史决策或真机证据 | [review 索引](review/README.md) |
@@ -78,6 +79,8 @@
 
 ### 5.1 专项清单
 
+- [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md)：前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化与分批实施；在前后端仓库保持镜像同步。
+- [任务中心前端架构设计](2026-08-29-task-center-frontend-architecture-design.md)：Main/Preload/Renderer 分层、前端契约、Store、页面、重连和 Desktop 权限关联；后端专属设计位于 `elysia-agent/docs/2026-08-29-task-system-backend-architecture-design.md`。
 - [UI 精修整改清单](2026-08-29-UI精修整改清单.md)：阶段 8 前 UI/布局/风格精修批次的规则与限制（布局硬值、虚拟列表红线、滚动条、token、无障碍、验证清单）。
 - [UI 真机走查问题记录](2026-08-29-UI真机走查问题记录.md)：真机走查发现的 5 个问题 + 3 条附注的定位记录（滚动条抖动、窗口边缘空药丸、表情按钮位置、输入区按钮层级、标题栏装饰点），只定位不修复，修复归 UI 精修批次。
 
