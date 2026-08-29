@@ -91,24 +91,20 @@ async function closeSettings(page: Page): Promise<void> {
 /** 待发送条内按钮（作用域限定——「删除」与会话列表删除按钮同名，必须圈定 .cy-voice-pending） */
 const pendingBtn = (page: Page, name: string) => page.locator('.cy-voice-pending').getByRole('button', { name, exact: true })
 
-/** 开始录音：UII02 统一 🎙️ 入口——点「语音选项」箭头 → 菜单「录制语音消息」（可达名=普通录音）。
- *  录音态下主键变「停止录音」（红点+计时），文本输入区被语音活跃禁用。 */
+/** 开始录音：UII02rev 独立录音按钮 —— 直接点「普通录音」，录音态变「停止录音」（红点+计时）。 */
 async function startRecord(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '语音选项', exact: true }).click()
-  await page.getByRole('menuitem', { name: '普通录音', exact: true }).click()
+  await page.getByRole('button', { name: '普通录音', exact: true }).click()
   await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
 }
 
 /** 仅触发录音入口（不等录音态）——用于 consent 确认等「点击后会弹窗/异步」场景，断言由调用方做。 */
 async function clickRecordEntry(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '语音选项', exact: true }).click()
-  await page.getByRole('menuitem', { name: '普通录音', exact: true }).click()
+  await page.getByRole('button', { name: '普通录音', exact: true }).click()
 }
 
-/** 断言录音入口回到 idle（准备可录音）：主键=转写 hold 键、无「停止录音」。
- *  UII02 把普通录音收进菜单（仅开菜单可达），idle 信号改用主键（转写可 hold）+ 无停止态。 */
+/** 断言录音入口回到 idle（准备可录音）：普通录音按钮存在、无「停止录音」。 */
 async function expectIdleRecordEntry(page: Page): Promise<void> {
-  await expect.poll(() => page.getByRole('button', { name: '输入法转写（按住说话）', exact: true }).count(), POLL).toBe(1)
+  await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
   expect(await page.getByRole('button', { name: '停止录音', exact: true }).count()).toBe(0)
 }
 
