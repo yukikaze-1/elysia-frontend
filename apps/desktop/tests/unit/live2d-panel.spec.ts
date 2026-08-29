@@ -1,8 +1,11 @@
 // @vitest-environment happy-dom
 // tests/unit/live2d-panel.spec.ts
 // Task 5（B6，spec §3.6 / D5B-09/D5B-10）：CyLive2DPanel 完整化——状态徽标（CharacterState 文案映射）、
-// 缩放/偏移手柄（读 settings → setViewTransform，即时预览 + 持久化）、鼠标跟随/回正（mousemove 归一坐标 →
-// setLookTarget；mouseleave → lerp 回正 → null；mouseTracking/reduceMotion 门控）、点击预设动作（priority=1）。
+// 鼠标跟随/回正（mousemove 归一坐标 → setLookTarget；mouseleave → lerp 回正 → null；mouseTracking/reduceMotion 门控）、
+// 点击预设动作（priority=1）。
+// UII-Live2D 修缮：画布顶部滑块组（.cy-live-view-controls）移除，视图操作改为画布直接操作——左键拖动移动
+// （阈值 4px、钳制 [-2,2]、DOM y 取反换算 *8/canvas 尺寸）、滚轮乘法缩放（钳制 [0.5,3]）、标题区「重置视图」
+// （仅 scale/offset 归位）；并断言拖动与视线跟随/点击动作的冲突消解。
 // 环境 happy-dom；fake controller（setLive2dControllerFactory 注入，全方法 mock）驱动真实 store；rAF 桩掉
 // （返回 0 不调度循环），tween 经 defineExpose.applyLookTween 手动驱动。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -119,7 +122,7 @@ describe('CyLive2DPanel：状态徽标（CharacterState 文案映射）', () => 
   })
 })
 
-describe('CyLive2DPanel：缩放/偏移手柄 → setViewTransform（读写转换）', () => {
+describe('CyLive2DPanel：视图变换转发（settings → store.setViewTransform）', () => {
   it('settings 变化（即使经设置子页改）→ store.setViewTransform 转发（scale/offsetX/offsetY）', async () => {
     const { calls } = fake
     const settings = useSettingsStore()
@@ -138,19 +141,136 @@ describe('CyLive2DPanel：缩放/偏移手柄 → setViewTransform（读写转�
     expect(calls.setViewTransform).toHaveBeenLastCalledWith(2, 1, -1)
     wrapper.unmount()
   })
+})
 
-  it('画布内叠加手柄（ready 展示）读写 settings：滑块 input → setLive2d patch（即时设置，持久化防抖）', async () => {
+describe('CyLive2DPanel：画布直接视图操作（UII-Live2D 修缮）', () => {
+  it('顶部滑块组已移除：.cy-live-view-controls 不存在（精确滑块只保留在设置中心）', async () => {
+    const wrapper = await mountPanel()
+    expect(wrapper.find('.cy-live-view-controls').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('左键拖动：向右 offsetX 增大（+dx*8/W）、向下 offsetY 减小（−dy*8/H，DOM y 取反）', async () => {
     const settings = useSettingsStore()
     const wrapper = await mountPanel()
-    const ranges = wrapper.findAll('.cy-live-view-controls input[type="range"]')
-    expect(ranges).toHaveLength(3)
+    const canvas = wrapper.find('canvas')
+    Object.defineProperty(canvas.element, 'getBoundingClientRect', { value: () => canvasRect() })   // 340×680
 
-    await ranges[0].setValue('2.5')
-    expect(settings.live2d.scale).toBe(2.5)
-    await ranges[1].setValue('-1.5')
-    expect(settings.live2d.offsetX).toBe(-1.5)
-    await ranges[2].setValue('0.75')
-    expect(settings.live2d.offsetY).toBe(0.75)
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
+    await canvas.trigger('pointermove', { pointerId: 1, clientX: 134, clientY: 100 })   // dx=34 → +34*8/340=+0.8
+    expect(settings.live2d.offsetX).toBeCloseTo(0.8, 5)
+    await canvas.trigger('pointerup', { pointerId: 1, clientX: 134, clientY: 100 })
+
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 2, clientX: 100, clientY: 100 })
+    await canvas.trigger('pointermove', { pointerId: 2, clientX: 100, clientY: 168 })   // dy=68 → −68*8/680=−0.8
+    expect(settings.live2d.offsetY).toBeCloseTo(-0.8, 5)
+    await canvas.trigger('pointerup', { pointerId: 2, clientX: 100, clientY: 168 })
+    wrapper.unmount()
+  })
+
+  it('拖动结果钳制在 [-2, 2]', async () => {
+    const settings = useSettingsStore()
+    settings.live2d.offsetX = 1.5
+    settings.live2d.offsetY = -1.5
+    const wrapper = await mountPanel()
+    const canvas = wrapper.find('canvas')
+    Object.defineProperty(canvas.element, 'getBoundingClientRect', { value: () => canvasRect() })
+
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
+    await canvas.trigger('pointermove', { pointerId: 1, clientX: 300, clientY: 300 })
+    // +200*8/340≈+4.7 → offsetX 钳 2；dy=200 → −1.5−200*8/680≈−3.85 → offsetY 钳 −2
+    expect(settings.live2d.offsetX).toBe(2)
+    expect(settings.live2d.offsetY).toBe(-2)
+    await canvas.trigger('pointerup', { pointerId: 1, clientX: 300, clientY: 300 })
+
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 2, clientX: 100, clientY: 100 })
+    await canvas.trigger('pointermove', { pointerId: 2, clientX: -200, clientY: 100 })   // dx=−300 → 2−300*8/340≈−5.1 → 钳 −2
+    expect(settings.live2d.offsetX).toBe(-2)
+    await canvas.trigger('pointerup', { pointerId: 2, clientX: -200, clientY: 100 })
+    wrapper.unmount()
+  })
+
+  it('滚轮缩放：向上放大、向下缩小，钳制 [0.5, 3]', async () => {
+    const settings = useSettingsStore()
+    const wrapper = await mountPanel()
+    const canvas = wrapper.find('canvas')
+
+    await canvas.trigger('wheel', { deltaY: -100 })   // ×exp(100*0.0015)
+    expect(settings.live2d.scale).toBeCloseTo(1 * Math.exp(100 * 0.0015), 5)
+    for (let i = 0; i < 40; i++) await canvas.trigger('wheel', { deltaY: 300 })
+    expect(settings.live2d.scale).toBe(0.5)
+    for (let i = 0; i < 80; i++) await canvas.trigger('wheel', { deltaY: -300 })
+    expect(settings.live2d.scale).toBe(3)
+    wrapper.unmount()
+  })
+
+  it('冲突消解：有效拖动后的 click 不触发 playTapMotion；阈值内普通点击仍触发且不移动模型', async () => {
+    const { calls } = fake
+    const settings = useSettingsStore()
+    const wrapper = await mountPanel()
+    const canvas = wrapper.find('canvas')
+    Object.defineProperty(canvas.element, 'getBoundingClientRect', { value: () => canvasRect() })
+
+    // 有效拖动（>4px）→ 模型移动、紧随 click 被抑制
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
+    await canvas.trigger('pointermove', { pointerId: 1, clientX: 150, clientY: 100 })
+    await canvas.trigger('pointerup', { pointerId: 1, clientX: 150, clientY: 100 })
+    await canvas.trigger('click', { button: 0 })
+    expect(calls.playTapMotion).not.toHaveBeenCalled()
+    expect(settings.live2d.offsetX).toBeCloseTo((50 * 8) / 340, 5)
+
+    // 阈值内移动（2px）→ 仍是普通点击：动作触发、模型未动
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 2, clientX: 100, clientY: 100 })
+    await canvas.trigger('pointermove', { pointerId: 2, clientX: 102, clientY: 100 })
+    await canvas.trigger('pointerup', { pointerId: 2, clientX: 102, clientY: 100 })
+    await canvas.trigger('click', { button: 0 })
+    expect(calls.playTapMotion).toHaveBeenCalledTimes(1)
+    expect(settings.live2d.offsetX).toBeCloseTo((50 * 8) / 340, 5)   // 未变
+    wrapper.unmount()
+  })
+
+  it('拖动期间视线目标冻结（setLookTarget 不调用），松开后恢复跟随', async () => {
+    const { calls } = fake
+    const wrapper = await mountPanel()
+    const canvas = wrapper.find('canvas')
+    Object.defineProperty(canvas.element, 'getBoundingClientRect', { value: () => canvasRect() })
+
+    await canvas.trigger('pointerdown', { button: 0, pointerId: 1, clientX: 100, clientY: 100 })
+    await canvas.trigger('mousemove', { clientX: 170, clientY: 170 })   // 按住期间（含未过阈值）mousemove 不喂视线
+    expect(calls.setLookTarget).not.toHaveBeenCalled()
+    await canvas.trigger('pointermove', { pointerId: 1, clientX: 160, clientY: 160 })
+    await canvas.trigger('pointerup', { pointerId: 1, clientX: 160, clientY: 160 })
+
+    await canvas.trigger('mousemove', { clientX: 170, clientY: 170 })   // 松开恢复正常跟随
+    expect(calls.setLookTarget).toHaveBeenCalledWith({ x: 0, y: -0.5 })
+    wrapper.unmount()
+  })
+
+  it('重置视图：仅 scale/offsetX/offsetY 归位（DEFAULT_LIVE2D），其余 live2d 配置原样', async () => {
+    const settings = useSettingsStore()
+    settings.setLive2d({ scale: 2.2, offsetX: -1.3, offsetY: 1.7, modelId: 'lil', mouseTracking: false, autoMotions: false, lipSync: false, performanceMode: 'low_power', reduceMotion: true })
+    const wrapper = await mountPanel()
+    const btn = wrapper.find('.cy-live-reset')
+    expect((btn.element as HTMLButtonElement).disabled).toBe(false)   // enabled + ready → 可用
+    await btn.trigger('click')
+    expect(settings.live2d.scale).toBe(1)
+    expect(settings.live2d.offsetX).toBe(0)
+    expect(settings.live2d.offsetY).toBe(0)
+    // 其余字段不受影响（不得走 restoreDefaults 的全量重置）
+    expect(settings.live2d.modelId).toBe('lil')
+    expect(settings.live2d.mouseTracking).toBe(false)
+    expect(settings.live2d.autoMotions).toBe(false)
+    expect(settings.live2d.lipSync).toBe(false)
+    expect(settings.live2d.performanceMode).toBe('low_power')
+    expect(settings.live2d.reduceMotion).toBe(true)
+    expect(settings.live2d.enabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('未启用 → 重置按钮禁用（视图操作门 viewActive）', async () => {
+    useSettingsStore().live2d.enabled = false
+    const wrapper = await mountPanel()
+    expect((wrapper.find('.cy-live-reset').element as HTMLButtonElement).disabled).toBe(true)
     wrapper.unmount()
   })
 })

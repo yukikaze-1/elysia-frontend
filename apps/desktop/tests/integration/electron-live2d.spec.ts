@@ -657,10 +657,11 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       // 帧率模式下拉 → 设置即时更新
       await page.locator('.cy-l2d-pane select').selectOption('balanced')
       await expect.poll(() => page.locator('.cy-l2d-pane select').inputValue(), POLL).toBe('balanced')
-      // 关闭设置 → chat 视图重挂载（Panel 重 init 读最新 settings 应用视图变换）→ 面板缩放手柄显示 1.50（即时生效落点）
+      // 关闭设置 → chat 视图重挂载（Panel 重 init 读最新 settings 应用视图变换）。
+      // UII-Live2D 修缮：画布顶部滑块组（.cy-live-view-controls）已移除、视图操作改为画布拖动/滚轮直接操作，
+      // 面板侧不再有 scale DOM 读数——「即时生效」以设置页字段值（上方 1.50 断言）+ 视图变换转发单测为准。
       await page.getByRole('button', { name: '关闭设置' }).click()
       await waitLive2dSettled(page)
-      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-live-view-controls .cy-live-vc-value')?.textContent ?? ''), POLL).toContain('1.50')
       // 500ms 防抖 + settingsSave → settings.json 落盘
       await expect.poll(() => readSettingsL2d(ud), POLL).toMatchObject({ scale: 1.5, performanceMode: 'balanced' })
     } finally { await closeApp(launched1, { keepUserData: true }) }

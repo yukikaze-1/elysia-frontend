@@ -14,6 +14,7 @@ import { useAppStore } from '../stores/app.store'
 import { LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH } from '../layout/constants'
 import type { CharacterState } from '../live2d/state-machine'
 import type { PerformanceMode } from '@shared/contracts'
+import { DEFAULT_LIVE2D } from '@shared/schemas'
 
 const layout = useLayoutStore()
 const store = useLive2dStore()
@@ -97,7 +98,7 @@ function clampCoord(v: number): number {
 }
 
 function onLookMove(e: MouseEvent): void {
-  if (!lookAllowed.value) return
+  if (!lookAllowed.value || viewPointerId !== null) return   // 按住/拖动期间视线目标冻结（UII-Live2D 修缮）
   const canvas = canvasRef.value
   if (!canvas) return
   const rect = canvas.getBoundingClientRect()
@@ -131,18 +132,86 @@ function onCanvasClick(e: MouseEvent): void {
   if (e.button !== 0) return
   if (!settings.live2d.enabled || store.status !== 'ready') return
   if (settings.live2d.reduceMotion) return // D5B-09：reduceMotion 时点击动作禁用
+  if (viewClickSuppress) { viewClickSuppress = false; return }   // 有效拖动后的 click 不是点击动作（UII-Live2D 修缮）
   store.playTapMotion(1)
 }
 
-// —— Task 5（B6）：缩放/偏移手柄（画布内叠加最小控件）——
-// 读 settingsStore.live2d → setViewTransform（写 canvas 视图变换，即时预览）→ 500ms 防抖 setLive2d 持久化。
-// 视图变换的即时生效走 watch → store.setViewTransform → controller.setViewTransform → handle MVP；tick 循环
-// 每帧重绘即反映新值。
-function onScaleInput(e: Event): void {
-  settings.setLive2d({ scale: Number((e.target as HTMLInputElement).value) })
+// —— UII-Live2D 修缮：画布直接视图操作（左键拖动移动 / 滚轮缩放 / 标题区重置），替换原顶部滑块组 ——
+// 仍走既有链路：settings.setLive2d（本地即时 + 500ms 防抖持久化）→ watch → store.setViewTransform →
+// controller → adapter，不引入第二套视图状态或持久化接口。adapter 将 offset 映射为 offset*0.25 clip，
+// 换算系数 8/canvas 尺寸使模型基本跟随指针；DOM y 向下为正、渲染坐标向上为正 → deltaY 取反。
+// reduceMotion 只门控角色动画/视线/点击，不拦手动视图操作；与视线跟随/点击动作的冲突经
+// 按住门控（viewPointerId）+ 拖动阈值（DRAG_THRESHOLD_PX）+ click 抑制（viewClickSuppress）消解。
+const DRAG_THRESHOLD_PX = 4
+
+/** 视图操作门：仅要求 enabled + ready（拖动/缩放/重置是手动视图操作，不受 reduceMotion 限制） */
+const viewActive = computed(() => settings.live2d.enabled && store.status === 'ready')
+
+const viewDragging = ref(false)   // 已过阈值、正在拖动（驱动 grabbing 光标）
+let viewPointerId: number | null = null
+let viewStartX = 0
+let viewStartY = 0
+let viewStartOffsetX = 0
+let viewStartOffsetY = 0
+let viewClickSuppress = false     // 有效拖动后武装，紧随的 click 消费掉（不触发点击动作）
+
+function onCanvasPointerDown(e: PointerEvent): void {
+  if (e.button !== 0 || !viewActive.value || viewPointerId !== null) return
+  viewPointerId = e.pointerId
+  viewStartX = e.clientX
+  viewStartY = e.clientY
+  viewStartOffsetX = settings.live2d.offsetX
+  viewStartOffsetY = settings.live2d.offsetY
+  viewDragging.value = false
+  viewClickSuppress = false
+  const canvas = e.currentTarget as HTMLElement
+  if (canvas.setPointerCapture) canvas.setPointerCapture(e.pointerId)
 }
-function onOffsetInput(key: 'offsetX' | 'offsetY', e: Event): void {
-  settings.setLive2d({ [key]: Number((e.target as HTMLInputElement).value) })
+
+function onCanvasPointerMove(e: PointerEvent): void {
+  if (e.pointerId !== viewPointerId) return
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const dx = e.clientX - viewStartX
+  const dy = e.clientY - viewStartY
+  if (!viewDragging.value) {
+    if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return   // 阈值内不算拖动，松开仍是普通点击
+    viewDragging.value = true
+  }
+  const rect = canvas.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0) return
+  settings.setLive2d({
+    offsetX: clampOffset(viewStartOffsetX + (dx * 8) / rect.width),
+    offsetY: clampOffset(viewStartOffsetY - (dy * 8) / rect.height)
+  })
+}
+
+function onCanvasPointerEnd(e: PointerEvent): void {
+  if (e.pointerId !== viewPointerId) return
+  if (viewDragging.value) viewClickSuppress = true
+  viewPointerId = null
+  viewDragging.value = false
+  const canvas = e.currentTarget as HTMLElement
+  if (canvas.hasPointerCapture && canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId)
+}
+
+function clampOffset(v: number): number {
+  return Math.min(2, Math.max(-2, v))
+}
+
+function clampScale(v: number): number {
+  return Math.min(3, Math.max(0.5, v))
+}
+
+function onCanvasWheel(e: WheelEvent): void {
+  if (!viewActive.value) return
+  e.preventDefault()   // 操作角色时不滚动页面
+  settings.setLive2d({ scale: clampScale(settings.live2d.scale * Math.exp(-e.deltaY * 0.0015)) })
+}
+
+/** 重置视图：仅恢复 scale/offset 默认值（DEFAULT_LIVE2D 常量；不走 restoreDefaults——那会连模型选择/动画/性能一并重置） */
+function resetView(): void {
+  settings.setLive2d({ scale: DEFAULT_LIVE2D.scale, offsetX: DEFAULT_LIVE2D.offsetX, offsetY: DEFAULT_LIVE2D.offsetY })
 }
 
 // —— Task 5（B5）：设置 → controller 窄转发（store 已接 controller；这里订阅 settings 变更推送）——
@@ -286,60 +355,42 @@ onBeforeUnmount(() => {
     />
     <div class="cy-live-head">
       <span class="cy-live-title">角色</span>
-      <button class="cy-live-min" :aria-pressed="layout.effective.live2dShown" title="折叠角色栏" aria-label="折叠角色栏" @click="layout.toggleLive2d()">›</button>
+      <div class="cy-live-head-actions">
+        <button
+          class="cy-live-reset"
+          :disabled="!viewActive"
+          title="重置模型位置和缩放"
+          aria-label="重置模型位置和缩放"
+          @click="resetView"
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+          </svg>
+        </button>
+        <button class="cy-live-min" :aria-pressed="layout.effective.live2dShown" title="折叠角色栏" aria-label="折叠角色栏" @click="layout.toggleLive2d()">›</button>
+      </div>
     </div>
     <div ref="stageRef" class="cy-live-stage">
       <div class="cy-live-glow" aria-hidden="true" />
+      <!-- UII-Live2D 修缮：视图操作改为画布直接操作（拖动移动/滚轮缩放，见脚本区）——原顶部滑块组已移除，
+           精确滑块保留在设置中心 CyLive2DPane，双向同步走同一 settings.setLive2d 链路 -->
       <canvas
         ref="canvasRef"
         class="cy-live-canvas"
+        :class="{ 'is-grab': viewActive && !viewDragging, 'is-grabbing': viewDragging }"
+        :title="viewActive ? '拖动移动模型 · 滚轮缩放' : undefined"
         aria-hidden="true"
+        @pointerdown="onCanvasPointerDown"
+        @pointermove="onCanvasPointerMove"
+        @pointerup="onCanvasPointerEnd"
+        @pointercancel="onCanvasPointerEnd"
+        @lostpointercapture="onCanvasPointerEnd"
         @mousemove="onLookMove"
         @mouseleave="onLookLeave"
         @click="onCanvasClick"
+        @wheel="onCanvasWheel"
       />
-      <!-- Task 5（B6）：缩放/偏移手柄（画布内叠加最小控件；读 settings.live2d → 写 canvas 视图变换，即时预览 + setLive2d 持久化） -->
-      <div
-        v-if="settings.live2d.enabled && store.status === 'ready'"
-        class="cy-live-view-controls"
-        role="group"
-        aria-label="模型视图（缩放/偏移）"
-        @click.stop
-      >
-        <label class="cy-live-vc-item">
-          <span>缩放</span>
-          <input
-            type="range"
-            min="0.5" max="3" step="0.05"
-            :value="settings.live2d.scale"
-            aria-label="模型缩放"
-            @input="onScaleInput"
-          />
-          <span class="cy-live-vc-value">{{ settings.live2d.scale.toFixed(2) }}</span>
-        </label>
-        <label class="cy-live-vc-item">
-          <span>横向</span>
-          <input
-            type="range"
-            min="-2" max="2" step="0.05"
-            :value="settings.live2d.offsetX"
-            aria-label="水平偏移"
-            @input="onOffsetInput('offsetX', $event)"
-          />
-          <span class="cy-live-vc-value">{{ settings.live2d.offsetX.toFixed(2) }}</span>
-        </label>
-        <label class="cy-live-vc-item">
-          <span>纵向</span>
-          <input
-            type="range"
-            min="-2" max="2" step="0.05"
-            :value="settings.live2d.offsetY"
-            aria-label="垂直偏移"
-            @input="onOffsetInput('offsetY', $event)"
-          />
-          <span class="cy-live-vc-value">{{ settings.live2d.offsetY.toFixed(2) }}</span>
-        </label>
-      </div>
       <!-- 覆盖态：禁用/加载/失败/回退时静态展示，不遮挡下拉 -->
       <div v-if="!settings.live2d.enabled" class="cy-live-overlay" role="status">Live2D 已关闭</div>
       <div v-else-if="store.status === 'loading'" class="cy-live-overlay" role="status">正在加载模型…</div>
@@ -410,6 +461,34 @@ onBeforeUnmount(() => {
   background: var(--cy-accent);
 }
 
+.cy-live-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* UII-Live2D 修缮：重置视图（紧凑次要按钮，与折叠按钮同规格） */
+.cy-live-reset {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--cy-border);
+  border-radius: 9px;
+  background: var(--cy-surface);
+  color: var(--cy-muted);
+}
+
+.cy-live-reset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.cy-live-reset:hover:not(:disabled) {
+  color: var(--cy-text);
+  background: var(--cy-surface-hover);
+}
+
 .cy-live-resizer {
   position: absolute;
   left: 0;
@@ -457,6 +536,17 @@ onBeforeUnmount(() => {
   display: block;
   /* 角色画布：仅 ready 时可见（loading 期 canvas 已挂载准备上下文） */
   background: transparent;
+  /* UII-Live2D 修缮：画布直接操作（拖动/滚轮）——禁触摸手势与选区，避免与视图拖动冲突 */
+  touch-action: none;
+  user-select: none;
+}
+
+.cy-live-canvas.is-grab {
+  cursor: grab;
+}
+
+.cy-live-canvas.is-grabbing {
+  cursor: grabbing;
 }
 
 .cy-live-overlay {
@@ -543,50 +633,5 @@ onBeforeUnmount(() => {
 .cy-live-badge.is-mood {
   background: rgba(255, 255, 255, 0.2);
   color: var(--cy-accent-text);
-}
-
-/* Task 5（B6）：缩放/偏移手柄（画布顶部叠加，不占 grid row，不遮挡下拉） */
-.cy-live-view-controls {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  right: 8px;
-  z-index: 1;
-  display: flex;
-  gap: 10px;
-  padding: 6px 10px;
-  border: 1px solid var(--cy-border);
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(3px);
-  color: var(--cy-text);
-  font-size: 11px;
-}
-
-.cy-live-vc-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-}
-
-.cy-live-vc-item > span:first-child {
-  flex: none;
-  color: var(--cy-muted);
-}
-
-.cy-live-vc-item input[type='range'] {
-  flex: 1;
-  min-width: 0;
-  accent-color: var(--cy-accent);
-}
-
-.cy-live-vc-value {
-  flex: 0 0 34px;
-  text-align: right;
-  color: var(--cy-muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
 }
 </style>
