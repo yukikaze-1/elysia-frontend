@@ -3,11 +3,23 @@
 // 声音列表来自 modelStore.voices（id/name/languages）；currentVoice 高亮；「设为当前声音」→ modelStore.setVoice(voiceId 字符串)；
 // 「试听」→ modelStore.preview({ voiceId })——preview 是「可调用 + 可读状态」双用句柄：
 // 调用触发试听，`.url`/`.error` 读取结果（响应式 getter）；试听为独立操作，不打断当前生成。
+// 播放只跟随本次按钮操作显式触发，不使用 autoplay：preview URL 会跨 tab 保留，若在重新挂载时 autoplay，
+// TTS → STT → TTS 会把上一段试听再次播放。
+import { nextTick, ref } from 'vue'
 import { useModelServiceStore } from '../stores/model-service.store'
 
 const modelStore = useModelServiceStore()
+const previewAudio = ref<HTMLAudioElement>()
 
-function onPreview(voiceId: string): void { void modelStore.preview({ voiceId }) }
+async function onPreview(voiceId: string): Promise<void> {
+  await modelStore.preview({ voiceId })
+  if (!modelStore.preview?.url) return
+  await nextTick()
+  const audio = previewAudio.value
+  if (!audio) return // 请求完成前已离开 TTS 页签：不在后续重新挂载时补播
+  audio.currentTime = 0
+  void audio.play().catch(() => { /* 播放策略拒绝时保留 controls，允许用户手动播放 */ })
+}
 function onSetVoice(voiceId: string): void { void modelStore.setVoice(voiceId) }
 </script>
 
@@ -42,10 +54,10 @@ function onSetVoice(voiceId: string): void { void modelStore.setVoice(voiceId) }
     <div v-if="modelStore.preview?.error" class="cy-ms-error" role="alert">{{ modelStore.preview.error }}</div>
     <audio
       v-if="modelStore.preview?.url"
+      ref="previewAudio"
       :src="modelStore.preview.url"
       class="cy-tts-audio"
       controls
-      autoplay
     />
   </section>
 </template>
