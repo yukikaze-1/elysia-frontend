@@ -72,30 +72,35 @@ async function toggleConnect(): Promise<void> {
 
 <template>
   <div class="cy-connection-panel">
-    <div class="cy-mode-row">
-      <span class="cy-mode-badge">{{ mode === 'mock' ? 'MOCK 演示模式' : 'REAL' }}</span>
-    </div>
-    <div v-if="mode !== 'mock'" class="cy-row cy-row-form">
-      <input v-model="endpointInput" class="cy-input" type="text" placeholder="https://… 或回环 http://127.0.0.1:8765" />
-      <button class="cy-btn" :disabled="busy" @click="applyEndpoint">设置</button>
-    </div>
-    <div v-if="endpointErr" class="cy-err">{{ endpointErr }}</div>
-    <div v-if="mode !== 'mock'" class="cy-row cy-row-form">
-      <span class="cy-token-label">{{ tokenLabel }}</span>
-      <input v-model="tokenInput" class="cy-input" type="password" placeholder="Token" @keyup.enter="applyToken" />
-      <button class="cy-btn" :disabled="busy" @click="applyToken">设置</button>
-      <button v-if="tokenStatus === 'available'" class="cy-btn" :disabled="busy" @click="clearToken">清除</button>
-    </div>
-    <div v-if="tokenErr" class="cy-err">{{ tokenErr }}</div>
+    <!-- UI 问题 6：头部只显联调关键态（mode badge + 连接/断开）；Endpoint/Token/版本/错误收进「配置」折叠，
+         默认收起，避免联调产物常驻产品 UI 最显眼位置。Endpoint/Token 设置入口仍可达（总原则 3 不回退）。 -->
+    <details class="cy-conn-config">
+      <summary>
+        <span class="cy-conn-config-toggle">配置</span>
+        <span class="cy-mode-badge">{{ mode === 'mock' ? 'MOCK' : 'REAL' }}</span>
+      </summary>
+      <div v-if="mode !== 'mock'" class="cy-row cy-row-form">
+        <input v-model="endpointInput" class="cy-input" type="text" placeholder="https://… 或回环 http://127.0.0.1:8765" />
+        <button class="cy-btn" :disabled="busy" @click="applyEndpoint">设置</button>
+      </div>
+      <div v-if="endpointErr" class="cy-err">{{ endpointErr }}</div>
+      <div v-if="mode !== 'mock'" class="cy-row cy-row-form">
+        <span class="cy-token-label">{{ tokenLabel }}</span>
+        <input v-model="tokenInput" class="cy-input" type="password" placeholder="Token" @keyup.enter="applyToken" />
+        <button class="cy-btn" :disabled="busy" @click="applyToken">设置</button>
+        <button v-if="tokenStatus === 'available'" class="cy-btn" :disabled="busy" @click="clearToken">清除</button>
+      </div>
+      <div v-if="tokenErr" class="cy-err">{{ tokenErr }}</div>
+      <div v-if="serverVersion || protocolVersion" class="cy-server-info">
+        后端 {{ serverVersion }} · 协议 {{ protocolVersion }}
+      </div>
+      <div v-if="connection.error" class="cy-conn-error">{{ connection.error.message }}</div>
+    </details>
     <div class="cy-row">
       <button class="cy-btn cy-connect-btn" :disabled="busy" @click="toggleConnect">
         {{ connected ? '断开' : '连接' }}
       </button>
     </div>
-    <div v-if="serverVersion || protocolVersion" class="cy-server-info">
-      后端 {{ serverVersion }} · 协议 {{ protocolVersion }}
-    </div>
-    <div v-if="connection.error" class="cy-conn-error">{{ connection.error.message }}</div>
   </div>
 </template>
 
@@ -112,9 +117,30 @@ async function toggleConnect(): Promise<void> {
   font-size: 12px;
 }
 
-.cy-mode-row {
+.cy-conn-config {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 「配置」折叠开关行：默认收起，Endpoint/Token/版本/错误 均在展开后可见 */
+.cy-conn-config > summary {
   display: flex;
   align-items: center;
+  gap: 6px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+.cy-conn-config > summary::-webkit-details-marker { display: none; }
+
+.cy-conn-config-toggle {
+  padding: 2px 8px;
+  color: var(--cy-muted);
+  background: var(--cy-surface-soft);
+  border: 1px solid var(--cy-border);
+  border-radius: 999px;
+  font-size: 11px;
 }
 
 .cy-mode-badge {

@@ -13,9 +13,17 @@ const conversationStore = useConversationStore()
 const draftStore = useDraftStore()
 
 const container = ref<HTMLElement>()
-const heights = ref<Record<string, number>>({})          // 实测高（ResizeObserver）
+const heights = ref<Record<string, number>>({})          // 实测高（ResizeObserver，滚动提交后合并）
 const rowEls = new Map<string, HTMLElement>()            // messageId → 行元素
 const resizeObs = ref<ResizeObserver>()
+
+/** UI 问题 1：滚动中实测高先写 pendingHeights，滚动停（scrollend/150ms 空闲）才合并进 heights——
+ *  避免滚动中每次估高→实测修正都改 paddingTop/Bottom → scrollHeight → thumb 跳。
+ *  prefix 只用已提交 heights（未提交 pending 不参与窗口二分）→ 滚动中布局稳定；停稳后一次合并修正。 */
+const pendingHeights = ref<Record<string, number>>({})
+const isScrolling = ref(false)
+let scrollSettleTimer: ReturnType<typeof setTimeout> | undefined
+const SCROLL_SETTLE_MS = 150
 
 /** 窗口化后的可见顺序（order 恒 (createdAt, messageId) 升序，P0-1 不变量） */
 const items = computed(() => messageStore.order.map((id) => messageStore.byId[id]).filter(Boolean))
@@ -59,6 +67,11 @@ function onScroll(): void {
   if (!el) return
   scrollTop.value = el.scrollTop
   atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  // UI 问题 1：滚动期间进入「滚动中」态，实测高写 pendingHeights（不立即合并）
+  // → 滚动中 padding/scrollHeight 稳定，thumb 不跳；滚动停 150ms 后合并一次修正。
+  isScrolling.value = true
+  if (scrollSettleTimer) clearTimeout(scrollSettleTimer)
+  scrollSettleTimer = setTimeout(commitScrollHeights, SCROLL_SETTLE_MS)
   captureCurrent()
   // 顶部哨兵：更早历史 + 非加载中 → loadOlder（D5）。
   // 评审 P1-2：前插前 captureAnchor、前插完成后 restoreScrollTop——否则新页整块前插会把锚点/可视消息往下推
@@ -72,6 +85,25 @@ function onScroll(): void {
       pendingLoadAnchor.value = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
       void messageStore.loadOlder().then(() => restoreLoadAnchor())
     }
+  }
+}
+
+/** UI 问题 1：滚动停止——把滚动中累积的 pendingHeights 一次性合并进 heights，
+ *  触发一次窗口重算/padding 修正，替代滚动中逐条修正（thumb 稳定，停稳后一次对齐）。
+ *  同时应用滚动中累积的锚点补偿（loadOlder 前插/估→实测差），一次性落到 scrollTop。 */
+function commitScrollHeights(): void {
+  if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
+  isScrolling.value = false
+  const hasPending = Object.keys(pendingHeights.value).length > 0
+  if (hasPending) {
+    const next = { ...heights.value, ...pendingHeights.value }
+    heights.value = next
+    pendingHeights.value = {}
+  }
+  if (container.value && pendingCompensation.value !== 0) {
+    container.value.scrollTop += pendingCompensation.value
+    scrollTop.value = container.value.scrollTop
+    pendingCompensation.value = 0
   }
 }
 
@@ -99,16 +131,15 @@ function captureCurrent(): void {
   if (a.messageId) lastAnchor.value = { conversationId: conversationStore.currentId ?? '', anchor: a }
 }
 
-/** 行实测：写 heights 并补偿锚点上方变化（D5，防估→实测推走锚点；评审 P1-2 前插行首测按实测-估高补差） */
+/** 行实测：写 heights 并补偿锚点上方变化（D5，防估→实测推走锚点；评审 P1-2 前插行首测按实测-估高补差）。
+ *  UI 问题 1：滚动中实测先写 pendingHeights（不立即改 padding/scrollHeight），滚动停后一次合并，
+ *  避免滚动中 thumb 因估→实测修正而跳。非滚动态走既有立即路径（流式/初始加载）。 */
 function onRowResized(id: string, entry: ResizeObserverEntry): void {
-  // 7D 真机修复：用 border-box 实际高度（同 CyHistoryViewer）。contentRect 不含 .cy-vlist-row 的
-  // 上下 padding（6+6=12px/行），长列表前缀和会逐行欠估 → strict 可见窗口偏前 → 视口边缘出现「半可见但空 source」的 completed 行。
   // 7D 真机修复：用 border-box 实际高度（同 CyHistoryViewer）。contentRect 不含 .cy-vlist-row 的
   // 上下 padding（6+6=12px/行），长列表前缀和会逐行欠估 → strict 可见窗口偏前 → 视口边缘出现「半可见但空 source」的 completed 行。
   const h = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height
   const prev = heights.value[id]
   if (prev === h) return
-  heights.value[id] = h
   const anchorId = lastAnchor.value?.anchor.messageId ?? pendingLoadAnchor.value?.messageId
   if (anchorId === id) return
   const anchorIdx = anchorId ? items.value.findIndex((m) => m.messageId === anchorId) : -1
@@ -118,11 +149,17 @@ function onRowResized(id: string, entry: ResizeObserverEntry): void {
     // 已测行按实测增量（既有 D5 语义）
     const delta = prev !== undefined ? h - prev : h - estimateHeight(items.value[idx])
     pendingCompensation.value += delta
-    if (container.value && pendingCompensation.value !== 0) {
-      container.value.scrollTop += pendingCompensation.value
-      scrollTop.value = container.value.scrollTop
-      pendingCompensation.value = 0
-    }
+  }
+  // UI 问题 1：滚动中只写 pendingHeights（并累积补偿不立即应用），滚动停 commitScrollHeights 一次合并 + 补偿
+  if (isScrolling.value) {
+    pendingHeights.value[id] = h
+    return
+  }
+  heights.value[id] = h
+  if (container.value && pendingCompensation.value !== 0) {
+    container.value.scrollTop += pendingCompensation.value
+    scrollTop.value = container.value.scrollTop
+    pendingCompensation.value = 0
   }
 }
 
@@ -134,6 +171,11 @@ watch(() => conversationStore.currentId, (id, oldId) => {
     draftStore.setScrollAnchor(oldId, lastAnchor.value.anchor)
     void draftStore.flush(oldId)
   }
+  // UI 问题 1：切会话清滚动批次态（pendingHeights + settle 定时器 + 滚动标志）
+  if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
+  isScrolling.value = false
+  pendingHeights.value = {}
+  pendingCompensation.value = 0
   heights.value = {}
   scrollTop.value = 0
   atBottom.value = true
@@ -221,7 +263,10 @@ function setRowEl(id: string, el: Element | null): void {
   else { const prev = rowEls.get(id); if (prev) { resizeObs.value?.unobserve(prev); rowEls.delete(id) } }
 }
 
-onBeforeUnmount(() => { resizeObs.value?.disconnect() })
+onBeforeUnmount(() => {
+  if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
+  resizeObs.value?.disconnect()
+})
 
 onMounted(() => {
   resizeObs.value = new ResizeObserver((entries) => {
@@ -276,7 +321,8 @@ onMounted(() => {
 .cy-located-chip { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }
 .cy-sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .cy-empty { display: grid; flex: 1; place-items: center; color: var(--cy-muted); font-size: 13px; }
-.cy-back-bottom { position: sticky; bottom: 12px; align-self: center; padding: 6px 12px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; cursor: pointer; }
+.cy-back-bottom { position: sticky; bottom: 12px; align-self: center; z-index: 2; padding: 6px 13px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
+.cy-back-bottom:hover { color: var(--cy-accent); background: var(--cy-surface-hover); }
 .cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: flex-start; gap: 8px; padding: 9px 13px; margin: 6px 0; color: var(--cy-muted); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 13px; font-size: 12px; }
 .cy-typing-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cy-accent-strong); animation: cy-pulse 1s ease-in-out infinite; }
 @keyframes cy-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }

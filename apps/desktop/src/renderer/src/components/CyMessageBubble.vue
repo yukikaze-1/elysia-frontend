@@ -102,7 +102,10 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
           <!-- 阶段 6 批次 B（Task 7）：归档工具卡片（Message.toolCalls，REST 历史 + WS 回放双路径配对产物；只读） -->
           <CyToolCard v-for="tc in message.toolCalls" :key="tc.id" :record="tc" readonly />
           <template v-for="seg in publicSegments" :key="seg.segmentId">
-            <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :source="needsDeferredRender(seg) ? '' : segmentText(seg)" />
+            <!-- UI 问题 2：延迟态仍渲染 .cy-segment（perf-gate ②b/③ 断言「视口外 completed 段空 source」的契约），
+                 但加 .cy-segment-deferred 类——视觉上是中性骨架（浅色、无 accent 药丸底），不是误导性空 accent 药丸。
+                 滚入真正可见窗口后再渲染实文。 -->
+            <CyMarkdown v-if="isTextSegment(seg)" class="cy-segment" :class="{ 'cy-segment-deferred': needsDeferredRender(seg) }" :source="needsDeferredRender(seg) ? '' : segmentText(seg)" />
             <!-- G4：sticker 分段渲染（wire seg.stickerId，复用通用媒体代理） -->
             <img v-else-if="seg.kind === 'sticker' && seg.stickerId" :src="stickerSrc(seg.stickerId)" class="cy-sticker-img" alt="表情" />
             <!-- G3：assistant 媒体分段（attachmentId 存在时渲染媒体组件；实时流式分段无 attachmentId 仍走占位，P2-5 wire 契约） -->
@@ -239,6 +242,22 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border-left: 2px solid var(--cy-accent-strong);
+}
+
+/* UI 问题 2：延迟态（completed + 视口外）——保留 .cy-segment 契约（perf-gate ②b/③ 断言空 source），
+   但视觉改为中性骨架（surface-soft 底、muted、无 accent 药丸底 + 轻微脉冲），消除空 accent 药丸的误导。
+   滚入真正可见窗口后去掉该类，恢复 accent 药丸渲染实文。 */
+.cy-segment.cy-segment-deferred {
+  color: var(--cy-muted);
+  background: var(--cy-surface-soft);
+  border-left-color: var(--cy-border);
+  min-height: 20px;
+  animation: cy-segment-deferred-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cy-segment-deferred-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 .cy-media-placeholder {

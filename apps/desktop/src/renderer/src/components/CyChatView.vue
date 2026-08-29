@@ -23,9 +23,6 @@ const convTitle = computed(() => {
   return c?.title ?? '新会话'
 })
 
-/** 操作门控(批次B T9):connected + 会话就绪 + 不在操作中 */
-const canAct = computed(() => connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy)
-
 /** 连接状态展示:状态点 tone + 文案 */
 const statusTone = computed(() => {
   switch (connectionStore.state.status) {
@@ -55,12 +52,8 @@ const statusLabel = computed(() => {
   }
 })
 
-/** F1(Task 4 review):create 只设 currentId、不 reset messageStore——新建后显式 activate(c.id) 拉起空消息页 */
-async function newConversation(): Promise<void> {
-  await conversationStore.create()
-  const id = conversationStore.currentId
-  if (id) await conversationStore.activate(id)
-}
+/** F1(Task 4 review):create 只设 currentId、不 reset messageStore——新建后显式 activate(c.id) 拉起空消息页
+ *  UI 问题 6：删「新建」头部按钮——会话创建收敛到左侧列表头 +；此函数保留供列表复用（独立组件），头部不再入口。 */
 </script>
 
 <template>
@@ -74,17 +67,19 @@ async function newConversation(): Promise<void> {
         </div>
       </div>
       <div class="cy-header-actions">
-        <!-- P2-1：查看器入口不 gating（spec §4.8）——未连接时打开查询经 Main 失败，在查看器错误区展示；新建会话仍 gating -->
+        <!-- P2-1：查看器入口不 gating（spec §4.8）——未连接时打开查询经 Main 失败，在查看器错误区展示 -->
         <button class="cy-action-button" title="聊天记录" @click="historyStore.openViewer()">聊天记录</button>
         <button class="cy-action-button" title="资源" @click="historyStore.openViewer('image_video')">资源</button>
-        <button class="cy-action-button" title="新建会话" :disabled="!canAct" @click="newConversation">新建</button>
+        <!-- UI 问题 6：删「新建」（与列表头 + 冗余）；角色改为紧凑图标钮（live2dShown 时是唯一可再展开的入口——面板折叠后 v-show 隐藏但其 toggle 不可点） -->
         <button
-          class="cy-action-button"
+          class="cy-action-button cy-action-icon"
           :aria-pressed="layout.effective.live2dShown"
           title="显示/隐藏角色"
           aria-label="显示/隐藏角色"
           @click="layout.toggleLive2d()"
-        >角色</button>
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M15 3v18" /></svg>
+        </button>
         <CyConnectionPanel />
       </div>
     </header>
@@ -165,6 +160,8 @@ async function newConversation(): Promise<void> {
 .cy-status-text {
   color: var(--cy-muted);
   font-size: 12px;
+  /* 问题 6/附注 B：状态文字不折行（窄聊天下「未连接」被断成「未连/接」） */
+  white-space: nowrap;
 }
 
 .cy-header-actions {
@@ -191,5 +188,16 @@ async function newConversation(): Promise<void> {
 .cy-action-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* UI 问题 6：角色改为紧凑图标钮（降低视觉权重，但保 live2dShown 时可再展开的入口） */
+.cy-action-icon {
+  display: grid;
+  place-items: center;
+  padding: 7px 9px;
+}
+.cy-action-icon[aria-pressed='true'] {
+  color: var(--cy-accent-text);
+  background: var(--cy-accent);
 }
 </style>
