@@ -317,6 +317,16 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
           </template>
           <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
         </button>
+        <!-- UI精修 01：分组分隔线——组1(附件/录音) vs 组2(表情/实时/转写)，细竖线 span 界定两组 -->
+        <span class="cy-composer-divider" aria-hidden="true" />
+        <!-- G4 Emoji/表情包：面板弹出（Esc 关闭回焦点）+ 待发送贴图队列；UII01 移入 composer-box 组2（表情→实时→转写） -->
+        <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 7.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM8.5 9.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM12 17c-2.5 0-4.5-1.5-5-3.5h10c-.5 2-2.5 3.5-5 3.5z"/></svg>
+        </button>
+        <!-- UI精修 01：picker-wrap 在 flex 行内恒为空会插入左右两个 phantom gap，改为仅弹层打开时挂载 -->
+        <div v-if="showPicker" class="cy-picker-wrap" @keydown="onPickerKeydown">
+          <CyEmojiPicker class="cy-emoji-pop" @select-emoji="insertEmoji" @select-sticker="onSelectSticker" @close="showPicker = false" />
+        </div>
         <button
           class="cy-voice-btn"
           :class="{ active: voiceStore.mode === 'realtime' }"
@@ -372,15 +382,6 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
     <CyRealtimeBar v-else />
     <!-- P4-B 转写浮层：按住说话期间显示字幕 + 「松开提交 · 上滑取消」 -->
     <CyDictationHint v-if="voiceStore.mode === 'dictating'" />
-    <!-- G4 Emoji/表情包：面板弹出（Esc 关闭回焦点）+ 待发送贴图队列 -->
-    <div class="cy-composer-tools">
-      <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 7.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM8.5 9.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM12 17c-2.5 0-4.5-1.5-5-3.5h10c-.5 2-2.5 3.5-5 3.5z"/></svg>
-      </button>
-      <div class="cy-picker-wrap" @keydown="onPickerKeydown">
-        <CyEmojiPicker v-if="showPicker" class="cy-emoji-pop" @select-emoji="insertEmoji" @select-sticker="onSelectSticker" @close="showPicker = false" />
-      </div>
-    </div>
     <div v-if="pendingStickers.length" class="cy-sticker-queue" role="list" aria-label="待发送表情">
       <span v-for="s in pendingStickers" :key="s.stickerId" class="cy-sticker-chip" role="listitem">
         {{ s.stickerId }}                    <!-- P0-2：契约 StickerEntry 无 name，chip 显示 stickerId -->
@@ -439,9 +440,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-composer-box {
-  display: grid;
-  grid-template-columns: auto auto auto auto 1fr auto auto;  /* 附件 + 语音三入口 + textarea + stop + send */
-  align-items: end;
+  /* UI精修 01：grid 列数改为 flex——组内含分隔线 span，硬编码列数会因元素增删而脆 */
+  display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding: 8px;
   background: var(--cy-surface);
@@ -450,7 +451,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-composer textarea {
-  width: 100%;
+  flex: 1;
   min-width: 0;
   min-height: 40px;
   max-height: 72px;
@@ -581,19 +582,20 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   font-size: 11px;
 }
 
-/* G4 Emoji/表情包：工具行 + 弹出面板锚点 + 待发送贴图队列 */
-.cy-composer-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 7px;
+/* G4 Emoji/表情包：弹出面板锚点 + 待发送贴图队列（UI精修 01：按钮移入 composer-box 组2，不再独立一行） */
+.cy-composer-divider {
+  flex-shrink: 0;
+  width: 1px;
+  height: 24px;
+  background: var(--cy-border);
+  align-self: center;
 }
 
 .cy-emoji-btn {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 9px;
   color: var(--cy-muted);
   background: var(--cy-surface);
