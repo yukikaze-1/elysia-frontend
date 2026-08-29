@@ -70,29 +70,39 @@ beforeEach(() => {
   s.voice.consentBackendStt = true
 })
 
-describe('CyChatInput 语音三入口守卫（Minor 24）', () => {
-  it('realtimeEnabled=false 时 🔊 实时会话禁用、🎤 普通录音不禁用', () => {
+describe('CyChatInput 语音入口守卫（Minor 24，UII02 统一 🎙️ 主键+菜单）', () => {
+  /** 打开语音下拉菜单以暴露「录制语音消息」菜单项（可达名=普通录音） */
+  async function openVoiceMenu(wrapper: ReturnType<typeof mount>): Promise<void> {
+    const arrow = wrapper.find('[aria-label="语音选项"]')
+    expect(arrow.exists()).toBe(true)
+    await arrow.trigger('click')
+    await wrapper.vm.$nextTick()
+  }
+
+  it('realtimeEnabled=false 时 🎧 实时会话禁用、🎤 普通录音(菜单项)不禁用', async () => {
     useSettingsStore().voice.realtimeEnabled = false
     const wrapper = mountInput()
     expect(isDisabled(wrapper, '[aria-label="实时会话"]')).toBe(true)
+    await openVoiceMenu(wrapper)
     expect(isDisabled(wrapper, '[aria-label="普通录音"]')).toBe(false)
   })
 
-  it('voice.enabled=false 时 🎤/🔊/⌨️ 三入口全部禁用', () => {
+  it('voice.enabled=false 时 🎤(菜单)/🎧/⌨️ 三入口全部禁用', async () => {
     useSettingsStore().voice.enabled = false
     const wrapper = mountInput()
+    await openVoiceMenu(wrapper)
     expect(isDisabled(wrapper, '[aria-label="普通录音"]')).toBe(true)
     expect(isDisabled(wrapper, '[aria-label="实时会话"]')).toBe(true)
     expect(isDisabled(wrapper, '[aria-label="输入法转写（按住说话）"]')).toBe(true)
   })
 
-  it('realtimeEnabled=true 时 🔊 实时会话可用', () => {
+  it('realtimeEnabled=true 时 🎧 实时会话可用', () => {
     useSettingsStore().voice.realtimeEnabled = true
     const wrapper = mountInput()
     expect(isDisabled(wrapper, '[aria-label="实时会话"]')).toBe(false)
   })
 
-  it('录音中 🎤 变「停止录音」+ 显示时长 + textarea/发送禁用', () => {
+  it('录音中主键变「停止录音」+ 显示时长 + textarea/发送禁用', () => {
     const voice = useVoiceStore()
     voice.mode = 'recording'
     voice.record.elapsedMs = 7000

@@ -91,9 +91,25 @@ async function closeSettings(page: Page): Promise<void> {
 /** 待发送条内按钮（作用域限定——「删除」与会话列表删除按钮同名，必须圈定 .cy-voice-pending） */
 const pendingBtn = (page: Page, name: string) => page.locator('.cy-voice-pending').getByRole('button', { name, exact: true })
 
+/** 开始录音：UII02 统一 🎙️ 入口——点「语音选项」箭头 → 菜单「录制语音消息」（可达名=普通录音）。
+ *  录音态下主键变「停止录音」（红点+计时），文本输入区被语音活跃禁用。 */
 async function startRecord(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '普通录音', exact: true }).click()
+  await page.getByRole('button', { name: '语音选项', exact: true }).click()
+  await page.getByRole('menuitem', { name: '普通录音', exact: true }).click()
   await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
+}
+
+/** 仅触发录音入口（不等录音态）——用于 consent 确认等「点击后会弹窗/异步」场景，断言由调用方做。 */
+async function clickRecordEntry(page: Page): Promise<void> {
+  await page.getByRole('button', { name: '语音选项', exact: true }).click()
+  await page.getByRole('menuitem', { name: '普通录音', exact: true }).click()
+}
+
+/** 断言录音入口回到 idle（准备可录音）：主键=转写 hold 键、无「停止录音」。
+ *  UII02 把普通录音收进菜单（仅开菜单可达），idle 信号改用主键（转写可 hold）+ 无停止态。 */
+async function expectIdleRecordEntry(page: Page): Promise<void> {
+  await expect.poll(() => page.getByRole('button', { name: '输入法转写（按住说话）', exact: true }).count(), POLL).toBe(1)
+  expect(await page.getByRole('button', { name: '停止录音', exact: true }).count()).toBe(0)
 }
 
 /** 覆写 renderer 的 navigator.mediaDevices.getUserMedia 为拒绝（NotAllowedError，与真实权限拒绝走同一 capture 失败路径）；
@@ -157,7 +173,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       // 删除收口 → 回 idle（无残留待发送条）+ 普通录音按钮恢复 + 连接保持
       await pendingBtn(page, '删除').click()
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
-      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      await expectIdleRecordEntry(page)
       await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('已连接')
     } finally { await closeApp(launched) }
   })
@@ -337,9 +353,9 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await startRecord(page)
       await page.getByRole('button', { name: '断开', exact: true }).click()
       await expect.poll(() => page.evaluate(() => document.querySelector('.cy-status-text')?.textContent ?? ''), POLL).toContain('未连接')
-      // voiceStore.reset 清态：录音按钮回「普通录音」（mode=idle），无残留待发送条
+      // voiceStore.reset 清态：录音入口回 idle（主键=转写 hold），无残留待发送条
       await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(0)
-      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      await expectIdleRecordEntry(page)
     } finally { await closeApp(launched) }
   })
 
@@ -363,7 +379,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
     try {
       const page = first.page
       await connectAndActivateFirst(page)
-      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await clickRecordEntry(page)
       await expect.poll(() => page.getByRole('dialog', { name: '后端语音识别确认' }).count(), POLL).toBe(1)
       await page.getByRole('button', { name: '同意', exact: true }).click()
       // 同意后继续录音（confirmConsent 重发挂起的 startRecord）
@@ -379,7 +395,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
     const second = await launchVoice({ userData: ud, seed: false })
     try {
       await connectAndActivateFirst(second.page)
-      await second.page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await clickRecordEntry(second.page)
       // 重启后不再弹确认：直接进录音态
       await expect.poll(() => second.page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
       expect(await second.page.getByRole('dialog', { name: '后端语音识别确认' }).count()).toBe(0)
@@ -391,13 +407,13 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
     try {
       const page = launched.page
       await connectAndActivateFirst(page)
-      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await clickRecordEntry(page)
       await expect.poll(() => page.getByRole('dialog', { name: '后端语音识别确认' }).count(), POLL).toBe(1)
       await page.getByRole('button', { name: '取消', exact: true }).click()
-      // 中止：不进入录音态（按钮保持「普通录音」），无待发送条
+      // 中止：不进入录音态（入口回 idle），无待发送条
       await expect.poll(() => page.getByRole('dialog', { name: '后端语音识别确认' }).count(), POLL).toBe(0)
       expect(await page.getByRole('button', { name: '停止录音', exact: true }).count()).toBe(0)
-      expect(await page.getByRole('button', { name: '普通录音', exact: true }).count()).toBe(1)
+      await expectIdleRecordEntry(page)
     } finally { await closeApp(launched) }
   })
 
@@ -445,15 +461,15 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await connectAndActivateFirst(page)
       // 1) 覆写 getUserMedia 拒绝（NotAllowedError，真实权限拒绝同路径），原函数存 window.__origGUM
       await stubGetUserMediaReject(page)
-      // 2) 点普通录音 → control 帧先行（voice.record.start）→ capture 拒绝 → composer micError banner + 按钮恢复（mode 回 idle）
+      // 2) 点录音入口（菜单）→ control 帧先行（voice.record.start）→ capture 拒绝 → composer micError banner + 入口回 idle（mode 回 idle）
       await expect.poll(() => page.locator('.cy-status-text').textContent(), POLL).toContain('已连接')
-      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await clickRecordEntry(page)
       await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(1)
-      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      await expectIdleRecordEntry(page)
       expect(await page.getByRole('button', { name: '停止录音', exact: true }).count()).toBe(0)
       // 3) 还原 getUserMedia → 同一连接普通录音成功：进入 recording（P0-01：后端会话已由 discard 释放，无 VOICE_SESSION_CONFLICT）
       await restoreGetUserMedia(page)
-      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await clickRecordEntry(page)
       await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
       await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(0)
       // 4) stop → 删除（discardRecord：待发送条消失 + mode 回 idle）——realtime/dictation 的 guardStart 要求 idle，必须先 discard
@@ -461,7 +477,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)
       await pendingBtn(page, '删除').click()
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
-      await expect.poll(() => page.getByRole('button', { name: '普通录音', exact: true }).count(), POLL).toBe(1)
+      await expectIdleRecordEntry(page)
       // 5) 实时 start+stop（同连接，无需重连）
       await page.getByRole('button', { name: '实时会话', exact: true }).click()
       await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(1)
@@ -494,9 +510,9 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       // 退出设置 → CyVoicePane 卸载 clearTransientErrors → 聊天页无残留 composer banner（mode-idle micError 残差不误展示）
       await closeSettings(page)
       await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(0)
-      // 还原 getUserMedia → 普通录音按钮可立即启动（进入 recording）
+      // 还原 getUserMedia → 录音入口可立即启动（进入 recording）
       await restoreGetUserMedia(page)
-      await page.getByRole('button', { name: '普通录音', exact: true }).click()
+      await clickRecordEntry(page)
       await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
       await page.getByRole('button', { name: '停止录音', exact: true }).click()
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)

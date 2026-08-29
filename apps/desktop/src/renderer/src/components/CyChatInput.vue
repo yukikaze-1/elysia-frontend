@@ -58,6 +58,11 @@ function onToggleRealtime(): void {
 }
 
 // —— ⌨️ 转写：按住 pointerdown 开始 / pointerup 提交 / pointercancel 取消；上滑 60px 置 cancel 标记 → pointerup 走 cancel ——
+/** UII02：主键 pointerdown 门——录音中不触发转录 hold（主键在 recording 态是「停止录音」toggle，不 startDictation） */
+function onVoicePointerDown(e: PointerEvent): void {
+  if (voiceStore.mode === 'recording') return
+  onDictationPointerDown(e)
+}
 const dictationHold = ref<{ startY: number; cancel: boolean } | null>(null)
 function onDictationPointerDown(e: PointerEvent): void {
   if (voiceActive.value && voiceStore.mode !== 'dictating') return
@@ -79,6 +84,33 @@ function onDictationPointerUp(): void {
 function onDictationPointerCancel(): void {
   dictationHold.value = null
   void voiceStore.cancelDictation()
+}
+
+// —— UII02 语音下拉菜单：箭头点开（菜单选「录制语音消息」→ 进入 toggle 录音）；Esc 关闭回焦 ——
+const voiceMenuOpen = ref(false)
+function selectVoiceMenu(kind: 'record'): void {
+  voiceMenuOpen.value = false
+  if (kind === 'record') void voiceStore.startRecord()
+}
+function onVoiceMenuKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') { voiceMenuOpen.value = false; textareaRef.value?.focus() }
+}
+
+// —— UII02 附件弹出菜单：＋ 主键触发；菜单按 accept 分类（图片/文件/音频/其他），各开对应 file input ——
+const attachMenuOpen = ref(false)
+const imageInput = ref<HTMLInputElement>()
+const audioInput = ref<HTMLInputElement>()
+/** 打开/关闭附件菜单（＋ 主键与箭头都开菜单；此处直接用 openAttachmentMenu 简化主键行） */
+function toggleAttachMenu(): void {
+  attachMenuOpen.value = !attachMenuOpen.value
+}
+function pickAttachment(kind: 'image' | 'audio' | 'file'): void {
+  attachMenuOpen.value = false
+  const input = kind === 'image' ? imageInput.value : kind === 'audio' ? audioInput.value : fileInput.value
+  input?.click()
+}
+function onAttachMenuKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') { attachMenuOpen.value = false; textareaRef.value?.focus() }
 }
 
 // —— 转写 final 插入（D-P4）：finalText 置位 → 组件读 textarea 选区 → applyDictationInsert → clearDictationFinal ——
@@ -297,29 +329,26 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" @leave="dragActive = false" />
 
       <div class="cy-composer-box">
-        <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" :disabled="voiceActive" @click="fileInput?.click()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
-        </button>
+        <!-- UII02 附件入口：主键＋ 与箭头▾ 都开菜单（按 accept 分类：图片/文件/音频）。二者分离，不侵入现有点击流 -->
+        <span class="cy-attach-group">
+          <button class="cy-attach-btn" title="添加文件" aria-label="添加文件" :disabled="voiceActive" @click="toggleAttachMenu()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+          <button class="cy-attach-arrow" aria-label="附件选项" :aria-expanded="attachMenuOpen" @click="toggleAttachMenu()">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <div v-if="attachMenuOpen" class="cy-attach-menu" role="menu" aria-label="附件选项" @keydown="onAttachMenuKeydown">
+            <button role="menuitem" @click="pickAttachment('image')">图片</button>
+            <button role="menuitem" @click="pickAttachment('file')">文件</button>
+            <button role="menuitem" @click="pickAttachment('audio')">音频</button>
+          </div>
+        </span>
         <input ref="fileInput" type="file" multiple class="cy-hidden-input" @change="onFilePick" />
-        <!-- P4-B 语音三入口（spec §5.12）：🎤 普通录音 / 🔊 实时会话 / ⌨️ 转写（按住说话） -->
-        <button
-          class="cy-voice-btn"
-          :class="{ active: voiceStore.mode === 'recording' }"
-          :disabled="recordDisabled"
-          :aria-pressed="voiceStore.mode === 'recording'"
-          :title="voiceStore.mode === 'recording' ? '停止录音' : '普通录音'"
-          :aria-label="voiceStore.mode === 'recording' ? '停止录音' : '普通录音'"
-          @click="onToggleRecord"
-        >
-          <template v-if="voiceStore.mode === 'recording'">
-            <i class="cy-rec-dot" aria-hidden="true" />
-            <span class="cy-rec-timer">{{ formatElapsed(voiceStore.record.elapsedMs) }}</span>
-          </template>
-          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 00-3 3v6a3 3 0 006 0V5a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2" /><path d="M12 19v3" /></svg>
-        </button>
-        <!-- UI精修 01：分组分隔线——组1(附件/录音) vs 组2(表情/实时/转写)，细竖线 span 界定两组 -->
+        <input ref="imageInput" type="file" accept="image/*" multiple class="cy-hidden-input" @change="onFilePick" />
+        <input ref="audioInput" type="file" accept="audio/*" multiple class="cy-hidden-input" @change="onFilePick" />
+        <!-- 左组：＋ ▾ ｜ 😊——添加内容（附件/表情） -->
         <span class="cy-composer-divider" aria-hidden="true" />
-        <!-- G4 Emoji/表情包：面板弹出（Esc 关闭回焦点）+ 待发送贴图队列；UII01 移入 composer-box 组2（表情→实时→转写） -->
+        <!-- G4 Emoji/表情包：面板弹出（Esc 关闭回焦点）+ 待发送贴图队列。UII02 归位到左组（＋旁） -->
         <button class="cy-emoji-btn" :aria-expanded="showPicker" aria-label="Emoji 与表情包" @click="showPicker = !showPicker">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 7.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM8.5 9.5a1.25 1.25 0 110-2.5 1.25 1.25 0 010 2.5zM12 17c-2.5 0-4.5-1.5-5-3.5h10c-.5 2-2.5 3.5-5 3.5z"/></svg>
         </button>
@@ -327,30 +356,6 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
         <div v-if="showPicker" class="cy-picker-wrap" @keydown="onPickerKeydown">
           <CyEmojiPicker class="cy-emoji-pop" @select-emoji="insertEmoji" @select-sticker="onSelectSticker" @close="showPicker = false" />
         </div>
-        <button
-          class="cy-voice-btn"
-          :class="{ active: voiceStore.mode === 'realtime' }"
-          :disabled="realtimeDisabled"
-          :aria-pressed="voiceStore.mode === 'realtime'"
-          title="实时会话"
-          aria-label="实时会话"
-          @click="onToggleRealtime"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 010 7" /><path d="M18.5 5.5a9 9 0 010 13" /></svg>
-        </button>
-        <button
-          class="cy-voice-btn"
-          :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel }"
-          :disabled="dictationDisabled"
-          title="转写（按住说话）"
-          aria-label="输入法转写（按住说话）"
-          @pointerdown="onDictationPointerDown"
-          @pointermove="onDictationPointerMove"
-          @pointerup="onDictationPointerUp"
-          @pointercancel="onDictationPointerCancel"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h4M12 20h6" /><path d="M8 4h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
-        </button>
         <textarea
           ref="textareaRef"
           v-model="draft"
@@ -371,12 +376,62 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
             <rect x="6" y="6" width="12" height="12" rx="2" />
           </svg>
         </button>
+        <!-- 右组：🎙️▾ → 发送——语音输入（转录主键 hold + 菜单切录音） -->
+        <!-- UII02 统一语音入口：主键=转录(hold，idle 态)；录音中主键变「停止录音」(toggle，红点+计时)。
+             箭头=菜单(click)切录音。主键/箭头分离 gap，pointerdown 只绑主键防误触菜单 -->
+        <button
+          class="cy-voice-btn cy-voice-main"
+          :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel, recording: voiceStore.mode === 'recording' }"
+          :disabled="dictationDisabled && voiceStore.mode !== 'recording'"
+          :title="voiceStore.mode === 'recording' ? '停止录音' : '转写（按住说话）'"
+          :aria-label="voiceStore.mode === 'recording' ? '停止录音' : '输入法转写（按住说话）'"
+          @click="voiceStore.mode === 'recording' ? onToggleRecord() : undefined"
+          @pointerdown="onVoicePointerDown"
+          @pointermove="onDictationPointerMove"
+          @pointerup="onDictationPointerUp"
+          @pointercancel="onDictationPointerCancel"
+        >
+          <template v-if="voiceStore.mode === 'recording'">
+            <i class="cy-rec-dot" aria-hidden="true" />
+            <span class="cy-rec-timer">{{ formatElapsed(voiceStore.record.elapsedMs) }}</span>
+          </template>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h4M12 20h6" /><path d="M8 4h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+        </button>
+        <span class="cy-voice-group">
+          <button
+            class="cy-voice-arrow"
+            :disabled="voiceActive && voiceStore.mode !== 'recording'"
+            aria-label="语音选项"
+            :aria-expanded="voiceMenuOpen"
+            @click="voiceMenuOpen = !voiceMenuOpen"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+          <!-- 语音下拉菜单：仅打开时挂载（防 flex 恒空 phantom gap）。菜单项视觉「录制语音消息」、可达名「普通录音」（测试红考依）。
+               锚定在 .cy-voice-group（position:relative）上，向上弹出不偏离箭头 -->
+          <div v-if="voiceMenuOpen" class="cy-voice-menu" role="menu" aria-label="语音选项" @keydown="onVoiceMenuKeydown">
+            <!-- 菜单项可达名='普通录音'（测试红考依），视觉文字='录制语音消息'（用户可读，语义更清晰） -->
+            <button role="menuitem" aria-label="普通录音" :disabled="recordDisabled" @click="selectVoiceMenu('record')">录制语音消息</button>
+          </div>
+        </span>
         <button class="cy-send-btn" :disabled="!canSend" title="发送" aria-label="发送" @click="send">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
             <path d="M5 12h14M13 6l6 6-6 6" />
           </svg>
         </button>
       </div>
+      <!-- UII02 实时语音：独立 accent 胶囊（框外、模式入口）。点击 startRealtime；isRealtime 时整区被 CyRealtimeBar 替换 -->
+      <button
+        class="cy-realtime-capsule"
+        :disabled="realtimeDisabled"
+        :aria-pressed="voiceStore.mode === 'realtime'"
+        title="实时语音会话"
+        aria-label="实时会话"
+        @click="onToggleRealtime"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 010 7" /><path d="M18.5 5.5a9 9 0 010 13" /></svg>
+        <span>实时语音</span>
+      </button>
     </template>
     <!-- P4-B 实时会话：输入区替换为实时状态条（聆听 + 字幕 + 轮次 + 停止） -->
     <CyRealtimeBar v-else />
@@ -533,6 +588,83 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   50% { opacity: 0.25; }
 }
 
+/* UII02 统一语音入口：主键(转录 hold) + 下拉箭头(菜单)。主键/箭头分离 gap，pointerdown 只绑主键防误触菜单 */
+.cy-voice-main.recording {
+  width: auto;
+  min-width: 32px;
+  padding: 0 9px;
+  gap: 4px;
+  color: var(--cy-danger);
+  background: var(--cy-surface-soft);
+  border-color: var(--cy-danger);
+}
+
+.cy-voice-group {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.cy-voice-arrow {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 32px;
+  margin-left: -6px;   /* 主键与箭头紧邻，但 pointerdown 只绑主键——箭头是独立的 click 区域 */
+  border-radius: 7px;
+  color: var(--cy-muted);
+  background: transparent;
+  border: 0;
+}
+
+.cy-voice-arrow:hover:not(:disabled) {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-voice-arrow:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 语音下拉菜单：输入区内覆盖层（z 不触标题栏下 40/50 契约），锚定 .cy-voice-group，向上弹出 */
+.cy-voice-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 30;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  background: var(--cy-surface);
+  border: 1px solid var(--cy-border);
+  border-radius: 10px;
+  box-shadow: var(--cy-shadow);
+}
+
+.cy-voice-menu [role='menuitem'] {
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cy-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cy-voice-menu [role='menuitem']:hover:not(:disabled) {
+  background: var(--cy-surface-hover);
+}
+
+.cy-voice-menu [role='menuitem']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .cy-hidden-input {
   display: none;
 }
@@ -550,6 +682,67 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 
 .cy-attach-btn:hover {
   color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+/* UII02 附件弹出菜单：主键(＋)+箭头(▾)成组，position:relative 锚点；菜单向上弹出、按 accept 分类 */
+.cy-attach-group {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.cy-attach-arrow {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 32px;
+  margin-right: 2px;
+  border-radius: 7px;
+  color: var(--cy-muted);
+  background: transparent;
+  border: 0;
+}
+
+.cy-attach-arrow:hover:not(:disabled) {
+  color: var(--cy-accent);
+  background: var(--cy-surface-hover);
+}
+
+.cy-attach-arrow:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cy-attach-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 30;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px;
+  background: var(--cy-surface);
+  border: 1px solid var(--cy-border);
+  border-radius: 10px;
+  box-shadow: var(--cy-shadow);
+}
+
+.cy-attach-menu [role='menuitem'] {
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--cy-text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cy-attach-menu [role='menuitem']:hover {
   background: var(--cy-surface-hover);
 }
 
@@ -580,6 +773,28 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   margin-top: 7px;
   color: var(--cy-muted);
   font-size: 11px;
+}
+
+/* UII02 实时语音独立 capsule：框外、accent 填充凸显「核心模式入口」；isRealtime 时整区被替换成 CyRealtimeBar */
+.cy-realtime-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--cy-accent);
+  color: var(--cy-accent-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.cy-realtime-capsule:hover:not(:disabled) {
+  filter: brightness(0.94);
+}
+.cy-realtime-capsule:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* G4 Emoji/表情包：弹出面板锚点 + 待发送贴图队列（UI精修 01：按钮移入 composer-box 组2，不再独立一行） */
