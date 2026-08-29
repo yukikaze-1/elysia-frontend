@@ -41,6 +41,19 @@ describe('CyProfileWizard Teleport + 焦点管理（UII-QQ 修缮批次）', () 
     w.unmount()
   })
 
+  it('表单滚动区与底部操作区分离——保存按钮不随长表单滚出可视区', async () => {
+    const { w } = await mountWizard()
+    const form = q('.cy-wizard-form')
+    const body = q('.cy-wizard-body')
+    const actions = q('.cy-wizard-actions')
+    expect(form).not.toBeNull()
+    expect(body?.parentElement?.classList.contains('cy-wizard-form')).toBe(true)
+    expect(actions?.parentElement?.classList.contains('cy-wizard-form')).toBe(true)
+    expect(actions?.previousElementSibling?.classList.contains('cy-wizard-body')).toBe(true)
+    expect(body?.contains(actions)).toBe(false)
+    w.unmount()
+  })
+
   it('Esc 关闭向导（emit close），卸载后焦点回到触发元素', async () => {
     const { w, trigger } = await mountWizard()
     q('.cy-wizard-overlay')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
