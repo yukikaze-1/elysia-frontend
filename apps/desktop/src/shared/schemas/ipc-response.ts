@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
+import { BackendFeatureFlagsSchema, CharacterBindingSnapshotSchema, CharacterGenerationRefSchema } from './character'
 import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 import { DIAGNOSTICS_PREVIEW_MAX, DIAGNOSTICS_TYPE_MAX } from '@shared/contracts'
 
@@ -16,7 +17,8 @@ export const ConnectionStateSchema = z.object({
   serverVersion: z.string().optional(),
   connectionId: z.string().optional(),
   activeConversationId: z.string().optional(),
-  lastError: z.string().optional()
+  lastError: z.string().optional(),
+  features: BackendFeatureFlagsSchema.optional()   // 多角色 FE-A（§5.2）：仅 connected 时由 Main 填充
 })
 
 export const BackendSessionSchema = z.object({
@@ -154,14 +156,16 @@ export const MessageSchema = z.object({
   usage: TokenUsageSchema.optional(),
   model: z.string().optional(),
   emotion: z.string().optional(),
-  stickerId: z.string().optional()   // 阶段 3 G4：用户贴图消息 wire 表示（可选字段，D8）
+  stickerId: z.string().optional(),   // 阶段 3 G4：用户贴图消息 wire 表示（可选字段，D8）
+  character: CharacterGenerationRefSchema.optional()   // 多角色 FE-A：消息角色审计快照（不镜像则 preload parse 静默剥字段，D6B-10 先例）
 })
 
 export const ConversationSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
   updatedAt: z.string(),
-  preview: z.string().optional()
+  preview: z.string().optional(),
+  character: CharacterBindingSnapshotSchema.optional()   // 多角色 FE-A：会话角色绑定摘要（legacy 缺省）
 })
 
 export const PageSchema = <T extends z.ZodType>(itemSchema: T) =>

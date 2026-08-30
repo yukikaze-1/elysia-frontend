@@ -1,6 +1,6 @@
 # Cyrene 多角色、用户身份与自定义角色前端架构设计
 
-> **文档状态：** 架构设计稿（目标设计，未实现）  
+> **文档状态：** 架构设计稿（目标设计；前端 A 契约层已实施，实时进度以 doc 16 为准）  
 > **日期：** 2026-08-30  
 > **前端事实基线：** `elysia-frontend@23e7108`  
 > **后端契约基线：** `elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture-design.md`（该文档事实基线 `elysia-agent@a410a9d`）  

@@ -1,4 +1,5 @@
-import type { BackendEvent, Live2DDirectiveEvent, ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent } from '@shared/contracts/events'
+import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedEvent, Live2DDirectiveEvent, ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent } from '@shared/contracts/events'
+import type { CharacterPublicStateView } from '@shared/contracts/character'
 import type { ConversationTokenUsage, SegmentChannel, SegmentKind, TokenUsage } from '@shared/contracts/message'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
@@ -97,6 +98,18 @@ export class FrameMapper {
         return this.mapToolStarted(frame)
       case 'tool.completed':
         return this.mapToolCompleted(frame)
+      // —— 多角色 FE-A（§7.1）：角色状态/目录变更 ——
+      case 'character.state.changed':
+        return this.mapCharacterStateChanged(frame)
+      case 'character.catalog.changed':
+        return {
+          ...this.envelope(),
+          event: 'character.catalog.changed',
+          characterId: frame.characterId,
+          currentRevision: frame.currentRevision,
+          status: frame.status,
+          updatedAt: frame.updatedAt
+        } satisfies CharacterCatalogChangedEvent
       case 'action':
         return null // 已知忽略（D6A-03：v2 已停发，不告警、不作工具状态源）
       default:
@@ -134,7 +147,8 @@ export class FrameMapper {
       messageId: frame.messageId,
       responseId: frame.generationId,
       conversationId: this.resolveConversationId(frame.conversationId),
-      ...(frame.model ? { model: frame.model } : {})
+      ...(frame.model ? { model: frame.model } : {}),
+      ...this.characterIdentity(frame)
     }
   }
 
@@ -216,7 +230,8 @@ export class FrameMapper {
       ...(frame.conversationUsage ? { conversationUsage: this.mapConversationUsage(frame.conversationUsage) } : {}),
       model: frame.model,
       ...(frame.mood ? { emotion: frame.mood } : {}),
-      ...(frame.finishReason ? { finishReason: frame.finishReason } : {})
+      ...(frame.finishReason ? { finishReason: frame.finishReason } : {}),
+      ...this.characterIdentity(frame)
     }
   }
 
@@ -231,7 +246,38 @@ export class FrameMapper {
         message: frame.message,
         ...(frame.retryable !== undefined ? { retryable: frame.retryable } : {}),
         ...(frame.details !== undefined ? { details: frame.details } : {}) // 空 dict 也保留(details 恒上 wire)
-      }
+      },
+      ...this.characterIdentity(frame)
+    }
+  }
+
+  /** generation 角色身份透传（CHAR-FE-08；undefined 不写键，迁移期 optional） */
+  private characterIdentity(frame: { characterId?: string; characterInstanceId?: string; characterRevision?: number }) {
+    return {
+      ...(frame.characterId !== undefined ? { characterId: frame.characterId } : {}),
+      ...(frame.characterInstanceId !== undefined ? { characterInstanceId: frame.characterInstanceId } : {}),
+      ...(frame.characterRevision !== undefined ? { characterRevision: frame.characterRevision } : {})
+    }
+  }
+
+  /** character.state.changed raw 帧 → 领域事件（state 完整 view；null 归一 undefined，FE-E 消费顺序只看 stateVersion） */
+  private mapCharacterStateChanged(frame: Extract<RawFrame, { type: 'character.state.changed' }>): CharacterStateChangedEvent {
+    const view: CharacterPublicStateView = {
+      ...(frame.state.mood ? { mood: { label: frame.state.mood.label, intensity: frame.state.mood.intensity, updatedAt: frame.state.mood.updatedAt } } : {}),
+      ...(frame.state.currentActivity != null ? { currentActivity: frame.state.currentActivity } : {}),
+      ...(frame.state.lastInteractionAt != null ? { lastInteractionAt: frame.state.lastInteractionAt } : {}),
+      proactiveEnabled: frame.state.proactiveEnabled,
+      updatedAt: frame.state.updatedAt
+    }
+    return {
+      ...this.envelope(),
+      event: 'character.state.changed',
+      conversationId: frame.conversationId,
+      characterId: frame.characterId,
+      characterInstanceId: frame.characterInstanceId,
+      characterRevision: frame.characterRevision,
+      stateVersion: frame.stateVersion,
+      state: view
     }
   }
 

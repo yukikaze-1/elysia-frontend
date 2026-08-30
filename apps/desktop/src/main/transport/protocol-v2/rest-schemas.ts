@@ -1,12 +1,43 @@
 import { z } from 'zod'
 import type { RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestPendingQueryResponse, RestSearchMessagesResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult, RestStickerListResponse } from './rest-types'
 
+// —— 多角色 FE-A：会话/消息内嵌角色绑定快照 wire schema——
+// check:contract 以 Node ESM 直接加载本文件（DesktopCallStatusSchema 同款约束）→ 运行时值导入只允许 zod，
+// isSafeRegistryId/isSafeThemeColor 在此自包含一份镜像副本，与 shared/schemas/character.ts、
+// character-rest-schemas.ts 三处同形（任意一处修改需同步）。
+function isSafeRegistryId(v: string): boolean {
+  if (v.length === 0 || v.length > 200) return false
+  if (v.startsWith('/') || v.startsWith('\\')) return false
+  if (v.includes('://') || v.includes(':\\')) return false
+  if (v.includes('..')) return false
+  return true
+}
+function isSafeThemeColor(v: string): boolean {
+  if (v.length === 0 || v.length > 64) return false
+  if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true
+  if (/^(rgba?|hsla?)\(\s*[\d.,%\s]+\s*\)$/.test(v)) return true
+  return /^[a-z]+$/i.test(v)
+}
+export const RestCharacterPresentationSchema = z.object({
+  avatarAssetId: z.string().refine(isSafeRegistryId, '注册表 ID 不得为路径/URL').nullable().optional(),
+  live2dModelId: z.string().refine(isSafeRegistryId, '注册表 ID 不得为路径/URL').nullable().optional(),
+  themeColor: z.string().refine(isSafeThemeColor, '颜色仅支持 hex/rgb(a)/hsl(a)/命名色').nullable().optional()
+}).strict()
+export const RestCharacterBindingSnapshotSchema = z.object({
+  characterId: z.string().min(1),
+  characterInstanceId: z.string().min(1),
+  characterRevision: z.number().int().min(1),
+  displayName: z.string().min(1),
+  presentation: RestCharacterPresentationSchema
+}).strict()
+
 export const RestSessionSummarySchema = z.object({
   conversationId: z.string().min(1),
   title: z.string().optional(),
   messageCount: z.number().int().nonnegative(),
   updatedAt: z.string().min(1),
-  active: z.boolean()
+  active: z.boolean(),
+  character: RestCharacterBindingSnapshotSchema.optional()   // 多角色 FE-A：CHAR-FE-06（legacy 缺省）
 }).strict()
 
 export const RestSessionListResultSchema = z.object({
@@ -34,7 +65,8 @@ export const RestMessageSchema = z.object({
   error: z.string().optional(),
   error_type: z.string().optional(),
   duration_ms: z.number().nullable().optional(),   // P0-02：wire 边界接受 null，映射层归一化（不扩散到领域/IPC）
-  truncated: z.boolean().optional()
+  truncated: z.boolean().optional(),
+  character: RestCharacterBindingSnapshotSchema.optional()   // 多角色 FE-A：CHAR-FE-07（assistant 与 summary 同形）
 }).strict()
 
 export const RestMessagesPageResponseSchema = z.object({

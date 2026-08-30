@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { BackendEvent } from '../contracts'
+import { CharacterPublicStateViewSchema } from './character'
 
 export const SegmentChannelSchema = z.enum(['inner_voice', 'public_reply'])
 export const SegmentKindSchema = z.enum([
@@ -20,7 +21,11 @@ export const GenerationStartedEventSchema = BackendEventEnvelopeSchema.extend({
   messageId: z.string().min(1),
   responseId: z.string().min(1),
   conversationId: z.string().min(1),
-  model: z.string().optional()
+  model: z.string().optional(),
+  // 多角色 FE-A：generation 角色身份（CHAR-FE-08；迁移期 optional，flag=true 后必填）
+  characterId: z.string().min(1).optional(),
+  characterInstanceId: z.string().min(1).optional(),
+  characterRevision: z.number().int().min(1).optional()
 })
 
 export const GenerationSegmentStartedEventSchema = BackendEventEnvelopeSchema.extend({
@@ -86,7 +91,10 @@ export const GenerationCompletedEventSchema = BackendEventEnvelopeSchema.extend(
   conversationUsage: ConversationUsageSchema.optional(),
   model: z.string().optional(),
   emotion: z.string().optional(),
-  finishReason: z.string().optional()
+  finishReason: z.string().optional(),
+  characterId: z.string().min(1).optional(),
+  characterInstanceId: z.string().min(1).optional(),
+  characterRevision: z.number().int().min(1).optional()
 })
 
 export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({
@@ -98,7 +106,10 @@ export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({
     message: z.string(),
     retryable: z.boolean().optional(),
     details: z.unknown().optional()
-  })
+  }),
+  characterId: z.string().min(1).optional(),
+  characterInstanceId: z.string().min(1).optional(),
+  characterRevision: z.number().int().min(1).optional()
 })
 
 /** 模型 Profile 激活结果（switch_model.result；判别字段 event 对齐 BackendEvent 契约；沿用既有成员写法，不注 z.ZodType 以免判别联合丢失形状信息） */
@@ -228,6 +239,29 @@ export const ToolCompletedEventSchema = BackendEventEnvelopeSchema.extend({
   conversationId: z.string().optional()
 }).strict()
 
+// —— 多角色 FE-A（§7.1）：角色状态/目录事件 schema 镜像（缺镜像 → preload parseBackendEvent 丢弃，P4-B 先例）——
+// state 为完整公开视图（不是 patch）；strict 未知字段整帧拒。CharacterPublicStateViewSchema 复用 character.ts 镜像。
+
+/** 角色公开状态变化（character.state.changed；完整 view 整体替换） */
+export const CharacterStateChangedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('character.state.changed'),
+  conversationId: z.string().min(1),
+  characterId: z.string().min(1),
+  characterInstanceId: z.string().min(1),
+  characterRevision: z.number().int().min(1),
+  stateVersion: z.number().int().min(1),
+  state: CharacterPublicStateViewSchema
+}).strict()
+
+/** 角色目录失效通知（character.catalog.changed；不携带完整 Prompt） */
+export const CharacterCatalogChangedEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('character.catalog.changed'),
+  characterId: z.string().min(1),
+  currentRevision: z.number().int().min(1),
+  status: z.enum(['active', 'archived']),
+  updatedAt: z.string().min(1)
+}).strict()
+
 export const BackendEventSchema = z.discriminatedUnion('event', [
   GenerationStartedEventSchema,
   GenerationSegmentStartedEventSchema,
@@ -253,7 +287,9 @@ export const BackendEventSchema = z.discriminatedUnion('event', [
   Live2DDirectiveEventSchema,
   ToolRequestEventSchema,
   ToolStartedEventSchema,
-  ToolCompletedEventSchema
+  ToolCompletedEventSchema,
+  CharacterStateChangedEventSchema,
+  CharacterCatalogChangedEventSchema
 ])
 
 export function parseBackendEvent(input: unknown): {

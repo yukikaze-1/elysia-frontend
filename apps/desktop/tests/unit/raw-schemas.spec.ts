@@ -226,10 +226,11 @@ describe('后端旧输出旁路兼容帧（阶段 6 真实联调）', () => {
 })
 
 describe('raw schemas fingerprint(2C)', () => {
-  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),阶段6 实联调纳入 3 类后端旧输出兼容帧后为 36 型', () => {
-    expect(RAW_FRAME_TYPES).toHaveLength(36)
+  it('RAW_FRAME_TYPES 与 union 推导集合一致(I6),阶段6 实联调纳入 3 类后端旧输出兼容帧后为 36 型,多角色 FE-A 纳入角色状态/目录帧后为 38 型', () => {
+    expect(RAW_FRAME_TYPES).toHaveLength(38)
     expect([...RAW_FRAME_TYPES].sort()).toEqual([
       'action', 'audio', 'audio_cancelled', 'audio_end', 'audio_start',
+      'character.catalog.changed', 'character.state.changed',
       'delta', 'dictation.cancelled', 'dictation.final', 'dictation.partial',
       'error', 'expression', 'generation.completed', 'generation.delta',
       'generation.failed', 'generation.segment.completed', 'generation.segment.started',

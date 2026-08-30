@@ -1,4 +1,5 @@
 /** 后端 WS v2 raw wire 类型(保留后端原始命名;与领域层禁止混用) */
+import type { RestCharacterBindingSnapshot } from './character-rest-types'
 
 export type RawSegmentChannel = 'inner_voice' | 'public_reply' | 'status'
 export type RawSegmentKind = 'text' | 'markdown' | 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'link'
@@ -45,6 +46,8 @@ export interface RawSessionMessageItem {
   duration_ms?: number | null // P0-02：WS replay wire 类型同步（raw-schemas duration_ms 已 nullable，诚实反映 wire）
   truncated?: boolean
   token_usage?: RawTokenUsage
+  /** 多角色 FE-A：WS 回放消息内嵌角色快照（CHAR-FE-07；与 REST 同形 camelCase，legacy 缺省） */
+  character?: RestCharacterBindingSnapshot
 }
 export interface RawServerInfo {
   type: 'server_info'
@@ -70,7 +73,14 @@ export interface RawMessageMessage { type: 'message'; role?: string; content?: s
 export interface RawTokenUsageMessage { type: 'token_usage'; turn?: RawTokenTurnStats; session?: RawTokenStats }
 
 /** generation 文本聊天帧 */
-export interface RawGenerationStarted {
+/** generation 角色身份（多角色 FE-A，CHAR-FE-08；三条 started/completed/failed 均可携带，迁移期 optional） */
+interface RawGenerationCharacterIdentity {
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
+}
+
+export interface RawGenerationStarted extends RawGenerationCharacterIdentity {
   type: 'generation.started'
   generationId: string
   messageId: string
@@ -106,7 +116,7 @@ export interface RawGenerationSegmentCompleted {
   content?: string
   conversationId?: string
 }
-export interface RawGenerationCompleted {
+export interface RawGenerationCompleted extends RawGenerationCharacterIdentity {
   type: 'generation.completed'
   generationId: string
   messageId: string
@@ -119,7 +129,7 @@ export interface RawGenerationCompleted {
   conversationId?: string
   conversationUsage?: RawConversationUsage
 }
-export interface RawGenerationFailed {
+export interface RawGenerationFailed extends RawGenerationCharacterIdentity {
   type: 'generation.failed'
   generationId: string
   messageId?: string
@@ -332,6 +342,38 @@ export interface RawToolCompleted {
   conversationId?: string
 }
 
+// —— 多角色 FE-A（设计 §7.1/§7.3/§7.6）：角色状态/目录变更 raw 帧 ——
+// state 为完整公开视图（不是 patch）；顺序判断只看 stateVersion。raw 与领域同名字段（camelCase）。
+
+/** 角色公开状态变化帧（character.state.changed） */
+export interface RawCharacterStateChanged {
+  type: 'character.state.changed'
+  conversationId: string
+  characterId: string
+  characterInstanceId: string
+  characterRevision: number
+  stateVersion: number
+  state: RawCharacterStateView
+}
+
+/** 完整公开状态 view（mood/currentActivity/lastInteractionAt 可为 null，mapper 归一 undefined） */
+export interface RawCharacterStateView {
+  mood?: { label: string; intensity: number; updatedAt: string } | null
+  currentActivity?: string | null
+  lastInteractionAt?: string | null
+  proactiveEnabled: boolean
+  updatedAt: string
+}
+
+/** 角色目录失效通知帧（character.catalog.changed；不携带完整 Prompt） */
+export interface RawCharacterCatalogChanged {
+  type: 'character.catalog.changed'
+  characterId: string
+  currentRevision: number
+  status: 'active' | 'archived'
+  updatedAt: string
+}
+
 /** 旧后端泛型动作帧（v2 已停发、v1 不变；契约识别 + 有意忽略，不告警不作工具状态源，D6A-03） */
 export interface RawAction {
   type: 'action'
@@ -437,3 +479,5 @@ export type RawFrame =
   | RawLive2DDirective
   // 阶段 6 批次 A（F-6-01）：工具双轨帧 + action 兼容帧
   | RawToolRequest | RawToolStarted | RawToolCompleted | RawAction
+  // 多角色 FE-A：角色状态/目录变更帧
+  | RawCharacterStateChanged | RawCharacterCatalogChanged

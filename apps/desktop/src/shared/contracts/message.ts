@@ -1,4 +1,5 @@
 import type { ToolCallRecord } from './tool'
+import type { CharacterGenerationRef } from './character'
 
 /** 双展示通道:Inner Voice 与 Public Reply 属于同一条 AI 回复消息 */
 export type SegmentChannel = 'inner_voice' | 'public_reply'
@@ -94,6 +95,9 @@ export interface Message {
   attachments?: MessageAttachment[]
   /** 阶段 3 G4：用户贴图消息 wire 表示（§7 开放项按可选字段落地，联调对齐后端） */
   stickerId?: string
+  /** 多角色 FE-A：消息角色审计快照（§5.10；assistant 保存实际生成时快照，user/tool 通常省略；
+   *  replay/REST 优先用消息自身快照，缺失不硬编码 Cyrene/Elysia） */
+  character?: CharacterGenerationRef
 }
 
 /** tool 消息元数据(docs/18 §14:不得按普通文本丢弃) */

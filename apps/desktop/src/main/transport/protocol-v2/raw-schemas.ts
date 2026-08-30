@@ -9,6 +9,36 @@ export const RawSegmentKindSchema = z.enum([
   'text', 'markdown', 'image', 'video', 'audio', 'file', 'sticker', 'link'
 ])
 
+// —— 多角色 FE-A：会话/消息内嵌角色绑定快照 wire schema（CHAR-FE-06/07）——
+// raw-schemas 被裸 Node ESM 加载（check:contract），运行时导入只允许 zod/node 内建 →
+// isSafeRegistryId/isSafeThemeColor 自包含镜像副本，与 shared/schemas/character.ts、
+// rest-schemas.ts 三处同形（任意一处修改需同步）。
+function isSafeRegistryId(v: string): boolean {
+  if (v.length === 0 || v.length > 200) return false
+  if (v.startsWith('/') || v.startsWith('\\')) return false
+  if (v.includes('://') || v.includes(':\\')) return false
+  if (v.includes('..')) return false
+  return true
+}
+function isSafeThemeColor(v: string): boolean {
+  if (v.length === 0 || v.length > 64) return false
+  if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true
+  if (/^(rgba?|hsla?)\(\s*[\d.,%\s]+\s*\)$/.test(v)) return true
+  return /^[a-z]+$/i.test(v)
+}
+const RawCharacterPresentationSchema = z.object({
+  avatarAssetId: z.string().refine(isSafeRegistryId, '注册表 ID 不得为路径/URL').nullable().optional(),
+  live2dModelId: z.string().refine(isSafeRegistryId, '注册表 ID 不得为路径/URL').nullable().optional(),
+  themeColor: z.string().refine(isSafeThemeColor, '颜色仅支持 hex/rgb(a)/hsl(a)/命名色').nullable().optional()
+}).strict()
+const RawCharacterBindingSnapshotSchema = z.object({
+  characterId: z.string().min(1),
+  characterInstanceId: z.string().min(1),
+  characterRevision: z.number().int().min(1),
+  displayName: z.string().min(1),
+  presentation: RawCharacterPresentationSchema
+}).strict()
+
 const RawTokenRoundSchema = z.object({
   model: z.string().optional(),
   session_id: z.string().optional(),
@@ -45,7 +75,10 @@ const RawSessionMessageItemSchema = z.object({
   error_type: z.string().optional(),
   duration_ms: z.number().nullable().optional(),   // P0-02：WS replay wire 边界同款（三条恢复路径一致，否则 replay tool null 整段拒）
   truncated: z.boolean().optional(),
-  token_usage: RawTokenUsageSchema.optional()
+  token_usage: RawTokenUsageSchema.optional(),
+  // 多角色 FE-A：WS 回放消息内嵌角色快照（CHAR-FE-07；schema 镜像 rest-schemas.ts 同名子 schema——
+  // raw-schemas 被裸 Node 加载，运行时导入只允许 zod，故自包含一份；三处同形修改需同步）
+  character: RawCharacterBindingSnapshotSchema.optional()
 }).strict()
 
 const RawSessionMessageSchema = z.object({
@@ -77,7 +110,11 @@ const RawGenerationStartedSchema = z.object({
   messageId: z.string().min(1),
   conversationId: z.string().optional(),
   requestId: z.string().optional(),
-  model: z.string().optional()
+  model: z.string().optional(),
+  // 多角色 FE-A：generation 角色身份（CHAR-FE-08；迁移期 optional）
+  characterId: z.string().min(1).optional(),
+  characterInstanceId: z.string().min(1).optional(),
+  characterRevision: z.number().int().min(1).optional()
 }).strict()
 
 const RawGenerationSegmentStartedSchema = z.object({
@@ -122,7 +159,10 @@ const RawGenerationCompletedSchema = z.object({
   mood: z.string().optional(),
   completeness: z.string().optional(),
   conversationId: z.string().optional(),
-  conversationUsage: RawConversationUsageSchema.optional()
+  conversationUsage: RawConversationUsageSchema.optional(),
+  characterId: z.string().min(1).optional(),
+  characterInstanceId: z.string().min(1).optional(),
+  characterRevision: z.number().int().min(1).optional()
 }).strict()
 
 const RawGenerationFailedSchema = z.object({
@@ -134,7 +174,10 @@ const RawGenerationFailedSchema = z.object({
   message: z.string(),
   retryable: z.boolean(),
   details: z.record(z.string(), z.unknown()),
-  conversationId: z.string().optional()
+  conversationId: z.string().optional(),
+  characterId: z.string().min(1).optional(),
+  characterInstanceId: z.string().min(1).optional(),
+  characterRevision: z.number().int().min(1).optional()
 }).strict()
 
 const RawAckErrorSchema = z.object({
@@ -397,6 +440,37 @@ const RawToolStatusSchema = z.object({
   executionSummary: z.string().optional()
 }).strict()
 
+// —— 多角色 FE-A（§7.1）：角色状态/目录变更帧 schema（strict 未知字段整帧拒；state 为完整公开视图）——
+const RawCharacterStateViewSchema = z.object({
+  mood: z.object({
+    label: z.string().min(1),
+    intensity: z.number().min(0).max(1),
+    updatedAt: z.string().min(1)
+  }).strict().nullable().optional(),
+  currentActivity: z.string().nullable().optional(),
+  lastInteractionAt: z.string().min(1).nullable().optional(),
+  proactiveEnabled: z.boolean(),
+  updatedAt: z.string().min(1)
+}).strict()
+
+const RawCharacterStateChangedSchema = z.object({
+  type: z.literal('character.state.changed'),
+  conversationId: z.string().min(1),
+  characterId: z.string().min(1),
+  characterInstanceId: z.string().min(1),
+  characterRevision: z.number().int().min(1),
+  stateVersion: z.number().int().min(1),
+  state: RawCharacterStateViewSchema
+}).strict()
+
+const RawCharacterCatalogChangedSchema = z.object({
+  type: z.literal('character.catalog.changed'),
+  characterId: z.string().min(1),
+  currentRevision: z.number().int().min(1),
+  status: z.enum(['active', 'archived']),
+  updatedAt: z.string().min(1)
+}).strict()
+
 export const RawFrameSchema = z.discriminatedUnion('type', [
   RawSessionMessageSchema,
   RawServerInfoSchema,
@@ -434,7 +508,10 @@ export const RawFrameSchema = z.discriminatedUnion('type', [
   RawToolRequestSchema,
   RawToolStartedSchema,
   RawToolCompletedSchema,
-  RawActionSchema
+  RawActionSchema,
+  // 多角色 FE-A：角色状态/目录变更帧
+  RawCharacterStateChangedSchema,
+  RawCharacterCatalogChangedSchema
 ])
 
 export function parseRawFrame(input: unknown): {

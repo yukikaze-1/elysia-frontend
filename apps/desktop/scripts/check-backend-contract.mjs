@@ -14,12 +14,17 @@
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { isDeepStrictEqual } from 'node:util'
 
-const BACKEND_DIR = '/home/yomu/elysia-agent/frontend_contract'
+// 跨仓机器契约接收（多角色设计 §6.2.2）：目录可经环境变量 CYRENE_FRONTEND_CONTRACT_DIR 或首个
+// CLI 参数指定（Windows 开发机 handoff bundle 场景），缺省保持原 Linux 路径；traces 目录同理
+// （CYRENE_FRONTEND_CONTRACT_TRACES），未指定时若 contract 目录内直接含 ws-v2-*.jsonl 则就地使用。
+const BACKEND_DIR = process.env.CYRENE_FRONTEND_CONTRACT_DIR ?? process.argv[2] ?? '/home/yomu/elysia-agent/frontend_contract'
 const SCHEMA_JSON = `${BACKEND_DIR}/contract.schema.json` // 判别联合(如不存在退 ws_message.py Literal 提取)
-const BACKEND_TRACES = '/home/yomu/elysia-agent/docs/archive/frontend-handoff-v2/traces'
-const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
+const BACKEND_TRACES = process.env.CYRENE_FRONTEND_CONTRACT_TRACES
+  ?? (existsSync(BACKEND_DIR) && readdirSync(BACKEND_DIR).some((n) => /^ws-v2-.*\.jsonl$/.test(n))
+    ? BACKEND_DIR
+    : '/home/yomu/elysia-agent/docs/archive/frontend-handoff-v2/traces')
 
-// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 35 型
+// 当前 WS v2 帧子集白名单(server 帧):前端 parseRawFrame / RawFrameSchema 已覆盖的 37 型
 const WS_V2_FRAME_TYPES = [
   'server_info', 'session', 'expression', 'user_message.ack', 'error',
   'generation.started', 'generation.segment.started', 'generation.delta',
@@ -33,8 +38,11 @@ const WS_V2_FRAME_TYPES = [
   'voice_session.ack', 'voice_session.ended', 'dictation.partial', 'dictation.final',
   'dictation.cancelled', 'audio_start', 'audio', 'audio_end', 'audio_cancelled',
   // 阶段6 批次A（F-6-02）：工具双轨帧 + 过渡期 action 兼容帧，31 型 → 35 型
-  'tool.request', 'tool.started', 'tool.completed', 'action'
+  'tool.request', 'tool.started', 'tool.completed', 'action',
+  // 多角色 FE-A：角色状态/目录变更帧（后端尚未实现，入白名单后两侧任一就绪即可对拍）
+  'character.state.changed', 'character.catalog.changed'
 ]
+const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
 // 未纳帧(capabilities/transcription/command/wake/service_mode_result):前端有意滞后,只 warn 不报错(F2 白名单)
 
 if (!existsSync(BACKEND_DIR)) { console.log('[check-contract] 后端仓库未挂载,跳过'); process.exit(0) }

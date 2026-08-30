@@ -27,6 +27,7 @@ import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseRawFrame } from './protocol-v2/raw-schemas'
+import { parseBackendFeatureFlags } from './protocol-v2/character-rest-mapper'
 import type {
   RawAudioCancelled,
   RawAudioChunk,
@@ -358,7 +359,10 @@ export class RealBackend implements BackendAdapter {
       serverVersion: frame.server_version,
       connectionId: frame.connectionId,
       activeConversationId: this.state.activeConversationId,
-      lastError: undefined
+      lastError: undefined,
+      // 多角色 FE-A（§5.2）：类型化能力旗标——wire === true 才 true，缺省/其他形状 false；
+      // 仅 connected 填充且每次 server_info 整体替换（connecting/error 路径不带 features，不留旧连接能力）
+      features: parseBackendFeatureFlags(frame.features)
     })
     this.connectResolve?.({
       sessionId: frame.connectionId ?? 'local',

@@ -1,10 +1,13 @@
 import type { Conversation } from '@shared/contracts/conversation'
 import type { Message, MessageRole, MessageToolInfo } from '@shared/contracts/message'
+import type { CharacterGenerationRef } from '@shared/contracts/character'
 import type { ChatHistoryItem, ChatHistoryPage, MessagePage, StickerManifest } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import type { ToolCallRecord } from '@shared/contracts/tool'
 import type { RawSessionMessageItem } from './raw-types'
-import type { RestMessage, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestMessageContextResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
+import type { RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
+import type { RestCharacterBindingSnapshot } from './character-rest-types'
+import { toDomainBindingSnapshot, toDomainGenerationRef } from './character-rest-mapper'
 import { extractStickerId, mapContentMedia, mapContentToEntries, toOptionalNonNegativeNumber } from './content-part'
 import { classifyArchivedToolStatus } from '@shared/domain/tool-status'
 
@@ -28,6 +31,7 @@ interface MessageSource {
   error_type?: string
   duration_ms?: number | null
   truncated?: boolean
+  character?: RestCharacterBindingSnapshot   // 多角色 FE-A：消息角色审计快照（CHAR-FE-07）
 }
 
 const DESKTOP_CAPTURE_SRC_PATTERN = /^\/uploads\/desktop\/(call_[A-Za-z0-9_-]+)\.png$/
@@ -56,7 +60,14 @@ export class RestMapper {
 
   toDomainMessage(raw: RestMessage, conversationId?: string): Message { return this.assemble({ ...raw }, conversationId) }
   toDomainMessageFromReplay(raw: RawSessionMessageItem, conversationId: string): Message { return this.assemble({ ...raw, session_id: conversationId }, conversationId) }
-  toConversation(raw: RestSessionSummary): Conversation { return { id: raw.conversationId, title: raw.title ?? '', updatedAt: raw.updatedAt } }
+  toConversation(raw: RestSessionSummary): Conversation {
+    return {
+      id: raw.conversationId,
+      title: raw.title ?? '',
+      updatedAt: raw.updatedAt,
+      ...(raw.character ? { character: toDomainBindingSnapshot(raw.character) } : {})
+    }
+  }
   toMessagePage(raw: RestMessagesPageResponse, opts: { direction: 'before' | 'after'; conversationId?: string }): MessagePage {
     const items = pairToolCalls(raw.messages.map((m) => this.toDomainMessage(m, opts.conversationId)))
     if (opts.direction === 'before') items.sort((a, b) =>
@@ -170,6 +181,11 @@ export class RestMapper {
       if (Object.keys(tool).length) base.tool = tool
     }
     if (src.mood) base.emotion = src.mood // 回放项 mood → 领域 emotion(docs/18 §14 不静默丢弃)
+    if (src.character) {
+      // 多角色 FE-A：消息自带角色快照优先（CHAR-FE-07；缺省不硬编码 Cyrene/Elysia，动态身份消费在 FE-E）
+      const ref: CharacterGenerationRef = toDomainGenerationRef(src.character)
+      base.character = ref
+    }
     return base
   }
 }

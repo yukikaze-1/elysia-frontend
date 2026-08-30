@@ -1,4 +1,5 @@
 /** REST wire 类型(保留后端混合命名:message_id/_id/tool_call_id snake + camel) */
+import type { RestCharacterBindingSnapshot } from './character-rest-types'
 
 export interface RestSessionSummary {
   conversationId: string
@@ -6,6 +7,8 @@ export interface RestSessionSummary {
   messageCount: number
   updatedAt: string
   active: boolean
+  /** 多角色 FE-A：会话角色绑定快照（CHAR-FE-06；camelCase 嵌套，legacy 缺省） */
+  character?: RestCharacterBindingSnapshot
 }
 export interface RestSessionListResult { sessions: RestSessionSummary[]; has_more: boolean; cursor?: string }
 export interface RestSessionDetail { session: RestSessionSummary; messages: RestMessage[]; active: boolean }
@@ -29,6 +32,8 @@ export interface RestMessage {
   error_type?: string
   duration_ms?: number | null   // P0-02：JSON 可为 null（wire 类型诚实反映）
   truncated?: boolean
+  /** 多角色 FE-A：消息角色审计快照（CHAR-FE-07；assistant 与 summary 同形，user/tool 可省略） */
+  character?: RestCharacterBindingSnapshot
 }
 export interface RestMessagesPageResponse { messages: RestMessage[]; has_more: boolean; total: number; cursor?: string }
 export interface RestSessionActivateResult { activeConversationId: string }

@@ -1,5 +1,6 @@
 import type { SegmentChannel, SegmentKind, TokenUsage, ConversationTokenUsage } from './message'
 import type { ToolRuntime } from './tool'
+import type { CharacterPublicStateView, CharacterStatus } from './character'
 
 /** 事件外壳:所有后端事件共有的标识字段 */
 export interface BackendEventEnvelope {
@@ -16,6 +17,10 @@ export interface GenerationStartedEvent extends BackendEventEnvelope {
   responseId: string
   conversationId: string
   model?: string
+  /** 多角色 FE-A：generation 角色身份（CHAR-FE-08；迁移期 optional，character_profiles=true 后三条终态路径必填且与 started 一致） */
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
 }
 
 /** 分段开始:领域层创建 segment 元数据(方案 A,docs/18 §8.2) */
@@ -62,6 +67,10 @@ export interface GenerationCompletedEvent extends BackendEventEnvelope {
   model?: string
   emotion?: string
   finishReason?: string
+  /** 多角色 FE-A：同 started 的角色身份（一致性与迟到事件守卫在 FE-E 消费） */
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
 }
 
 export interface GenerationFailedEvent extends BackendEventEnvelope {
@@ -69,6 +78,10 @@ export interface GenerationFailedEvent extends BackendEventEnvelope {
   generationId: string
   messageId?: string
   error: { code: string; message: string; retryable?: boolean; details?: unknown }
+  /** 多角色 FE-A：同 started 的角色身份 */
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
 }
 
 /** 模型 Profile 激活结果（switch_model.result；判别字段用 event，配合 schemas/events.ts 的 z.discriminatedUnion('event', ...)） */
@@ -179,6 +192,30 @@ export interface ToolCompletedEvent extends BackendEventEnvelope {
   conversationId?: string
 }
 
+// —— 多角色 FE-A（设计 §7.1/§7.3/§7.6）：角色公开状态与目录变更事件 ——
+// state 是完整 CharacterPublicStateView（不是 patch）；顺序判断只看 stateVersion，updatedAt 仅展示/诊断。
+// catalog.changed 只作失效通知：不携带完整 Prompt，Renderer 收到后经 Main 重新 GET。
+
+/** 角色公开状态变化（character.state.changed；完整 view 整体替换该 instance 公开视图） */
+export interface CharacterStateChangedEvent extends BackendEventEnvelope {
+  event: 'character.state.changed'
+  conversationId: string
+  characterId: string
+  characterInstanceId: string
+  characterRevision: number
+  stateVersion: number
+  state: CharacterPublicStateView
+}
+
+/** 角色目录失效通知（character.catalog.changed；revision 较旧的事件不回退缓存） */
+export interface CharacterCatalogChangedEvent extends BackendEventEnvelope {
+  event: 'character.catalog.changed'
+  characterId: string
+  currentRevision: number
+  status: CharacterStatus
+  updatedAt: string
+}
+
 /** 后端事件判别联合 */
 export type BackendEvent =
   | GenerationStartedEvent
@@ -207,3 +244,6 @@ export type BackendEvent =
   | ToolRequestEvent
   | ToolStartedEvent
   | ToolCompletedEvent
+  // —— 多角色 FE-A（§7.1）：角色状态与目录事件 ——
+  | CharacterStateChangedEvent
+  | CharacterCatalogChangedEvent

@@ -1,4 +1,5 @@
 import type { Conversation, PageQuery } from './conversation'
+import type { BackendFeatureFlags } from './character'
 import type { Message } from './message'
 import type { ToolAttachment } from './tool'
 
@@ -19,6 +20,9 @@ export interface ConnectionState {
   connectionId?: string
   activeConversationId?: string
   lastError?: string
+  /** 多角色 FE-A：类型化后端能力（server_info.features 提取；wire === true 才 true，其余一律 false；
+   *  仅 connected 状态填充，新连接整体替换不做浅 merge——设计 §5.2） */
+  features?: BackendFeatureFlags
 }
 
 export interface ConnectInput {
