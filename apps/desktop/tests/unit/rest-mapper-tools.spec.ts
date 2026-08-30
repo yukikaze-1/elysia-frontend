@@ -36,8 +36,41 @@ describe('pairToolCalls 配对（Task 5 / F-6-19/21）', () => {
     expect(out[0].toolCalls?.[0]).toMatchObject({ status: 'completed', outputSummary: '2026-08-20', durationMs: 5, finishedAt: 't1' })
   })
   it('配对失败（success:false）→ failed + error/errorType', () => {
-    const fail = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '超时', errorType: 'TIMEOUT' } }])
-    expect(fail[0].toolCalls?.[0]).toMatchObject({ status: 'failed', error: { code: 'TIMEOUT', message: '超时' }, errorType: 'TIMEOUT' })
+    const fail = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '数据库不可用', errorType: 'DB_DOWN' } }])
+    expect(fail[0].toolCalls?.[0]).toMatchObject({ status: 'failed', error: { code: 'DB_DOWN', message: '数据库不可用' }, errorType: 'DB_DOWN' })
+  })
+  it('UII-QQ 收尾：errorType=TIMEOUT → timeout（超时非「执行失败」）', () => {
+    const t = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '服务端已过期', errorType: 'TIMEOUT' } }])
+    expect(t[0].toolCalls?.[0]).toMatchObject({ status: 'timeout', error: { code: 'TIMEOUT', message: '服务端已过期' }, errorType: 'TIMEOUT' })
+  })
+  it('UII-QQ 收尾：errorType=CANCELLED → cancelled（用户取消非执行失败，灰态非红框）', () => {
+    const c = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '用户取消', errorType: 'CANCELLED' } }])
+    expect(c[0].toolCalls?.[0]).toMatchObject({ status: 'cancelled', errorType: 'CANCELLED' })
+  })
+  it('UII-QQ 收尾：旧归档仅错误文字「用户取消」/「用户取消选择」（无 error_type）→ cancelled（文案全等严格兼容）', () => {
+    const c1 = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '用户取消' } }])
+    expect(c1[0].toolCalls?.[0]?.status).toBe('cancelled')
+    const c2 = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '用户取消选择' } }])
+    expect(c2[0].toolCalls?.[0]?.status).toBe('cancelled')
+  })
+  it('UII-QQ 收尾：错误文字含「取消」但非全等 → 仍 failed（禁止宽泛 includes 猜测）', () => {
+    const f = pairToolCalls([mkSkeleton(), { ...resultOk, content: undefined, tool: { callId: 'tc_1', name: 'get_time', success: false, error: '取消重试后仍失败：磁盘错误' } }])
+    expect(f[0].toolCalls?.[0]?.status).toBe('failed')
+  })
+  it('UII-QQ 收尾：骨架 runtime 判定——desktop. 前缀推断 desktop；显式 runtime 优先；普通 read_file 不误标 desktop', () => {
+    const m = mapper.toDomainMessage(asRest({
+      role: 'assistant', message_id: 'm-rt', timestamp: '2026-08-30T00:00:00.000Z',
+      tool_calls: [
+        { id: 'tc_d', function: { name: 'desktop.file.read', arguments: '{}' } },
+        { id: 'tc_lw', runtime: 'local_worker', function: { name: 'index_docs', arguments: '{}' } },
+        { id: 'tc_be', function: { name: 'read_file', arguments: '{}' } }
+      ]
+    }), 'c')
+    expect(m.toolCalls).toEqual([
+      { id: 'tc_d', toolName: 'desktop.file.read', runtime: 'desktop', status: 'completed' },
+      { id: 'tc_lw', toolName: 'index_docs', runtime: 'local_worker', status: 'completed' },
+      { id: 'tc_be', toolName: 'read_file', runtime: 'backend', status: 'completed' }
+    ])
   })
   it('success:true 但 error 非空 → 以错误为准 failed（review P-17 对齐 spec §3.6）', () => {
     const fail = pairToolCalls([mkSkeleton(), { ...resultOk, tool: { callId: 'tc_1', name: 'get_time', success: true, error: '部分失败', errorType: 'PARTIAL' } }])

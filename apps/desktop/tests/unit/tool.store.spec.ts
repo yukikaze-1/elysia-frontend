@@ -55,6 +55,18 @@ describe('toolStore 三来路归一化', () => {
     s.applyBackendEvent({ event: 'tool.started', callId: 'tc_b1', toolName: 'search_web', runtime: 'backend', inputSummary: 'q=<str:2>' } as unknown as ToolBackendEvent)
     expect(s.records['tc_b1']).toMatchObject({ runtime: 'backend', status: 'running' })
   })
+  it('UII-QQ 收尾：backend completed 失败按 errorType 分类——CANCELLED → cancelled（用户取消非红「执行失败」）', () => {
+    const s = useToolStore()
+    s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_c1', toolName: 'search_web', runtime: 'backend', success: false, errorType: 'CANCELLED', error: { code: 'CANCELLED', message: '用户取消' } } as unknown as ToolBackendEvent)
+    expect(s.records['tc_c1']).toMatchObject({ status: 'cancelled', errorType: 'CANCELLED' })
+  })
+  it('UII-QQ 收尾：backend completed 失败按 errorType 分类——TIMEOUT → timeout；未命中码仍 failed', () => {
+    const s = useToolStore()
+    s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_t1', toolName: 'search_web', runtime: 'backend', success: false, errorType: 'TIMEOUT', error: { code: 'TIMEOUT', message: '执行超时' } } as unknown as ToolBackendEvent)
+    expect(s.records['tc_t1']?.status).toBe('timeout')
+    s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_f1', toolName: 'search_web', runtime: 'backend', success: false, errorType: 'EXEC_ERROR', error: { code: 'EXEC_ERROR', message: 'boom' } } as unknown as ToolBackendEvent)
+    expect(s.records['tc_f1']?.status).toBe('failed')
+  })
   it('真实乱序：backend desktop started 先到时，本地 awaiting_permission 仍覆盖并打开权限窗', () => {
     const s = useToolStore()
     s.applyBackendEvent({ event: 'tool.started', callId: 'tc_d1', toolName: 'desktop.file.read', runtime: 'desktop', inputSummary: 'path=<redacted>' } as unknown as ToolBackendEvent)

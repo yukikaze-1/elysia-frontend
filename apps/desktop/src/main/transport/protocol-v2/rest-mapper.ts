@@ -6,6 +6,7 @@ import type { ToolCallRecord } from '@shared/contracts/tool'
 import type { RawSessionMessageItem } from './raw-types'
 import type { RestMessage, RestMessagesPageResponse, RestSearchMessageItem, RestSearchMessagesResponse, RestMessageContextResponse, RestSessionSummary, RestStickerListResponse } from './rest-types'
 import { extractStickerId, mapContentMedia, mapContentToEntries, toOptionalNonNegativeNumber } from './content-part'
+import { classifyArchivedToolStatus } from '@shared/domain/tool-status'
 
 export interface RestMapperOptions { onProtocolWarning?: (warning: ProtocolWarning) => void }
 
@@ -209,18 +210,27 @@ export function compareBySortKey(a: ChatHistoryItem, b: ChatHistoryItem): number
 }
 
 /** 归档 tool_calls 骨架解析（F-6-19）：`{id, type?, function:{name, arguments}}` 契约形状；arguments 为 JSON 字符串不解析。
- * 非结构条目静默跳过（归档 wire 有意放宽，防整段拒）；同 id 幂等去重（后见同 id 骨架忽略，review P-17）。 */
+ * 非结构条目静默跳过（归档 wire 有意放宽，防整段拒）；同 id 幂等去重（后见同 id 骨架忽略，review P-17）。
+ * UII-QQ 收尾 runtime 判定优先级：① 数据存在显式 runtime 字段 → 用明确值（实时事件中的明确 runtime 不被名称推断覆盖）；
+ * ② toolName 以 `desktop.` 开头 → 确定性推断 desktop（归档卡不再把 desktop.file.read 误标「后端」；
+ *   友好名同为「读取文件」的普通 read_file 不受影响）；local_worker 无可靠标识、不猜测；③ 其余回退 backend（D6A-06 缺省）。
+ * desktopCallId 证据在 pairToolCalls 中仍会修正为 desktop（优先级②，与名称推断同向）。 */
 function parseToolCallSkeletons(raw: unknown[] | undefined): ToolCallRecord[] {
   if (!raw?.length) return []
   const out: ToolCallRecord[] = []
   const seen = new Set<string>()
   for (const item of raw) {
     if (typeof item !== 'object' || item === null) continue
-    const o = item as { id?: unknown; function?: { name?: unknown } }
+    const o = item as { id?: unknown; runtime?: unknown; function?: { name?: unknown } }
     if (typeof o.id !== 'string' || o.id === '' || typeof o.function?.name !== 'string' || o.function.name === '') continue
     if (seen.has(o.id)) continue
     seen.add(o.id)
-    out.push({ id: o.id, toolName: o.function.name, runtime: 'backend', status: 'completed' }) // D6A-06：归档无 runtime 源，恒 backend 缺省
+    const name = o.function.name
+    const explicit = typeof o.runtime === 'string' && ['backend', 'desktop', 'local_worker'].includes(o.runtime)
+      ? o.runtime as ToolCallRecord['runtime']
+      : undefined
+    const runtime = explicit ?? (name.startsWith('desktop.') ? 'desktop' : 'backend')
+    out.push({ id: o.id, toolName: name, runtime, status: 'completed' })
   }
   return out
 }
@@ -242,14 +252,18 @@ export function pairToolCalls(messages: Message[]): Message[] {
       const info = r?.tool
       if (!r || !info) continue // 缺配对：保持 completed + 无摘要（降级）
       // R-A3（D6B-21）：空串 error 视为无错误且视为成功——后端序列化空串无失败细节，不判 failed（走 success 分支）；
-      // error 非空以错误为准；error 缺省（undefined）按 success 旗标（缺省视为 true）
-      const hasError = info.error !== undefined && info.error !== ''
-      const ok = info.error === '' ? true : (!hasError && info.success !== false)
-      tc.status = ok ? 'completed' : 'failed'
-      if (ok) {
+      // error 缺省（undefined）按 success 旗标（缺省视为 true）。UII-QQ 收尾：失败按稳定错误类型分类——
+      // 取消（CANCELLED/TOOL_CANCELLED/USER_CANCELLED；旧归档无 error_type 时仅接受「用户取消」/「用户取消选择」
+      // 文案全等）→ cancelled（灰「已取消」，非红「执行失败」）；TIMEOUT → timeout；未命中一律真实失败。
+      const classified = classifyArchivedToolStatus({ success: info.success, error: info.error, errorType: info.errorType })
+      tc.status = classified
+      if (classified === 'completed') {
         if (r.content) tc.outputSummary = r.content
       } else {
-        tc.error = { code: info.errorType ?? 'TOOL_ERROR', message: info.error ?? '工具执行失败' }
+        tc.error = {
+          code: info.errorType ?? (classified === 'cancelled' ? 'CANCELLED' : classified === 'timeout' ? 'TIMEOUT' : 'TOOL_ERROR'),
+          message: info.error ?? (classified === 'cancelled' ? '用户取消' : classified === 'timeout' ? '执行超时' : '工具执行失败'),
+        }
         tc.errorType = info.errorType
       }
       if (info.durationMs !== undefined) tc.durationMs = info.durationMs

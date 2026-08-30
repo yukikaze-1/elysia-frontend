@@ -19,6 +19,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { HistoryEntry, PermissionGrant, PublicToolEvent, ToolCallRecord, ToolCallStatus } from '@shared/contracts/tool'
 import type { BackendEvent } from '@shared/contracts/events'
+import { isToolCancelType, isToolTimeoutType } from '@shared/domain/tool-status'
 import { api } from './desktop-api'   // 既有 api 单例（代码 H6）
 
 const LIVE_LIMIT = 3
@@ -106,8 +107,16 @@ export const useToolStore = defineStore('tool', () => {
     } else if (ev.event === 'tool.completed') {
       const existing = records.value[ev.callId]
       if (existing && existing.runtime === 'desktop') return   // D6B-21 修正：仅 desktop 本地记录存在时不覆盖（本地裁决优先）；backend 自身 started→completed 正常推进（Task 8 集成发现）
+      // UII-QQ 收尾：backend 失败按稳定错误类型分类——用户取消（CANCELLED/TOOL_CANCELLED/USER_CANCELLED，
+      // 与 message.store isCancellationCode 同源口径）→ cancelled（灰「已取消」非红「执行失败」）；
+      // TIMEOUT → timeout；未命中一律真实 failed。不凭猜测扩大代码集（见 shared/domain/tool-status）。
+      const status: ToolCallStatus = ev.success
+        ? 'completed'
+        : isToolCancelType(ev.errorType) ? 'cancelled'
+        : isToolTimeoutType(ev.errorType) ? 'timeout'
+        : 'failed'
       upsertRecord(ev.callId, { id: ev.callId, toolName: ev.toolName, runtime: ev.runtime,
-        status: ev.success ? 'completed' : 'failed', outputSummary: ev.outputSummary, error: ev.error ? { code: String(ev.error['code'] ?? ''), message: String(ev.error['message'] ?? '') } : undefined,
+        status, outputSummary: ev.outputSummary, error: ev.error ? { code: String(ev.error['code'] ?? ''), message: String(ev.error['message'] ?? '') } : undefined,
         errorType: ev.errorType, truncated: ev.truncated, durationMs: ev.durationMs, generationId: ev.generationId, conversationId: ev.conversationId })
     }
     // tool.request 防御性忽略（批次 B 起 desktop 请求不再经 chat:event，D6B-08）
