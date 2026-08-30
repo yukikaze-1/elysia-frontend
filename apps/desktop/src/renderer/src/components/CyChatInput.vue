@@ -409,7 +409,8 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
             @pointerup="onDictationPointerUp"
             @pointercancel="onDictationPointerCancel"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 20h4M12 20h6" /><path d="M8 4h8a2 2 0 012 2v5a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+            <!-- 语音转写图标：麦克风 + 声波 + 「文」（语音转文字惯用构图；aria-label/title 不变） -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2.75" width="4.5" height="7.5" rx="2.25" /><path d="M2.5 8.5a4.25 4.25 0 0 0 7.5 0" /><path d="M6.25 13.5v2" /><path d="M14.75 5a5 5 0 0 1 0 6.5" /><path d="M17.5 3.25a8 8 0 0 1 0 10" /><text x="16.5" y="22" font-size="10.5" fill="currentColor" stroke="none" text-anchor="middle">文</text></svg>
           </button>
           <button
             v-if="hasActiveGeneration"
