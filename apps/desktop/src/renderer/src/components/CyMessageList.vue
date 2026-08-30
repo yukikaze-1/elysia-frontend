@@ -1,12 +1,16 @@
 <script setup lang="ts">
 // CyMessageList：自研轻量虚拟列表（spec §4.3.2/§4.3.4 D3/D5/D6）。
 // 估高 + ResizeObserver 实测 + 前缀和二分窗口；向上加载锚点不跳动；切会话草稿+锚点 flush。
+// UII-QQ 时间戳批次：全量 items 预计算「本地日首条非 tool 消息」（dayFirst）→ 对应行内渲染居中日期分隔；
+// 估高经 estimateMessageRowHeight 补分隔额度（实测由 ResizeObserver border-box 天然含分隔）；
+// 相对标签（今天/昨天）经 now ref + 跨本地午夜定时刷新（卸载清理）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import { useDraftStore } from '../stores/draft.store'
 import CyMessageBubble from './CyMessageBubble.vue'
 import { buildPrefix, captureAnchor, computeWindow, restoreScrollTop, OVERSCAN_PX } from '../utils/virtual-window'
+import { dayFirstDayKeys, daySeparatorLabel, estimateMessageRowHeight } from '../utils/message-time'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
@@ -28,7 +32,52 @@ const SCROLL_SETTLE_MS = 150
 
 /** 窗口化后的可见顺序（order 恒 (createdAt, messageId) 升序，P0-1 不变量） */
 const items = computed(() => messageStore.order.map((id) => messageStore.byId[id]).filter(Boolean))
-const prefix = computed(() => buildPrefix(items.value, heights.value))
+
+/** UII-QQ 时间戳批次：全量 items 预计算「本地日首条非 tool 消息」——全局 index → 本地日键 + 对应消息 id 集。
+ *  判定恒基于全量 items（与虚拟窗口 startIndex 无关）；tool 空占位跳过；首条非 tool 恒有分隔 */
+const dayFirst = computed(() => {
+  const byIndex = dayFirstDayKeys(items.value)
+  const ids = new Set<string>()
+  for (const idx of byIndex.keys()) {
+    const m = items.value[idx]
+    if (m) ids.add(m.messageId)
+  }
+  return { byIndex, ids }
+})
+
+function isDayFirstRow(globalIdx: number): boolean {
+  return dayFirst.value.byIndex.has(globalIdx)
+}
+
+/** 分隔标签（今天/昨天/M月D日/YYYY年M月D日）：键来自 dayFirst（消息自身日），相对判断用 now */
+function daySeparatorText(globalIdx: number): string {
+  const key = dayFirst.value.byIndex.get(globalIdx)
+  return key ? daySeparatorLabel(key, { now: now.value }) : ''
+}
+
+/** 相对日期标签基准：跨本地午夜后刷新（setTimeout 至下一午夜 +5s，触发后重排；卸载清理）。
+ *  分隔键（dayFirst）与 now 无关，仅标签文案随 now 更新 */
+const now = ref(new Date())
+let midnightTimer: ReturnType<typeof setTimeout> | undefined
+function scheduleMidnightRefresh(): void {
+  if (midnightTimer) clearTimeout(midnightTimer)
+  const n = now.value
+  const next = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1, 0, 0, 5)
+  midnightTimer = setTimeout(() => {
+    now.value = new Date()
+    scheduleMidnightRefresh()
+  }, Math.max(1000, next.getTime() - n.getTime()))
+}
+
+const prefix = computed(() => {
+  // UII-QQ 时间戳批次：估高注入日首补额（未实测行含日期分隔高度，防跨多天长会话前缀和持续低估）；
+  // 实测路径天然覆盖——分隔渲染在 .cy-vlist-row 内，ResizeObserver border-box 实测含分隔高度
+  const ids = dayFirst.value.ids
+  return buildPrefix(items.value, heights.value, {
+    keyFor: (m) => m.messageId,
+    estimate: (m) => estimateMessageRowHeight(m, ids.has(m.messageId)),
+  })
+})
 const scrollTop = ref(0)
 const viewportHeight = ref(600)
 const atBottom = ref(true)
@@ -262,6 +311,7 @@ function setRowEl(id: string, el: Element | null): void {
 
 onBeforeUnmount(() => {
   if (scrollSettleTimer) { clearTimeout(scrollSettleTimer); scrollSettleTimer = undefined }
+  if (midnightTimer) { clearTimeout(midnightTimer); midnightTimer = undefined }
   resizeObs.value?.disconnect()
   viewportObs?.disconnect()
 })
@@ -294,6 +344,7 @@ onMounted(() => {
     }
   })
   if (el) viewportObs.observe(el)
+  scheduleMidnightRefresh()
 })
 </script>
 
@@ -310,8 +361,13 @@ onMounted(() => {
         :data-message-id="id"
         :ref="(el) => setRowEl(id, el as Element | null)"
         class="cy-vlist-row"
-        :class="{ 'cy-highlighted': messageStore.highlightMessageId === id, 'cy-turn-start': turnStartSet.has(win.startIndex + i), 'cy-first-row': win.startIndex + i === 0 }"
+        :class="{ 'cy-highlighted': messageStore.highlightMessageId === id, 'cy-turn-start': turnStartSet.has(win.startIndex + i) && !isDayFirstRow(win.startIndex + i), 'cy-first-row': win.startIndex + i === 0 }"
       >
+        <!-- UII-QQ 时间戳批次：本地日首条非 tool 消息行内渲染居中日期分隔（判定基于全量 items，见 dayFirst）；
+             该行禁用 cy-turn-start 大段顶距，由分隔自身留白负责轮次间距，避免双重间距 -->
+        <div v-if="isDayFirstRow(win.startIndex + i)" class="cy-day-separator">
+          <span class="cy-day-separator-text">{{ daySeparatorText(win.startIndex + i) }}</span>
+        </div>
         <CyMessageBubble :message="messageStore.byId[id]" />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
@@ -337,6 +393,10 @@ onMounted(() => {
 .cy-vlist-row.cy-turn-start { padding-top: 18px; }
 /* P3：全局首条消息 6px 顶距——不能用 :first-child（列表首位恒为 .cy-vlist-pad，永不匹配），用显式类 */
 .cy-vlist-row.cy-first-row { padding-top: 6px; }
+/* UII-QQ 时间戳批次：居中日期分隔——低权重浅胶囊小字，不与正文争焦点；
+   日首行顶部留白由分隔负责（该行 cy-turn-start 已禁用），不影响消息左右对齐结构 */
+.cy-day-separator { display: flex; justify-content: center; padding: 14px 0 2px; }
+.cy-day-separator-text { padding: 2px 10px; color: var(--cy-muted); background: var(--cy-surface-soft); border-radius: 999px; font-size: 11px; opacity: 0.85; font-variant-numeric: tabular-nums; user-select: none; }
 .cy-vlist-pad { flex-shrink: 0; }   /* 7C 真机修复：flex 列内垫片必须禁收缩，否则 paddingTop/Bottom 被压成 0，长会话滚不到底部新消息 */
 .cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: 12px; }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
 .cy-located-chip { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }

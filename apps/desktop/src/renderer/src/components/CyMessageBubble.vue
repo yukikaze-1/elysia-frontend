@@ -6,11 +6,18 @@
 import { computed } from 'vue'
 import type { AssistantSegment, Message } from '@shared/contracts'
 import { stickerRenderUrl } from '@shared/domain'
+import { formatFullTime, formatMessageTime } from '../utils/message-time'
 import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
 import CyToolCard from './CyToolCard.vue'   // 阶段 6 批次 B（Task 7）：归档工具卡片（只读）
 
 const props = defineProps<{ message: Message }>()   // UI 问题 1 修复：不再按 visible 延迟渲染——虚拟窗口/overscan 内全量渲染真实内容，消除「完整↔骨架」几何切跳
+
+// —— UII-QQ 时间戳批次：每条 Message 只显示一次时间（inner_voice/public_reply/工具卡/emotion 共用）——
+// 默认可见内容仅本地 HH:mm（h23）；<time datetime> 保留原始 createdAt，title/aria-label 为完整本地时间；
+// createdAt 为权威字段、流式期间不变 → 显示时间稳定不跳；非法 createdAt → null → time 整体不渲染（安全隐藏）
+const createdAtText = computed(() => formatMessageTime(props.message.createdAt))
+const createdAtFull = computed(() => formatFullTime(props.message.createdAt))
 
 /** G4：贴图渲染 URL（复用 G3 通用媒体代理；id 缺失返回 undefined → 占位） */
 function stickerSrc(id?: string): string | undefined { return id ? stickerRenderUrl(id) : undefined }
@@ -63,6 +70,11 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   <!-- user 消息:右对齐 + 「我」头像;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html);failed 加错误角标(P2-4) -->
   <div v-if="isUser" class="cy-message-row cy-user-row">
     <div class="cy-msg-col cy-user-col">
+      <!-- UII-QQ 收尾：时间头部行（右对齐）位于内容上方——与 Assistant「头像+名称时间头部+内容」镜像；
+           头像已表达用户身份，头部不重复「我」；时间仍在气泡外、不入蓝色气泡 -->
+      <div v-if="createdAtText" class="cy-user-msg-head">
+        <time class="cy-msg-time" :datetime="message.createdAt" :title="createdAtFull ?? undefined" :aria-label="createdAtFull ?? undefined">{{ createdAtText }}</time>
+      </div>
       <p v-if="message.content" class="cy-bubble cy-user-bubble">{{ message.content }}</p>
       <!-- G4：用户贴图消息（wire Message.stickerId；content 可空）——纯贴图不加气泡底 -->
       <img v-if="message.stickerId" :src="stickerSrc(message.stickerId)" class="cy-sticker-img" :class="{ 'cy-sticker-plain': stickerOnly }" alt="表情" />
@@ -82,7 +94,11 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   <div v-else class="cy-message-row cy-assistant-row" :class="{ 'is-streaming': message.status === 'streaming' }">
     <span class="cy-avatar cy-avatar-assistant" aria-hidden="true">Cy</span>
     <div class="cy-msg-col">
-      <div class="cy-msg-name">Cyrene</div>
+      <!-- UII-QQ 时间戳批次：名称行升为轻头部「Cyrene · HH:mm」——时间弱于名称；inner_voice/工具卡/正文/心情共用 -->
+      <div class="cy-msg-name">
+        <span>Cyrene</span>
+        <time v-if="createdAtText" class="cy-msg-time" :datetime="message.createdAt" :title="createdAtFull ?? undefined" :aria-label="createdAtFull ?? undefined">{{ createdAtText }}</time>
+      </div>
       <!-- 内心独白：details 可访问折叠,默认收起,展开/收起高度变化经 ResizeObserver 实测进前缀和 -->
       <details v-if="innerVoiceSegments.length" class="cy-inner-voice">
         <summary>内心独白</summary>
@@ -173,11 +189,31 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 }
 
 .cy-msg-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   color: var(--cy-muted);
   font-size: 12px;
   line-height: 1.2;
   padding-left: 2px;
   user-select: none;
+}
+
+/* UII-QQ 时间戳批次：时间弱于名称（同 --cy-muted、11px、低 opacity、tabular-nums）；
+   user/assistant 共用同一视觉权重；不与技术元数据行（.cy-msg-meta）混排 */
+.cy-msg-time {
+  flex: none;
+  color: var(--cy-muted);
+  font-size: 11px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+/* UII-QQ 收尾：用户时间头部行——右对齐、位于内容上方（col gap 6px 提供头行与气泡间距）；
+   行 flex-start 顶对齐使头像与时间行自然构成 Assistant 头部结构的镜像 */
+.cy-user-msg-head {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* 气泡基座：白底 + 轻阴影（不叠多层描边）；user 用浅蓝。近头像角收窄（QQ 朝向感）。

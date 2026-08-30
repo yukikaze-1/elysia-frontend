@@ -14,6 +14,7 @@ import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useDraftStore } from '../../src/renderer/src/stores/draft.store'
+import { useHistoryViewerStore } from '../../src/renderer/src/stores/historyViewer.store'
 
 const mockApi = {
   connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
@@ -118,6 +119,50 @@ describe('CyChatInput 转写 final 插入（D-P4）', () => {
     expect(voice.dictation.finalText).toBeUndefined()
     expect(voice.mode).toBe('idle')
     void draftStore.flush('conv-1')
+  })
+})
+
+describe('CyChatInput 会话入口（UII-QQ 收尾：纯图标）', () => {
+  it('accessible name 保留：button[aria-label] 可定位两个入口，title 同名（集成按 getByRole name 查找，不得改名）', () => {
+    const wrapper = mountInput()
+    const history = wrapper.find('button[aria-label="聊天记录"]')
+    const media = wrapper.find('button[aria-label="图片/视频"]')
+    expect(history.exists()).toBe(true)
+    expect(media.exists()).toBe(true)
+    expect(history.attributes('title')).toBe('聊天记录')
+    expect(media.attributes('title')).toBe('图片/视频')
+    wrapper.unmount()
+  })
+
+  it('纯图标：按钮内无可见文字（.cy-entry-label 已删），只保留 SVG', () => {
+    const wrapper = mountInput()
+    for (const sel of ['button[aria-label="聊天记录"]', 'button[aria-label="图片/视频"]']) {
+      const btn = wrapper.find(sel)
+      expect(btn.find('svg').exists()).toBe(true)
+      expect(btn.find('.cy-entry-label').exists()).toBe(false)
+      expect((btn.element.textContent ?? '').trim()).toBe('')
+    }
+    wrapper.unmount()
+  })
+
+  it('点击聊天记录 → historyStore.openViewer()（无参 = 当前会话全部）', async () => {
+    const wrapper = mountInput()
+    const store = useHistoryViewerStore()
+    const spy = vi.spyOn(store, 'openViewer')
+    await wrapper.find('button[aria-label="聊天记录"]').trigger('click')
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0]).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('点击图片/视频 → historyStore.openViewer("image_video")', async () => {
+    const wrapper = mountInput()
+    const store = useHistoryViewerStore()
+    const spy = vi.spyOn(store, 'openViewer')
+    await wrapper.find('button[aria-label="图片/视频"]').trigger('click')
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0]).toBe('image_video')
+    wrapper.unmount()
   })
 })
 

@@ -1,0 +1,124 @@
+// @vitest-environment happy-dom
+// tests/unit/cy-message-bubble.spec.ts —— UII-QQ 时间戳批次：气泡内时间戳。
+// assistant 名称行轻头部一次 / user 气泡外右下一次；<time datetime>=原始 createdAt、title/aria=完整本地时间；
+// 非法 createdAt 安全隐藏；流式→completed 时间不变；tool 占位无时间。
+// 子组件 stub；组件用 host 本地时区格式化——断言与组件同源（同一 format* 函数 + 正则口径），
+// 不依赖测试机时区/日期；时区精确转换由 message-time.spec 以显式 timeZone 锁定。
+import { describe, expect, it } from 'vitest'
+import { reactive } from 'vue'
+import { mount } from '@vue/test-utils'
+import type { Message } from '@shared/contracts'
+import CyMessageBubble from '../../src/renderer/src/components/CyMessageBubble.vue'
+import { formatFullTime, formatMessageTime } from '../../src/renderer/src/utils/message-time'
+
+const CREATED_AT = '2026-08-30T01:42:17.000Z'
+
+function baseMsg(partial: Partial<Message>): Message {
+  return { messageId: 'm1', conversationId: 'c1', role: 'user', content: 'hello', status: 'completed', createdAt: CREATED_AT, ...partial }
+}
+
+function mountBubble(message: Message) {
+  return mount(CyMessageBubble, {
+    props: { message },
+    global: { stubs: { CyMarkdown: true, CyAttachmentMedia: true, CyToolCard: true } },
+  })
+}
+
+describe('CyMessageBubble 时间戳（UII-QQ 时间戳批次）', () => {
+  it('assistant：名称行轻头部显示一次 HH:mm；inner_voice + 多 public_reply segment 不重复时间', () => {
+    const message = baseMsg({
+      role: 'assistant',
+      content: undefined,
+      status: 'streaming',
+      assistantSegments: [
+        { segmentId: 'i1', segmentIndex: 0, channel: 'inner_voice', kind: 'text', text: 'think...', completed: true },
+        { segmentId: 'p1', segmentIndex: 1, channel: 'public_reply', kind: 'text', text: '第一段', completed: true },
+        { segmentId: 'p2', segmentIndex: 2, channel: 'public_reply', kind: 'markdown', text: '**第二段**', completed: true },
+      ],
+    })
+    const w = mountBubble(message)
+    const times = w.findAll('time')
+    expect(times).toHaveLength(1)
+    expect(times[0].text()).toBe(formatMessageTime(CREATED_AT))
+    expect(times[0].text()).toMatch(/^\d{2}:\d{2}$/)
+    expect(w.find('.cy-msg-name').text()).toContain('Cyrene')
+    // emotion/toolCalls 等其余区块不另带 time（整行恒 1 个 time 元素）
+    w.unmount()
+  })
+
+  it('user：时间在内容上方头部行（.cy-user-msg-head）、气泡外部；内容之后无底部时间', () => {
+    const w = mountBubble(baseMsg({}))
+    const col = w.find('.cy-user-col')
+    const head = w.find('.cy-user-msg-head')
+    expect(head.exists()).toBe(true)
+    // 头部行是 col 的首个子元素，位于正文气泡之前
+    const children = Array.from(col.element.children)
+    expect(children[0]).toBe(head.element)
+    expect(children.indexOf(w.find('.cy-bubble').element)).toBeGreaterThan(0)
+    // 全条消息仅一个 time（在头部行内），不入蓝色气泡
+    const times = w.findAll('time')
+    expect(times).toHaveLength(1)
+    expect(times[0].element.parentElement).toBe(head.element)
+    expect(w.find('.cy-bubble time').exists()).toBe(false)
+    expect(head.text()).toBe(formatMessageTime(CREATED_AT))
+    w.unmount()
+  })
+
+  it('user：贴图（stickerOnly）与附件消息同样使用顶部时间（一次，位于贴图/附件之前）', () => {
+    const sticker = mountBubble(baseMsg({ content: undefined, stickerId: 'st1' }))
+    expect(sticker.findAll('time')).toHaveLength(1)
+    const sChildren = Array.from(sticker.find('.cy-user-col').element.children)
+    expect(sChildren[0]).toBe(sticker.find('.cy-user-msg-head').element)   // 头部行在最前（贴图之前）
+    sticker.unmount()
+    const att = mountBubble(baseMsg({ content: undefined, attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png' }] }))
+    expect(att.findAll('time')).toHaveLength(1)
+    att.unmount()
+  })
+
+  it('user 发送失败：错误角标之外仍显示一次时间（顶部头部行）', () => {
+    const w = mountBubble(baseMsg({ status: 'failed' }))
+    expect(w.find('.cy-user-error-badge').exists()).toBe(true)
+    expect(w.findAll('time')).toHaveLength(1)
+    expect(w.find('.cy-user-msg-head').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('<time datetime> 保留原始 createdAt；title/aria-label 为完整本地时间（YYYY年M月D日 HH:mm:ss）', () => {
+    const w = mountBubble(baseMsg({}))
+    const t = w.find('time')
+    expect(t.attributes('datetime')).toBe(CREATED_AT)
+    const full = formatFullTime(CREATED_AT)
+    expect(t.attributes('title')).toBe(full)
+    expect(t.attributes('aria-label')).toBe(full)
+    expect(full).toMatch(/^\d{4}年\d{1,2}月\d{1,2}日 \d{2}:\d{2}:\d{2}$/)
+    w.unmount()
+  })
+
+  it('非法 createdAt：不抛错、不渲染 time（无 Invalid Date 文本）', () => {
+    const w = mountBubble(baseMsg({ createdAt: 'not-a-date' }))
+    expect(w.find('time').exists()).toBe(false)
+    expect(w.find('.cy-user-col').text()).not.toContain('Invalid')
+    w.unmount()
+  })
+
+  it('流式 → completed：时间文本保持不变（同一 createdAt，不随状态跳动）', async () => {
+    const message = reactive(baseMsg({
+      role: 'assistant',
+      content: undefined,
+      status: 'streaming',
+      assistantSegments: [{ segmentId: 'p1', segmentIndex: 0, channel: 'public_reply', kind: 'text', text: '回复中', completed: false }],
+    }))
+    const w = mountBubble(message)
+    const before = w.find('time').text()
+    message.status = 'completed'   // 就地变异（同真实 store 语义）：props 对象引用不变
+    await w.vm.$nextTick()
+    expect(w.find('time').text()).toBe(before)
+    w.unmount()
+  })
+
+  it('tool 占位消息：不渲染时间', () => {
+    const w = mountBubble(baseMsg({ role: 'tool', content: undefined }))
+    expect(w.find('time').exists()).toBe(false)
+    w.unmount()
+  })
+})

@@ -361,13 +361,13 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
           <!-- UII-QQ IA：右侧会话入口——「聊天记录」（当前会话历史）与「图片/视频」（媒体资源视图）语义分开；
                不 gating，离线可打开查看器 -->
           <span class="cy-composer-toolbar-spacer" />
+          <!-- UII-QQ 收尾：入口改纯图标（功能经 title/aria-label 表达——键盘/读屏/accessiblename 不变；
+               离线可打开查看器语义与 historyStore.openViewer 参数不变） -->
           <button class="cy-history-btn" title="聊天记录" aria-label="聊天记录" @click="historyStore.openViewer()">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" /></svg>
-            <span class="cy-entry-label">聊天记录</span>
           </button>
           <button class="cy-history-btn" title="图片/视频" aria-label="图片/视频" @click="historyStore.openViewer('image_video')">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 15 5-5 4 4 3-3 6 6" /><circle cx="9" cy="9.5" r="1.4" /></svg>
-            <span class="cy-entry-label">图片/视频</span>
           </button>
         </div>
 
@@ -485,19 +485,19 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   flex: 1;
 }
 
-/* UII-QQ IA：右侧会话入口（聊天记录/资源）——图标 + 文字，窄 Composer 隐藏文字只留图标 */
+/* UII-QQ 收尾：右侧会话入口改纯图标（32×32、图标居中；间距走 toolbar gap 4px；
+   功能名经 title/aria-label 表达——集成规格按 accessible name 定位，aria-label 不得改名） */
 .cy-history-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 32px;
   height: 32px;
-  padding: 0 8px;
+  padding: 0;
   border-radius: 9px;
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid transparent;
-  font-size: 12px;
-  white-space: nowrap;
 }
 
 .cy-history-btn:hover {
@@ -505,22 +505,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   background: var(--cy-surface-hover);
 }
 
-.cy-entry-label {
-  min-width: 0;
-}
-
-/* 窄 Composer：入口文字隐藏（按钮仍可点，tooltip 保留）——与快捷键提示同一阈值 */
-@container (max-width: 639px) {
-  .cy-composer-hint,
-  .cy-entry-label {
-    display: none;
-  }
-
-  .cy-history-btn {
-    width: 32px;
-    padding: 0;
-    justify-content: center;
-  }
+.cy-history-btn:focus-visible {
+  outline: 2px solid var(--cy-accent-strong);
+  outline-offset: 1px;
 }
 
 /* 中部：多行 textarea，自适应高度（autoGrow），空闲紧凑 */
