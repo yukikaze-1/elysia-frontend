@@ -1,7 +1,7 @@
 # Cyrene 前端文档索引与阅读顺序
 
 **文档状态：** 维护中
-**最后核验：** 2026-08-29
+**最后核验：** 2026-08-30
 **适用阶段：** 全阶段
 **权威范围：** 文档导航、职责划分、信息权威来源和维护规则
 
@@ -16,6 +16,7 @@
 | 搭建 Windows/Linux 环境或连接真实后端 | [doc 17](17-Cyrene-前端开发环境与依赖安装记录.md) |
 | 理解总体架构和安全边界 | [doc 01](01-Cyrene-Electron-前端总体架构设计-v0.2.md)、[doc 07](07-Cyrene-Electron前端安全设计-v0.2.md) |
 | 修改后端协议或领域契约 | [doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) |
+| 理解用户身份、多角色与自定义角色前端设计 | [多角色与自定义角色前端架构](Cyrene-多角色与自定义角色前端架构设计.md) |
 | 理解任务系统和任务中心 | [任务系统总体架构](2026-08-29-task-system-overall-architecture-design.md)、[任务中心前端架构](2026-08-29-task-center-frontend-architecture-design.md) |
 | 判断阶段能否进入或完成 | [doc 12](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md) |
 | 查技术任务定义 | [doc 10](10-Cyrene-前端实施路线与任务拆分-v0.2.md) |
@@ -79,6 +80,7 @@
 
 ### 5.1 专项清单
 
+- [多角色、用户身份与自定义角色前端架构设计](Cyrene-多角色与自定义角色前端架构设计.md)：Main/Preload/Renderer 对后端角色 Prompt 系统的对接边界，覆盖“我的档案”、角色目录与编辑、会话选角、角色公开状态、Live2D/TTS 身份联动、缓存迁移和分批联调；`character-contract-v1` 已与后端 §11～§12 冻结对齐，后端权威设计位于 `elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture-design.md`。
 - [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md)：前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化与分批实施；在前后端仓库保持镜像同步。
 - [任务中心前端架构设计](2026-08-29-task-center-frontend-architecture-design.md)：Main/Preload/Renderer 分层、前端契约、Store、页面、重连和 Desktop 权限关联；后端专属设计位于 `elysia-agent/docs/2026-08-29-task-system-backend-architecture-design.md`。
 - [UI 精修整改清单](2026-08-29-UI精修整改清单.md)：阶段 8 前 UI/布局/风格精修批次的规则与限制（布局硬值、虚拟列表红线、滚动条、token、无障碍、验证清单）。
