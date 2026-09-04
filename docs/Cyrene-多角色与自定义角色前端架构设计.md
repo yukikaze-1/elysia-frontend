@@ -221,6 +221,25 @@ features: Record<string, unknown>
 | `voiceStore` | 录音、TTS 播放和口型播放状态 | 决定角色应使用哪个声音 |
 | `SessionStore` | 会话离线缓存 | 完整角色数据库或后端写入队列 |
 
+### 2.11 FE-F1a 已实现事实（运行时接线）
+
+当前前端已落地角色公开状态的运行时接线，但尚未在角色栏或其他页面展示其内容：
+
+- `characterRuntimeStore` 按 `characterInstanceId` 缓存 `CharacterPublicState`，以连接 epoch、请求序号、请求时 binding、实例/角色身份和 `stateVersion` 做防迟到与 fail-closed 守卫；脱敏错误沿用 `PublicError`。
+- `createCharacterRuntimeCoordinator` 只监听当前会话的权威 `character` binding 与连接能力；离线保留 binding 供后续 stale cache 展示，只有 connected 且 `characterProfiles=true` 且存在 binding 时才发起 state snapshot GET。
+- Renderer bootstrap 为角色能力计算包含状态、规范化 endpoint、connectionId、角色能力和 state-stream 能力的连接签名；connected→connected 的 endpoint/transport 变化会推进角色 epoch，并同步 identity/catalog/editor/runtime。`character.state.changed` 只旁路到 runtime store，不进入 messageStore。
+- WS 状态事件不会改写 active binding；不同会话仍可更新同一 canonical instance 的共享缓存。Live2D/TTS 仍待后续 FE-F 批次接线，后端真实联调尚未宣称完成。
+
+### 2.12 FE-F1b 已实现事实（公开状态 UI，2026-09-04）
+
+FE-F1b 已将角色公开状态接入 Live2D 侧栏；该批次只做只读展示，不改变会话角色绑定、selectionMode、TTS identity 或 autoplay：
+
+- 新增 `CyCharacterPublicState`，唯一数据源是 `characterRuntimeStore.activeBinding`、`activeState`、`activeStatus` 和 `activeError`；组件再次校验 `characterId + characterInstanceId + characterRevision`，不从兼容性的 `statesByInstanceId` 推导当前视图。
+- 展示角色 binding 的 `displayName`、`mood.label`、非空 `currentActivity` 和最近互动时间（`lastInteractionAt` 优先、`updatedAt` 回退）。相对时间由纯函数格式化，组件只按分钟刷新并在卸载时清理定时器。
+- 已覆盖无 binding、legacy/能力不可用、loading、ready、stale/离线和 error 分支。断线保留已有精确 revision 快照并标识“离线 · 可能过期”；在线且 `characterProfiles=true` 时才显示并执行重试，`characterStateStream=false` 仍使用 REST snapshot fallback。
+- 原 Live2D `CharacterState` 徽标明确标为“本地呈现”，不再冒充角色公开心情；组件不输出 L2/L3/L4、reflection、memory、relationship、internal state 或原始 JSON 等内部字段。
+- 组件测试位于 `apps/desktop/tests/unit/cy-character-public-state.spec.ts`；本批次使用 Mock/本地测试验证，真实后端与 Windows Electron 联调仍未宣称完成。
+
 ---
 
 ## 3. 术语与长期不变量
@@ -247,7 +266,11 @@ features: Record<string, unknown>
 3. Renderer 不根据“当前选择的 Live2D 模型”反推角色身份。
 4. Renderer 不根据回复中的自称、头像首字或会话标题猜角色。
 5. 角色目录缓存不能覆盖会话/消息携带的历史角色快照。
-6. 正在生成的一轮固定使用 `generation.started` 声明的角色身份；角色编辑只影响下一轮。
+6. 正在生成的一轮固定使用 `generation.started` 声明的完整角色身份元组
+   （`characterId + characterInstanceId + characterRevision`）；角色编辑期间，当前
+   generation/message 继续保留其已捕获的旧 `characterRevision`，不得被目录或会话摘要
+   回写。编辑成功后只影响下一轮；下一轮在同一 `follow_latest` 会话中重新原子捕获
+   最新 revision。
 7. 新连接和会话激活后，角色状态 snapshot 先于增量成为权威基线。
 8. 内置角色只读；前端编辑入口必须转换为“克隆后编辑”。
 9. 归档不会删除既有会话，也不会让离线历史突然失去身份。
@@ -597,7 +620,7 @@ export interface CharacterArchiveResult {
 
 保存必须发送完整 draft，而不是向后端做字段级 PATCH。这样 revision checksum、校验和并发语义都由后端对完整版本负责。
 
-`UpdateCharacterCommand` 是前端领域命令；Main 发往后端时将 `draft` 字段展平，wire 不存在额外的 `draft` 包装层。`preview` 因还包含 `userMessage`，保留 `{draft,userMessage}`。`affectedInstances` 是应受本次 revision 影响的 `follow_latest` instance 总数，`pendingInstances` 是其中尚待下一轮原子应用的子集。
+`UpdateCharacterCommand` 是前端领域命令；Main 发往后端时将 `draft` 字段展平，wire 不存在额外的 `draft` 包装层。`preview` 因还包含 `userMessage`，保留 `{draft,userMessage}`。`affectedInstances` 是应受本次 revision 影响的 `follow_latest` instance 总数，`pendingInstances` 是其中尚待下一轮原子应用的子集。保存成功不强制改写正在执行的 generation：`pendingInstances` 只表示尚未在下一轮边界原子采用新 revision 的实例；当前轮仍以开始时捕获的旧 revision 运行，下一轮才捕获新 revision。非 `follow_latest` 实例不因该计数被隐式改写。
 
 ### 5.8 校验与预览
 
@@ -732,7 +755,7 @@ export interface ResetCharacterEvolutionResult {
 
 `intensity` 只用于轻量表现，不默认显示“72% 心情值”。前端不得从它推导亲密度或关系等级。
 
-`characterRevision` 与 `stateVersion` 必须分开：前者说明角色内容版本，后者用于演化状态 CAS 和事件顺序。`character-contract-v1` 已冻结 raw 也使用 `characterRevision`，不再允许顶层模糊字段 `revision`。REST snapshot 不带 `conversationId`，因为同一 canonical instance 可绑定多个会话；WS event 才带本次投递关联的 `conversationId`。
+`characterRevision` 与 `stateVersion` 必须分开：前者说明角色内容版本，后者是 canonical instance 级别的演化状态 CAS/事件顺序高水位（跨 revision 也必须严格单调）。`character-contract-v1` 已冻结 raw 也使用 `characterRevision`，不再允许顶层模糊字段 `revision`。REST snapshot 不带 `conversationId`，因为同一 canonical instance 可绑定多个会话；WS event 才带本次投递关联的 `conversationId`。
 
 V1 reset 清除 L2、L3（含 history/awareness/compression 派生态）、动态 C6、reflector 和 mood，并原子递增一次 `stateVersion`；不删除会话、消息、LTM、relationship、用户档案、角色版本或会话 voice/service 设置。前端必须使用后端返回的 `resetFields` 展示结果，不能自行猜测重置范围。
 
@@ -931,6 +954,8 @@ interface GenerationIdentity {
   characterId: string
   characterInstanceId: string
   characterRevision: number
+  connectionEpoch: number
+  connectionSignature: string
 }
 
 generationId -> GenerationIdentity
@@ -944,6 +969,13 @@ generationId -> GenerationIdentity
 4. 会话切换后迟到事件直接丢弃并写脱敏诊断；
 5. 角色 catalog 更新不改变在途 generation identity；
 6. 回放同 messageId 以服务端归档快照覆盖本地临时 ref。
+7. `connectionEpoch + connectionSignature` 是传输世代栅栏；connected→connected 的新连接也必须使旧 generation map、segment、terminal 和分页请求失效。
+
+实现澄清（FE-E2）：Main 为每个 socket 分配只增不复用的本地 transport incarnation；socket 的
+`message`、`close`、`error`、握手超时和 replay 回调必须同时通过“仍是当前 socket”与
+incarnation 检查后才能进入领域/IPC 路径。当前 wire/IPC schema 不新增后端 source token，
+也不宣称后端已提供该字段；旧 socket 的入口由 Main 的双重栅栏封闭，Renderer 继续以
+`connectionEpoch + connectionSignature` 保护异步消息、分页和缓存提交。
 
 ### 7.3 角色状态事件
 
@@ -2090,7 +2122,9 @@ apps/desktop/src/renderer/src/
 - A expression/directive 不驱动 B；
 - A TTS ready 不在 B 自动播放；
 - 角色编辑期间当前 generation 保持旧 revision；
-- 下一轮使用新 revision；
+- 下一轮在同一会话中使用新 revision（验证 `generation.started` 的完整
+  `characterId + characterInstanceId + characterRevision` 元组），且上一轮的终态仍保留旧
+  revision；
 - 重连 replay 恢复 binding/state；
 - 离线缓存显示角色摘要；
 - 旧缓存无 character 不崩溃。
@@ -2191,8 +2225,8 @@ apps/desktop/src/renderer/src/
 
 ### 20.4 状态、Live2D 与 TTS
 
-- [ ] CharacterPublicState 与本地 presentation state 分离；
-- [ ] 不展示内部人格/记忆；
+- [x] CharacterPublicState 与本地 presentation state 分离（FE-F1b：角色栏公开状态卡与“本地呈现”徽标分层）；
+- [x] 不展示内部人格/记忆（FE-F1b 公开状态卡只读公开字段）；
 - [ ] Live2D 支持 follow character/fixed；
 - [ ] 角色切换不改写固定设置；
 - [ ] 模型缺失安全回退；
