@@ -8,7 +8,9 @@ import { useConversationStore } from '../../src/renderer/src/stores/conversation
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useCacheStore } from '../../src/renderer/src/stores/cache.store'
+import { useDraftStore } from '../../src/renderer/src/stores/draft.store'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
+import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Message } from '@shared/contracts'
 
@@ -53,6 +55,63 @@ describe('conversationStore', () => {
     expect(store.items[0].id).toBe('c1')
     expect(store.hasMore).toBe(true)
     expect(store.nextCursor).toBe('cur-1')
+  })
+
+  it('legacy list 同页重复 conversation id 也拒绝整页', async () => {
+    const store = useConversationStore()
+    mockApi.listConversations.mockResolvedValueOnce({ items: [convA, { ...convA, title: '重复标题' }], hasMore: false })
+    expect(await store.list()).toBe(false)
+    expect(store.items).toHaveLength(0)
+    expect(useCacheStore().conversations).toHaveLength(0)
+    expect(store.error?.message).toContain('重复')
+  })
+
+  it('legacy getMore 同页重复 conversation id 不污染已有页和游标', async () => {
+    const store = useConversationStore()
+    mockApi.listConversations.mockResolvedValueOnce({ items: [convA], hasMore: true, nextCursor: 'page-2' })
+    expect(await store.list()).toBe(true)
+    mockApi.listConversations.mockResolvedValueOnce({ items: [convB, { ...convB, title: '重复标题' }], hasMore: false })
+    await store.getMore()
+    expect(store.items.map((item) => item.id)).toEqual([convA.id])
+    expect(store.hasMore).toBe(true)
+    expect(store.nextCursor).toBe('page-2')
+  })
+
+  it('旧世代 list reject 不覆盖新连接的 error', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'list-old', serverUrl: 'https://same-list.example/api' })
+    store.setConnectionState(connection.state)
+    let rejectOld!: (cause: unknown) => void
+    mockApi.listConversations.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject }))
+    const pending = store.list()
+    await vi.waitFor(() => expect(mockApi.listConversations).toHaveBeenCalledTimes(1))
+
+    connection.setState({ status: 'connected', connectionId: 'list-new', serverUrl: 'https://same-list.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ error: { code: 'NEW_CONNECTION_ERROR', message: 'new connection error' } })
+    rejectOld(new Error('old list failure'))
+    await expect(pending).resolves.toBe(false)
+    expect(store.error?.code).toBe('NEW_CONNECTION_ERROR')
+  })
+
+  it('旧世代 getMore reject 不覆盖新连接的 error', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'more-old', serverUrl: 'https://same-more.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ nextCursor: 'old-cursor' })
+    let rejectOld!: (cause: unknown) => void
+    mockApi.listConversations.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject }))
+    const pending = store.getMore()
+    await vi.waitFor(() => expect(mockApi.listConversations).toHaveBeenCalledTimes(1))
+
+    connection.setState({ status: 'connected', connectionId: 'more-new', serverUrl: 'https://same-more.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ error: { code: 'NEW_MORE_ERROR', message: 'new getMore error' } })
+    rejectOld(new Error('old getMore failure'))
+    await pending
+    expect(store.error?.code).toBe('NEW_MORE_ERROR')
   })
 
   it('F1:操作失败置 error,成功后清旧错误(短横幅语义)', async () => {
@@ -126,6 +185,84 @@ describe('conversationStore', () => {
     await store.remove('c1')
     expect(store.currentId).toBeUndefined()
     expect(messageStore.byId['stale-1']).toBeUndefined()
+  })
+
+  it('旧世代 rename 成功到达时不触发新世代 safeList 或清除新 error', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'rename-old', serverUrl: 'https://rename-a.example/api' })
+    store.setConnectionState(connection.state)
+    let resolveRename!: (value: unknown) => void
+    mockApi.renameConversation.mockImplementationOnce(() => new Promise((resolve) => { resolveRename = resolve }))
+    const pending = store.rename({ conversationId: 'same-id', title: '旧标题' })
+    await vi.waitFor(() => expect(mockApi.renameConversation).toHaveBeenCalledTimes(1))
+
+    connection.setState({ status: 'connected', connectionId: 'rename-new', serverUrl: 'https://rename-b.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ error: { code: 'NEW_RENAME_ERROR', message: 'new error' } })
+    resolveRename({ id: 'same-id', title: '旧标题', updatedAt: '2026-08-31T00:00:00.000Z' })
+    await pending
+    expect(mockApi.listConversations).not.toHaveBeenCalled()
+    expect(store.error?.code).toBe('NEW_RENAME_ERROR')
+    expect(store.busy).toBe(false)
+  })
+
+  it('旧世代 rename 失败到达时不覆盖新世代 error', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'rename-fail-old', serverUrl: 'https://rename-fail-a.example/api' })
+    store.setConnectionState(connection.state)
+    let rejectRename!: (cause: unknown) => void
+    mockApi.renameConversation.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectRename = reject }))
+    const pending = store.rename({ conversationId: 'same-id', title: '旧标题' })
+    await vi.waitFor(() => expect(mockApi.renameConversation).toHaveBeenCalledTimes(1))
+
+    connection.setState({ status: 'connected', connectionId: 'rename-fail-new', serverUrl: 'https://rename-fail-b.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ error: { code: 'NEW_RENAME_FAILURE', message: 'new failure' } })
+    rejectRename(new Error('old rename failure'))
+    await pending
+    expect(mockApi.listConversations).not.toHaveBeenCalled()
+    expect(store.error?.code).toBe('NEW_RENAME_FAILURE')
+    expect(store.busy).toBe(false)
+  })
+
+  it('旧世代 remove 成功晚到不能清理新 backend 同 id 的 current/cache/messages/draft', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    const old = { id: 'remove-shared-id', title: 'A 会话', updatedAt: '2026-08-31T00:00:00.000Z' }
+    connection.setState({ status: 'connected', connectionId: 'remove-old', serverUrl: 'https://remove-a.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ items: [old], currentId: old.id })
+    const oldMessage: Message = { messageId: 'old-remove-message', conversationId: old.id, role: 'user', content: 'old', status: 'completed', createdAt: '2026-08-31T00:00:00.000Z' }
+    useMessageStore().loadPage({ items: [oldMessage], hasMore: false })
+    useCacheStore().hydrate({ drafts: [], scrollAnchors: {}, conversations: [old], messageSnapshots: { [old.id]: [oldMessage] } })
+    useDraftStore().$patch({ drafts: { [old.id]: 'old draft' } })
+    let resolveRemove!: (value?: unknown) => void
+    mockApi.deleteConversation.mockImplementationOnce(() => new Promise((resolve) => { resolveRemove = resolve }))
+    const pending = store.remove(old.id)
+    await vi.waitFor(() => expect(mockApi.deleteConversation).toHaveBeenCalledTimes(1))
+
+    connection.setState({ status: 'connected', connectionId: 'remove-new', serverUrl: 'https://remove-b.example/api' })
+    store.setConnectionState(connection.state)
+    const fresh = { id: old.id, title: 'B 会话', updatedAt: '2026-08-31T00:00:02.000Z' }
+    const freshMessage: Message = { messageId: 'new-remove-message', conversationId: fresh.id, role: 'user', content: 'new', status: 'completed', createdAt: '2026-08-31T00:00:02.000Z' }
+    store.$patch({ items: [fresh], currentId: fresh.id, error: { code: 'NEW_REMOVE_ERROR', message: 'new error' } })
+    const cache = useCacheStore()
+    cache.hydrate({ drafts: [], scrollAnchors: {}, conversations: [fresh], messageSnapshots: { [fresh.id]: [freshMessage] } })
+    useMessageStore().loadPage({ items: [freshMessage], hasMore: false })
+    useDraftStore().$patch({ drafts: { [fresh.id]: 'new draft' } })
+
+    resolveRemove()
+    await pending
+    expect(mockApi.listConversations).not.toHaveBeenCalled()
+    expect(store.currentId).toBe(fresh.id)
+    expect(store.items).toEqual([fresh])
+    expect(cache.snapshotMessages(fresh.id)).toEqual([freshMessage])
+    expect(useMessageStore().order).toEqual([freshMessage.messageId])
+    expect(useDraftStore().drafts[fresh.id]).toBe('new draft')
+    expect(store.error?.code).toBe('NEW_REMOVE_ERROR')
+    expect(store.busy).toBe(false)
   })
 
   it('getMore:nextCursor 透传追加;无 cursor 早退不调 api', async () => {
@@ -376,6 +513,422 @@ describe('G2 离线视图 / activateLocal / 在线恢复（spec §4.5.3 P1-1）'
     await conv.activate('conv-1')
     expect(conv.offlineView).toBe(false)
     expect(conv.error).toBeUndefined()
+  })
+})
+
+describe('FE-E1 会话角色绑定与新建选角契约', () => {
+  const binding = {
+    characterId: 'builtin/elysia',
+    characterInstanceId: 'instance-elysia',
+    characterRevision: 3,
+    displayName: 'Elysia',
+    presentation: { themeColor: '#f2a7c6' }
+  }
+  const profile = {
+    userId: 'user-1',
+    displayName: '旅行者',
+    locale: 'zh-CN',
+    timezone: 'Asia/Shanghai',
+    initialized: true,
+    defaultCharacterId: binding.characterId,
+    revision: 1,
+    createdAt: '2026-08-31T00:00:00.000Z',
+    updatedAt: '2026-08-31T00:00:00.000Z'
+  }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    setDesktopApi(mockApi)
+    vi.resetAllMocks()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'character-1', features: { characterProfiles: true, characterStateStream: false } })
+    const store = useConversationStore()
+    store.setConnectionState(connection.state)
+    useIdentityStore().profile = profile
+    mockApi.listConversations.mockResolvedValue({ items: [], hasMore: false })
+  })
+
+  it('profiles=true 带角色 ID 创建，并保留服务端绑定快照', async () => {
+    const store = useConversationStore()
+    const created = { id: 'bound-1', title: '新会话', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.createConversation.mockResolvedValue(created)
+
+    const result = await store.create(binding.characterId)
+
+    expect(mockApi.createConversation).toHaveBeenCalledTimes(1)
+    expect(mockApi.createConversation).toHaveBeenCalledWith({ characterId: binding.characterId })
+    expect(result?.character?.characterId).toBe(binding.characterId)
+    expect(store.items[0]?.character?.displayName).toBe('Elysia')
+    expect(useCacheStore().conversations[0]?.character?.characterId).toBe(binding.characterId)
+    expect(store.currentId).toBe('bound-1')
+  })
+
+  it('profiles=true 缺角色 ID 时拒绝且不调用后端', async () => {
+    const store = useConversationStore()
+    await expect(store.create()).resolves.toBeUndefined()
+    expect(mockApi.createConversation).not.toHaveBeenCalled()
+    expect(store.error?.code).toBe('CHARACTER_REQUIRED')
+  })
+
+  it('响应缺失或错配 binding 时视为协议错误，不写列表/当前/缓存', async () => {
+    const store = useConversationStore()
+    mockApi.createConversation.mockResolvedValueOnce({ id: 'missing-binding', title: 'x', updatedAt: '2026-08-31T00:00:00.000Z' })
+    await expect(store.create(binding.characterId)).resolves.toBeUndefined()
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(useCacheStore().conversations).toHaveLength(0)
+
+    mockApi.createConversation.mockResolvedValueOnce({ id: 'wrong-binding', title: 'x', updatedAt: '2026-08-31T00:00:00.000Z', character: { ...binding, characterId: 'builtin/cyrene' } })
+    await expect(store.create(binding.characterId)).resolves.toBeUndefined()
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+  })
+
+  it('同一 editor action 重复新建复用 in-flight Promise，只请求一次', async () => {
+    const store = useConversationStore()
+    mockApi.createConversation.mockResolvedValue({ id: 'once', title: 'x', updatedAt: '2026-08-31T00:00:00.000Z', character: binding })
+    const first = store.create(binding.characterId)
+    const second = store.create(binding.characterId)
+    await Promise.all([first, second])
+    expect(mockApi.createConversation).toHaveBeenCalledTimes(1)
+  })
+
+  it('连接世代切换后迟到创建结果被丢弃，不污染列表/缓存', async () => {
+    const store = useConversationStore()
+    let resolveCreated!: (value: unknown) => void
+    mockApi.createConversation.mockReturnValue(new Promise((resolve) => { resolveCreated = resolve }))
+    const pending = store.create(binding.characterId)
+    await Promise.resolve()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'reconnecting', connectionId: 'character-1', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    resolveCreated({ id: 'late', title: '迟到', updatedAt: '2026-08-31T00:00:00.000Z', character: binding })
+    await expect(pending).resolves.toBeUndefined()
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(useCacheStore().conversations).toHaveLength(0)
+  })
+
+  it('safeList 期间连接跨代会清除已暂存的旧创建结果并释放 busy', async () => {
+    const store = useConversationStore()
+    let resolveList!: (value: unknown) => void
+    mockApi.createConversation.mockResolvedValue({ id: 'stale-after-list', title: '旧连接', updatedAt: '2026-08-31T00:00:00.000Z', character: binding })
+    mockApi.listConversations.mockImplementationOnce(() => new Promise((resolve) => { resolveList = resolve }))
+    const pending = store.create(binding.characterId)
+    await vi.waitFor(() => expect(mockApi.listConversations).toHaveBeenCalled())
+    const connection = useConnectionStore()
+    connection.setState({ status: 'reconnecting', connectionId: 'character-1', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    resolveList({ items: [], hasMore: false })
+    await expect(pending).resolves.toBeUndefined()
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(useCacheStore().conversations).toHaveLength(0)
+    expect(store.busy).toBe(false)
+  })
+
+  it('safeList 失败不抹掉已确认的创建权威结果', async () => {
+    const store = useConversationStore()
+    const created = { id: 'authoritative', title: '已创建', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.createConversation.mockResolvedValue(created)
+    mockApi.listConversations.mockRejectedValue(new Error('list temporarily unavailable'))
+    const result = await store.create(binding.characterId)
+    expect(result?.id).toBe('authoritative')
+    expect(store.items.map((item) => item.id)).toEqual(['authoritative'])
+    expect(store.currentId).toBe('authoritative')
+    expect(store.error?.message).toContain('list temporarily unavailable')
+  })
+
+  it('profiles=true 首次 list 遇到缺 binding 的坏页时不覆盖既有 items/cache', async () => {
+    const store = useConversationStore()
+    const existing = { id: 'existing-bound', title: '既有', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.listConversations.mockResolvedValueOnce({ items: [existing], hasMore: false })
+    expect(await store.list()).toBe(true)
+    const cache = useCacheStore()
+    expect(cache.conversations[0]?.id).toBe(existing.id)
+
+    mockApi.listConversations.mockResolvedValueOnce({ items: [{ id: 'bad-page', title: '缺角色', updatedAt: '2026-08-31T00:00:01.000Z' }], hasMore: false })
+    expect(await store.list()).toBe(false)
+    expect(store.items.map((item) => item.id)).toEqual([existing.id])
+    expect(cache.conversations.map((item) => item.id)).toEqual([existing.id])
+    expect(store.error?.message).toContain('会话响应')
+  })
+
+  it('profiles=true getMore 遇到缺 binding 的坏页时保留原页/cursor/cache', async () => {
+    const store = useConversationStore()
+    const first = { id: 'page-1', title: '第一页', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.listConversations.mockResolvedValueOnce({ items: [first], hasMore: true, nextCursor: 'page-2' })
+    expect(await store.list()).toBe(true)
+    mockApi.listConversations.mockResolvedValueOnce({ items: [{ id: 'bad-page-2', title: '坏页', updatedAt: '2026-08-31T00:00:01.000Z' }], hasMore: false })
+    await store.getMore()
+    expect(store.items.map((item) => item.id)).toEqual([first.id])
+    expect(store.hasMore).toBe(true)
+    expect(store.nextCursor).toBe('page-2')
+    expect(useCacheStore().conversations.map((item) => item.id)).toEqual([first.id])
+  })
+
+  it('create→safeList 返回同 id 的缺失/冲突 binding 时保留权威创建快照并公开协议错误', async () => {
+    const store = useConversationStore()
+    const created = { id: 'authoritative-binding', title: '权威', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.createConversation.mockResolvedValueOnce(created)
+    mockApi.listConversations.mockResolvedValueOnce({ items: [{ id: created.id, title: created.title, updatedAt: created.updatedAt }], hasMore: false })
+    const missing = await store.create(binding.characterId)
+    expect(missing?.id).toBe(created.id)
+    expect(store.items[0]?.character).toEqual(binding)
+    expect(useCacheStore().conversations[0]?.character).toEqual(binding)
+    expect(store.error?.message).toContain('会话响应')
+
+    mockApi.createConversation.mockResolvedValueOnce({ ...created, id: 'conflicting-binding' })
+    mockApi.listConversations.mockResolvedValueOnce({ items: [{ ...created, id: 'conflicting-binding', character: { ...binding, characterRevision: 99 } }], hasMore: false })
+    const conflict = await store.create(binding.characterId)
+    expect(conflict?.id).toBe('conflicting-binding')
+    expect(store.items.find((item) => item.id === 'conflicting-binding')?.character?.characterRevision).toBe(binding.characterRevision)
+    expect(store.error?.message).toContain('冲突')
+  })
+
+  it('连接世代变化会释放永不 settle 的旧 create，允许新世代立即创建且旧响应不污染', async () => {
+    const store = useConversationStore()
+    let resolveOld!: (value: unknown) => void
+    mockApi.createConversation.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    const old = store.create(binding.characterId)
+    await Promise.resolve()
+    expect(store.busy).toBe(true)
+
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'character-2', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.busy).toBe(false)
+
+    const next = { id: 'new-generation', title: '新世代', updatedAt: '2026-08-31T00:00:02.000Z', character: binding }
+    mockApi.createConversation.mockResolvedValueOnce(next)
+    mockApi.listConversations.mockResolvedValueOnce({ items: [next], hasMore: false })
+    const fresh = await store.create(binding.characterId)
+    expect(fresh?.id).toBe(next.id)
+    expect(mockApi.createConversation).toHaveBeenCalledTimes(2)
+
+    resolveOld({ id: 'late-old-generation', title: '迟到', updatedAt: '2026-08-31T00:00:03.000Z', character: binding })
+    await expect(old).resolves.toBeUndefined()
+    expect(store.items.map((item) => item.id)).toEqual([next.id])
+  })
+
+  it('旧 create 卡在 safeList 时换代不会释放新 create 的 busy owner', async () => {
+    const store = useConversationStore()
+    let resolveOldList!: (value: unknown) => void
+    let resolveNewList!: (value: unknown) => void
+    const old = { id: 'owner-old', title: '旧任务', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    const next = { id: 'owner-new', title: '新任务', updatedAt: '2026-08-31T00:00:01.000Z', character: binding }
+    mockApi.createConversation.mockResolvedValueOnce(old).mockResolvedValueOnce(next)
+    mockApi.listConversations
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOldList = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNewList = resolve }))
+
+    const oldTask = store.create(binding.characterId)
+    await vi.waitFor(() => expect(mockApi.listConversations).toHaveBeenCalledTimes(1))
+
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'character-owner-2', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.busy).toBe(false)
+
+    const newTask = store.create(binding.characterId)
+    await vi.waitFor(() => expect(mockApi.listConversations).toHaveBeenCalledTimes(2))
+    expect(store.busy).toBe(true)
+
+    resolveOldList({ items: [], hasMore: false })
+    await Promise.resolve()
+    await Promise.resolve()
+    // old list/create finally 只能释放自己的 owner，不能把新任务误判成空闲。
+    expect(store.busy).toBe(true)
+
+    resolveNewList({ items: [next], hasMore: false })
+    await Promise.all([oldTask, newTask])
+    expect(store.busy).toBe(false)
+    expect(store.items.map((item) => item.id)).toEqual([next.id])
+  })
+
+  it('同一 backend URL 的重连仍保护 immutable binding 冲突', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'same-url-1', serverUrl: 'http://backend.test:80/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    const existing = { id: 'same-url-conversation', title: '原会话', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.listConversations.mockResolvedValueOnce({ items: [existing], hasMore: false })
+    expect(await store.list()).toBe(true)
+
+    connection.setState({ status: 'connected', connectionId: 'same-url-2', serverUrl: 'http://backend.test:80/api/', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    mockApi.listConversations.mockResolvedValueOnce({ items: [{ ...existing, character: { ...binding, displayName: '改名但同版本' } }], hasMore: false })
+    expect(await store.list()).toBe(false)
+    expect(store.items[0]?.character?.characterRevision).toBe(binding.characterRevision)
+    expect(store.error?.message).toContain('冲突')
+  })
+
+  it('backend URL 改变时隔离旧会话/缓存/消息，同 id 的新 binding 可成为权威', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'backend-a', serverUrl: 'http://backend-a.test/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    const old = { id: 'shared-id', title: '旧后端会话', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.listConversations.mockResolvedValueOnce({ items: [old], hasMore: false })
+    expect(await store.list()).toBe(true)
+    store.$patch({ currentId: old.id })
+    const message: Message = { messageId: 'old-message', conversationId: old.id, role: 'user', content: '旧正文', status: 'completed', createdAt: '2026-08-31T00:00:00.000Z' }
+    useMessageStore().loadPage({ items: [message], hasMore: false })
+    useCacheStore().hydrate({ drafts: [], scrollAnchors: {}, conversations: [old], messageSnapshots: { [old.id]: [message] } })
+
+    connection.setState({ status: 'connected', connectionId: 'backend-b', serverUrl: 'http://backend-b.test/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(useCacheStore().conversations).toHaveLength(0)
+    expect(useCacheStore().snapshotMessages(old.id)).toBeUndefined()
+    expect(useMessageStore().order).toHaveLength(0)
+
+    const fresh = { id: old.id, title: '新后端会话', updatedAt: '2026-08-31T00:00:02.000Z', character: { ...binding, characterId: 'builtin/cyrene', characterRevision: 8, displayName: 'Cyrene' } }
+    mockApi.listConversations.mockResolvedValueOnce({ items: [fresh], hasMore: false })
+    expect(await store.list()).toBe(true)
+    expect(store.items).toEqual([fresh])
+  })
+
+  it('角色模式同一页出现重复 conversation id 即使 binding 相同也拒绝整页', async () => {
+    const store = useConversationStore()
+    const duplicate = { id: 'duplicate-page', title: '第一标题', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.listConversations.mockResolvedValueOnce({ items: [duplicate, { ...duplicate, title: '第二标题' }], hasMore: false })
+    expect(await store.list()).toBe(false)
+    expect(store.items).toHaveLength(0)
+    expect(useCacheStore().conversations).toHaveLength(0)
+    expect(store.error?.message).toContain('重复')
+  })
+
+  it('unknown connection A→B 不能把不同连接当作连续事实', () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    const old = { id: 'unknown-shared', title: '未知来源', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    connection.setState({ status: 'connected', connectionId: 'unknown-a', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    store.$patch({ items: [old], currentId: old.id })
+    useCacheStore().syncConversations([old])
+    const message: Message = { messageId: 'unknown-message', conversationId: old.id, role: 'user', content: 'unknown', status: 'completed', createdAt: '2026-08-31T00:00:00.000Z' }
+    useMessageStore().loadPage({ items: [message], hasMore: false })
+
+    connection.setState({ status: 'connected', connectionId: 'unknown-b', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(useCacheStore().conversations).toHaveLength(0)
+    expect(useMessageStore().order).toHaveLength(0)
+
+    // 非法 URL 走同一 non-authoritative fallback，不能借 connectionId
+    // 变化继续沿用另一未知 backend 的事实。
+    connection.setState({ status: 'connected', connectionId: 'invalid-a', serverUrl: 'not-a-valid-url', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    store.$patch({ items: [old], currentId: old.id })
+    useCacheStore().syncConversations([old])
+    connection.setState({ status: 'connected', connectionId: 'invalid-b', serverUrl: 'still-not-a-url', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+  })
+
+  it('authoritative A→无 URL 中间态→B 会在 B 到达时隔离旧事实', () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    const old = { id: 'authoritative-shared', title: 'A 后端', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    connection.setState({ status: 'connected', connectionId: 'backend-a-1', serverUrl: 'https://backend-a.example/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    store.$patch({ items: [old], currentId: old.id })
+    useCacheStore().syncConversations([old])
+
+    connection.setState({ status: 'reconnecting', connectionId: 'intermediate-only' })
+    store.setConnectionState(connection.state)
+    expect(store.items).toEqual([old])
+    expect(store.currentId).toBe(old.id)
+
+    connection.setState({ status: 'connected', connectionId: 'backend-b-1', serverUrl: 'https://backend-b.example/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(useCacheStore().conversations).toHaveLength(0)
+  })
+
+  it('启动时无 provenance 的离线缓存首次进入 authoritative backend 前先隔离', () => {
+    setActivePinia(createPinia())
+    setDesktopApi(mockApi)
+    vi.resetAllMocks()
+    const old = { id: 'startup-unknown', title: '启动缓存', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    const cache = useCacheStore()
+    cache.hydrate({ drafts: [], scrollAnchors: {}, conversations: [old], messageSnapshots: {} })
+    const store = useConversationStore()
+    store.setOfflineCache(cache.conversations)
+    expect(store.items).toHaveLength(1)
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'authoritative-first', serverUrl: 'https://new-backend.example/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.items).toHaveLength(0)
+    expect(store.currentId).toBeUndefined()
+    expect(cache.conversations).toHaveLength(0)
+  })
+
+  it('same URL 断线重连保留会话事实，不因 transport id 变化清理', () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    const old = { id: 'same-url-retained', title: '保持会话', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    connection.setState({ status: 'connected', connectionId: 'same-url-1', serverUrl: 'https://same-backend.example/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    store.$patch({ items: [old], currentId: old.id })
+    useCacheStore().syncConversations([old])
+
+    connection.setState({ status: 'disconnected' })
+    store.setConnectionState(connection.state)
+    connection.setState({ status: 'connected', connectionId: 'same-url-2', serverUrl: 'https://same-backend.example/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    expect(store.items).toEqual([old])
+    expect(store.currentId).toBe(old.id)
+    expect(useCacheStore().conversations).toEqual([old])
+  })
+
+  it('已知 authoritative 后端进入无 URL 中间态时，列表不覆盖旧事实', async () => {
+    const store = useConversationStore()
+    const connection = useConnectionStore()
+    const old = { id: 'authoritative-intermediate', title: 'A 后端会话', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    connection.setState({ status: 'connected', connectionId: 'authoritative-a', serverUrl: 'https://authoritative-a.example/api', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    mockApi.listConversations.mockResolvedValueOnce({ items: [old], hasMore: true, nextCursor: 'a-next' })
+    expect(await store.list()).toBe(true)
+
+    // A URL-less connected snapshot is a transport/intermediate identity,
+    // not proof that a new connection id belongs to the old backend.
+    connection.setState({ status: 'connected', connectionId: 'unknown-intermediate', features: { characterProfiles: true, characterStateStream: false } })
+    store.setConnectionState(connection.state)
+    mockApi.listConversations.mockResolvedValueOnce({
+      items: [{ ...old, title: '不应覆盖 A', character: { ...binding, displayName: '未知后端角色' } }],
+      hasMore: false
+    })
+    expect(await store.list()).toBe(false)
+    expect(store.items).toEqual([old])
+    expect(store.nextCursor).toBe('a-next')
+    expect(useCacheStore().conversations).toEqual([old])
+  })
+
+  it('列表/缓存/离线水合保持 immutable 角色 binding 快照', async () => {
+    const store = useConversationStore()
+    const source = { id: 'snapshot-1', title: '历史会话', updatedAt: '2026-08-31T00:00:00.000Z', character: binding }
+    mockApi.listConversations.mockResolvedValue({ items: [source], hasMore: false })
+    await store.list()
+    source.character.displayName = '被外部修改'
+    expect(store.items[0]?.character?.displayName).toBe('Elysia')
+    expect(useCacheStore().conversations[0]?.character?.displayName).toBe('Elysia')
+
+    const cache = useCacheStore()
+    const offlineSource = { ...source, character: { ...binding, displayName: 'Elysia' } }
+    cache.hydrate({ drafts: [], scrollAnchors: {}, conversations: [offlineSource], messageSnapshots: {} })
+    expect(cache.conversations[0]?.character?.displayName).toBe('Elysia')
+    store.setOfflineCache(cache.conversations)
+    const offlineConnection = useConnectionStore()
+    offlineConnection.setState({ status: 'disconnected' })
+    await store.activateLocal('snapshot-1')
+    expect(store.currentCharacter?.displayName).toBe('Elysia')
+    expect(cache.conversations[0]?.character?.characterId).toBe(binding.characterId)
   })
 })
 

@@ -6,6 +6,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
+import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { BackendEvent, GenerationDeltaEvent, GenerationStartedEvent, Message } from '@shared/contracts'
 
@@ -99,6 +100,24 @@ describe('messageStore 流式应用', () => {
     expect(store.byId['msg-1']?.usage).toBeUndefined()
   })
 
+  it('旧 cancel IPC 迟到不应中断新 generation', async () => {
+    let resolveCancel!: () => void
+    mockApi.cancel.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveCancel = resolve }))
+    const store = useMessageStore()
+    store.applyEvent(started())
+    const cancelTask = store.cancel()
+
+    // A newer generation takes ownership while the old cancel request is in
+    // flight.  Its accumulator must remain streaming when the old response
+    // finally settles.
+    store.applyEvent({ ...started(), generationId: 'gen-2', messageId: 'msg-2', responseId: 'gen-2' })
+    resolveCancel()
+    await cancelTask
+
+    expect(store.activeGenerationId).toBe('gen-2')
+    expect(store.byId['msg-2']?.status).toBe('streaming')
+  })
+
   it('断线后同代迟到 delta/completed 丢弃(P2-5)', () => {
     const store = useMessageStore()
     store.applyEvent(started())
@@ -167,6 +186,39 @@ describe('messageStore 流式应用', () => {
       code: 'AUTHENTICATION_FAILED', message: 'token 无效', backendCode: 'TOKEN_EXPIRED'
     })
     expect(Object.values(store.byId).some((m) => m.role === 'user' && m.status === 'failed')).toBe(true)
+  })
+
+  it('FE-E2 connected A→B 同会话：旧 send ACK 迟到不得迁移/缓存/解锁 B 请求', async () => {
+    mockApi.send.mockReset()
+    mockApi.cacheMessages.mockReset()
+    let resolveOld!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    let resolveNew!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    mockApi.send
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
+    const connectionStore = useConnectionStore()
+    connectionStore.setState({ status: 'connected', serverUrl: 'http://backend-a', connectionId: 'A' })
+    const store = useMessageStore()
+
+    const oldRequest = store.send('来自 A')
+    expect(store.sending).toBe(true)
+    connectionStore.setState({ status: 'connected', serverUrl: 'http://backend-b', connectionId: 'B' })
+    store.handleConnectionStateChange(connectionStore.state)
+    const newRequest = store.send('来自 B')
+    expect(store.sending).toBe(true)
+
+    resolveOld({ clientRequestId: 'old', serverMessageId: 'server-old' })
+    expect(await oldRequest).toBe(false)
+    expect(store.byId['server-old']).toBeUndefined()
+    expect(store.sending).toBe(true)
+    expect(store.lastError).toBeUndefined()
+    expect(mockApi.cacheMessages).not.toHaveBeenCalled()
+
+    resolveNew({ clientRequestId: 'new', serverMessageId: 'server-new' })
+    expect(await newRequest).toBe(true)
+    expect(store.byId['server-new']).toBeDefined()
+    expect(store.sending).toBe(false)
+    expect(mockApi.cacheMessages).toHaveBeenCalledTimes(1)
   })
 
   // ---------- Task 7(批次B):归属守卫 + 纯缓冲 + 竞态修复 ----------
@@ -493,6 +545,70 @@ describe('G2 历史懒加载：有序插入 / loadOlder / loadSnapshot（spec §
     expect(store.beforeCursor).toBeUndefined()
     expect(store.loadingOlder).toBe(false)
   })
+
+  it('loadOlder 旧会话迟到页不会写入新会话，也不能解锁新请求', async () => {
+    const store = useMessageStore()
+    const conversations = useConversationStore()
+    mockApi.getMessages.mockClear()
+    store.loadPage({ items: [pageMsg('old-current', 't2')], hasMore: true, nextCursor: 'old-cursor' })
+    store.setPageMeta({ items: [pageMsg('old-current', 't2')], hasMore: true, nextCursor: 'old-cursor' })
+    let resolveOld!: (page: unknown) => void
+    let resolveNew!: (page: unknown) => void
+    mockApi.getMessages
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
+
+    const oldTask = store.loadOlder()
+    await vi.waitFor(() => expect(mockApi.getMessages).toHaveBeenCalledTimes(1))
+    conversations.$patch({ currentId: 'new-conversation' })
+    store.resetConversation('new-conversation')
+    store.$patch({ hasMoreBefore: true, beforeCursor: 'new-cursor' })
+    const newTask = store.loadOlder()
+    await vi.waitFor(() => expect(mockApi.getMessages).toHaveBeenCalledTimes(2))
+
+    resolveOld({ items: [pageMsg('old-late', 't0')], hasMore: false })
+    await oldTask
+    expect(store.loadingOlder).toBe(true)
+    expect(store.byId['old-late']).toBeUndefined()
+
+    resolveNew({ items: [{ ...pageMsg('new-message', 't1'), conversationId: 'new-conversation' }], hasMore: false })
+    await newTask
+    expect(store.loadingOlder).toBe(false)
+    expect(store.byId['new-message']).toBeDefined()
+    expect(store.beforeCursor).toBeUndefined()
+  })
+
+  it('loadEarlier 的旧 owner 跨会话迟到不覆盖新游标/状态', async () => {
+    const store = useMessageStore()
+    const conversations = useConversationStore()
+    mockApi.getMessages.mockClear()
+    store.$patch({ nextCursor: 'old-earlier' })
+    let resolveOld!: (page: unknown) => void
+    let resolveNew!: (page: unknown) => void
+    mockApi.getMessages
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
+    const oldTask = store.loadEarlier()
+    await vi.waitFor(() => expect(mockApi.getMessages).toHaveBeenCalledTimes(1))
+
+    conversations.$patch({ currentId: 'new-conversation' })
+    store.resetConversation('new-conversation')
+    store.$patch({ nextCursor: 'new-earlier' })
+    const newTask = store.loadEarlier()
+    await vi.waitFor(() => expect(mockApi.getMessages).toHaveBeenCalledTimes(2))
+
+    resolveOld({ items: [{ ...pageMsg('old-earlier-message', 't0'), conversationId: 'conv-1' }], hasMore: false })
+    await oldTask
+    expect(store.loadingEarlier).toBe(true)
+    expect(store.byId['old-earlier-message']).toBeUndefined()
+    expect(store.nextCursor).toBe('new-earlier')
+
+    resolveNew({ items: [{ ...pageMsg('new-earlier-message', 't1'), conversationId: 'new-conversation' }], hasMore: false })
+    await newTask
+    expect(store.loadingEarlier).toBe(false)
+    expect(store.nextCursor).toBeUndefined()
+    expect(store.byId['new-earlier-message']).toBeDefined()
+  })
 })
 
 describe('G3 附件发送编排（spec §4.4/§5）', () => {
@@ -589,6 +705,46 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     expect(ok).toBe(false)          // 守卫丢弃 → 返回 false（不提交上下文）
     expect(store.byId.m1).toBeUndefined()   // c1 上下文不得进入 c2 列表
     expect(store.order).toHaveLength(0)
+  })
+  it('FE-E2：同会话同连接的上下文请求 latest-wins，A 不得覆盖 B 的消息或 cursor', async () => {
+    let resolveCtxA!: (value: unknown) => void
+    let resolveCtxB!: (value: unknown) => void
+    let resolveFirstB!: (value: unknown) => void
+    const getMessageContext = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveCtxA = resolve }))
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveCtxB = resolve }))
+    const getMessages = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstB = resolve }))
+    setDesktopApi({ getMessageContext, getMessages } as never)
+    const conversationStore = useConversationStore()
+    conversationStore.$patch({ currentId: 'c1' })
+    const store = useMessageStore()
+    store.resetConversation('c1')
+
+    const requestA = store.loadContextWindow('anchor-a')
+    const requestB = store.loadContextWindow('anchor-b')
+    expect(getMessageContext).toHaveBeenCalledTimes(2)
+
+    resolveCtxB({ items: [
+      { messageId: 'b-context', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T02:00:00.000Z', content: 'B context' }
+    ], hasMore: false })
+    await vi.waitFor(() => expect(getMessages).toHaveBeenCalledTimes(1))
+    resolveFirstB({ items: [
+      { messageId: 'b-first', conversationId: 'c1', role: 'assistant', status: 'completed', createdAt: '2026-08-14T02:00:10.000Z', content: 'B first' }
+    ], hasMore: true, nextCursor: 'cursor-b' })
+    expect(await requestB).toBe(true)
+
+    // A resumes only after B has committed.  Its owner check is expected to
+    // stop it before loadPage/reorder or the second REST request.
+    resolveCtxA({ items: [
+      { messageId: 'a-context', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T01:00:00.000Z', content: 'A context' }
+    ], hasMore: false })
+    expect(await requestA).toBe(false)
+    expect(getMessages).toHaveBeenCalledTimes(1)
+    expect(store.byId['b-context']).toBeDefined()
+    expect(store.byId['b-first']).toBeDefined()
+    expect(store.byId['a-context']).toBeUndefined()
+    expect(store.nextCursor).toBe('cursor-b')
   })
   it('P1-4：loadPage 跳过非当前会话消息（迟到的异流 REST 页不污染列表）', () => {
     const conversationStore = useConversationStore()
@@ -698,6 +854,38 @@ describe('P4-B 语音扩展：voice_session.turn + sendVoiceCommit（spec §5.11
     expect(store.byId['msg-voice-1']?.status).toBe('acknowledged')
     expect(store.byId['msg-voice-1']?.content).toBe('语音内容')
     expect(store.order).not.toContain(expect.stringMatching(/^local-/))
+  })
+
+  it('FE-E2 connected A→B 同会话：旧 voice ACK 迟到不得迁移，且不得解锁新的 text send', async () => {
+    mockApi.voiceCommit.mockReset()
+    mockApi.send.mockReset()
+    mockApi.cacheMessages.mockReset()
+    let resolveOld!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    let resolveNew!: (ref: { clientRequestId: string; serverMessageId?: string }) => void
+    mockApi.voiceCommit.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+    mockApi.send.mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
+    const connectionStore = useConnectionStore()
+    connectionStore.setState({ status: 'connected', serverUrl: 'http://backend-a', connectionId: 'A' })
+    const store = useMessageStore()
+
+    const oldRequest = store.sendVoiceCommit('recording-a', '来自 A 的语音')
+    connectionStore.setState({ status: 'connected', serverUrl: 'http://backend-b', connectionId: 'B' })
+    store.handleConnectionStateChange(connectionStore.state)
+    const newRequest = store.send('来自 B 的文字')
+    expect(store.sending).toBe(true)
+
+    resolveOld({ clientRequestId: 'old-voice', serverMessageId: 'server-old-voice' })
+    expect(await oldRequest).toBe(false)
+    expect(store.byId['server-old-voice']).toBeUndefined()
+    expect(store.sending).toBe(true)
+    expect(store.lastError).toBeUndefined()
+    expect(mockApi.cacheMessages).not.toHaveBeenCalled()
+
+    resolveNew({ clientRequestId: 'new-text', serverMessageId: 'server-new-text' })
+    expect(await newRequest).toBe(true)
+    expect(store.byId['server-new-text']).toBeDefined()
+    expect(store.sending).toBe(false)
+    expect(mockApi.cacheMessages).toHaveBeenCalledTimes(1)
   })
 
   it('sendVoiceCommit 失败 → failed + lastError + false（调用方保留待发送条）', async () => {

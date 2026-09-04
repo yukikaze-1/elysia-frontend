@@ -41,7 +41,7 @@ describe('CyMessageBubble 时间戳（UII-QQ 时间戳批次）', () => {
     expect(times).toHaveLength(1)
     expect(times[0].text()).toBe(formatMessageTime(CREATED_AT))
     expect(times[0].text()).toMatch(/^\d{2}:\d{2}$/)
-    expect(w.find('.cy-msg-name').text()).toContain('Cyrene')
+    expect(w.find('.cy-msg-name').text()).toContain('角色')
     // emotion/toolCalls 等其余区块不另带 time（整行恒 1 个 time 元素）
     w.unmount()
   })
@@ -119,6 +119,67 @@ describe('CyMessageBubble 时间戳（UII-QQ 时间戳批次）', () => {
   it('tool 占位消息：不渲染时间', () => {
     const w = mountBubble(baseMsg({ role: 'tool', content: undefined }))
     expect(w.find('time').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('assistant：优先使用消息自身角色快照，并把身份放进头像 title/aria-label', () => {
+    const w = mountBubble(baseMsg({
+      role: 'assistant',
+      content: undefined,
+      character: {
+        characterId: 'custom/elysia',
+        characterInstanceId: 'instance-elysia-v2',
+        characterRevision: 2,
+        displayName: 'Elysia',
+        presentation: { themeColor: '#88aaff' }
+      },
+      assistantSegments: [{ segmentId: 'p1', segmentIndex: 0, channel: 'public_reply', kind: 'text', text: 'hi', completed: true }]
+    }))
+    expect(w.find('.cy-msg-name').text()).toContain('Elysia')
+    const avatar = w.find('.cy-avatar-assistant')
+    expect(avatar.text()).toBe('E')
+    expect(avatar.attributes('aria-label')).toBe('Elysia')
+    expect(avatar.attributes('title')).toBe('Elysia')
+    w.unmount()
+  })
+
+  it('assistant：缺显示名时只接受 exact revision cache，不能用不同 revision 的当前目录身份', () => {
+    const message = baseMsg({
+      role: 'assistant',
+      content: undefined,
+      character: { characterId: 'custom/a', characterInstanceId: 'inst-a', characterRevision: 3 },
+      assistantSegments: []
+    })
+    const exact = mount(CyMessageBubble, {
+      props: {
+        message,
+        revisionIdentity: { characterId: 'custom/a', characterRevision: 3, displayName: '旧版本 A', presentation: {} },
+        characterBinding: { characterId: 'custom/a', characterInstanceId: 'inst-a', characterRevision: 4, displayName: '当前版本 A', presentation: {} }
+      },
+      global: { stubs: { CyMarkdown: true, CyAttachmentMedia: true, CyToolCard: true } }
+    })
+    expect(exact.find('.cy-msg-name').text()).toContain('旧版本 A')
+    exact.unmount()
+
+    const mismatched = mount(CyMessageBubble, {
+      props: {
+        message,
+        revisionIdentity: { characterId: 'custom/a', characterRevision: 2, displayName: '错误版本', presentation: {} },
+        characterBinding: { characterId: 'custom/a', characterInstanceId: 'inst-a', characterRevision: 4, displayName: '当前版本 A', presentation: {} }
+      },
+      global: { stubs: { CyMarkdown: true, CyAttachmentMedia: true, CyToolCard: true } }
+    })
+    expect(mismatched.find('.cy-msg-name').text()).toContain('角色')
+    mismatched.unmount()
+  })
+
+  it('user：视觉仍显示“我”，但 aria/title 使用身份档案显示名', () => {
+    const w = mount(CyMessageBubble, { props: { message: baseMsg({}), userDisplayName: 'Yomu' } })
+    const avatar = w.find('.cy-avatar-user')
+    expect(avatar.text()).toBe('我')
+    expect(avatar.attributes('role')).toBe('img')
+    expect(avatar.attributes('aria-label')).toBe('Yomu')
+    expect(avatar.attributes('title')).toBe('Yomu')
     w.unmount()
   })
 })

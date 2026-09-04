@@ -55,6 +55,41 @@ describe('cacheStore（spec §4.5）', () => {
     expect(mockApi.cacheMessages).toHaveBeenCalledWith({ conversationId: 'c1', messages: [m('m1', 't')], updatedAt: 'now' })
   })
 
+  it('pushMessages 在 await 前及成功后都隔离调用方嵌套 mutation', async () => {
+    let resolveCache!: () => void
+    mockApi.cacheMessages.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveCache = resolve }))
+    const source: Message = {
+      ...m('nested', 't'),
+      content: '原始正文',
+      assistantSegments: [{ segmentId: 'seg-1', segmentIndex: 0, channel: 'public_reply', kind: 'markdown', text: '原始分段', completed: true }],
+      character: {
+        characterId: 'builtin/elysia', characterInstanceId: 'instance-elysia', characterRevision: 1,
+        displayName: 'Elysia', presentation: { themeColor: '#f2a7c6' }
+      }
+    }
+    const task = useCacheStore().pushMessages('c1', [source], 'now')
+    source.content = 'await 中改写'
+    source.assistantSegments![0]!.text = 'await 中分段改写'
+    source.character!.displayName = 'await 中角色改写'
+    resolveCache()
+    await task
+
+    const sent = mockApi.cacheMessages.mock.calls.at(-1)?.[0]
+    expect(sent.messages[0]).toMatchObject({
+      content: '原始正文',
+      assistantSegments: [{ text: '原始分段' }],
+      character: { displayName: 'Elysia' }
+    })
+    source.content = '成功后改写'
+    source.assistantSegments![0]!.text = '成功后分段改写'
+    source.character!.presentation!.themeColor = '#000000'
+    expect(useCacheStore().snapshotMessages('c1')?.[0]).toMatchObject({
+      content: '原始正文',
+      assistantSegments: [{ text: '原始分段' }],
+      character: { presentation: { themeColor: '#f2a7c6' } }
+    })
+  })
+
   it('syncConversations 更新内存会话列表（在线 list 后供离线切换判定）', () => {
     const s = useCacheStore()
     s.syncConversations([{ id: 'c9', title: '新', updatedAt: 't' }])

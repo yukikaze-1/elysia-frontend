@@ -5,9 +5,12 @@ import { computed, ref } from 'vue'
 import type { Conversation } from '@shared/contracts'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
+import { useAppStore } from '../stores/app.store'
+import CyConversationCharacterPicker from './CyConversationCharacterPicker.vue'
 
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
+const appStore = useAppStore()
 
 const items = computed(() => conversationStore.items)
 const currentId = computed(() => conversationStore.currentId)
@@ -16,6 +19,7 @@ const currentId = computed(() => conversationStore.currentId)
 const canAct = computed(() => connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy)
 /** 打开会话门控(G2 §4.5.3):在线走 activate;离线视图走 activateLocal(读缓存)——打开按钮离线也启用,新建/重命名/删除仍连在线门控 */
 const canOpen = computed(() => canAct.value || conversationStore.offlineView)
+const profilesEnabled = computed(() => connectionStore.state.status === 'connected' && connectionStore.state.features?.characterProfiles === true)
 
 const query = ref('')
 const filteredItems = computed(() => {
@@ -26,11 +30,40 @@ const filteredItems = computed(() => {
 
 const renamingId = ref<string>()
 const renameDraft = ref('')
+const characterPickerOpen = ref(false)
+const characterPickerBusy = ref(false)
 
-async function create(): Promise<void> {
-  await conversationStore.create()
-  const id = conversationStore.currentId
-  if (id) await conversationStore.activate(id)
+async function createLegacy(): Promise<void> {
+  const conversation = await conversationStore.create()
+  if (conversation?.id) await conversationStore.activate(conversation.id)
+}
+
+function create(): void {
+  if (!canAct.value) return
+  if (profilesEnabled.value) {
+    characterPickerOpen.value = true
+    return
+  }
+  void createLegacy()
+}
+
+async function confirmCharacter(characterId: string): Promise<void> {
+  if (characterPickerBusy.value || !canAct.value || !profilesEnabled.value) return
+  characterPickerBusy.value = true
+  try {
+    const conversation = await conversationStore.create(characterId)
+    if (conversation?.id) {
+      await conversationStore.activate(conversation.id)
+      characterPickerOpen.value = false
+    }
+  } finally {
+    characterPickerBusy.value = false
+  }
+}
+
+function openSettings(kind: 'identity' | 'characters'): void {
+  characterPickerOpen.value = false
+  appStore.openSettings(kind)
 }
 
 function startRename(c: Conversation): void {
@@ -73,6 +106,19 @@ function displayTitle(c: Conversation): string {
   return c.title || '新会话'
 }
 
+function avatarLabel(c: Conversation): string {
+  return Array.from(c.character?.displayName?.trim() || c.title?.trim() || '会')[0] ?? '会'
+}
+
+function avatarStyle(c: Conversation): Record<string, string> | undefined {
+  const color = c.character?.presentation.themeColor
+  return color ? { backgroundColor: color } : undefined
+}
+
+function characterLabel(c: Conversation): string {
+  return c.character?.displayName || '未绑定角色'
+}
+
 /** 离线视图：点击其他缓存会话 → activateLocal（P1-1 绕过 api.activate/getMessages）；在线 → 既有 activate */
 function activateConv(id: string): void {
   if (connectionStore.state.status === 'disconnected') void conversationStore.activateLocal(id)
@@ -111,17 +157,18 @@ function activateConv(id: string): void {
       >
         <!-- 常规态:整行可点激活;重命名态:标题换输入框(按钮内不放 input) -->
         <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" :disabled="!canOpen" @click="activateConv(c.id)">
-          <span class="cy-conversation-avatar">{{ (c.title || '新').slice(0, 1) }}</span>
+          <span class="cy-conversation-avatar" :style="avatarStyle(c)">{{ avatarLabel(c) }}</span>
           <span class="cy-conversation-copy">
             <span class="cy-conversation-row1">
               <span class="cy-conversation-title">{{ displayTitle(c) }}</span>
               <span class="cy-conversation-time">{{ formatTime(c.updatedAt) }}</span>
             </span>
             <span class="cy-conversation-preview">{{ c.preview || '暂无消息' }}</span>
+            <span class="cy-conversation-character">{{ characterLabel(c) }}</span>
           </span>
         </button>
         <div v-else class="cy-conversation-main cy-conversation-renaming">
-          <span class="cy-conversation-avatar">{{ (c.title || '新').slice(0, 1) }}</span>
+          <span class="cy-conversation-avatar" :style="avatarStyle(c)">{{ avatarLabel(c) }}</span>
           <input
             v-model="renameDraft"
             class="cy-rename-input"
@@ -148,6 +195,14 @@ function activateConv(id: string): void {
       <p v-if="filteredItems.length === 0" class="cy-conversation-empty">暂无会话</p>
     </div>
   </aside>
+  <CyConversationCharacterPicker
+    :open="characterPickerOpen"
+    :busy="characterPickerBusy || conversationStore.busy"
+    :remote-available="connectionStore.state.status === 'connected' && profilesEnabled"
+    @close="characterPickerOpen = false"
+    @confirm="confirmCharacter"
+    @open-settings="openSettings"
+  />
 </template>
 
 <style scoped>
@@ -314,6 +369,15 @@ function activateConv(id: string): void {
 .cy-conversation-preview {
   color: var(--cy-muted);
   font-size: 12px;
+}
+
+.cy-conversation-character {
+  display: block;
+  overflow: hidden;
+  color: var(--cy-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cy-conversation-actions {

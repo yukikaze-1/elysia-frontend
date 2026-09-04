@@ -1,17 +1,36 @@
 <script setup lang="ts">
-// CyMessageBubble:单条消息气泡。user 右对齐(「我」头像)+纯文本;assistant 左对齐(Cyrene 头像),
+// CyMessageBubble:单条消息气泡。user 右对齐(「我」头像)+纯文本;assistant 左对齐(动态角色头像),
 // 按 assistantSegments(segmentIndex 排序)渲染:内心独白 details 折叠(默认收起,标题仅「内心独白」)+
 // public_reply 白色气泡 + 工具卡 + 元数据低权重行。UII-QQ 重构:去掉「外层大卡片+状态行+蓝色正文框」
 // 多层嵌套;completed 不展示,failed/interrupted 仍明确展示(inner_voice 数据不删,只改展示)。
 import { computed } from 'vue'
-import type { AssistantSegment, Message } from '@shared/contracts'
+import type { AssistantSegment, CharacterBindingSnapshot, CharacterGenerationRef, Message, CharacterPresentation } from '@shared/contracts'
 import { stickerRenderUrl } from '@shared/domain'
 import { formatFullTime, formatMessageTime } from '../utils/message-time'
 import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
 import CyToolCard from './CyToolCard.vue'   // 阶段 6 批次 B（Task 7）：归档工具卡片（只读）
 
-const props = defineProps<{ message: Message }>()   // UI 问题 1 修复：不再按 visible 延迟渲染——虚拟窗口/overscan 内全量渲染真实内容，消除「完整↔骨架」几何切跳
+/**
+ * The message snapshot is the first identity authority.  The two optional
+ * fallbacks are display-only inputs supplied by the message list: an exact
+ * (characterId, characterRevision) cache entry, then the immutable session
+ * binding.  Keeping the resolver here makes it impossible for a current
+ * catalog rename to silently rewrite an historical message.
+ */
+interface RevisionIdentityDisplay {
+  characterId: string
+  characterRevision: number
+  displayName: string
+  presentation: CharacterPresentation
+}
+
+const props = defineProps<{
+  message: Message
+  characterBinding?: CharacterBindingSnapshot
+  revisionIdentity?: RevisionIdentityDisplay
+  userDisplayName?: string
+}>()   // UI 问题 1 修复：不再按 visible 延迟渲染——虚拟窗口/overscan 内全量渲染真实内容，消除「完整↔骨架」几何切跳
 
 // —— UII-QQ 时间戳批次：每条 Message 只显示一次时间（inner_voice/public_reply/工具卡/emotion 共用）——
 // 默认可见内容仅本地 HH:mm（h23）；<time datetime> 保留原始 createdAt，title/aria-label 为完整本地时间；
@@ -23,6 +42,47 @@ const createdAtFull = computed(() => formatFullTime(props.message.createdAt))
 function stickerSrc(id?: string): string | undefined { return id ? stickerRenderUrl(id) : undefined }
 
 const isUser = computed(() => props.message.role === 'user')
+
+function sameCharacterTuple(
+  left: Pick<CharacterGenerationRef, 'characterId' | 'characterInstanceId' | 'characterRevision'>,
+  right: Pick<CharacterGenerationRef, 'characterId' | 'characterInstanceId' | 'characterRevision'>
+): boolean {
+  return left.characterId === right.characterId
+    && left.characterInstanceId === right.characterInstanceId
+    && left.characterRevision === right.characterRevision
+}
+
+function firstCharacter(value: string): string {
+  return Array.from(value.trim())[0] ?? '角'
+}
+
+/** Resolve a message's immutable assistant identity without consulting the live catalog. */
+const assistantIdentity = computed<{
+  displayName: string
+  presentation?: CharacterPresentation
+}>(() => {
+  const messageRef = props.message.character
+  const cached = messageRef && props.revisionIdentity
+    && messageRef.characterId === props.revisionIdentity.characterId
+    && messageRef.characterRevision === props.revisionIdentity.characterRevision
+      ? props.revisionIdentity
+      : undefined
+  const binding = messageRef && props.characterBinding && sameCharacterTuple(messageRef, props.characterBinding)
+    ? props.characterBinding
+    : !messageRef ? props.characterBinding : undefined
+  const displayName = messageRef?.displayName?.trim()
+    || cached?.displayName?.trim()
+    || binding?.displayName?.trim()
+    || '角色'
+  const presentation = messageRef?.presentation
+    || cached?.presentation
+    || binding?.presentation
+  return { displayName, ...(presentation ? { presentation } : {}) }
+})
+
+const assistantName = computed(() => assistantIdentity.value.displayName)
+const assistantAvatar = computed(() => firstCharacter(assistantName.value))
+const userDisplayName = computed(() => props.userDisplayName?.trim() || '我')
 
 /** 双通道各自按 segmentIndex 全局排序(P0 inner_voice 仅 text/markdown) */
 const innerVoiceSegments = computed(() =>
@@ -84,19 +144,19 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
       </div>
       <span v-if="message.status === 'failed'" class="cy-user-error-badge" title="发送失败">发送失败</span>
     </div>
-    <span class="cy-avatar cy-avatar-user" aria-hidden="true">我</span>
+    <span class="cy-avatar cy-avatar-user" role="img" :title="userDisplayName" :aria-label="userDisplayName">我</span>
   </div>
 
   <!-- tool 角色消息：不渲染空气泡（归档工具卡片在 assistant 消息内；tool 消息自身只留空占位） -->
   <div v-else-if="message.role === 'tool'" class="cy-tool-role-placeholder" />
 
-  <!-- assistant 消息:左对齐,Cyrene 头像 + 扁平列(名称一次/内心独白折叠/工具卡/白色气泡/低权重元数据) -->
+  <!-- assistant 消息:左对齐,动态角色头像 + 扁平列(名称一次/内心独白折叠/工具卡/白色气泡/低权重元数据) -->
   <div v-else class="cy-message-row cy-assistant-row" :class="{ 'is-streaming': message.status === 'streaming' }">
-    <span class="cy-avatar cy-avatar-assistant" aria-hidden="true">Cy</span>
+    <span class="cy-avatar cy-avatar-assistant" role="img" :title="assistantName" :aria-label="assistantName">{{ assistantAvatar }}</span>
     <div class="cy-msg-col">
-      <!-- UII-QQ 时间戳批次：名称行升为轻头部「Cyrene · HH:mm」——时间弱于名称；inner_voice/工具卡/正文/心情共用 -->
+      <!-- UII-QQ 时间戳批次：名称行升为轻头部「角色 · HH:mm」——时间弱于名称；inner_voice/工具卡/正文/心情共用 -->
       <div class="cy-msg-name">
-        <span>Cyrene</span>
+        <span>{{ assistantName }}</span>
         <time v-if="createdAtText" class="cy-msg-time" :datetime="message.createdAt" :title="createdAtFull ?? undefined" :aria-label="createdAtFull ?? undefined">{{ createdAtText }}</time>
       </div>
       <!-- 内心独白：details 可访问折叠,默认收起,展开/收起高度变化经 ResizeObserver 实测进前缀和 -->

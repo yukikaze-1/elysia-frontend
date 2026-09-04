@@ -6,6 +6,7 @@
 import { computed } from 'vue'
 import { useConversationStore } from '../stores/conversation.store'
 import { useLayoutStore } from '../stores/layout.store'
+import { useAppStore } from '../stores/app.store'
 import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
 import CyTtsPlayer from './CyTtsPlayer.vue'
@@ -13,11 +14,18 @@ import CyLiveToolCards from './CyLiveToolCards.vue'   // 阶段 6 批次 B（Tas
 
 const conversationStore = useConversationStore()
 const layout = useLayoutStore()
+const appStore = useAppStore()
 
 const convTitle = computed(() => {
   const c = conversationStore.items.find((i) => i.id === conversationStore.currentId)
   return c?.title ?? '新会话'
 })
+const currentCharacter = computed(() => conversationStore.currentCharacter)
+
+function openCharacterDetails(): void {
+  const characterId = currentCharacter.value?.characterId
+  if (characterId) appStore.openSettings('characters', characterId)
+}
 
 /** F1(Task 4 review):create 只设 currentId、不 reset messageStore——新建后显式 activate(c.id) 拉起空消息页
  *  UI 问题 6：删「新建」头部按钮——会话创建收敛到左侧列表头 +；此函数保留供列表复用（独立组件），头部不再入口。 */
@@ -30,6 +38,13 @@ const convTitle = computed(() => {
            聊天记录/资源在 Composer 工具栏；角色开关在右缘把手（面板隐藏时显示） -->
       <div class="cy-chat-heading">
         <h2>{{ convTitle }}</h2>
+        <div class="cy-chat-character" :class="{ 'is-legacy': !currentCharacter }">
+          <span class="cy-chat-character-label">
+            <span class="cy-chat-character-dot" :style="currentCharacter?.presentation.themeColor ? { backgroundColor: currentCharacter.presentation.themeColor } : undefined" aria-hidden="true"></span>
+            {{ currentCharacter ? `角色 · ${currentCharacter.displayName}` : '未绑定角色' }}
+          </span>
+          <button v-if="currentCharacter" type="button" class="cy-chat-character-detail" @click="openCharacterDetails">查看角色详情</button>
+        </div>
       </div>
     </header>
 
@@ -86,6 +101,57 @@ const convTitle = computed(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cy-chat-character {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--cy-muted);
+  font-size: 11px;
+}
+
+.cy-chat-character-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cy-chat-character-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cy-accent);
+  border: 1px solid var(--cy-border);
+}
+
+.cy-chat-character-detail {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--cy-border);
+  border-radius: 6px;
+  background: var(--cy-surface-soft);
+  color: var(--cy-accent-strong);
+  font-size: 10px;
+}
+
+.cy-chat-character-detail:hover {
+  background: var(--cy-surface-hover);
+}
+
+.cy-chat-character-detail:focus-visible {
+  outline: 2px solid var(--cy-accent-strong);
+  outline-offset: 2px;
+}
+
+.cy-chat-character.is-legacy {
+  color: var(--cy-muted);
 }
 
 /* 角色栏折叠态：消息区让出 16px 右边条给把手——滚动条随之左移，不被遮挡 */

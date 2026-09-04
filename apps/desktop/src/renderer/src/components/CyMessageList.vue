@@ -8,6 +8,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import { useDraftStore } from '../stores/draft.store'
+import { useIdentityStore } from '../stores/identity.store'
+import { useCharacterCatalogStore } from '../stores/character-catalog.store'
+import type { Message } from '@shared/contracts'
 import CyMessageBubble from './CyMessageBubble.vue'
 import { buildPrefix, captureAnchor, computeWindow, restoreScrollTop, OVERSCAN_PX } from '../utils/virtual-window'
 import { dayFirstDayKeys, daySeparatorLabel, estimateMessageRowHeight } from '../utils/message-time'
@@ -15,6 +18,22 @@ import { dayFirstDayKeys, daySeparatorLabel, estimateMessageRowHeight } from '..
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
 const draftStore = useDraftStore()
+const identityStore = useIdentityStore()
+const characterCatalogStore = useCharacterCatalogStore()
+
+const userDisplayName = computed(() => identityStore.profile?.displayName?.trim() || '我')
+
+/**
+ * The bubble may use a revision cache only when the message itself carries
+ * the exact character id + content revision.  It must never receive the
+ * current catalog summary as a historical-message fallback.
+ */
+function revisionIdentityFor(message: Message) {
+  const ref = message.character
+  return ref
+    ? characterCatalogStore.revisionIdentity(ref.characterId, ref.characterRevision)
+    : undefined
+}
 
 const container = ref<HTMLElement>()
 const heights = ref<Record<string, number>>({})          // 实测高（ResizeObserver，滚动提交后合并）
@@ -368,7 +387,12 @@ onMounted(() => {
         <div v-if="isDayFirstRow(win.startIndex + i)" class="cy-day-separator">
           <span class="cy-day-separator-text">{{ daySeparatorText(win.startIndex + i) }}</span>
         </div>
-        <CyMessageBubble :message="messageStore.byId[id]" />
+        <CyMessageBubble
+          :message="messageStore.byId[id]"
+          :character-binding="conversationStore.currentCharacter"
+          :revision-identity="revisionIdentityFor(messageStore.byId[id])"
+          :user-display-name="userDisplayName"
+        />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
       <div :style="{ height: win.paddingBottom + 'px' }" class="cy-vlist-pad" />
