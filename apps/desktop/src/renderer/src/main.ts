@@ -13,6 +13,11 @@ import { useVoiceStore } from './stores/voice.store'
 import { useSettingsStore } from './stores/settings.store'
 import { useLive2dStore } from './stores/live2d.store'
 import { useToolStore } from './stores/tool.store'
+import { useIdentityStore } from './stores/identity.store'
+import { useCharacterCatalogStore } from './stores/character-catalog.store'
+import { useCharacterEditorStore } from './stores/character-editor.store'
+import { useCharacterRuntimeStore } from './stores/character-runtime.store'
+import { createCharacterRuntimeCoordinator } from './stores/character-runtime-coordinator'
 import { createRendererBootstrap } from './bootstrap'
 
 const app = createApp(App)
@@ -39,14 +44,22 @@ useLayoutStore().hydrate()
 // P3-6:desktopApi 守卫——仅 Electron preload contextBridge 注入;普通浏览器打开产物时 window.desktopApi 为 undefined,不接线不抛错。
 if (window.desktopApi) {
   setDesktopApi(window.desktopApi)
+  const connectionStore = useConnectionStore()
+  const conversationStore = useConversationStore()
+  const characterRuntimeStore = useCharacterRuntimeStore()
   createRendererBootstrap(window.desktopApi, {
-    connection: useConnectionStore(),
+    connection: connectionStore,
     message: useMessageStore(),
-    conversation: useConversationStore(),
+    conversation: conversationStore,
     draft: useDraftStore(),
     cache: useCacheStore(),
     voice: useVoiceStore(),
     settings: useSettingsStore(),
+    identity: useIdentityStore(),
+    characterCatalog: useCharacterCatalogStore(),
+    characterEditor: useCharacterEditorStore(),
+    characterRuntime: characterRuntimeStore,
+    characterRuntimeCoordinator: createCharacterRuntimeCoordinator(conversationStore, connectionStore, characterRuntimeStore),
     live2d: useLive2dStore(), // 批次 C（C3）：live2d.directive 分发（handleDirective 消费）
     tools: useToolStore() // 阶段 6 批次 B（Task 7）：tool.* 事件旁路 + tool:event 常驻订阅 + generation 清终态接线
   }).register()
