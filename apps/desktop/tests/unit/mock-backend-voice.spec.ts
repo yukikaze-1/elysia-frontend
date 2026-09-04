@@ -65,6 +65,7 @@ describe('MockBackend 语音模拟（P4-B Task 7）', () => {
     backend = new MockBackend()
     const ev: BackendEvent[] = []
     backend.subscribe((e) => ev.push(e))
+    await backend.connect({ serverUrl: 'mock://test', token: 'token-a' })
     await backend.startRealtimeVoice({ sessionId: 'vs1', conversationId: 'conv-1001' })
     expect(ev.some((e) => e.event === 'voice_session.started' && e.sessionId === 'vs1' && e.conversationId === 'conv-1001')).toBe(true)
 
@@ -89,6 +90,25 @@ describe('MockBackend 语音模拟（P4-B Task 7）', () => {
     expect(ev.filter((e) => e.event === 'voice_session.partial')).toHaveLength(2)
     await backend.cancelRealtimeVoice({ sessionId: 'vs2' })
     expect(ev.some((e) => e.event === 'voice_session.ended' && e.reason === 'cancelled' && e.sessionId === 'vs2')).toBe(true)
+  })
+
+  it('断线后 sendAudioBytes 不发旧 partial/turn，B 显式重连后可开始同 key 新 realtime', async () => {
+    backend = new MockBackend()
+    const ev: BackendEvent[] = []
+    backend.subscribe((e) => ev.push(e))
+
+    await backend.connect({ serverUrl: 'mock://test', token: 'token-a' })
+    await backend.startRealtimeVoice({ sessionId: 'same-session', conversationId: 'conv-a' })
+    await backend.disconnect()
+    backend.sendAudioBytes(new Uint8Array([1, 2, 3]))
+    expect(ev.filter((e) => e.event === 'voice_session.partial')).toHaveLength(0)
+    expect(ev.filter((e) => e.event === 'voice_session.turn')).toHaveLength(0)
+
+    await backend.connect({ serverUrl: 'mock://test', token: 'token-b' })
+    await backend.startRealtimeVoice({ sessionId: 'same-session', conversationId: 'conv-b' })
+    backend.sendAudioBytes(new Uint8Array([4, 5, 6]))
+    expect(ev.filter((e) => e.event === 'voice_session.partial')).toHaveLength(1)
+    expect(ev.filter((e) => e.event === 'voice_session.turn')).toHaveLength(1)
   })
 
   it('dictation：partial→final；cancel→cancelled', async () => {
@@ -267,6 +287,7 @@ describe('MockBackend discardVoice 冻结契约五态（Task 3，R-S4-03）', ()
     backend = new MockBackend()
     const ev: BackendEvent[] = []
     backend.subscribe((e) => ev.push(e))
+    await backend.connect({ serverUrl: 'mock://test', token: 'token-a' })
     await backend.startRealtimeVoice({ sessionId: 'vs1', conversationId: 'conv-1001' })
     await expect(backend.discardVoice({ recordingId: 'whatever' })).rejects.toMatchObject({
       code: 'VOICE_SESSION_CONFLICT', message: '已有活动语音会话'
@@ -346,6 +367,52 @@ describe('stopRecordVoice transcriptDelayMs 延迟 emit（Task 3，R-S4-05）', 
       // activeVoice 于停被接受时同步清（Task 5 修正：不随延迟 emit 顺延）：随后 discard 落入 IDLE 幂等成功——
       // 若 activeVoice 未清，discard(other) 会因 mismatch 抛 VOICE_RECORDING_NOT_FOUND
       await expect(backend.discardVoice({ recordingId: 'other-rec' })).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('断开连接后：旧连接的延迟 transcript 不再 emit', async () => {
+    vi.useFakeTimers()
+    try {
+      backend = new MockBackend({ transcriptDelayMs: 50 })
+      const ev: BackendEvent[] = []
+      backend.subscribe((event) => ev.push(event))
+      await backend.connect({ serverUrl: 'mock://first' })
+      await backend.startRecordVoice({ recordingId: 'rec-disconnected' })
+      await backend.stopRecordVoice({ recordingId: 'rec-disconnected' })
+
+      await backend.disconnect()
+      await vi.advanceTimersByTimeAsync(50)
+
+      expect(ev.filter((event) => event.event === 'voice.transcript')).toHaveLength(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('重连后：旧 incarnation 的延迟 transcript 不 emit，新连接自己的 transcript 正常 emit', async () => {
+    vi.useFakeTimers()
+    try {
+      backend = new MockBackend({ transcriptDelayMs: 50 })
+      const ev: BackendEvent[] = []
+      backend.subscribe((event) => ev.push(event))
+
+      await backend.connect({ serverUrl: 'mock://first' })
+      await backend.startRecordVoice({ recordingId: 'rec-old' })
+      await backend.stopRecordVoice({ recordingId: 'rec-old' })
+
+      // connect() advances the Mock transport incarnation without clearing
+      // the old timer, so this assertion exercises the timer ownership fence.
+      await backend.connect({ serverUrl: 'mock://second' })
+      await backend.startRecordVoice({ recordingId: 'rec-new' })
+      await backend.stopRecordVoice({ recordingId: 'rec-new' })
+
+      await vi.advanceTimersByTimeAsync(50)
+
+      const transcripts = ev.filter((event) => event.event === 'voice.transcript')
+      expect(transcripts).toHaveLength(1)
+      expect(transcripts[0]?.recordingId).toBe('rec-new')
     } finally {
       vi.useRealTimers()
     }

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'http'
 import { WebSocketServer } from 'ws'
 import { AddressInfo } from 'net'
-import { RealBackend, type RealBackendOptions } from '../../src/main/transport/real-backend'
+import { RealBackend, type RealBackendOptions, type WebSocketLike } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { CyreneErrorCode } from '@shared/errors'
@@ -77,6 +77,163 @@ function makeOpts(o: Partial<RealBackendOptions> = {}): RealBackendOptions {
 }
 
 describe('RealBackend WS 连接', () => {
+  it('socket 替换后旧 message/replay/close/error 回调全部失效（同 connectionId 也不能串代）', async () => {
+    type Handler = (arg?: unknown, arg2?: unknown) => void
+    type HandlerSet = Partial<Record<'open' | 'message' | 'close' | 'error' | 'unexpected-response', Handler>>
+    const handlers: HandlerSet[] = []
+    const sockets: WebSocketLike[] = []
+    const wsFactory = (): WebSocketLike => {
+      const current: HandlerSet = {}
+      handlers.push(current)
+      const ws: WebSocketLike = {
+        on: (event, callback) => { current[event] = callback },
+        send: vi.fn(),
+        close: vi.fn(),
+        readyState: 1
+      }
+      sockets.push(ws)
+      return ws
+    }
+    const push = (index: number, frame: unknown): void => {
+      handlers[index].message?.(Buffer.from(JSON.stringify(frame)))
+    }
+    const handshake = (index: number): void => {
+      push(index, { type: 'session', conversationId: 'same-conversation', messages: [], token_stats: { total: 0, byModel: {} } })
+      // Deliberately reuse the server connectionId: it is not a callback owner.
+      push(index, { type: 'server_info', protocol_version: '2.0', server_version: 'v', features: {}, services: {}, connectionId: 'reused-connection-id' })
+    }
+    const events: BackendEvent[] = []
+    const replays: string[] = []
+    const backend = new RealBackend({
+      now: () => Date.now(),
+      wsFactory,
+      onSessionReplay: (conversationId) => replays.push(conversationId),
+      reconnectBaseDelayMs: 1
+    })
+    backend.subscribe((event) => events.push(event))
+
+    const firstConnect = backend.connect({ serverUrl: 'http://old.example', token: 'token' })
+    expect(sockets).toHaveLength(1)
+    handshake(0)
+    await expect(firstConnect).resolves.toMatchObject({ sessionId: 'reused-connection-id' })
+
+    const secondConnect = backend.connect({ serverUrl: 'http://new.example', token: 'token' })
+    expect(sockets).toHaveLength(2)
+    handshake(1)
+    await expect(secondConnect).resolves.toMatchObject({ sessionId: 'reused-connection-id' })
+    expect(backend.getConnectionState()).toMatchObject({ status: 'connected', serverUrl: 'http://new.example' })
+
+    const eventCount = events.length
+    const replayCount = replays.length
+    // These callbacks model A's delayed delivery after B is already current.
+    push(0, { type: 'generation.started', generationId: 'old-generation', messageId: 'old-message', conversationId: 'same-conversation', model: 'old' })
+    push(0, { type: 'session', conversationId: 'same-conversation', messages: [], token_stats: { total: 0, byModel: {} } })
+    handlers[0].close?.()
+    handlers[0].error?.()
+
+    expect(events).toHaveLength(eventCount)
+    expect(replays).toHaveLength(replayCount)
+    expect(backend.getConnectionState()).toMatchObject({ status: 'connected', serverUrl: 'http://new.example' })
+    await backend.disconnect()
+  })
+
+  it('并发 connect：B 替换 A 时 A 及时 reject，A 的迟到握手不能结算 B', async () => {
+    type SocketEvent = 'open' | 'message' | 'close' | 'error' | 'unexpected-response'
+    type SocketHandler = (arg?: unknown, arg2?: unknown) => void
+    const handlers: Partial<Record<SocketEvent, SocketHandler>>[] = []
+    const wsFactory = (): WebSocketLike => {
+      const current: Partial<Record<SocketEvent, SocketHandler>> = {}
+      handlers.push(current)
+      return {
+        on: (event, callback) => { current[event] = callback },
+        send: vi.fn(),
+        close: vi.fn(),
+        readyState: 1
+      }
+    }
+    const frame = (index: number, value: unknown): void => {
+      handlers[index]?.message?.(Buffer.from(JSON.stringify(value)))
+    }
+    const backend = new RealBackend({ wsFactory, handshakeTimeoutMs: 1000 })
+    const firstConnect = backend.connect({ serverUrl: 'http://a.example', token: 'token-a' })
+    expect(handlers).toHaveLength(1)
+
+    const secondConnect = backend.connect({ serverUrl: 'http://b.example', token: 'token-b' })
+    await expect(firstConnect).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
+    expect(handlers).toHaveLength(2)
+    expect(backend.getConnectionState()).toMatchObject({ status: 'connecting', serverUrl: 'http://b.example' })
+
+    // A 的 server_info 即使在 B 已经接管后才抵达，也不能把 B 的状态或 promise 结算掉。
+    frame(0, { type: 'server_info', protocol_version: '2.0', server_version: 'old', features: {}, services: {}, connectionId: 'old' })
+    expect(backend.getConnectionState()).toMatchObject({ status: 'connecting', serverUrl: 'http://b.example' })
+
+    frame(1, { type: 'server_info', protocol_version: '2.0', server_version: 'new', features: {}, services: {}, connectionId: 'new' })
+    await expect(secondConnect).resolves.toMatchObject({ sessionId: 'new', serverUrl: 'http://b.example' })
+    expect(backend.getConnectionState()).toMatchObject({ status: 'connected', serverUrl: 'http://b.example', serverVersion: 'new' })
+    await backend.disconnect()
+  })
+
+  it('429 后重试握手超时继续退避，下一次 server_info 结算原始 connect（旧回调 inert）', async () => {
+    vi.useFakeTimers()
+    type SocketEvent = 'open' | 'message' | 'close' | 'error' | 'unexpected-response'
+    type SocketHandler = (arg?: unknown, arg2?: unknown) => void
+    const handlers: Partial<Record<SocketEvent, SocketHandler>>[] = []
+    const wsFactory = (): WebSocketLike => {
+      const current: Partial<Record<SocketEvent, SocketHandler>> = {}
+      handlers.push(current)
+      return {
+        on: (event, callback) => { current[event] = callback },
+        send: vi.fn(),
+        close: vi.fn(),
+        readyState: 1
+      }
+    }
+    const frame = (index: number, value: unknown): void => {
+      handlers[index]?.message?.(Buffer.from(JSON.stringify(value)))
+    }
+    const backend = new RealBackend({
+      wsFactory,
+      now: () => 0,
+      reconnectBaseDelayMs: 10,
+      handshakeTimeoutMs: 5
+    })
+    const connectPromise = backend.connect({ serverUrl: 'http://retry.example', token: 'token' })
+    let settled: 'pending' | 'resolved' | 'rejected' = 'pending'
+    void connectPromise.then(() => { settled = 'resolved' }, () => { settled = 'rejected' })
+
+    try {
+      expect(handlers).toHaveLength(1)
+      handlers[0]?.['unexpected-response']?.(undefined, { statusCode: 429 })
+      expect(backend.getConnectionState().status).toBe('reconnecting')
+      await Promise.resolve()
+      expect(settled).toBe('pending')
+
+      await vi.advanceTimersByTimeAsync(10) // retry socket #1
+      expect(handlers).toHaveLength(2)
+      expect(backend.getConnectionState().status).toBe('reconnecting')
+
+      await vi.advanceTimersByTimeAsync(5) // retry #1 handshake timeout → schedule retry #2
+      expect(handlers).toHaveLength(2)
+      expect(backend.getConnectionState().status).toBe('reconnecting')
+      expect(settled).toBe('pending')
+
+      await vi.advanceTimersByTimeAsync(20) // retry socket #2
+      expect(handlers).toHaveLength(3)
+      // retry #1 的迟到 server_info 必须被 socket/incarnation 栅栏丢弃。
+      frame(1, { type: 'server_info', protocol_version: '2.0', server_version: 'stale', features: {}, services: {}, connectionId: 'stale' })
+      expect(settled).toBe('pending')
+      expect(backend.getConnectionState().status).toBe('reconnecting')
+
+      frame(2, { type: 'server_info', protocol_version: '2.0', server_version: 'ok', features: {}, services: {}, connectionId: 'final' })
+      await expect(connectPromise).resolves.toMatchObject({ sessionId: 'final', protocolVersion: '2.0' })
+      expect(settled).toBe('resolved')
+      expect(backend.getConnectionState().status).toBe('connected')
+    } finally {
+      await backend.disconnect()
+      vi.useRealTimers()
+    }
+  })
+
   it('握手头精确注入 X-Protocol-Version:"2"/X-Client-Platform/Authorization', async () => {
     const b = makeBackend()
     const session = await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })

@@ -51,6 +51,11 @@ describe('ipc-limit（spec §4.1——D7A-13 值表：无界字段 maxLength 补
 })
 
 describe('ipc-limit（spec §4.1——引用性哨兵：既有上界不回退）', () => {
+  it('chatCreate 透传 FE-E1 characterId，同时保持 strict 输入', () => {
+    expect(chatCreateSchema.safeParse({ characterId: 'builtin/elysia' }).success).toBe(true)
+    expect(chatCreateSchema.safeParse({ characterId: 'builtin/elysia', extra: true }).success).toBe(false)
+  })
+
   it('MAX_IPC_MESSAGE_BYTES 恒为 4MiB', () => {
     expect(MAX_IPC_MESSAGE_BYTES).toBe(4 * 1024 * 1024)
   })

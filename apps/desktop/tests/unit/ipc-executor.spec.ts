@@ -9,6 +9,40 @@ const sanitize = (m: string): string => m.replace(/\/home\/alice/g, '~')
 const noopSanitize = (m: string): string => m
 
 describe('createIpcHandler', () => {
+  it('角色错误 details 按 backendCode 白名单公开，恶意 revision/issues/raw 不上行', async () => {
+    const allowed = createIpcHandler(z.undefined(), z.undefined(), () => {
+      throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, 'validation', {
+        backendCode: 'CHARACTER_VALIDATION', currentRevision: 99, rawBody: 'SECRET',
+        issues: [
+          { severity: 'error', code: 'REQUIRED', path: '/promptProfile/core', message: '必填' },
+          { severity: 'error', code: 'PATH', path: '/C:/Users/secret.txt', message: 'leak' }
+        ]
+      })
+    }, { sanitize: noopSanitize })
+    expect(await allowed(undefined)).toEqual({
+      ok: false,
+      error: {
+        code: 'BACKEND_REJECTED', message: 'validation', backendCode: 'CHARACTER_VALIDATION',
+        issues: [{ severity: 'error', code: 'REQUIRED', path: '/promptProfile/core', message: '必填' }]
+      }
+    })
+
+    const denied = createIpcHandler(z.undefined(), z.undefined(), () => {
+      throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, 'other', {
+        backendCode: 'OTHER_ERROR', currentRevision: 7,
+        issues: [{ severity: 'error', code: 'X', path: '/x', message: 'secret' }], rawBody: 'SECRET'
+      })
+    }, { sanitize: noopSanitize })
+    expect(await denied(undefined)).toEqual({ ok: false, error: { code: 'BACKEND_REJECTED', message: 'other', backendCode: 'OTHER_ERROR' } })
+
+    const revision = createIpcHandler(z.undefined(), z.undefined(), () => {
+      throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, 'conflict', {
+        backendCode: 'CHARACTER_REVISION_CONFLICT', currentRevision: 4,
+        issues: [{ severity: 'error', code: 'NO', path: '/x', message: 'not allowed here' }]
+      })
+    }, { sanitize: noopSanitize })
+    expect(await revision(undefined)).toEqual({ ok: false, error: { code: 'BACKEND_REJECTED', message: 'conflict', backendCode: 'CHARACTER_REVISION_CONFLICT', currentRevision: 4 } })
+  })
   it('合法入参 → ok:true 带 data', async () => {
     const h = createIpcHandler(z.undefined(), z.object({ name: z.string() }), () => ({ name: 'Cyrene' }), { sanitize: noopSanitize })
     expect(await h(undefined)).toEqual({ ok: true, data: { name: 'Cyrene' } })

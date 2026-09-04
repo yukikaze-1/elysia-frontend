@@ -11,6 +11,24 @@ import type {
   AudioCancelInput,
   BackendEvent,
   BackendSession,
+  CharacterDetail,
+  CharacterArchiveResult,
+  CharacterDraft,
+  CharacterDraftSummary,
+  CharacterListQuery,
+  CharacterPublicState,
+  CharacterRevisionQuery,
+  CharacterRevisionSummary,
+  CharacterSummary,
+  CharacterMutationResult,
+  PersistedCharacterDraft,
+  CharacterPreviewCommand,
+  CharacterPreviewResult,
+  CharacterValidationResult,
+  CloneCharacterCommand,
+  CreateCharacterCommand,
+  RollbackCharacterCommand,
+  UpdateCharacterCommand,
   CacheMessagesInput,
   CancelGenerationInput,
   ChatHistoryPage,
@@ -53,6 +71,8 @@ import type {
   TtsPreviewCommand,
   TtsPreviewOutcome,
   TtsVoiceListResult,
+  UpdateUserIdentityCommand,
+  UserIdentityProfile,
   UpsertModelProfileCommand,
   VoiceCommitInput,
   VoiceDiscardInput,
@@ -68,6 +88,29 @@ import {
   AttachmentCheckResultSchema,
   AttachmentsUploadResponseSchema,
   BackendSessionSchema,
+  CharacterGetMeRequestSchema,
+  CharacterGetMeResponseSchema,
+  CharacterUpdateMeRequestSchema,
+  CharacterUpdateMeResponseSchema,
+  CharacterGetRequestSchema,
+  CharacterGetResponseSchema,
+  CharacterListRequestSchema,
+  CharacterListResponseSchema,
+  CharacterListRevisionsRequestSchema,
+  CharacterListRevisionsResponseSchema,
+  CharacterStateRequestSchema,
+  CharacterStateResponseSchema,
+  CharacterCreateRequestSchema, CharacterCreateResponseSchema,
+  CharacterUpdateRequestSchema, CharacterUpdateResponseSchema,
+  CharacterCloneRequestSchema, CharacterCloneResponseSchema,
+  CharacterArchiveRequestSchema, CharacterArchiveResponseSchema,
+  CharacterRollbackRequestSchema, CharacterRollbackResponseSchema,
+  CharacterValidateRequestSchema, CharacterValidateResponseSchema,
+  CharacterPreviewRequestSchema, CharacterPreviewResponseSchema,
+  CharacterDraftListRequestSchema, CharacterDraftListResponseSchema,
+  CharacterDraftGetRequestSchema, CharacterDraftGetResponseSchema,
+  CharacterDraftSaveRequestSchema, CharacterDraftSaveResponseSchema,
+  CharacterDraftDeleteRequestSchema, CharacterDraftDeleteResponseSchema,
   ChatHistoryPageSchema,
   ClientRequestRefSchema,
   ConnectionStateSchema,
@@ -126,6 +169,16 @@ function formatIpcError(error: import('@shared/contracts').IpcErrorBody): Error 
   if (error.clientRequestId) parts.push(`clientRequestId=${error.clientRequestId}`)
   if (typeof error.retryAfterMs === 'number') parts.push(`retryAfterMs=${error.retryAfterMs}`)
   if (typeof error.idempotencyDurable === 'boolean') parts.push(`idempotencyDurable=${error.idempotencyDurable}`)
+  if (typeof error.currentRevision === 'number') parts.push(`currentRevision=${error.currentRevision}`)
+  if (error.issues?.length) {
+    // 结构化错误来自 Main，但仍需防 malformed surrogate / 非可序列化替身
+    // 让 contextBridge 错误格式化本身抛错；超出预算时安全省略 issues。
+    try {
+      const serialized = JSON.stringify(error.issues)
+      const encoded = encodeURIComponent(serialized)
+      if (encoded.length <= 32_768) parts.push(`issues=${encoded}`)
+    } catch { /* fail closed: 主错误仍可展示，但不把 issues 拼入 message。 */ }
+  }
   return new Error(`[${parts.join('] [')}] ${error.message}`)
 }
 
@@ -180,6 +233,13 @@ function unwrap<T>(res: IpcResult<T>, schema: z.ZodType<T>): T {
     throw formatIpcError(res.error)
   }
   throw new Error('[IPC_ERROR] IPC 返回格式异常')
+}
+
+/** FE-B 角色请求也在 Preload 侧先 strict 解析，避免把未声明字段送入 Main。 */
+function parseRequest<T>(schema: z.ZodType<T>, input: unknown): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) throw new Error('[SCHEMA_VALIDATION_FAILED] IPC 请求校验失败')
+  return parsed.data
 }
 
 /** ConnectionState 纯守卫：ConnectionStateSchema 全字段校验（status 必填 + optional 字段类型），非法返回 false */
@@ -253,6 +313,79 @@ async function deleteConversation(id: string): Promise<void> {
 }
 async function getConnectionState(): Promise<ConnectionState> {
   return unwrap(await invoke<ConnectionState>(IpcChannels.chatGetState), ConnectionStateSchema)
+}
+
+// —— 多角色角色域（具名 IPC；请求/响应两端共用 strict schema）——
+async function getMe(): Promise<UserIdentityProfile> {
+  // 以 schema 解析无参请求，保证此面不会意外扩展为任意 payload。
+  parseRequest(CharacterGetMeRequestSchema, undefined)
+  return unwrap(await invoke<UserIdentityProfile>(IpcChannels.profileGetMe), CharacterGetMeResponseSchema)
+}
+async function updateMe(input: UpdateUserIdentityCommand): Promise<UserIdentityProfile> {
+  const request = parseRequest(CharacterUpdateMeRequestSchema, input)
+  return unwrap(await invokeWithArgs<UserIdentityProfile>(IpcChannels.profileUpdateMe, request), CharacterUpdateMeResponseSchema)
+}
+async function listCharacters(input: CharacterListQuery = {}): Promise<Page<CharacterSummary>> {
+  const request = parseRequest(CharacterListRequestSchema, input)
+  return unwrap(await invokeWithArgs<Page<CharacterSummary>>(IpcChannels.charactersList, request), CharacterListResponseSchema)
+}
+async function getCharacter(characterId: string): Promise<CharacterDetail> {
+  const request = parseRequest(CharacterGetRequestSchema, { characterId })
+  return unwrap(await invokeWithArgs<CharacterDetail>(IpcChannels.charactersGet, request), CharacterGetResponseSchema)
+}
+async function listCharacterRevisions(input: CharacterRevisionQuery): Promise<Page<CharacterRevisionSummary>> {
+  const request = parseRequest(CharacterListRevisionsRequestSchema, input)
+  return unwrap(await invokeWithArgs<Page<CharacterRevisionSummary>>(IpcChannels.charactersListRevisions, request), CharacterListRevisionsResponseSchema)
+}
+async function getCharacterState(characterInstanceId: string): Promise<CharacterPublicState> {
+  const request = parseRequest(CharacterStateRequestSchema, { characterInstanceId })
+  return unwrap(await invokeWithArgs<CharacterPublicState>(IpcChannels.characterInstancesGetState, request), CharacterStateResponseSchema)
+}
+async function createCharacter(input: CreateCharacterCommand): Promise<CharacterDetail> {
+  const request = parseRequest(CharacterCreateRequestSchema, input)
+  return unwrap(await invokeWithArgs<CharacterDetail>(IpcChannels.charactersCreate, request), CharacterCreateResponseSchema)
+}
+async function updateCharacter(input: UpdateCharacterCommand): Promise<CharacterMutationResult> {
+  const request = parseRequest(CharacterUpdateRequestSchema, input)
+  return unwrap(await invokeWithArgs<CharacterMutationResult>(IpcChannels.charactersUpdate, request), CharacterUpdateResponseSchema)
+}
+async function cloneCharacter(input: CloneCharacterCommand): Promise<CharacterDetail> {
+  const request = parseRequest(CharacterCloneRequestSchema, input)
+  return unwrap(await invokeWithArgs<CharacterDetail>(IpcChannels.charactersClone, request), CharacterCloneResponseSchema)
+}
+async function archiveCharacter(characterId: string): Promise<CharacterArchiveResult> {
+  const request = parseRequest(CharacterArchiveRequestSchema, { characterId })
+  return unwrap(await invokeWithArgs<CharacterArchiveResult>(IpcChannels.charactersArchive, request), CharacterArchiveResponseSchema)
+}
+async function rollbackCharacter(input: RollbackCharacterCommand): Promise<CharacterMutationResult> {
+  const request = parseRequest(CharacterRollbackRequestSchema, input)
+  return unwrap(await invokeWithArgs<CharacterMutationResult>(IpcChannels.charactersRollback, request), CharacterRollbackResponseSchema)
+}
+async function validateCharacter(draft: CharacterDraft): Promise<CharacterValidationResult> {
+  const request = parseRequest(CharacterValidateRequestSchema, draft)
+  return unwrap(await invokeWithArgs<CharacterValidationResult>(IpcChannels.charactersValidate, request), CharacterValidateResponseSchema)
+}
+async function previewCharacter(input: CharacterPreviewCommand): Promise<CharacterPreviewResult> {
+  const request = parseRequest(CharacterPreviewRequestSchema, input)
+  return unwrap(await invokeWithArgs<CharacterPreviewResult>(IpcChannels.charactersPreview, request), CharacterPreviewResponseSchema)
+}
+
+// —— FE-D2 未提交角色草稿：list 仅摘要，get 才返回完整 authored draft ——
+async function listCharacterDrafts(): Promise<CharacterDraftSummary[]> {
+  parseRequest(CharacterDraftListRequestSchema, undefined)
+  return unwrap(await invoke<CharacterDraftSummary[]>(IpcChannels.characterDraftsList), CharacterDraftListResponseSchema)
+}
+async function getCharacterDraft(key: string): Promise<PersistedCharacterDraft | undefined> {
+  const request = parseRequest(CharacterDraftGetRequestSchema, { key })
+  return unwrap(await invokeWithArgs<PersistedCharacterDraft | undefined>(IpcChannels.characterDraftsGet, request), CharacterDraftGetResponseSchema)
+}
+async function saveCharacterDraft(input: PersistedCharacterDraft): Promise<void> {
+  const request = parseRequest(CharacterDraftSaveRequestSchema, input)
+  unwrap(await invokeWithArgs<void>(IpcChannels.characterDraftsSave, request), CharacterDraftSaveResponseSchema)
+}
+async function deleteCharacterDraft(key: string): Promise<void> {
+  const request = parseRequest(CharacterDraftDeleteRequestSchema, { key })
+  unwrap(await invokeWithArgs<void>(IpcChannels.characterDraftsDelete, request), CharacterDraftDeleteResponseSchema)
 }
 
 // —— 阶段 3 G4 历史查看器/表情面：三通道信封解包（spec §4.3）——
@@ -560,6 +693,25 @@ export const desktopApi = {
   renameConversation,
   deleteConversation,
   getConnectionState,
+  // —— 多角色角色面 ——
+  getMe,
+  // —— 多角色身份与角色操作 ——
+  updateMe,
+  listCharacters,
+  getCharacter,
+  listCharacterRevisions,
+  getCharacterState,
+  createCharacter,
+  updateCharacter,
+  cloneCharacter,
+  archiveCharacter,
+  rollbackCharacter,
+  validateCharacter,
+  previewCharacter,
+  listCharacterDrafts,
+  getCharacterDraft,
+  saveCharacterDraft,
+  deleteCharacterDraft,
   queryChatHistory,
   getMessageContext,
   listStickers,

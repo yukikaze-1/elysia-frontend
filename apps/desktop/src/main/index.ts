@@ -26,11 +26,14 @@ import type { Logger } from './diagnostics/logger'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { CredentialStore } from './credentials/credential-store'
 import { SessionStore } from './persistence/session-store'
+import { CharacterDraftStore } from './persistence/character-draft-store'
 import { SettingsService } from './settings/settings-service'
 import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
 import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthLevelEnv, parseMockMouthWindowEnv, parseMockDirectiveEnv, parseMockToolFlowEnv, parseMockToolHistoryEnv, parseMockDisconnectAfterMsEnv, parseMockMultiSegmentEnv } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
+import { createCharacterService, UnavailableCharacterBackend } from './characters/character-service'
+import { MockCharacterBackend } from './characters/mock-character-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
 import { UploadService } from './attachments/upload-service'
@@ -221,14 +224,19 @@ async function main(): Promise<void> {
     // 批次 B（Task 6）：tool-service 桥容器（MockBackend 构造 options 的 toolRequestSink 闭包读取——
     // toolSvc 在 adapter 之后构造，回调只在桌面工具请求到达时触发，此时已装配完）
     const toolBridge: { svc: ToolService | undefined } = { svc: undefined }
+    // FE-B：角色读服务维护独立连接世代；不把角色 REST 方法加入 RealBackend。
+    let characterConnectionEpoch = 0
     const onState = (state: ConnectionState) => {
+      characterConnectionEpoch++
       chatBridge.svc?.pushState(state)
       // A-8（D6B-11）：重连成功（connected）→ 工具服务重发未确认终态 + 清 selected-set；首次连接无记录为 no-op
       if (state.status === 'connected') void toolBridge.svc?.reconnect()
     }
     const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
+    // FE-E1：Mock 角色服务与聊天 Mock 通过装配层注入不可变 binding 快照，二者仍保持独立。
+    const mockCharacterBackend = useMock ? new MockCharacterBackend() : undefined
     const adapter: BackendAdapter = useMock
-      ? new MockBackend({ onConnectionStateChange: onState, ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), ...(mockReplyFixtureText !== undefined ? { replyFixtureText: mockReplyFixtureText } : {}), ...(mockDisconnectAfter !== undefined ? { disconnectAfterMs: mockDisconnectAfter } : {}), ...(mockMultiSegment !== undefined ? { multiSegmentCount: mockMultiSegment } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
+      ? new MockBackend({ onConnectionStateChange: onState, ...(mockCharacterBackend ? { features: mockCharacterBackend.features, characterBindings: mockCharacterBackend.getConversationBindings(), characterBindingResolver: (characterId: string) => mockCharacterBackend.getConversationBinding(characterId) } : {}), ...(mockHistoryCount !== undefined ? { seedHistoryCount: mockHistoryCount } : {}), ...(mockVoiceTranscript !== undefined ? { voiceTranscriptText: mockVoiceTranscript } : {}), ...(mockVoiceTranscriptDelay !== undefined ? { transcriptDelayMs: mockVoiceTranscriptDelay } : {}), ...(mockEmitDelay !== undefined ? { emitDelayMs: mockEmitDelay } : {}), ...(mockGenerationEmotion !== undefined ? { generationEmotion: mockGenerationEmotion } : {}), ...(mockMouthLevel !== undefined ? { mockMouthLevel, ttsAudioSink: (id: string, bytes: Uint8Array, mime?: string) => mediaBridge.media?.putTtsAudio(id, bytes, mime) } : {}), ...(mockMouthWindowMs !== undefined ? { mouthTtsWindowMs: mockMouthWindowMs } : {}), ...(mockDirective !== undefined ? { directive: mockDirective } : {}), ...(mockToolFlow !== undefined ? { toolFlow: mockToolFlow } : {}), ...(mockToolHistory ? { toolHistory: true } : {}), ...(mockReplyFixtureText !== undefined ? { replyFixtureText: mockReplyFixtureText } : {}), ...(mockDisconnectAfter !== undefined ? { disconnectAfterMs: mockDisconnectAfter } : {}), ...(mockMultiSegment !== undefined ? { multiSegmentCount: mockMultiSegment } : {}), toolRequestSink: (req) => { void toolBridge.svc?.handleRequest(req) } })
       : (() => {
           // 协议告警/后端错误可见化:onProtocolWarning → 脱敏 warn 日志(不记正文/Token/原始帧);
           // onError → error 日志 + 推 chat:error 给 Renderer(连接面板展示)。getBuild 晚绑定 adapter,
@@ -252,6 +260,12 @@ async function main(): Promise<void> {
               : undefined
           })
         })()
+    const characterService = createCharacterService({
+      backend: mockCharacterBackend ?? new UnavailableCharacterBackend(),
+      // Real 模式角色后端尚未接入，能力安全默认为 false；Mock 显式开启角色闭环。
+      getFeatures: () => mockCharacterBackend?.features,
+      getConnectionEpoch: () => characterConnectionEpoch
+    })
     // —— 阶段 7 批次 A（Task 5，spec §6.3）：诊断服务装配（F-08 定案——adapter deps 注入、构造期 subscribe，无 attachAdapter 方法；
     //   构造在 adapter 之后：事件源引用须先就位——与 chat/tool svc 同款时序治理）——
     //   deps：dirs{logs,audit,temp}（harness 导出落 temp）/logWriter（createDiagnostics 扩展返回——Task 3）/auditor/sanitize/
@@ -400,6 +414,14 @@ async function main(): Promise<void> {
       getActiveConversationId: () => chatBridge.svc?.getConnectionState().activeConversationId
     })
     await sessionStore.load() // 损坏隔离，不阻塞启动
+    // FE-D2：角色编辑器草稿独立于 SessionStore，使用同一 app-cache/safeRoot/原子写边界。
+    const characterDrafts = new CharacterDraftStore({
+      appCache: dirs.appCache,
+      safeRoot,
+      logger: diagnostics.logger,
+      countDiagnostic: (code: string) => diagnostics?.logger.warn('persistence:diagnostic', { code })
+    })
+    await characterDrafts.load() // 损坏/超限草稿隔离后以空仓库启动，不阻塞连接
     // 阶段 4 批次 B SettingsService：已上移至 createToolService 之前（批次 C V-4 装配顺序——GrantStore 构造依赖，见上）
     const chatSvc = createChatService({
       adapter,
@@ -428,7 +450,7 @@ async function main(): Promise<void> {
     // 阶段 5 批次 A Live2D 模型注册表（spec D5A-07）：扫 dirs.models，manifest+integrity 两级可用性 + fail-closed verify。
     // 纯磁盘只读，无生命周期（懒加载 integrity），registerHandlers 前装配即可。
     const live2dRegistry = new Live2DModelRegistry({ modelsDir: dirs.models })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, characterDrafts, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, characters: { service: characterService }, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         { name: 'credentials', run: () => store.close() },

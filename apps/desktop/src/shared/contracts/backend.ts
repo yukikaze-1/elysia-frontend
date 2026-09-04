@@ -17,6 +17,12 @@ export interface ConnectionState {
   serverUrl?: string
   protocolVersion?: string
   serverVersion?: string
+  /**
+   * Desktop-local opaque source scope. It is minted for every explicit
+   * connect() and is intentionally unrelated to the server connectionId or
+   * authentication token. Automatic socket reconnects keep the same scope.
+   */
+  connectionScopeId?: string
   connectionId?: string
   activeConversationId?: string
   lastError?: string

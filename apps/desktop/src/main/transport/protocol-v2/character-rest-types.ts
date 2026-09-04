@@ -52,6 +52,12 @@ export interface RestCharacterListQuery {
   limit?: number
 }
 
+/** GET /api/characters/{id}/revisions query；characterId 由路径承载，不混入 query wire。 */
+export interface RestCharacterRevisionQuery {
+  cursor?: string
+  limit?: number
+}
+
 /** 角色列表 / 版本列表 raw 分页（CHAR-FE-02；Main 转 Page<T>{items,hasMore,nextCursor?}） */
 export interface RestCharacterListResponse {
   items: RestCharacterSummary[]
@@ -150,6 +156,8 @@ export interface RestCharacterDraft {
 
 /** POST /api/characters：wire 顶层完整 draft（§6.2 矩阵） */
 export type RestCreateCharacterBody = RestCharacterDraft
+/** POST /api/characters/validate：wire 顶层完整 draft（与 create 同形） */
+export type RestValidateCharacterBody = RestCharacterDraft
 
 /** PUT /api/characters/{id}：Main 展平 expectedRevision + statePolicy + 完整 draft */
 export interface RestUpdateCharacterBody extends RestCharacterDraft {
@@ -193,6 +201,7 @@ export interface RestCharacterMutationResult {
 }
 export interface RestCharacterArchiveResult {
   character: RestCharacterSummary
+  /** Unknown optional:后端未返回时省略，不以 null 表示缺省。 */
   userProfile?: RestUserIdentityProfile
 }
 

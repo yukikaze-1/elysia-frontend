@@ -233,6 +233,26 @@ export interface CharacterPreviewResult {
   }
 }
 
+// —— §12.3 未提交角色草稿（仅 Main 本地恢复，不进入 SessionStore/消息缓存）——
+export type CharacterEditorMode = 'create' | 'edit' | 'clone'
+
+/** 恢复列表只返回摘要；不得把 authored prompt 放入列表响应。 */
+export interface CharacterDraftSummary {
+  key: string
+  mode: CharacterEditorMode
+  characterId?: CharacterId
+  baseRevision?: number
+  displayName: string
+  updatedAt: string
+}
+
+/** 本地草稿完整记录；`characterId` 是 edit/clone 的来源角色，create 时省略。
+ * statePolicy 仅存于完整记录（列表摘要不暴露）；旧版本缺省按 preserve 恢复。 */
+export interface PersistedCharacterDraft extends CharacterDraftSummary {
+  draft: CharacterDraft
+  statePolicy?: CharacterStatePolicy
+}
+
 // —— §5.9 会话角色绑定摘要（迁移期 optional；character_profiles=true 后新建/已迁移会话必带，
 // 缺失视为契约错误，不回退猜测）——
 export interface CharacterBindingSnapshot {

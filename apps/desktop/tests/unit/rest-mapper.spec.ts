@@ -125,6 +125,15 @@ describe('RestMapper', () => {
     expect(m.emotion).toBe('calm')
   })
 
+  it('item-level session_id 不被 envelope/request id 改籍，交给上层 scope fence 拒绝', () => {
+    const raw: RestMessage = {
+      role: 'assistant', message_id: 'msg-cross-conversation', timestamp: '2026-08-11T00:00:04.000Z',
+      session_id: 'conversation-from-item', content: '不能改籍'
+    }
+    const mapped = mapper.toDomainMessage(raw, 'conversation-from-request')
+    expect(mapped.conversationId).toBe('conversation-from-item')
+  })
+
   it('toConversation 映射', () => {
     const s: RestSessionSummary = { conversationId: 'conv-1', title: '测试', messageCount: 3, updatedAt: '2026-08-11T00:00:00.000Z', active: true }
     expect(mapper.toConversation(s)).toEqual({ id: 'conv-1', title: '测试', updatedAt: '2026-08-11T00:00:00.000Z' })

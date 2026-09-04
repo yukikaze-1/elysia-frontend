@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { parsePublicError } from '../../src/renderer/src/utils/public-error'
 
 describe('parsePublicError', () => {
+  it('安全解析 percent-encoded validation issues/currentRevision，非法或路径泄漏编码 fail closed', () => {
+    const issues = encodeURIComponent(JSON.stringify([{ severity: 'warning', code: 'WARN', path: '/description', message: '含 ] 和\n换行' }]))
+    expect(parsePublicError(`[BACKEND_REJECTED] [backendCode=CHARACTER_VALIDATION] [currentRevision=3] [issues=${issues}] 校验失败`)).toMatchObject({
+      backendCode: 'CHARACTER_VALIDATION', currentRevision: 3,
+      issues: [{ severity: 'warning', code: 'WARN', path: '/description', message: '含 ] 和\n换行' }],
+      message: '校验失败'
+    })
+    expect(parsePublicError('[BACKEND_REJECTED] [issues=%E0%A4%A] bad')).not.toHaveProperty('issues')
+    const leaked = encodeURIComponent(JSON.stringify([{ severity: 'error', code: 'X', path: '/C:/Users/a.txt', message: 'x' }]))
+    expect(parsePublicError(`[BACKEND_REJECTED] [issues=${leaked}] bad`)).not.toHaveProperty('issues')
+  })
   it('解析 [code] message', () => {
     expect(parsePublicError('[CREDENTIAL_UNAVAILABLE] 后端 Token 未设置')).toEqual({ code: 'CREDENTIAL_UNAVAILABLE', message: '后端 Token 未设置' })
   })

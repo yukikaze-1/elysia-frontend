@@ -58,7 +58,15 @@ export interface RawServerInfo {
   connectionId?: string
   build_sha?: string
 }
-export interface RawExpression {
+/** 表现/TTS raw 帧的角色归属；迁移期 optional，character_profiles=true 的必填门在运行时守卫处理。 */
+interface RawCharacterEventIdentity {
+  conversationId?: string
+  generationId?: string
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
+}
+export interface RawExpression extends RawCharacterEventIdentity {
   type: 'expression'
   expression: string
   intensity?: number
@@ -252,7 +260,7 @@ export interface RawDictationCancelled {
   clientRequestId: string
 }
 /** 音频流开始（对齐 ws_message.py AudioStartMessage；stream_id = playback ID；Phase 2 放行后、首 chunk 前） */
-export interface RawAudioStart {
+export interface RawAudioStart extends RawCharacterEventIdentity {
   type: 'audio_start'
   stream_id: number
   format: 'wav' | 'mp3'
@@ -283,7 +291,7 @@ export interface RawAudioCancelled {
 export type DirectiveState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'happy' | 'sad' | 'surprised'
 
 /** 后端 Live2D 表现指令建议帧（对齐 doc 02 §12；扁平 wire，C3 契约冻结；后端当前不发，桩化开发） */
-export interface RawLive2DDirective {
+export interface RawLive2DDirective extends RawCharacterEventIdentity {
   type: 'live2d.directive'
   expression?: string
   motion?: string

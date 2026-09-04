@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type {
   ActivateConversationResult,
   ActivateModelProfileCommand,
@@ -56,7 +57,9 @@ import type {
   AudioSessionReadyEvent,
   AudioSessionCancelledEvent,
   VoiceErrorEvent,
-  Live2DDirectiveEvent
+  Live2DDirectiveEvent,
+  BackendFeatureFlags,
+  CharacterBindingSnapshot
 } from '@shared/contracts'
 import type { DirectiveState, RawLive2DDirective } from './protocol-v2/raw-types'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
@@ -68,6 +71,12 @@ import type { ToolAttachment } from '@shared/contracts/tool'
 import type { DesktopToolRequest } from '../tools/tool-service'
 import { DESKTOP_TOOL_VERSION } from '../tools/tool-registry'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
+
+function cloneValue<T>(value: T): T {
+  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
+  if (structured) return structured(value)
+  return JSON.parse(JSON.stringify(value)) as T
+}
 
 /** 上传 MIME → kind 提示值（Mock 确定性；真实后端以魔数真值为准） */
 function kindFromMimeForMock(mime: string): string {
@@ -323,6 +332,14 @@ export interface MockBackendOptions {
    *  generation.completed 居末（否则 renderer 标 completing 非 completed）。与 seedHistoryCount 正交——
    *  前者控回复分段数，后者控历史/长会话消息数。缺省 undefined 走既有夹具回放。 */
   multiSegmentCount?: number
+  /** FE-E1：角色能力与会话绑定快照由 Main 装配注入；不让聊天 Mock 依赖角色目录实现。 */
+  features?: BackendFeatureFlags
+  characterBindings?: Readonly<Record<string, CharacterBindingSnapshot>>
+  /**
+   * FE-E1：运行期读取角色绑定的窄装配端口。它只返回当前仍可用于
+   * 新会话的 immutable snapshot；MockBackend 不依赖角色目录实现本身。
+   */
+  characterBindingResolver?: (characterId: string) => CharacterBindingSnapshot | undefined
 }
 
 const MOCK_SESSION: BackendSession = {
@@ -348,6 +365,19 @@ export class MockBackend implements BackendAdapter {
    *  订阅者，单槽会被 chat-service 订阅覆盖导致 mock 下聊天断流（与 real-backend 多槽语义对齐）。 */
   private readonly handlers = new Set<BackendEventHandler>()
   private connected = false
+  /**
+   * Mock transport incarnation.  Delayed fixture timers model callbacks from
+   * an old socket; reconnecting must make those timers inert even when they
+   * carry the same conversation id.
+   */
+  private connectionIncarnation = 0
+  /** Desktop-local opaque source scope; explicit connect() mints a new one. */
+  private connectionScopeId?: string
+  /** Last endpoint supplied to connect; included in connected state so the
+   * renderer can keep the same backend fact-domain rules in mock and real
+   * mode.  Disconnect/error states intentionally omit it, matching the real
+   * adapter's transient-state contract. */
+  private connectedServerUrl?: string
   /** Task 4：断线模拟——simulateDisconnect() 置 error 态；connect() 成功复位 false */
   private errored = false
   /** Task 4：断线模拟定时器（disconnectAfterMs 到期触发 simulateDisconnect()；dispose/clearTimers 清理） */
@@ -397,6 +427,12 @@ export class MockBackend implements BackendAdapter {
   private realtimeTurnEmitted = false
   /** 历史记录（预置样例 + sendMessage 追加；查看器 Mock 全链路数据源） */
   private readonly messageRecords: Message[]
+  /** FE-E1：可选角色能力（缺省保持 legacy Mock 行为）。 */
+  private readonly features?: BackendFeatureFlags
+  /** FE-E1：聊天 Mock 只持有由装配层提供的不可变角色绑定快照。 */
+  private readonly characterBindings?: Readonly<Record<string, CharacterBindingSnapshot>>
+  /** FE-E1：创建新会话时按请求读取最新角色 binding；旧会话仍保存自己的快照。 */
+  private readonly characterBindingResolver?: (characterId: string) => CharacterBindingSnapshot | undefined
 
   // —— 阶段 4 P4-A 模型服务（三类内置 + custom CRUD + voices/preview/setVoice；与 real 语义镜像）——
   /** 内置 provider 表（<service> → <provider> → 元数据）；capabilities 键名展开为稳定排序数组 */
@@ -500,6 +536,31 @@ export class MockBackend implements BackendAdapter {
     this.mouthTtsWindowMs = options.mouthTtsWindowMs ?? MOUTH_TTS_WINDOW_MS
     this.directive = options.directive
     this.onConnectionStateChange = options.onConnectionStateChange
+    this.features = options.features ? { ...options.features } : undefined
+    this.characterBindings = options.characterBindings
+      ? Object.fromEntries(Object.entries(options.characterBindings).map(([id, binding]) => [id, cloneValue(binding)]))
+      : undefined
+    this.characterBindingResolver = options.characterBindingResolver
+    // 角色能力开启时，给默认会话装配有效的历史快照；未注入角色能力时维持旧 Mock 的
+    // legacy 会话形状，避免无关测试/旧缓存依赖角色字段。
+    if (this.characterBindings) {
+      const bindings = Object.values(this.characterBindings)
+      this.conversations.forEach((conversation, index) => {
+        const binding = bindings[index]
+        if (binding) conversation.character = cloneValue(binding)
+      })
+    }
+    // Profile-enabled history must use the same immutable session snapshot as
+    // the live generation path.  Keep this enrichment in the Mock assembly
+    // layer; the chat mock still does not import or own character-domain
+    // behavior.
+    if (this.features?.characterProfiles === true) {
+      for (const message of this.messageRecords) {
+        if (message.role !== 'assistant' || message.character) continue
+        const binding = this.conversations.find((conversation) => conversation.id === message.conversationId)?.character
+        if (binding) message.character = cloneValue(binding)
+      }
+    }
     this.now = options.now ?? (() => new Date())
     this.idFactory = options.idFactory ?? (() => `mock-${Date.now()}-${++this.idCounter}`)
     const raw = options.fixtureRaw ?? fixtureRaw
@@ -527,46 +588,71 @@ export class MockBackend implements BackendAdapter {
   }
 
   async connect(input: ConnectInput): Promise<BackendSession> {
+    const incarnation = ++this.connectionIncarnation
+    // The source boundary is the explicit connect call, not the endpoint or
+    // synthetic connectionId. Automatic/mock timer callbacks retain this
+    // scope until the next explicit connect.
+    this.clearVoiceSourceState()
+    this.connectionScopeId = randomUUID()
     this.connected = true
     this.errored = false // 手动 reconnect：重置 error 态 → 发 connected
+    this.connectedServerUrl = input.serverUrl
     if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = undefined }
     if (this.disconnectAfterMs) {
-      this.disconnectTimer = setTimeout(() => this.simulateDisconnect(), this.disconnectAfterMs)
+      this.disconnectTimer = setTimeout(() => {
+        if (this.connectionIncarnation === incarnation) this.simulateDisconnect()
+      }, this.disconnectAfterMs)
     }
-    this.onConnectionStateChange?.({ status: 'connected' })
+    this.onConnectionStateChange?.({
+      status: 'connected',
+      ...(this.connectedServerUrl ? { serverUrl: this.connectedServerUrl } : {}),
+      connectionScopeId: this.connectionScopeId,
+      connectionId: this.connectionIdForState(),
+      ...(this.features ? { features: cloneValue(this.features) } : {})
+    })
     return { ...MOCK_SESSION, serverUrl: input.serverUrl }
   }
 
   async disconnect(): Promise<void> {
+    ++this.connectionIncarnation
     this.connected = false
     this.errored = false // 用户主动断开：非 error 态
+    this.clearVoiceSourceState()
     this.clearTimers()
     this.onConnectionStateChange?.({ status: 'disconnected' })
+    this.connectionScopeId = undefined
   }
 
   /** Task 4：断线模拟——置 error 态（lastError='mock-disconnect'），并广播给订阅方（手动 connect 恢复 connected） */
   private simulateDisconnect(): void {
     if (!this.connected) return
+    ++this.connectionIncarnation
     this.connected = false
     this.errored = true
+    this.clearVoiceSourceState()
     this.onConnectionStateChange?.({ status: 'error', lastError: 'mock-disconnect' })
+    this.connectionScopeId = undefined
   }
 
   getConnectionState(): ConnectionState {
     return {
       status: this.errored ? 'error' : this.connected ? 'connected' : 'disconnected',
-      ...(this.errored ? { lastError: 'mock-disconnect' } : {})
+      ...(this.errored ? { lastError: 'mock-disconnect' } : {}),
+      ...(!this.errored && this.connected && this.connectedServerUrl ? { serverUrl: this.connectedServerUrl } : {}),
+      ...(!this.errored && this.connected && this.connectionScopeId ? { connectionScopeId: this.connectionScopeId } : {}),
+      ...(!this.errored && this.connected ? { connectionId: this.connectionIdForState() } : {}),
+      ...(!this.errored && this.connected && this.features ? { features: cloneValue(this.features) } : {})
     }
   }
 
   async listConversations(_input: PageQuery): Promise<Page<Conversation>> {
-    return { items: this.conversations.map((c) => ({ ...c })), hasMore: false }
+    return { items: this.conversations.map((c) => cloneValue(c)), hasMore: false }
   }
 
   async getConversation(input: GetConversationQuery): Promise<ConversationDetail> {
     const conv = this.conversations.find((c) => c.id === input.conversationId)
     if (!conv) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `会话不存在: ${input.conversationId}`)
-    return { ...conv }
+    return cloneValue(conv)
   }
 
   async getConversationMessages(input: ConversationMessagesQuery): Promise<MessagePage> {
@@ -577,7 +663,7 @@ export class MockBackend implements BackendAdapter {
       const records = this.messageRecords
         .filter((m) => m.conversationId === input.conversationId)
         .sort((a, b) => a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0)
-      return { items: records, hasMore: false }
+      return { items: records.map((record) => cloneValue(record)), hasMore: false }
     }
     return { items: [], hasMore: false }
   }
@@ -589,13 +675,33 @@ export class MockBackend implements BackendAdapter {
     if (idx < 0) throw new CyreneError(CyreneErrorCode.NOT_FOUND, `消息不存在: ${input.messageId}`)
     const before = Math.min(input.before ?? 5, idx)
     const after = Math.min(input.after ?? 5, records.length - idx - 1)
-    return { items: records.slice(idx - before, idx + after + 1), hasMore: false }
+    return { items: records.slice(idx - before, idx + after + 1).map((record) => cloneValue(record)), hasMore: false }
   }
 
   async createConversation(input: CreateConversationInput): Promise<Conversation> {
-    const conv: Conversation = { id: this.idFactory(), title: input.title ?? '新会话', updatedAt: this.now().toISOString() }
+    let character: CharacterBindingSnapshot | undefined
+    if (this.features?.characterProfiles === true) {
+      if (!input.characterId) {
+        throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '角色模式的新会话必须指定角色', { backendCode: 'CHARACTER_REQUIRED' })
+      }
+      // 有 resolver 时必须以它的当前结果为准；resolver 返回 undefined
+      // 表示角色已归档/不存在，不能回退旧静态快照重新放行。
+      const binding = this.characterBindingResolver
+        ? this.characterBindingResolver(input.characterId)
+        : this.characterBindings?.[input.characterId]
+      if (!binding) {
+        throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '所选角色不可用', { backendCode: 'CHARACTER_NOT_FOUND' })
+      }
+      character = cloneValue(binding)
+    }
+    const conv: Conversation = {
+      id: this.idFactory(),
+      title: input.title ?? '新会话',
+      updatedAt: this.now().toISOString(),
+      ...(character ? { character } : {})
+    }
     this.conversations.push(conv)
-    return { ...conv }
+    return cloneValue(conv)
   }
 
   async activateConversation(conversationId: string): Promise<ActivateConversationResult> {
@@ -749,12 +855,18 @@ export class MockBackend implements BackendAdapter {
 
   async stopRecordVoice(input: VoiceRecordStopInput): Promise<void> {
     const text = this.transcriptText
+    const incarnation = this.connectionIncarnation
     // R-S4-05（ruling，Task 5 修正）：控制帧 invoke **立即 resolve**（与 real send-only 语义一致），
     // 非空 transcript 的 emit 单独延迟 fire-and-forget——renderer `await api.voiceStopRecord` 后即置
     // awaitingTranscript=true，「正在识别…」等待态在 delay 窗口内可观察（spec §7.2 用例 2b 依赖此顺序）。
     // 空串测「未识别」：不发 transcript（Minor 18）。
     if (text.length > 0) {
       const emit = (): void => {
+        // A stopRecordVoice call may be used by legacy tests/clients before a
+        // formal connect.  Incarnation alone is the ownership fence: a
+        // disconnect/reconnect advances it, while the initial legacy
+        // incarnation (0) remains valid for the delayed transcript.
+        if (this.connectionIncarnation !== incarnation) return
         this.emit({ ...this.stamp(), event: 'voice.transcript', recordingId: input.recordingId, text } satisfies VoiceTranscriptEvent)
       }
       if (this.transcriptDelayMs > 0) {
@@ -840,6 +952,10 @@ export class MockBackend implements BackendAdapter {
   sendAudioBytes(_bytes: Uint8Array): void {
     // 同步累积计数（无会话也计数，不 throw——与 real 的「丢弃告警不抛」语义对齐的 Mock 简化）
     this.receivedAudioChunks++
+    // Keep the deterministic counter semantics above, but never synthesize a
+    // partial/turn while the transport source is disconnected. A stale caller
+    // must not make audio from source A appear in source B after reconnect.
+    if (!this.connected) return
     if (this.activeVoice?.kind !== 'realtime') return
     // 实时会话：起会话后首个 chunk 模拟后端 VAD 分段 → partial + 自动提交 turn（每会话仅一次）
     if (!this.realtimeTurnEmitted) {
@@ -914,6 +1030,39 @@ export class MockBackend implements BackendAdapter {
     this.clearTimers()
   }
 
+  /**
+   * Capture a generation's character identity at generation start.  The
+   * resolver is deliberately a narrow composition port: the chat mock does
+   * not know how the character catalog stores revisions, but it can ask the
+   * assembler for the current active snapshot.  Updating the existing
+   * conversation summary and returning the tuple happen synchronously in one
+   * turn, so edits after this method returns cannot rewrite the in-flight
+   * generation.  A missing resolver result means the existing session keeps
+   * its historical binding (archived sessions remain readable).
+   */
+  private captureGenerationIdentity(conversationId: string): Partial<Pick<CharacterBindingSnapshot, 'characterId' | 'characterInstanceId' | 'characterRevision'>> {
+    if (this.features?.characterProfiles !== true) return {}
+    const conversation = this.conversations.find((item) => item.id === conversationId)
+    const current = conversation?.character
+    if (!conversation || !current) return {}
+    const latest = this.characterBindingResolver?.(current.characterId)
+    // A resolver may race an instance replacement/archival.  Existing
+    // sessions keep their immutable character/instance; only a newer
+    // revision of that same instance can advance the follow-latest summary.
+    if (latest
+      && latest.characterId === current.characterId
+      && latest.characterInstanceId === current.characterInstanceId
+      && latest.characterRevision >= current.characterRevision) {
+      conversation.character = cloneValue(latest)
+    }
+    const binding = conversation.character ?? current
+    return {
+      characterId: binding.characterId,
+      characterInstanceId: binding.characterInstanceId,
+      characterRevision: binding.characterRevision
+    }
+  }
+
   /** 领域富化（Mock 与 Real 差异注，P0-1）：直接产出 ChatHistoryItem（非 REST wire），
    *  为演示「表情」分类缩略图保留 resource；真实后端 search item 无 kind/url，联调后分类缩略图需资源端点补充。 */
   private toHistoryItem(m: Message): ChatHistoryItem {
@@ -943,7 +1092,8 @@ export class MockBackend implements BackendAdapter {
    */
   generateMultiSegmentEvents(generationId: string, messageId: string, responseId: string, conversationId: string): BackendEvent[] {
     const events: BackendEvent[] = []
-    events.push({ ...this.stamp(), event: 'generation.started', generationId, messageId, responseId, conversationId })
+    const characterIdentity = this.captureGenerationIdentity(conversationId)
+    events.push({ ...this.stamp(), event: 'generation.started', generationId, messageId, responseId, conversationId, ...characterIdentity })
     for (let i = 0; i < (this.multiSegmentCount ?? 0); i++) {
       const segId = `pr-ms-${i}`
       const text = `模拟命中文本 ${i}` // 可读确定性文本，避 base64 黑名单（安全 M-4）
@@ -951,11 +1101,12 @@ export class MockBackend implements BackendAdapter {
       events.push({ ...this.stamp(), event: 'generation.delta', segmentId: segId, segmentIndex: i, channel: 'public_reply', kind: 'markdown', generationId, deltaSequence: 0, text })
       events.push({ ...this.stamp(), event: 'generation.segment.completed', segmentId: segId, segmentIndex: i, channel: 'public_reply', kind: 'markdown', generationId })
     }
-    events.push({ ...this.stamp(), event: 'generation.completed', generationId, messageId, responseId })
+    events.push({ ...this.stamp(), event: 'generation.completed', generationId, messageId, responseId, ...characterIdentity })
     return events
   }
 
   private scheduleReplay(conversationId: string): void {
+    const incarnation = this.connectionIncarnation
     const genId = this.idFactory()
     const msgId = this.idFactory()
     const rspId = this.idFactory()
@@ -966,11 +1117,20 @@ export class MockBackend implements BackendAdapter {
       // 信封已在生成时刻打（stamp() 同步分配 eventId/sequence）——与夹具逐条重放的「emit 时刻打戳」语义有差异，
       // 但序列仍是发顺序严格递增（每代独立），且与其余语音/TTS 事件共享同一 nextSequence 计数器不会回退。
       // 逐条 setTimeout 重放（保持与夹具同款的分档延时节奏），generation.completed 已在 events 居末。
-      events.forEach((e, i) => { genTimers.push(setTimeout(() => this.emit(e), i * this.emitDelayMs)) })
+      events.forEach((e, i) => {
+        genTimers.push(setTimeout(() => {
+          if (!this.connected || this.connectionIncarnation !== incarnation) return
+          this.emit(e)
+        }, i * this.emitDelayMs))
+      })
       this.generationTimers.set(genId, genTimers)
       return
     }
     const segmentMap = new Map<string, string>()
+    // Capture the session binding once.  A catalog edit/archive that happens
+    // while timers are pending must not rewrite the in-flight generation's
+    // identity; the real backend has the same immutable-generation rule.
+    const characterIdentity = this.captureGenerationIdentity(conversationId)
     const genTimers: ReturnType<typeof setTimeout>[] = []
     // 阶段 7 批次 A（Task 3）：回复正文覆盖标记（每代局部——并发两代互不串扰；首批 public_reply delta 后关闭，
     // 其后 public_reply delta 置空 → 回复正文 = 夹具文本，内声优不受影响）
@@ -981,6 +1141,9 @@ export class MockBackend implements BackendAdapter {
       if ('messageId' in event) fresh.messageId = msgId
       if ('responseId' in event) fresh.responseId = rspId
       if ('conversationId' in event) fresh.conversationId = conversationId
+      if (event.event === 'generation.started' || event.event === 'generation.completed' || event.event === 'generation.failed') {
+        Object.assign(fresh, characterIdentity)
+      }
       if ('segmentId' in event && typeof event.segmentId === 'string') {
         let mapped = segmentMap.get(event.segmentId)
         if (!mapped) {
@@ -991,6 +1154,7 @@ export class MockBackend implements BackendAdapter {
       }
       // BackendEvent 是接口联合，需 as unknown as 双转（TS2352）
       const timer = setTimeout(() => {
+        if (!this.connected || this.connectionIncarnation !== incarnation) return
         // 回复正文覆盖（阶段 7 批次 A / 可行 MED）：replyFixtureText 注入时，public_reply 通道首个 delta
         // 文本替换为夹具全文、其后 public_reply delta 置空（回复正文恒 = 夹具内容，集成 XSS 载荷注入用）。
         // 与下方 generationEmotion 同在 emit 时刻改写（fresh 每事件一份，发射时刻改值与既有并发快照语义一致）。
@@ -1040,10 +1204,13 @@ export class MockBackend implements BackendAdapter {
           if (this.ttsAudioSink && this.mockMouthLevel !== undefined) {
             this.ttsAudioSink('mock-silent', makeSilentWav((this.mouthTtsWindowMs + 1000) / 1000)) // WAV 时长 ≥ 窗口+1s：<audio> 在 cancelled 前持续播放，口部窗口不坍缩
             if (this.ttsCancelTimer) clearTimeout(this.ttsCancelTimer)
-            this.ttsCancelTimer = setTimeout(() => {
+            const cancelTimer = setTimeout(() => {
+              if (this.ttsCancelTimer !== cancelTimer) return
               this.ttsCancelTimer = undefined
+              if (!this.connected || this.connectionIncarnation !== incarnation) return
               this.emit({ ...this.stamp(), event: 'audio.session.cancelled', streamId: 1 } satisfies AudioSessionCancelledEvent)
             }, this.mouthTtsWindowMs)
+            this.ttsCancelTimer = cancelTimer
           }
           this.emit({ ...this.stamp(), event: 'audio.session.started', streamId: 1, format: 'wav' } satisfies AudioSessionStartedEvent)
           this.emit({ ...this.stamp(), event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/mock-silent', format: 'wav' } satisfies AudioSessionReadyEvent)
@@ -1063,17 +1230,37 @@ export class MockBackend implements BackendAdapter {
     if (this.disconnectTimer) { clearTimeout(this.disconnectTimer); this.disconnectTimer = undefined } // Task 4：清断线模拟定时器（防 dispose 悬挂）
   }
 
+  /** Clear all source-owned voice state at explicit/disconnected boundaries. */
+  private clearVoiceSourceState(): void {
+    this.activeVoice = undefined
+    this.realtimeConversationId = undefined
+    this.realtimeTurnEmitted = false
+  }
+
   private emit(event: BackendEvent): void {
+    // Character events are stamped at the Main transport boundary rather
+    // than accepted from raw fixtures. This mirrors RealBackend and keeps a
+    // queued event from source A distinguishable after explicit source B
+    // connects; raw wire schemas remain unchanged.
+    const scoped = this.connectionScopeId
+      && (event.event === 'character.state.changed' || event.event === 'character.catalog.changed')
+      ? { ...event, connectionScopeId: this.connectionScopeId }
+      : event
     // 多槽分发 + 单处理器异常隔离（阶段 7 批次 A）：一个订阅者抛错不中断事件流与其他处理器
     // （real emit 无兜底——devTap 订阅者抛错即断聊天事件流，R2-3/安全 LOW①）
     for (const handler of this.handlers) {
-      try { handler(event) } catch { /* 单处理器异常隔离：不中断事件流与其他处理器 */ }
+      try { handler(scoped) } catch { /* 单处理器异常隔离：不中断事件流与其他处理器 */ }
     }
   }
 
   /** 共享单调信封（Minor 11）：全部 Mock 事件（replay + 语音/TTS）复用同一计数器打 eventId/sequence */
   private stamp(): { eventId: string; sequence: number } {
     return { eventId: this.idFactory(), sequence: this.nextSequence++ }
+  }
+
+  /** Synthetic connection id for the renderer's session fence. */
+  private connectionIdForState(): string {
+    return `${MOCK_SESSION.sessionId}-${this.connectionIncarnation}`
   }
 
   /** TTS 活动判定（D-P13）：无独立标志，`!!activeSelection.ttsProfileId` 即活动 */

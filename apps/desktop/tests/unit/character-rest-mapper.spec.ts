@@ -4,6 +4,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseBackendFeatureFlags,
+  toRestCharacterDraft,
+  toRestCharacterListQuery,
+  toRestCharacterRevisionQuery,
+  toRestCloneCharacterBody,
+  toRestCreateCharacterBody,
+  toRestCreateSessionBody,
+  toRestPreviewCharacterBody,
+  toRestResetEvolutionBody,
+  toRestRollbackCharacterBody,
+  toRestUpdateCharacterBody,
+  toRestUpdateMeBody,
+  toRestValidateCharacterBody,
   toDomainArchiveResult,
   toDomainBindingSnapshot,
   toDomainCharacterList,
@@ -17,7 +29,27 @@ import {
   toDomainRevisionList,
   toDomainValidationResult
 } from '../../src/main/transport/protocol-v2/character-rest-mapper'
-import { RestCharacterDetailSchema } from '../../src/main/transport/protocol-v2/character-rest-schemas'
+import {
+  RestCharacterDraftSchema,
+  RestCharacterArchiveResultSchema,
+  RestCharacterDetailSchema,
+  RestCharacterListQuerySchema,
+  RestCharacterMutationResultSchema,
+  RestCharacterRevisionQuerySchema,
+  RestCharacterPublicStateSchema,
+  RestCharacterRevisionSummarySchema,
+  RestCloneCharacterBodySchema,
+  RestCreateCharacterBodySchema,
+  RestPreviewCharacterBodySchema,
+  RestResetEvolutionBodySchema,
+  RestRollbackCharacterBodySchema,
+  RestUpdateCharacterBodySchema,
+  RestUpdateMeBodySchema,
+  RestValidateCharacterBodySchema,
+  RestUserIdentityProfileSchema
+} from '../../src/main/transport/protocol-v2/character-rest-schemas'
+import { RestCreateSessionBodySchema } from '../../src/main/transport/protocol-v2/rest-schemas'
+import type { CharacterDraft } from '@shared/contracts/character'
 import type { RestCharacterDetail, RestCharacterSummary, RestUserIdentityProfile } from '../../src/main/transport/protocol-v2/character-rest-types'
 
 const rawProfile: RestUserIdentityProfile = {
@@ -55,15 +87,136 @@ const rawDetail: RestCharacterDetail = {
   }
 }
 
+const domainDraft: CharacterDraft = {
+  displayName: 'Elysia',
+  description: '默认同伴',
+  aliases: ['小爱'],
+  promptProfile: {
+    corePersonality: '温柔', relationshipStyle: '同伴', emotionStyle: '',
+    speakingStyle: '口语', conversationInitiative: '', examples: [{ user: '你好', assistant: '你好呀' }]
+  },
+  runtimeDefaults: {
+    voice: { providerId: 'minimax', voiceId: 'voice-1' },
+    emotion: { idleExpressions: ['idle'] },
+    wakeWords: ['你好'],
+    proactive: { enabled: false, intervalSeconds: 0, triggers: [] }
+  },
+  presentation: { themeColor: '#ff88aa' },
+  openingMessage: '欢迎回来'
+}
+
 describe('raw wire schema 先行校验（strict 接纳）', () => {
   it('含 null 可选字段的 raw detail 通过 strict schema', () => {
     expect(RestCharacterDetailSchema.safeParse(rawDetail).success).toBe(true)
+  })
+
+  it('archive userProfile 只允许省略或对象，不接受 null', () => {
+    expect(RestCharacterArchiveResultSchema.safeParse({ character: rawSummary }).success).toBe(true)
+    expect(RestCharacterArchiveResultSchema.safeParse({ character: rawSummary, userProfile: rawProfile }).success).toBe(true)
+    expect(RestCharacterArchiveResultSchema.safeParse({ character: rawSummary, userProfile: null }).success).toBe(false)
   })
   it('presentation 混入绝对路径 → 整帧拒绝（fail-closed）', () => {
     expect(RestCharacterDetailSchema.safeParse({
       ...rawDetail,
       summary: { ...rawSummary, presentation: { live2dModelId: '/models/x.model3.json' } }
     }).success).toBe(false)
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      summary: { ...rawSummary, presentation: { live2dModelId: 'C:/models/x.model3.json' } }
+    }).success).toBe(false)
+  })
+  it('raw 角色时间统一要求 UTC ISO-8601；合法 +00:00 可通过', () => {
+    expect(RestUserIdentityProfileSchema.safeParse({ ...rawProfile, createdAt: 't' }).success).toBe(false)
+    expect(RestUserIdentityProfileSchema.safeParse({
+      ...rawProfile, createdAt: '2026-08-30T00:00:00+00:00', updatedAt: '2026-08-30T00:00:00+00:00'
+    }).success).toBe(true)
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail, summary: { ...rawSummary, updatedAt: '2026-08-30' }
+    }).success).toBe(false)
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail, current: { ...rawDetail.current, createdAt: '2026-02-30T00:00:00Z' }
+    }).success).toBe(false)
+    expect(RestCharacterRevisionSummarySchema.safeParse({
+      revision: 1, checksum: 'sha256:a', createdBy: 'system', createdAt: '2026-08-30T00:00:00+08:00'
+    }).success).toBe(false)
+    expect(RestCharacterPublicStateSchema.safeParse({
+      characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
+      mood: { label: '平静', intensity: 0.2, updatedAt: 't' }, proactiveEnabled: false,
+      updatedAt: '2026-08-30T00:00:00Z'
+    }).success).toBe(false)
+    expect(RestCharacterPublicStateSchema.safeParse({
+      characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
+      mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00+00:00' },
+      lastInteractionAt: '2026-08-30T00:00:00+00:00', proactiveEnabled: false,
+      updatedAt: '2026-08-30T00:00:00Z'
+    }).success).toBe(true)
+  })
+  it('raw 角色必填文本拒绝全空白；emotion/initiative 允许空串但字段必须存在', () => {
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      current: {
+        ...rawDetail.current,
+        displayName: ' ',
+        promptProfile: { ...rawDetail.current.promptProfile, emotionStyle: '', conversationInitiative: '' }
+      }
+    }).success).toBe(false)
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      current: {
+        ...rawDetail.current,
+        promptProfile: { ...rawDetail.current.promptProfile, emotionStyle: '', conversationInitiative: '' }
+      }
+    }).success).toBe(true)
+    const withoutEmotion: Record<string, unknown> = { ...rawDetail.current.promptProfile }
+    delete withoutEmotion.emotionStyle
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      current: { ...rawDetail.current, promptProfile: withoutEmotion }
+    }).success).toBe(false)
+    const withoutInitiative: Record<string, unknown> = { ...rawDetail.current.promptProfile }
+    delete withoutInitiative.conversationInitiative
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      current: { ...rawDetail.current, promptProfile: withoutInitiative }
+    }).success).toBe(false)
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      current: {
+        ...rawDetail.current,
+        aliases: ['\t']
+      }
+    }).success).toBe(false)
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail,
+      current: {
+        ...rawDetail.current,
+        promptProfile: { ...rawDetail.current.promptProfile, corePersonality: ' ' }
+      }
+    }).success).toBe(false)
+    expect(RestUserIdentityProfileSchema.safeParse({ ...rawProfile, displayName: '\n' }).success).toBe(false)
+  })
+  it('raw themeColor 只允许安全命名色/函数；CSS 全局关键字与随机字符串拒绝', () => {
+    expect(RestCharacterDetailSchema.safeParse({
+      ...rawDetail, summary: { ...rawSummary, presentation: { themeColor: 'red' } }
+    }).success).toBe(true)
+    for (const themeColor of ['inherit', 'currentColor', 'initial', 'unset', 'revert', 'randombrand', 'url(x)']) {
+      expect(RestCharacterDetailSchema.safeParse({
+        ...rawDetail, summary: { ...rawSummary, presentation: { themeColor } }
+      }).success).toBe(false)
+    }
+  })
+  it('raw stateImpact：preserve 必须 resetFields=[]；reset_evolution 以服务端返回子集为准', () => {
+    const base = {
+      character: rawDetail,
+      stateImpact: { statePolicy: 'preserve' as const, affectedInstances: 2, pendingInstances: 1, resetFields: [] as const }
+    }
+    expect(RestCharacterMutationResultSchema.safeParse(base).success).toBe(true)
+    expect(RestCharacterMutationResultSchema.safeParse({
+      ...base, stateImpact: { ...base.stateImpact, resetFields: ['mood'] }
+    }).success).toBe(false)
+    expect(RestCharacterMutationResultSchema.safeParse({
+      ...base, stateImpact: { ...base.stateImpact, statePolicy: 'reset_evolution', resetFields: ['mood'] }
+    }).success).toBe(true)
   })
 })
 
@@ -99,7 +252,7 @@ describe('raw 分页 → Page（CHAR-FE-02）', () => {
   })
   it('revision 分页映射', () => {
     const page = toDomainRevisionList({
-      items: [{ revision: 1, checksum: 'sha256:a', createdBy: 'system', createdAt: 't' }],
+      items: [{ revision: 1, checksum: 'sha256:a', createdBy: 'system', createdAt: '2026-08-30T00:00:00+00:00' }],
       has_more: false
     })
     expect(page.items[0]).toMatchObject({ revision: 1, checksum: 'sha256:a' })
@@ -153,10 +306,10 @@ describe('state / reset 映射（CHAR-FE-09/15）', () => {
     expect(s).toMatchObject({ characterId: 'ch_elysia', stateVersion: 8, proactiveEnabled: false })
     const withMood = toDomainPublicState({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 8,
-      mood: { label: '开心', intensity: 0.4, updatedAt: 't' },
+      mood: { label: '开心', intensity: 0.4, updatedAt: '2026-08-30T00:00:00+00:00' },
       proactiveEnabled: true, updatedAt: '2026-08-30T00:00:00.000Z'
     })
-    expect(withMood.mood).toEqual({ label: '开心', intensity: 0.4, updatedAt: 't' })
+    expect(withMood.mood).toEqual({ label: '开心', intensity: 0.4, updatedAt: '2026-08-30T00:00:00+00:00' })
   })
   it('reset result：resetFields 以后端返回为权威', () => {
     const r = toDomainResetResult({
@@ -197,5 +350,78 @@ describe('parseBackendFeatureFlags（§5.2：wire === true 才 true）', () => {
       .toEqual({ characterProfiles: false, characterStateStream: false })
     expect(parseBackendFeatureFlags(undefined))
       .toEqual({ characterProfiles: false, characterStateStream: false })
+  })
+})
+
+describe('领域命令 → REST raw 请求矩阵（§6.2/§6.2.1）', () => {
+  it('create/update/validate 展平 draft；preview 保留 draft 包装', () => {
+    const create = toRestCreateCharacterBody({ draft: domainDraft })
+    expect(create).toEqual(toRestCharacterDraft(domainDraft))
+    expect('draft' in create).toBe(false)
+    expect(RestCreateCharacterBodySchema.safeParse(create).success).toBe(true)
+
+    const update = toRestUpdateCharacterBody({
+      characterId: 'ch_elysia', expectedRevision: 2, statePolicy: 'reset_evolution', draft: domainDraft
+    })
+    expect(update).toMatchObject({ expectedRevision: 2, statePolicy: 'reset_evolution', displayName: 'Elysia' })
+    expect('draft' in update).toBe(false)
+    expect(RestUpdateCharacterBodySchema.safeParse(update).success).toBe(true)
+    expect(RestUpdateCharacterBodySchema.safeParse({ ...update, draft: domainDraft }).success).toBe(false)
+
+    const validate = toRestValidateCharacterBody(domainDraft)
+    expect('draft' in validate).toBe(false)
+    expect(RestValidateCharacterBodySchema.safeParse(validate).success).toBe(true)
+
+    const preview = toRestPreviewCharacterBody({ draft: domainDraft, userMessage: '今天过得怎么样？' })
+    expect(preview).toEqual({ draft: create, userMessage: '今天过得怎么样？' })
+    expect(RestPreviewCharacterBodySchema.safeParse(preview).success).toBe(true)
+  })
+
+  it('其他角色命令体只带 wire 所需字段，缺省 optional 不伪造 null', () => {
+    const clone = toRestCloneCharacterBody({ characterId: 'ch_elysia' })
+    expect(clone).toEqual({})
+    expect(RestCloneCharacterBodySchema.safeParse(clone).success).toBe(true)
+    expect(RestCloneCharacterBodySchema.safeParse({ displayName: ' ' }).success).toBe(false)
+
+    const rollback = toRestRollbackCharacterBody({
+      characterId: 'ch_elysia', targetRevision: 1, expectedRevision: 2, statePolicy: 'preserve'
+    })
+    expect(rollback).toEqual({ targetRevision: 1, expectedRevision: 2, statePolicy: 'preserve' })
+    expect(RestRollbackCharacterBodySchema.safeParse(rollback).success).toBe(true)
+
+    const reset = toRestResetEvolutionBody({ characterInstanceId: 'ci_1', expectedStateVersion: 8 })
+    expect(reset).toEqual({ expectedStateVersion: 8 })
+    expect(RestResetEvolutionBodySchema.safeParse(reset).success).toBe(true)
+    expect(toRestUpdateMeBody({ expectedRevision: 1, displayName: '旅人', locale: 'zh-CN', timezone: 'UTC' }))
+      .toEqual({ expectedRevision: 1, displayName: '旅人', locale: 'zh-CN', timezone: 'UTC' })
+    expect(RestUpdateMeBodySchema.safeParse({ expectedRevision: 1, displayName: ' ', locale: 'zh-CN', timezone: 'UTC' }).success).toBe(false)
+  })
+
+  it('query mapper 保持 path/query 分离；session create 的角色字段迁移期可省略', () => {
+    expect(toRestCharacterListQuery({ source: 'custom', status: 'active', search: '爱', cursor: 'c1', limit: 20 }))
+      .toEqual({ source: 'custom', status: 'active', search: '爱', cursor: 'c1', limit: 20 })
+    expect(RestCharacterListQuerySchema.safeParse({ source: 'builtin', limit: 1 }).success).toBe(true)
+    expect(toRestCharacterRevisionQuery({ characterId: 'ch_elysia', cursor: 'r1', limit: 10 }))
+      .toEqual({ cursor: 'r1', limit: 10 })
+    expect(RestCharacterRevisionQuerySchema.safeParse({ cursor: 'r1', limit: 10 }).success).toBe(true)
+    expect(toRestCreateSessionBody({ title: '新会话', characterId: 'ch_elysia' }))
+      .toEqual({ title: '新会话', characterId: 'ch_elysia' })
+    expect(toRestCreateSessionBody({})).toEqual({})
+    expect(RestCreateSessionBodySchema.safeParse({ characterId: ' ' }).success).toBe(false)
+  })
+
+  it('所有 request schema strict 拒绝模糊 revision/未知字段，必填 prompt 字段拒绝空白', () => {
+    const body = toRestCreateCharacterBody({ draft: domainDraft })
+    expect(RestCreateCharacterBodySchema.safeParse({ ...body, revision: 1 }).success).toBe(false)
+    expect(RestCharacterDraftSchema.safeParse({
+      ...body,
+      promptProfile: { ...body.promptProfile, corePersonality: ' ' }
+    }).success).toBe(false)
+    expect(RestCharacterDraftSchema.safeParse({
+      ...body,
+      promptProfile: { ...body.promptProfile, emotionStyle: '', conversationInitiative: '' }
+    }).success).toBe(true)
+    expect(RestResetEvolutionBodySchema.safeParse({ expectedStateVersion: 0 }).success).toBe(false)
+    expect(RestPreviewCharacterBodySchema.safeParse({ draft: body, userMessage: ' ' }).success).toBe(false)
   })
 })

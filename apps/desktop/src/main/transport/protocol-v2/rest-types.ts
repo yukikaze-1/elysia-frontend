@@ -10,6 +10,11 @@ export interface RestSessionSummary {
   /** 多角色 FE-A：会话角色绑定快照（CHAR-FE-06；camelCase 嵌套，legacy 缺省） */
   character?: RestCharacterBindingSnapshot
 }
+/** POST /api/sessions 请求体；迁移期 characterId 可省略，运行时 feature gate 再要求新会话显式选角。 */
+export interface RestCreateSessionBody {
+  title?: string
+  characterId?: string
+}
 export interface RestSessionListResult { sessions: RestSessionSummary[]; has_more: boolean; cursor?: string }
 export interface RestSessionDetail { session: RestSessionSummary; messages: RestMessage[]; active: boolean }
 export interface RestMessage {

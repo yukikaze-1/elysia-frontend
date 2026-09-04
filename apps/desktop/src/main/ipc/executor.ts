@@ -17,6 +17,9 @@ function truncateCodepoints(s: string, max: number): string {
   return out
 }
 
+const REVISION_DETAIL_CODES = new Set(['CHARACTER_REVISION_CONFLICT', 'USER_PROFILE_REVISION_CONFLICT'])
+const VALIDATION_DETAIL_CODES = new Set(['CHARACTER_VALIDATION', 'CHARACTER_RESERVED_CONTENT'])
+
 export interface IpcHandlerOptions { sanitize: MessageSanitizer; channel?: string; logger?: Logger }
 
 export function createIpcHandler<TReq, TRes>(
@@ -45,6 +48,8 @@ export function createIpcHandler<TReq, TRes>(
         const details = (e.details ?? {}) as {
           backendCode?: string; code?: string; retryable?: boolean; requestId?: string
           clientRequestId?: string; retryAfterMs?: number; idempotencyDurable?: boolean
+          currentRevision?: number
+          issues?: unknown
         }
         const backendCode = details.backendCode ?? details.code   // 兼容既有 error 帧路径 details.code
         const error: import('@shared/contracts').IpcErrorBody = { code: e.code, message: msg }
@@ -54,6 +59,22 @@ export function createIpcHandler<TReq, TRes>(
         if (details.clientRequestId) error.clientRequestId = details.clientRequestId
         if (typeof details.retryAfterMs === 'number') error.retryAfterMs = details.retryAfterMs
         if (typeof details.idempotencyDurable === 'boolean') error.idempotencyDurable = details.idempotencyDurable
+        if (backendCode && REVISION_DETAIL_CODES.has(backendCode) && Number.isSafeInteger(details.currentRevision) && (details.currentRevision ?? 0) >= 1) error.currentRevision = details.currentRevision
+        if (backendCode && VALIDATION_DETAIL_CODES.has(backendCode) && Array.isArray(details.issues)) {
+          const issues = details.issues.slice(0, 20).flatMap((item) => {
+            if (!item || typeof item !== 'object') return []
+            const issue = item as Record<string, unknown>
+            if ((issue.severity !== 'error' && issue.severity !== 'warning') || typeof issue.code !== 'string' || typeof issue.path !== 'string' || typeof issue.message !== 'string') return []
+            if (!issue.path.startsWith('/') || issue.path.includes('\\') || issue.path.includes('://') || /^\/[a-zA-Z]:/.test(issue.path)) return []
+            return [{
+              severity: issue.severity as 'error' | 'warning',
+              code: truncateCodepoints(options.sanitize(issue.code), 80),
+              path: truncateCodepoints(options.sanitize(issue.path), 300),
+              message: truncateCodepoints(options.sanitize(issue.message), 500)
+            }]
+          })
+          if (issues.length) error.issues = issues
+        }
         return { ok: false, error }
       }
       // 批次 C（Task 6，F-17/V-28）：ToolServiceError 结构化上提——工具域错误码（GRANT_NOT_FOUND/TOOL_STATE_INVALID/

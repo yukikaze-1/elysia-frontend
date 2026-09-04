@@ -157,12 +157,35 @@ describe('RealBackend TTS audio_* 帧缓冲 + sink（Task 5）', () => {
 
   it('无 sink → TTS_MEDIA_SINK_MISSING 告警 + 不 emit ready（缓冲已删）', async () => {
     const { ws, sink, warnings, events } = await makeBackend({ getTtsMedia: () => undefined })
-    ws.push({ type: 'audio_start', stream_id: 5, format: 'wav' })
+    ws.push({
+      type: 'audio_start', stream_id: 5, format: 'wav',
+      conversationId: 'conv-1', generationId: 'gen-1', characterId: 'ch_elysia',
+      characterInstanceId: 'ci-1', characterRevision: 2
+    })
     ws.push({ type: 'audio', stream_id: 5, seq: 0, data: Buffer.from([1]).toString('base64'), is_final: false })
     ws.push({ type: 'audio_end', stream_id: 5, format: 'wav' })
     expect(sink.calls).toHaveLength(0)
     expect(readyEventsOf(events)).toHaveLength(0)
     expect(warnings.some((w) => w.code === 'TTS_MEDIA_SINK_MISSING')).toBe(true)
+    // 丢弃后 identity 也必须释放；后续取消不能继承已丢弃流的角色。
+    ws.push({ type: 'audio_cancelled', stream_id: 5 })
+    expect(events.filter((e) => e.event === 'audio.session.cancelled').at(-1)).not.toMatchObject({ characterId: 'ch_elysia' })
+  })
+
+  it('sink 写入抛错 → 丢弃 ready 且释放 audio identity', async () => {
+    const { ws, events } = await makeBackend({
+      getTtsMedia: () => ({ putTtsAudio: () => { throw new Error('media write failed') } }) as TtsMediaSink
+    })
+    ws.push({
+      type: 'audio_start', stream_id: 6, format: 'wav',
+      conversationId: 'conv-1', generationId: 'gen-1', characterId: 'ch_elysia',
+      characterInstanceId: 'ci-1', characterRevision: 2
+    })
+    ws.push({ type: 'audio', stream_id: 6, seq: 0, data: Buffer.from([1]).toString('base64'), is_final: false })
+    ws.push({ type: 'audio_end', stream_id: 6, format: 'wav' })
+    expect(readyEventsOf(events)).toHaveLength(0)
+    ws.push({ type: 'audio_cancelled', stream_id: 6 })
+    expect(events.filter((e) => e.event === 'audio.session.cancelled').at(-1)).not.toMatchObject({ characterId: 'ch_elysia' })
   })
 
   it('audio_end 无缓冲 → AUDIO_END_NO_BUFFER 告警，不崩', async () => {
@@ -170,5 +193,20 @@ describe('RealBackend TTS audio_* 帧缓冲 + sink（Task 5）', () => {
     ws.push({ type: 'audio_end', stream_id: 999, format: 'wav' })
     expect(sink.calls).toHaveLength(0)
     expect(warnings.some((w) => w.code === 'AUDIO_END_NO_BUFFER')).toBe(true)
+  })
+
+  it('同 stream 重开 legacy 流不继承上一段角色 identity', async () => {
+    const { ws, events } = await makeBackend()
+    ws.push({
+      type: 'audio_start', stream_id: 8, format: 'wav',
+      conversationId: 'conv-1', generationId: 'gen-1', characterId: 'ch_elysia',
+      characterInstanceId: 'ci-1', characterRevision: 2
+    })
+    ws.push({ type: 'audio_cancelled', stream_id: 8 })
+    ws.push({ type: 'audio_start', stream_id: 8, format: 'wav' })
+    const starts = startedEventsOf(events).filter((e) => e.streamId === 8)
+    expect(starts).toHaveLength(2)
+    expect(starts[0]).toMatchObject({ characterId: 'ch_elysia', characterRevision: 2 })
+    expect(starts[1]).not.toHaveProperty('characterId')
   })
 })

@@ -68,6 +68,25 @@ export const IpcChannels = {
   diagnosticsClearLogs: 'diagnostics:clear-logs',         // 阶段 7 批次 A：清理日志（invoke）
   diagnosticsExport: 'diagnostics:export',                 // 阶段 7 批次 A：导出脱敏诊断包（invoke）
   diagnosticsLastCrash: 'diagnostics:last-crash',    // 阶段 7 批次 B：读取最近 Renderer 崩溃 marker（invoke，一次性——读后清空）
+  // —— 多角色角色域（不接 RealBackend REST；Mock/contract fake 可用）——
+  profileGetMe: 'profile:get-me',
+  // —— 多角色身份与角色操作；具名通道，仍不接 RealBackend REST ——
+  profileUpdateMe: 'profile:update-me',
+  charactersList: 'characters:list',
+  charactersGet: 'characters:get',
+  charactersCreate: 'characters:create',
+  charactersUpdate: 'characters:update',
+  charactersClone: 'characters:clone',
+  charactersArchive: 'characters:archive',
+  charactersRollback: 'characters:rollback',
+  charactersValidate: 'characters:validate',
+  charactersPreview: 'characters:preview',
+  charactersListRevisions: 'characters:list-revisions',
+  characterInstancesGetState: 'character-instances:get-state',
+  characterDraftsList: 'character-drafts:list',
+  characterDraftsGet: 'character-drafts:get',
+  characterDraftsSave: 'character-drafts:save',
+  characterDraftsDelete: 'character-drafts:delete',
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
@@ -89,6 +108,8 @@ export interface IpcErrorBody {
   clientRequestId?: string
   retryAfterMs?: number
   idempotencyDurable?: boolean
+  currentRevision?: number
+  issues?: Array<{ severity: 'error' | 'warning'; code: string; path: string; message: string }>
 }
 
 /** IPC 结果信封：ok:true 带 data；ok:false 带公开错误 */

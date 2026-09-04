@@ -12,19 +12,79 @@ export const RawSegmentKindSchema = z.enum([
 // —— 多角色 FE-A：会话/消息内嵌角色绑定快照 wire schema（CHAR-FE-06/07）——
 // raw-schemas 被裸 Node ESM 加载（check:contract），运行时导入只允许 zod/node 内建 →
 // isSafeRegistryId/isSafeThemeColor 自包含镜像副本，与 shared/schemas/character.ts、
-// rest-schemas.ts 三处同形（任意一处修改需同步）。
+// character-rest-schemas.ts、rest-schemas.ts 四处同形（任意一处修改需同步）。
 function isSafeRegistryId(v: string): boolean {
-  if (v.length === 0 || v.length > 200) return false
+  if (v.trim().length === 0 || v.length > 200) return false
   if (v.startsWith('/') || v.startsWith('\\')) return false
-  if (v.includes('://') || v.includes(':\\')) return false
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(v)) return false
   if (v.includes('..')) return false
   return true
 }
+
+/** character-contract-v1 时间：仅接受 UTC ISO-8601 的 Z / +00:00 形式。 */
+function isUtcIsoTimestamp(v: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,9})?(Z|\+00:00)$/.exec(v)
+  if (!match) return false
+
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const hour = Number(match[4])
+  const minute = Number(match[5])
+  const second = Number(match[6])
+  const milliseconds = Number(`${(match[7] ?? '').slice(1)}000`.slice(0, 3)) || 0
+  if (year < 1 || month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59) return false
+
+  const date = new Date(0)
+  date.setUTCFullYear(year, month - 1, day)
+  date.setUTCHours(hour, minute, second, milliseconds)
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day &&
+    date.getUTCHours() === hour &&
+    date.getUTCMinutes() === minute &&
+    date.getUTCSeconds() === second &&
+    date.getUTCMilliseconds() === milliseconds
+}
+
+const utcIsoTimestamp = () => z.string().refine(isUtcIsoTimestamp, '时间必须是 UTC ISO-8601（Z 或 +00:00）')
+const nonBlankText = (max?: number) => {
+  const base = max === undefined ? z.string().min(1) : z.string().min(1).max(max)
+  return base.refine((v) => v.trim().length > 0, '文本不能全为空白')
+}
+const rawCharacterEventIdentityFields = {
+  conversationId: nonBlankText().optional(),
+  generationId: nonBlankText().optional(),
+  characterId: nonBlankText().optional(),
+  characterInstanceId: nonBlankText().optional(),
+  characterRevision: z.number().int().min(1).optional()
+}
+
+const SAFE_CSS_NAMED_COLORS = new Set([
+  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black', 'blanchedalmond',
+  'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse', 'chocolate', 'coral', 'cornflowerblue',
+  'cornsilk', 'crimson', 'cyan', 'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgrey', 'darkgreen',
+  'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon',
+  'darkseagreen', 'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet', 'deeppink',
+  'deepskyblue', 'dimgray', 'dimgrey', 'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia',
+  'gainsboro', 'ghostwhite', 'gold', 'goldenrod', 'gray', 'grey', 'green', 'greenyellow', 'honeydew', 'hotpink',
+  'indianred', 'indigo', 'ivory', 'khaki', 'lavender', 'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue',
+  'lightcoral', 'lightcyan', 'lightgoldenrodyellow', 'lightgray', 'lightgrey', 'lightgreen', 'lightpink',
+  'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey', 'lightsteelblue',
+  'lightyellow', 'lime', 'limegreen', 'linen', 'magenta', 'maroon', 'mediumaquamarine', 'mediumblue',
+  'mediumorchid', 'mediumpurple', 'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise',
+  'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose', 'moccasin', 'navajowhite', 'navy', 'oldlace',
+  'olive', 'olivedrab', 'orange', 'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise',
+  'palevioletred', 'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple', 'rebeccapurple',
+  'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell', 'sienna',
+  'silver', 'skyblue', 'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal',
+  'thistle', 'tomato', 'turquoise', 'violet', 'wheat', 'white', 'whitesmoke', 'yellow', 'yellowgreen', 'transparent'
+])
 function isSafeThemeColor(v: string): boolean {
   if (v.length === 0 || v.length > 64) return false
   if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true
   if (/^(rgba?|hsla?)\(\s*[\d.,%\s]+\s*\)$/.test(v)) return true
-  return /^[a-z]+$/i.test(v)
+  return SAFE_CSS_NAMED_COLORS.has(v.toLowerCase())
 }
 const RawCharacterPresentationSchema = z.object({
   avatarAssetId: z.string().refine(isSafeRegistryId, '注册表 ID 不得为路径/URL').nullable().optional(),
@@ -32,10 +92,10 @@ const RawCharacterPresentationSchema = z.object({
   themeColor: z.string().refine(isSafeThemeColor, '颜色仅支持 hex/rgb(a)/hsl(a)/命名色').nullable().optional()
 }).strict()
 const RawCharacterBindingSnapshotSchema = z.object({
-  characterId: z.string().min(1),
-  characterInstanceId: z.string().min(1),
+  characterId: nonBlankText(),
+  characterInstanceId: nonBlankText(),
   characterRevision: z.number().int().min(1),
-  displayName: z.string().min(1),
+  displayName: nonBlankText(64),
   presentation: RawCharacterPresentationSchema
 }).strict()
 
@@ -101,7 +161,8 @@ const RawServerInfoSchema = z.object({
 const RawExpressionSchema = z.object({
   type: z.literal('expression'),
   expression: z.string().min(1),
-  intensity: z.number().optional()
+  intensity: z.number().optional(),
+  ...rawCharacterEventIdentityFields
 }).strict()
 
 const RawGenerationStartedSchema = z.object({
@@ -112,8 +173,8 @@ const RawGenerationStartedSchema = z.object({
   requestId: z.string().optional(),
   model: z.string().optional(),
   // 多角色 FE-A：generation 角色身份（CHAR-FE-08；迁移期 optional）
-  characterId: z.string().min(1).optional(),
-  characterInstanceId: z.string().min(1).optional(),
+  characterId: nonBlankText().optional(),
+  characterInstanceId: nonBlankText().optional(),
   characterRevision: z.number().int().min(1).optional()
 }).strict()
 
@@ -160,8 +221,8 @@ const RawGenerationCompletedSchema = z.object({
   completeness: z.string().optional(),
   conversationId: z.string().optional(),
   conversationUsage: RawConversationUsageSchema.optional(),
-  characterId: z.string().min(1).optional(),
-  characterInstanceId: z.string().min(1).optional(),
+  characterId: nonBlankText().optional(),
+  characterInstanceId: nonBlankText().optional(),
   characterRevision: z.number().int().min(1).optional()
 }).strict()
 
@@ -175,8 +236,8 @@ const RawGenerationFailedSchema = z.object({
   retryable: z.boolean(),
   details: z.record(z.string(), z.unknown()),
   conversationId: z.string().optional(),
-  characterId: z.string().min(1).optional(),
-  characterInstanceId: z.string().min(1).optional(),
+  characterId: nonBlankText().optional(),
+  characterInstanceId: nonBlankText().optional(),
   characterRevision: z.number().int().min(1).optional()
 }).strict()
 
@@ -339,7 +400,8 @@ const RawAudioStartSchema = z.object({
   stream_id: z.number().int(),
   format: z.enum(['wav', 'mp3']),
   sampleRate: z.number().int().optional(),
-  durationMs: z.number().int().optional()
+  durationMs: z.number().int().optional(),
+  ...rawCharacterEventIdentityFields
 }).strict()
 /** 音频流 chunk（audio；data 为 base64 字符串） */
 const RawAudioChunkSchema = z.object({
@@ -370,7 +432,8 @@ const RawLive2DDirectiveSchema = z.object({
   motion: z.string().optional(),
   state: z.enum(['idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised']).optional(),
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  durationMs: z.number().int().min(0).max(30000).optional()
+  durationMs: z.number().int().min(0).max(30000).optional(),
+  ...rawCharacterEventIdentityFields
 }).strict()
 
 // —— 阶段 6 批次 A（F-6-02）：工具双轨 wire schema（镜像 frontend_contract/contract.raw.ts；.strict() 未知字段整帧拒）——
@@ -443,21 +506,21 @@ const RawToolStatusSchema = z.object({
 // —— 多角色 FE-A（§7.1）：角色状态/目录变更帧 schema（strict 未知字段整帧拒；state 为完整公开视图）——
 const RawCharacterStateViewSchema = z.object({
   mood: z.object({
-    label: z.string().min(1),
+    label: nonBlankText(100),
     intensity: z.number().min(0).max(1),
-    updatedAt: z.string().min(1)
+    updatedAt: utcIsoTimestamp()
   }).strict().nullable().optional(),
-  currentActivity: z.string().nullable().optional(),
-  lastInteractionAt: z.string().min(1).nullable().optional(),
+  currentActivity: z.string().max(200).nullable().optional(),
+  lastInteractionAt: utcIsoTimestamp().nullable().optional(),
   proactiveEnabled: z.boolean(),
-  updatedAt: z.string().min(1)
+  updatedAt: utcIsoTimestamp()
 }).strict()
 
 const RawCharacterStateChangedSchema = z.object({
   type: z.literal('character.state.changed'),
-  conversationId: z.string().min(1),
-  characterId: z.string().min(1),
-  characterInstanceId: z.string().min(1),
+  conversationId: nonBlankText(),
+  characterId: nonBlankText(),
+  characterInstanceId: nonBlankText(),
   characterRevision: z.number().int().min(1),
   stateVersion: z.number().int().min(1),
   state: RawCharacterStateViewSchema
@@ -465,10 +528,10 @@ const RawCharacterStateChangedSchema = z.object({
 
 const RawCharacterCatalogChangedSchema = z.object({
   type: z.literal('character.catalog.changed'),
-  characterId: z.string().min(1),
+  characterId: nonBlankText(),
   currentRevision: z.number().int().min(1),
   status: z.enum(['active', 'archived']),
-  updatedAt: z.string().min(1)
+  updatedAt: utcIsoTimestamp()
 }).strict()
 
 export const RawFrameSchema = z.discriminatedUnion('type', [

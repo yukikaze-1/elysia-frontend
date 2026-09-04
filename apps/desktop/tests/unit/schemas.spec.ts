@@ -51,9 +51,9 @@ describe('事件 Schema 校验', () => {
     expect(parseBackendEvent(bad).success).toBe(false)
   })
 
-  it('未知可选字段被兼容(不报错)', () => {
+  it('generation.started 未知顶层字段 fail-closed', () => {
     const bad = { ...validStarted, traceId: 'x', extra: { a: 1 } }
-    expect(parseBackendEvent(bad).success).toBe(true)
+    expect(parseBackendEvent(bad).success).toBe(false)
   })
 
   it('父完成事件带 usage/model/emotion 通过校验', () => {

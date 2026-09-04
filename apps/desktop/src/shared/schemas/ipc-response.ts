@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
-import { BackendFeatureFlagsSchema, CharacterBindingSnapshotSchema, CharacterGenerationRefSchema } from './character'
+import { BackendFeatureFlagsSchema, CharacterBindingSnapshotSchema, CharacterGenerationRefSchema, CharacterIdSchema } from './character'
 import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { CreateConversationInput } from '@shared/contracts/conversation'
 import { DIAGNOSTICS_PREVIEW_MAX, DIAGNOSTICS_TYPE_MAX } from '@shared/contracts'
 
 /**
@@ -15,11 +16,12 @@ export const ConnectionStateSchema = z.object({
   serverUrl: z.string().optional(),
   protocolVersion: z.string().optional(),
   serverVersion: z.string().optional(),
+  connectionScopeId: z.string().min(1).optional(),
   connectionId: z.string().optional(),
   activeConversationId: z.string().optional(),
   lastError: z.string().optional(),
   features: BackendFeatureFlagsSchema.optional()   // 多角色 FE-A（§5.2）：仅 connected 时由 Main 填充
-})
+}).strict()
 
 export const BackendSessionSchema = z.object({
   sessionId: z.string().min(1),
@@ -158,7 +160,7 @@ export const MessageSchema = z.object({
   emotion: z.string().optional(),
   stickerId: z.string().optional(),   // 阶段 3 G4：用户贴图消息 wire 表示（可选字段，D8）
   character: CharacterGenerationRefSchema.optional()   // 多角色 FE-A：消息角色审计快照（不镜像则 preload parse 静默剥字段，D6B-10 先例）
-})
+}).strict()
 
 export const ConversationSchema = z.object({
   id: z.string().min(1),
@@ -166,10 +168,16 @@ export const ConversationSchema = z.object({
   updatedAt: z.string(),
   preview: z.string().optional(),
   character: CharacterBindingSnapshotSchema.optional()   // 多角色 FE-A：会话角色绑定摘要（legacy 缺省）
-})
+}).strict()
+
+/** 新建会话输入：characterId 在迁移期 optional；character_profiles=true 的必填门由运行时负责。 */
+export const CreateConversationInputSchema: z.ZodType<CreateConversationInput> = z.object({
+  title: z.string().max(200).optional(),
+  characterId: CharacterIdSchema.optional()
+}).strict()
 
 export const PageSchema = <T extends z.ZodType>(itemSchema: T) =>
-  z.object({ items: z.array(itemSchema), hasMore: z.boolean(), nextCursor: z.string().optional() })
+  z.object({ items: z.array(itemSchema), hasMore: z.boolean(), nextCursor: z.string().optional() }).strict()
 
 export const MessagePageSchema = PageSchema(MessageSchema)
 

@@ -8,6 +8,24 @@ import type {
   AudioCancelInput,
   BackendEvent,
   BackendSession,
+  CharacterDetail,
+  CharacterArchiveResult,
+  CharacterDraft,
+  CharacterDraftSummary,
+  CharacterListQuery,
+  CharacterPublicState,
+  CharacterRevisionQuery,
+  CharacterRevisionSummary,
+  CharacterSummary,
+  CharacterMutationResult,
+  CharacterPreviewCommand,
+  CharacterPreviewResult,
+  CharacterValidationResult,
+  PersistedCharacterDraft,
+  CloneCharacterCommand,
+  CreateCharacterCommand,
+  RollbackCharacterCommand,
+  UpdateCharacterCommand,
   CacheMessagesInput,
   CancelGenerationInput,
   ChatHistoryPage,
@@ -50,6 +68,8 @@ import type {
   TtsPreviewCommand,
   TtsPreviewOutcome,
   TtsVoiceListResult,
+  UpdateUserIdentityCommand,
+  UserIdentityProfile,
   UpsertModelProfileCommand,
   VoiceCommitInput,
   VoiceDiscardInput,
@@ -81,6 +101,25 @@ declare global {
       renameConversation(input: { conversationId: string; title: string }): Promise<Conversation>
       deleteConversation(id: string): Promise<void>
       getConnectionState(): Promise<ConnectionState>
+      // —— 多角色角色面 ——
+      getMe(): Promise<UserIdentityProfile>
+      updateMe(input: UpdateUserIdentityCommand): Promise<UserIdentityProfile>
+      listCharacters(input?: CharacterListQuery): Promise<Page<CharacterSummary>>
+      getCharacter(characterId: string): Promise<CharacterDetail>
+      listCharacterRevisions(input: CharacterRevisionQuery): Promise<Page<CharacterRevisionSummary>>
+      getCharacterState(characterInstanceId: string): Promise<CharacterPublicState>
+      createCharacter(input: CreateCharacterCommand): Promise<CharacterDetail>
+      updateCharacter(input: UpdateCharacterCommand): Promise<CharacterMutationResult>
+      cloneCharacter(input: CloneCharacterCommand): Promise<CharacterDetail>
+      archiveCharacter(characterId: string): Promise<CharacterArchiveResult>
+      rollbackCharacter(input: RollbackCharacterCommand): Promise<CharacterMutationResult>
+      validateCharacter(draft: CharacterDraft): Promise<CharacterValidationResult>
+      previewCharacter(input: CharacterPreviewCommand): Promise<CharacterPreviewResult>
+      // —— FE-D2：未提交角色编辑草稿（list 仅摘要；完整正文按 key 获取）——
+      listCharacterDrafts(): Promise<CharacterDraftSummary[]>
+      getCharacterDraft(key: string): Promise<PersistedCharacterDraft | undefined>
+      saveCharacterDraft(input: PersistedCharacterDraft): Promise<void>
+      deleteCharacterDraft(key: string): Promise<void>
       // —— 阶段 3 G4 历史查看器/表情面 ——
       queryChatHistory(input: ChatHistoryQuery): Promise<ChatHistoryPage>
       getMessageContext(input: MessageContextQuery): Promise<MessagePage>

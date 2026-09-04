@@ -1,0 +1,247 @@
+import { describe, expect, it, vi } from 'vitest'
+import { CyreneError, CyreneErrorCode } from '../../src/shared/errors'
+import type { CharacterServiceBackendPort } from '../../src/main/characters/character-backend-port'
+import { CharacterService, CHARACTER_SERVICE_BACKEND_CODES } from '../../src/main/characters/character-service'
+import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
+
+function makePort(): { port: CharacterServiceBackendPort; mock: MockCharacterBackend } {
+  const mock = new MockCharacterBackend()
+  return {
+    mock,
+    port: {
+      getMe: vi.fn(() => mock.getMe()),
+      updateMe: vi.fn((input) => mock.updateMe(input)),
+      listCharacters: vi.fn((input) => mock.listCharacters(input)),
+      getCharacter: vi.fn((id) => mock.getCharacter(id)),
+      createCharacter: vi.fn((input) => mock.createCharacter(input)),
+      updateCharacter: vi.fn((input) => mock.updateCharacter(input)),
+      cloneCharacter: vi.fn((input) => mock.cloneCharacter(input)),
+      archiveCharacter: vi.fn((id) => mock.archiveCharacter(id)),
+      rollbackCharacter: vi.fn((input) => mock.rollbackCharacter(input)),
+      validateCharacter: vi.fn((draft) => mock.validateCharacter(draft)),
+      previewCharacter: vi.fn((input) => mock.previewCharacter(input)),
+      listCharacterRevisions: vi.fn((input) => mock.listCharacterRevisions(input)),
+      getCharacterState: vi.fn((id) => mock.getCharacterState(id))
+    }
+  }
+}
+
+describe('CharacterService 角色编排', () => {
+  it('能力缺省/关闭时稳定拒绝，不调用后端端口', async () => {
+    const { port } = makePort()
+    const service = new CharacterService({ backend: port, getFeatures: () => undefined })
+    await expect(service.getMe()).rejects.toMatchObject({ code: CyreneErrorCode.NOT_IMPLEMENTED })
+    try {
+      await service.listCharacters()
+    } catch (error) {
+      expect(error).toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.profilesUnavailable } })
+    }
+    expect(port.getMe).not.toHaveBeenCalled()
+    expect(port.listCharacters).not.toHaveBeenCalled()
+  })
+
+  it('FE-D1 mutation 同对象互斥、写后旧 GET 不复活，preview 连接迟到拒绝', async () => {
+    let epoch = 1
+    const { port, mock } = makePort()
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, getConnectionEpoch: () => epoch })
+    const created = await service.createCharacter({
+      draft: {
+        displayName: 'D1', description: '', aliases: [],
+        promptProfile: { corePersonality: '真诚', relationshipStyle: '朋友', emotionStyle: '', speakingStyle: '自然', conversationInitiative: '', examples: [] },
+        runtimeDefaults: { voice: {}, emotion: { idleExpressions: [] }, wakeWords: ['D1'], proactive: { enabled: false, intervalSeconds: 3600, triggers: [] } },
+        presentation: {}
+      }
+    })
+    let resolveOld: ((value: typeof created) => void) | undefined
+    port.getCharacter = vi.fn(() => new Promise<typeof created>((resolve) => { resolveOld = resolve }))
+    const oldRead = service.getCharacter(created.summary.characterId)
+    await Promise.resolve()
+    await Promise.resolve()
+    const updateInput = {
+      characterId: created.summary.characterId, expectedRevision: 1, statePolicy: 'preserve' as const,
+      draft: { ...created.current, displayName: 'D1-v2' }
+    }
+    delete (updateInput.draft as { characterId?: string }).characterId
+    delete (updateInput.draft as { revision?: number }).revision
+    for (const key of ['schemaVersion', 'checksum', 'compilerVersion', 'createdBy', 'createdAt'] as const) delete (updateInput.draft as Record<string, unknown>)[key]
+    const updated = await service.updateCharacter(updateInput)
+    resolveOld?.(created)
+    await oldRead
+    vi.mocked(port.getCharacter).mockImplementationOnce(() => mock.getCharacter(created.summary.characterId))
+    expect((await service.getCharacter(created.summary.characterId)).current.revision).toBe(updated.character.current.revision)
+    expect(port.getCharacter).toHaveBeenCalledTimes(2)
+
+    let release: (() => void) | undefined
+    vi.mocked(port.updateCharacter).mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve(updated) }))
+    const first = service.updateCharacter({ ...updateInput, expectedRevision: 2 })
+    await expect(service.archiveCharacter(created.summary.characterId)).rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.mutationInProgress } })
+    await Promise.resolve()
+    await Promise.resolve()
+    release?.(); await first
+
+    let resolvePreview: ((value: Awaited<ReturnType<MockCharacterBackend['previewCharacter']>>) => void) | undefined
+    vi.mocked(port.previewCharacter).mockImplementationOnce(() => new Promise((resolve) => { resolvePreview = resolve }))
+    const preview = service.previewCharacter({ draft: updateInput.draft, userMessage: 'test' })
+    await Promise.resolve()
+    await Promise.resolve()
+    epoch = 2
+    resolvePreview?.({ ephemeral: true, reply: 'late' })
+    await expect(preview).rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.staleConnection } })
+  })
+
+  it('同键 GET 去重并在 TTL 内命中缓存，同时不把调用方改写带回缓存', async () => {
+    const deferred: { resolve: (value: Awaited<ReturnType<MockCharacterBackend['getMe']>>) => void } = {} as never
+    const { port, mock } = makePort()
+    port.getMe = vi.fn(() => new Promise<Awaited<ReturnType<MockCharacterBackend['getMe']>>>(
+      (resolve) => { deferred.resolve = resolve }
+    ))
+    let now = 1000
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, now: () => now, cacheTtlMs: 100 })
+
+    const first = service.getMe()
+    const second = service.getMe()
+    await Promise.resolve()
+    expect(port.getMe).toHaveBeenCalledTimes(1)
+    const source = await mock.getMe()
+    deferred.resolve(source)
+    const a = await first
+    const b = await second
+    expect(a).toEqual(b)
+    a.displayName = '调用方改写'
+    const cached = await service.getMe()
+    expect(cached.displayName).toBe(source.displayName)
+    expect(port.getMe).toHaveBeenCalledTimes(1)
+
+    now += 101
+    vi.mocked(port.getMe).mockImplementationOnce(() => mock.getMe())
+    await service.getMe()
+    expect(port.getMe).toHaveBeenCalledTimes(2)
+  })
+
+  it('连接 epoch 变化时丢弃迟到响应，旧结果既不返回也不进入缓存', async () => {
+    let epoch = 1
+    let resolveOld: ((value: Awaited<ReturnType<MockCharacterBackend['getMe']>>) => void) | undefined
+    const { port, mock } = makePort()
+    port.getMe = vi.fn(() => new Promise<Awaited<ReturnType<MockCharacterBackend['getMe']>>>(
+      (resolve) => { resolveOld = resolve }
+    ))
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, getConnectionEpoch: () => epoch })
+    const old = service.getMe()
+    await Promise.resolve()
+    // 注入 provider 后 setter 不得永久遮蔽真实 provider；后续 provider 推进仍应失效旧请求。
+    service.setConnectionEpoch(99)
+    epoch = 2
+    resolveOld?.(await mock.getMe())
+    await expect(old).rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.staleConnection } })
+
+    port.getMe = vi.fn(() => mock.getMe())
+    const current = await service.getMe()
+    expect(current.userId).toBe('user-mock')
+    expect(port.getMe).toHaveBeenCalledTimes(1)
+  })
+
+  it('clearCache 使在途结果不再复用或回填缓存，但不伪装成连接变化错误', async () => {
+    const { port, mock } = makePort()
+    const resolvers: Array<(value: Awaited<ReturnType<MockCharacterBackend['getMe']>>) => void> = []
+    port.getMe = vi.fn(() => new Promise<Awaited<ReturnType<MockCharacterBackend['getMe']>>>((resolve) => { resolvers.push(resolve) }))
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features })
+
+    const oldRead = service.getMe()
+    await Promise.resolve()
+    service.clearCache()
+
+    const oldValue = await mock.getMe()
+    oldValue.displayName = '旧在途结果'
+    resolvers[0](oldValue)
+    await expect(oldRead).resolves.toMatchObject({ displayName: '旧在途结果' })
+
+    // 旧结果已返回但未回填 cache；清除后的首次读取必须再次触碰 backend。
+    const freshRead = service.getMe()
+    await Promise.resolve()
+    expect(port.getMe).toHaveBeenCalledTimes(2)
+    const freshValue = await mock.getMe()
+    freshValue.displayName = '清除后新结果'
+    resolvers[1](freshValue)
+    await expect(freshRead).resolves.toMatchObject({ displayName: '清除后新结果' })
+
+    const cached = await service.getMe()
+    expect(cached.displayName).toBe('清除后新结果')
+    expect(port.getMe).toHaveBeenCalledTimes(2)
+  })
+
+  it('角色 mutation 不会因另一个角色的 opaque cursor 文本而失效 revision cache', async () => {
+    const { port, mock } = makePort()
+    const draft = (name: string) => ({
+      displayName: name, description: '', aliases: [],
+      promptProfile: { corePersonality: '真诚', relationshipStyle: '朋友', emotionStyle: '', speakingStyle: '自然', conversationInitiative: '', examples: [] },
+      runtimeDefaults: { voice: {}, emotion: { idleExpressions: [] }, wakeWords: [name], proactive: { enabled: false, intervalSeconds: 3600, triggers: [] } },
+      presentation: {}
+    })
+    const target = await mock.createCharacter({ draft: draft('target') })
+    const other = await mock.createCharacter({ draft: draft('other') })
+    port.listCharacterRevisions = vi.fn(() => Promise.resolve({ items: [], hasMore: false }))
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features })
+    const query = { characterId: other.summary.characterId, cursor: target.summary.characterId }
+    await service.listCharacterRevisions(query)
+    await service.listCharacterRevisions(query)
+    expect(port.listCharacterRevisions).toHaveBeenCalledTimes(1)
+
+    await service.archiveCharacter(target.summary.characterId)
+    await service.listCharacterRevisions(query)
+    expect(port.listCharacterRevisions).toHaveBeenCalledTimes(1)
+  })
+
+  it('后端 CyreneError 的 code 与 backendCode 原样保留', async () => {
+    const { port, mock } = makePort()
+    const backendError = new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '后端拒绝', { backendCode: 'CHARACTER_BUSY' })
+    port.getCharacter = vi.fn(() => Promise.reject(backendError))
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features })
+    await expect(service.getCharacter('builtin/elysia')).rejects.toBe(backendError)
+  })
+
+  it('updateMe 使用 capability/epoch 门并在成功后精确失效 profile/catalog 缓存', async () => {
+    const { port, mock } = makePort()
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features })
+    const profile = await service.getMe()
+    await service.listCharacters({ status: 'active' })
+    await service.getCharacter('builtin/elysia')
+    expect(port.getMe).toHaveBeenCalledTimes(1)
+    expect(port.listCharacters).toHaveBeenCalledTimes(1)
+    expect(port.getCharacter).toHaveBeenCalledTimes(1)
+
+    const updated = await service.updateMe({
+      expectedRevision: profile.revision,
+      displayName: '新的旅行者',
+      locale: profile.locale,
+      timezone: profile.timezone,
+      defaultCharacterId: 'builtin/cyrene'
+    })
+    expect(updated).toMatchObject({ displayName: '新的旅行者', revision: profile.revision + 1, defaultCharacterId: 'builtin/cyrene' })
+
+    await service.getMe()
+    await service.listCharacters({ status: 'active' })
+    await service.getCharacter('builtin/elysia')
+    expect(port.getMe).toHaveBeenCalledTimes(2)
+    expect(port.listCharacters).toHaveBeenCalledTimes(2)
+    expect(port.getCharacter).toHaveBeenCalledTimes(1)
+  })
+
+  it('updateMe 在能力关闭或连接世代变化时拒绝且不伪成功', async () => {
+    const { port, mock } = makePort()
+    const profile = await mock.getMe()
+    const command = { expectedRevision: profile.revision, displayName: profile.displayName, locale: profile.locale, timezone: profile.timezone }
+    const disabled = new CharacterService({ backend: port, getFeatures: () => undefined })
+    await expect(disabled.updateMe(command)).rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.profilesUnavailable } })
+    expect(port.updateMe).not.toHaveBeenCalled()
+
+    let epoch = 1
+    let resolveWrite: ((value: typeof profile) => void) | undefined
+    port.updateMe = vi.fn(() => new Promise<typeof profile>((resolve) => { resolveWrite = resolve }))
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, getConnectionEpoch: () => epoch })
+    const pending = service.updateMe(command)
+    await Promise.resolve()
+    epoch = 2
+    resolveWrite?.({ ...profile, revision: profile.revision + 1 })
+    await expect(pending).rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.staleConnection } })
+  })
+})

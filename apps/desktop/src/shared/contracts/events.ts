@@ -9,6 +9,15 @@ export interface BackendEventEnvelope {
   timestamp?: string
 }
 
+/** 表现/TTS 事件的角色归属；迁移期字段 optional，能力开启后的必填与当前 binding 校验留给运行时。 */
+export interface CharacterEventIdentity {
+  conversationId?: string
+  generationId?: string
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
+}
+
 /** 一次 AI 回复开始 */
 export interface GenerationStartedEvent extends BackendEventEnvelope {
   event: 'generation.started'
@@ -124,11 +133,24 @@ export interface DictationFinalEvent extends BackendEventEnvelope { event: 'dict
 /** 输入法转写取消（dictation.cancelled） */
 export interface DictationCancelledEvent extends BackendEventEnvelope { event: 'dictation.cancelled'; clientRequestId: string }
 /** TTS 句开始（audio.session.started；Phase 2 放行后、首 chunk 前） */
-export interface AudioSessionStartedEvent extends BackendEventEnvelope { event: 'audio.session.started'; streamId: number; format?: 'wav' | 'mp3' }
+export interface AudioSessionStartedEvent extends BackendEventEnvelope, CharacterEventIdentity {
+  event: 'audio.session.started'
+  streamId: number
+  format?: 'wav' | 'mp3'
+}
 /** TTS 整段就绪（audio.session.ready；Main 缓冲收齐后经 MediaService 出 URL） */
-export interface AudioSessionReadyEvent extends BackendEventEnvelope { event: 'audio.session.ready'; streamId: number; url: string; durationMs?: number; format?: 'wav' | 'mp3' }
+export interface AudioSessionReadyEvent extends BackendEventEnvelope, CharacterEventIdentity {
+  event: 'audio.session.ready'
+  streamId: number
+  url: string
+  durationMs?: number
+  format?: 'wav' | 'mp3'
+}
 /** TTS 播放取消/中断（audio.session.cancelled；audio.cancel / TTS 中断时发，前端清理孤儿 chunk） */
-export interface AudioSessionCancelledEvent extends BackendEventEnvelope { event: 'audio.session.cancelled'; streamId: number }
+export interface AudioSessionCancelledEvent extends BackendEventEnvelope, CharacterEventIdentity {
+  event: 'audio.session.cancelled'
+  streamId: number
+}
 /** 语音族错误（voice.error；D-P15：real-backend 对语音族错误码额外 emit，connectionStore 横幅抑制） */
 export interface VoiceErrorEvent extends BackendEventEnvelope { event: 'voice.error'; code: string; message?: string }
 
@@ -140,11 +162,24 @@ export type DirectiveState = 'idle' | 'listening' | 'thinking' | 'speaking' | 'h
 /** 后端 Live2D 表现指令建议（live2d.directive；显式指令 > emotion 自动映射，消费在 live2dStore.handleDirective） */
 export interface Live2DDirectiveEvent extends BackendEventEnvelope {
   event: 'live2d.directive'
+  /** 多角色 FE-A：表现指令身份（迁移期 optional；运行时守卫负责能力开启后的必填）。 */
+  conversationId?: string
+  generationId?: string
+  characterId?: string
+  characterInstanceId?: string
+  characterRevision?: number
   expression?: string
   motion?: string
   state?: DirectiveState
   priority?: 0 | 1 | 2 | 3
   durationMs?: number
+}
+
+/** 后端 expression 表现帧归一后的领域事件；不再在 Main mapper 中静默丢失身份。 */
+export interface ExpressionEvent extends BackendEventEnvelope, CharacterEventIdentity {
+  event: 'expression'
+  expression: string
+  intensity?: number
 }
 
 // —— 阶段 6 批次 A（F-6）：工具双轨领域事件（D6-01~08）——
@@ -199,6 +234,8 @@ export interface ToolCompletedEvent extends BackendEventEnvelope {
 /** 角色公开状态变化（character.state.changed；完整 view 整体替换该 instance 公开视图） */
 export interface CharacterStateChangedEvent extends BackendEventEnvelope {
   event: 'character.state.changed'
+  /** Desktop-local source fence; never comes from the backend wire payload. */
+  connectionScopeId?: string
   conversationId: string
   characterId: string
   characterInstanceId: string
@@ -210,6 +247,8 @@ export interface CharacterStateChangedEvent extends BackendEventEnvelope {
 /** 角色目录失效通知（character.catalog.changed；revision 较旧的事件不回退缓存） */
 export interface CharacterCatalogChangedEvent extends BackendEventEnvelope {
   event: 'character.catalog.changed'
+  /** Desktop-local source fence; never comes from the backend wire payload. */
+  connectionScopeId?: string
   characterId: string
   currentRevision: number
   status: CharacterStatus
@@ -239,6 +278,7 @@ export type BackendEvent =
   | AudioSessionReadyEvent
   | AudioSessionCancelledEvent
   | VoiceErrorEvent
+  | ExpressionEvent
   | Live2DDirectiveEvent
   // —— 阶段 6 批次 A（F-6-03）——
   | ToolRequestEvent

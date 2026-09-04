@@ -59,7 +59,12 @@ export class RestMapper {
   constructor(_options: RestMapperOptions = {}) {}
 
   toDomainMessage(raw: RestMessage, conversationId?: string): Message { return this.assemble({ ...raw }, conversationId) }
-  toDomainMessageFromReplay(raw: RawSessionMessageItem, conversationId: string): Message { return this.assemble({ ...raw, session_id: conversationId }, conversationId) }
+  // Keep an explicitly supplied raw session_id intact.  The envelope/request
+  // id is a scope, not permission to rewrite a message's provenance: the
+  // renderer's page/replay fence must be able to reject a mismatched item.
+  // Raw WS replay items normally have no session_id, so the envelope remains
+  // the fallback in assemble().
+  toDomainMessageFromReplay(raw: RawSessionMessageItem, conversationId: string): Message { return this.assemble({ ...raw }, conversationId) }
   toConversation(raw: RestSessionSummary): Conversation {
     return {
       id: raw.conversationId,
@@ -112,7 +117,11 @@ export class RestMapper {
 
   private assemble(src: MessageSource, conversationId?: string): Message {
     const role = src.role as MessageRole
-    const convId = conversationId ?? src.session_id ?? ''
+    // An item-level session_id, when present, is the original provenance and
+    // must win over the caller's envelope/request id.  Overwriting it here
+    // would turn a cross-conversation response into an apparently valid
+    // message and defeat the renderer's fail-closed conversation fence.
+    const convId = src.session_id ?? conversationId ?? ''
     const base: Message = {
       messageId: src.message_id, // D2:正式 v2 路径不设 fallback——身份缺失已在 schema 层拒帧(§5.4 #3)
       conversationId: convId,

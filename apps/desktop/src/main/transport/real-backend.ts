@@ -27,7 +27,7 @@ import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseRawFrame } from './protocol-v2/raw-schemas'
-import { parseBackendFeatureFlags } from './protocol-v2/character-rest-mapper'
+import { parseBackendFeatureFlags, toRestCreateSessionBody } from './protocol-v2/character-rest-mapper'
 import type {
   RawAudioCancelled,
   RawAudioChunk,
@@ -89,6 +89,24 @@ interface PendingAck {
   resolve: (ref: ClientRequestRef) => void
   reject: (e: unknown) => void
   timer: ReturnType<typeof setTimeout>
+}
+
+/**
+ * The promise returned by one explicit connect() call.  It is deliberately
+ * separate from the socket incarnation: a transient socket failure can enter
+ * the background reconnect loop after this promise has been rejected, while a
+ * newer explicit connect() must be able to settle its own promise only.
+ */
+interface PendingConnect {
+  resolve: (session: BackendSession) => void
+  reject: (error: unknown) => void
+  settled: boolean
+  /**
+   * The request stays alive while a transient socket failure is retried. A
+   * handshake timeout on the first socket is still fail-fast, while later
+   * sockets belong to the reconnect loop.
+   */
+  reconnecting: boolean
 }
 
 const PROTOCOL_VERSION_WIRE = '2.0'   // wire 上 server_info.protocol_version 的展示值(两层取值,见 design §5.3)
@@ -173,12 +191,25 @@ export class RealBackend implements BackendAdapter {
   private reconnectAttempts = 0
   private reconnectTimer?: ReturnType<typeof setTimeout>
   private handshakeTimer?: ReturnType<typeof setTimeout>
+  /**
+   * Local transport incarnation.  `connectionId` comes from the server and
+   * is not a safe callback owner (a server may reuse it, and a socket can be
+   * replaced before its close/error event is delivered).  Every socket and
+   * every lifecycle callback captures this monotonic value together with the
+   * socket object; both must still match before touching current state.
+   */
+  private transportIncarnation = 0
   private lastSocketClosedAt?: number
   private disconnected = false
   private serverUrl = ''
   private token = ''
-  private connectResolve?: (s: BackendSession) => void
-  private connectReject?: (e: unknown) => void
+  /**
+   * Local source ownership for the current explicit connection. This is
+   * deliberately opaque and never derived from (or correlated with) token
+   * material. A background socket retry does not mint a new scope.
+   */
+  private connectionScopeId?: string
+  private pendingConnect?: PendingConnect
   /** T3:在途 REST 请求的 AbortController;disconnect 时统一 abort,使挂起请求按 NOT_CONNECTED 终止 */
   private readonly activeControllers = new Set<AbortController>()
   /** server_info.services 归一化（llm/stt/tts 每服务 model 三态：string|null|缺省）；P4-A 由 getActiveModelSelection 消费 */
@@ -193,6 +224,8 @@ export class RealBackend implements BackendAdapter {
   private activeVoice?: { kind: VoiceInputMode; key: string }
   /** TTS audio_* 帧缓冲（Task 5）：按 stream_id 积累 chunks；audio_end 时拼装写入 sink 并 emit ready；新 stream supersede 旧 */
   private ttsBuffers = new Map<number, { chunks: Uint8Array[]; bytes: number; format: 'wav' | 'mp3'; durationMs?: number }>()
+  /** Monotonic local source fence for REST results that outlive an explicit connect boundary. */
+  private sourceGeneration = 0
   /** 批次 B（Task 6，D6B-08）：tool.request 路由目标——可空 setter（index.ts 在 adapter 构造后注入 tool-service，
    *  避免构造环；BackendAdapter 接口可选成员，real 专用）。 */
   onToolRequest?: (req: DesktopToolRequest) => void
@@ -208,6 +241,19 @@ export class RealBackend implements BackendAdapter {
     if (this.handshakeTimer) { clearTimeout(this.handshakeTimer); this.handshakeTimer = undefined }
   }
 
+  /** A callback is allowed to enter the adapter only while it owns the live socket. */
+  private isCurrentTransport(ws: WebSocketLike, incarnation: number): boolean {
+    return !this.disconnected && this.ws === ws && this.transportIncarnation === incarnation
+  }
+
+  /** Retire a socket before closing/replacing it so its queued callbacks fail closed. */
+  private retireTransport(ws: WebSocketLike, incarnation: number): boolean {
+    if (this.ws !== ws || this.transportIncarnation !== incarnation) return false
+    this.transportIncarnation++
+    this.ws = undefined
+    return true
+  }
+
   /** 统一状态迁移入口:赋值 + 回调。加性改造——迁移前后各状态机路径产生的对象值不变;
    *  `this.state` 直接替换(非原地 Object.assign):getConnectionState 当前无外部调用方持引用依赖对象身份
    *  (仅 spec 即时断言),替换语义与 2B 逐点一致,避免原地合并残留旧字段(如 error 后 lastError 泄漏进 connecting)。 */
@@ -215,19 +261,98 @@ export class RealBackend implements BackendAdapter {
     this.state = next
     this.options.onConnectionStateChange?.(this.state)
   }
+
+  private sourceBoundaryError(): CyreneError {
+    return new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, '连接来源已切换，请重试')
+  }
+
+  /**
+   * Explicit connect is a hard source boundary even when endpoint, account,
+   * character identity and server connectionId are all reused. Retire every
+   * operation owned by the old source before installing the new token/scope;
+   * automatic socket reconnect deliberately does not call this method.
+   */
+  private clearSourceOwnedOperations(): void {
+    this.sourceGeneration++
+    this.clearHandshakeTimer()
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
+
+    for (const pending of this.pendingAcks.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(this.sourceBoundaryError())
+    }
+    this.pendingAcks.clear()
+
+    for (const pending of this.pendingSwitch.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(this.sourceBoundaryError())
+    }
+    this.pendingSwitch.clear()
+
+    if (this.pendingVoice) {
+      clearTimeout(this.pendingVoice.timer)
+      this.pendingVoice.reject(this.sourceBoundaryError())
+      this.pendingVoice = undefined
+    }
+
+    this.activeVoice = undefined
+    this.ttsBuffers.clear()
+    this.sessionBuffer = []
+    this.services = undefined
+    // FrameMapper owns segment/audio identity tables. Do not let one survive
+    // into B even if a stale audio_end callback is delivered later.
+    this.mapper = undefined
+
+    for (const controller of this.activeControllers) controller.abort()
+    this.activeControllers.clear()
+
+    // Retire/close A before B allocates a socket. WebSocket mocks may invoke
+    // close synchronously; retirement makes those callbacks inert first.
+    const oldWs = this.ws
+    if (oldWs) {
+      const oldIncarnation = this.transportIncarnation
+      this.retireTransport(oldWs, oldIncarnation)
+      try { oldWs.close() } catch { /* source replacement is best effort */ }
+    } else {
+      this.transportIncarnation++
+    }
+  }
+
+  /** Settle only the still-current explicit connect attempt. */
+  private settleConnectAttempt(attempt: PendingConnect | undefined, result: { session: BackendSession } | { error: unknown }): boolean {
+    if (!attempt || attempt.settled || this.pendingConnect !== attempt) return false
+    attempt.settled = true
+    this.pendingConnect = undefined
+    if ('session' in result) attempt.resolve(result.session)
+    else attempt.reject(result.error)
+    return true
+  }
+
+  /** Keep the explicit connect request as the owner of future retry sockets. */
+  private markConnectAttemptReconnecting(attempt: PendingConnect | undefined): void {
+    if (!attempt || attempt.settled || this.pendingConnect !== attempt) return
+    attempt.reconnecting = true
+  }
+
   subscribe(handler: BackendEventHandler): () => void { this.handler.add(handler); return () => this.handler.delete(handler) }
   async setToken(token: string): Promise<void> { this.token = token }
 
   // —— 帧分派 ——
-  private handleFrame(rawText: string): void {
+  private handleFrame(rawText: string, connectAttempt?: PendingConnect): void {
     let parsed: ReturnType<typeof parseRawFrame>
     try { parsed = parseRawFrame(JSON.parse(rawText)) } catch { this.warn('RAW_FRAME_INVALID', 'JSON 解析失败'); return }
     if (!parsed.success) { this.warn('RAW_FRAME_INVALID', '帧校验失败'); return }
     const frame = parsed.data
     switch (frame.type) {
       case 'session': this.handleSession(frame); return
-      case 'server_info': this.handleServerInfo(frame); return
-      case 'expression': return
+      case 'server_info': this.handleServerInfo(frame, connectAttempt); return
+      case 'expression': {
+        // expression 与 Live2D 指令一样必须经过 FrameMapper：legacy 无身份帧由 mapper
+        // 返回 null，带 character identity 的帧则进入领域事件并保持身份。
+        const ev = this.mapper?.mapFrame(frame)
+        if (ev) this.emit(ev)
+        return
+      }
       case 'state': return // FE-INT-P1-01:FSM 状态契约识别,renderer 暂不消费(有意忽略,勿误删)
       case 'typing': return // FE-INT-P1-01:输入状态契约识别,renderer 暂不消费(有意忽略,勿误删)
       // 阶段 6 真实联调：后端少数旧输出旁路会越过 v2 分流，向 v2 连接广播这三类 v1 兼容帧。
@@ -338,16 +463,21 @@ export class RealBackend implements BackendAdapter {
     }
   }
 
-  private handleServerInfo(frame: RawServerInfo): void {
+  private handleServerInfo(frame: RawServerInfo, connectAttempt?: PendingConnect): void {
     this.clearHandshakeTimer() // server_info 到达即握手完成,成功与版本不符两条路径都清(后者走 fail-closed)
     if (frame.protocol_version !== PROTOCOL_VERSION_WIRE) {
       const err = new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `后端协议版本 ${frame.protocol_version} 不兼容,要求 ${PROTOCOL_VERSION_WIRE}`)
-      this.ws?.close() // 版本不符 fail-closed:关闭已建立的 socket,避免后续帧继续被分派/泄漏
-      this.ws = undefined
-      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
-      this.connectReject?.(err)
-      this.connectResolve = undefined
-      this.connectReject = undefined
+      // Retire before close because ws implementations/mocks may deliver the
+      // close callback synchronously.  That callback must not schedule a
+      // reconnect before the protocol-mismatch error state is installed.
+      const ws = this.ws
+      if (ws) {
+        const incarnation = this.transportIncarnation
+        this.retireTransport(ws, incarnation)
+        try { ws.close() } catch { /* protocol mismatch close is best effort */ }
+      }
+      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
+      this.settleConnectAttempt(connectAttempt, { error: err })
       this.options.onError?.(err)
       return
     }
@@ -357,6 +487,7 @@ export class RealBackend implements BackendAdapter {
       serverUrl: this.serverUrl,
       protocolVersion: frame.protocol_version,
       serverVersion: frame.server_version,
+      connectionScopeId: this.connectionScopeId,
       connectionId: frame.connectionId,
       activeConversationId: this.state.activeConversationId,
       lastError: undefined,
@@ -364,13 +495,12 @@ export class RealBackend implements BackendAdapter {
       // 仅 connected 填充且每次 server_info 整体替换（connecting/error 路径不带 features，不留旧连接能力）
       features: parseBackendFeatureFlags(frame.features)
     })
-    this.connectResolve?.({
+    const session: BackendSession = {
       sessionId: frame.connectionId ?? 'local',
       protocolVersion: frame.protocol_version,
       serverUrl: this.serverUrl
-    })
-    this.connectResolve = undefined
-    this.connectReject = undefined
+    }
+    this.settleConnectAttempt(connectAttempt, { session })
     // services 归一化（版本校验 early-return 之后）：RawServerInfo.services 是 loose record，
     // 只取每服务 model（string|null），未知形状忽略，绝不直接赋值原始 record。
     this.services = this.normalizeServices(frame.services)
@@ -470,25 +600,56 @@ export class RealBackend implements BackendAdapter {
   }
   /** audio_end：拼装缓冲写入 sink，emit ready；无 sink 告警丢弃 */
   private handleAudioEnd(frame: RawAudioEnd): void {
+    // Keep both owners local. A subscriber may synchronously start an
+    // explicit connect from the `audio.session.ready` callback; in that
+    // case source cleanup replaces `this.mapper` and clears the shared
+    // buffer map. The old callback must never delete B's same stream id or
+    // clear B's mapper identity in its finally block.
+    const sourceGeneration = this.sourceGeneration
+    const mapper = this.mapper
     const b = this.ttsBuffers.get(frame.stream_id)
-    if (!b) { this.warn('AUDIO_END_NO_BUFFER', `收到未关联 audio_start 的 audio_end: stream_id=${frame.stream_id}`); return }
-    const mime = b.format === 'mp3' ? 'audio/mpeg' : 'audio/wav'
-    const sink = this.options.getTtsMedia?.()
-    if (!sink) { this.warn('TTS_MEDIA_SINK_MISSING', `TTS 音频 sink 缺失,丢弃 stream_id=${frame.stream_id}`); this.ttsBuffers.delete(frame.stream_id); return }
-    const concatLen = b.chunks.reduce((s, c) => s + c.length, 0)
-    const concat = new Uint8Array(concatLen)
-    let off = 0
-    for (const c of b.chunks) { concat.set(c, off); off += c.length }
-    const { url } = sink.putTtsAudio(`tts-${randomUUID()}`, concat, mime)
-    const ev = this.mapper?.stampEvent<AudioSessionReadyEvent>({
-      event: 'audio.session.ready',
-      streamId: frame.stream_id,
-      url,
-      ...(b.durationMs !== undefined ? { durationMs: b.durationMs } : {}),
-      format: b.format
-    })
-    if (ev) this.emit(ev)
-    this.ttsBuffers.delete(frame.stream_id)
+    if (!b) {
+      // 即使缓冲已经被取消/丢弃，也必须清理同 stream 的角色身份，避免下一次
+      // audio_start 之前错误继承上一段 TTS 的 character snapshot。
+      mapper?.clearAudioIdentity(frame.stream_id)
+      this.warn('AUDIO_END_NO_BUFFER', `收到未关联 audio_start 的 audio_end: stream_id=${frame.stream_id}`)
+      return
+    }
+    try {
+      if (sourceGeneration !== this.sourceGeneration) return
+      const mime = b.format === 'mp3' ? 'audio/mpeg' : 'audio/wav'
+      const sink = this.options.getTtsMedia?.()
+      if (!sink) {
+        this.warn('TTS_MEDIA_SINK_MISSING', `TTS 音频 sink 缺失,丢弃 stream_id=${frame.stream_id}`)
+        return
+      }
+      const concatLen = b.chunks.reduce((s, c) => s + c.length, 0)
+      const concat = new Uint8Array(concatLen)
+      let off = 0
+      for (const c of b.chunks) { concat.set(c, off); off += c.length }
+      const { url } = sink.putTtsAudio(`tts-${randomUUID()}`, concat, mime)
+      // A sink is supplied by Main and is normally synchronous, but keep the
+      // generation check after it as well so a re-entrant source switch cannot
+      // publish an A ready event into B.
+      if (sourceGeneration !== this.sourceGeneration) return
+      const ev = mapper?.stampEvent<AudioSessionReadyEvent>({
+        event: 'audio.session.ready',
+        streamId: frame.stream_id,
+        url,
+        ...(b.durationMs !== undefined ? { durationMs: b.durationMs } : {}),
+        format: b.format
+      })
+      if (ev) this.emit(ev)
+    } catch (error) {
+      // sink/组装/事件装配失败均按丢弃处理；身份与二进制缓冲由 finally 一并释放。
+      this.options.logger?.warn('tts.audio-end:discarded', { message: error instanceof Error ? error.message : String(error) })
+    } finally {
+      // Only the owner which found this buffer may remove it from the shared
+      // map. A source switch clears the old map before B is installed; an
+      // unconditional delete here would otherwise erase B's same-key stream.
+      if (sourceGeneration === this.sourceGeneration) this.ttsBuffers.delete(frame.stream_id)
+      mapper?.clearAudioIdentity(frame.stream_id)
+    }
   }
   /** audio_cancelled：清缓冲 + emit cancelled */
   private handleAudioCancelled(frame: RawAudioCancelled): void {
@@ -497,71 +658,122 @@ export class RealBackend implements BackendAdapter {
     if (ev) this.emit(ev)
   }
 
-  private emit(event: BackendEvent): void { for (const h of this.handler) h(event) }
+  /**
+   * Stamp only the two renderer-facing character events with the desktop-local
+   * source fence. The raw wire schemas deliberately remain backend-owned and
+   * never accept this field. Events from an old socket are already fenced by
+   * (ws, transportIncarnation); this stamp additionally fences events queued
+   * in IPC while an explicit connection is replaced.
+   */
+  private emit(event: BackendEvent): void {
+    const scoped = this.connectionScopeId
+      && (event.event === 'character.state.changed' || event.event === 'character.catalog.changed')
+      ? { ...event, connectionScopeId: this.connectionScopeId }
+      : event
+    for (const h of this.handler) h(scoped)
+  }
 
   // —— 连接生命周期 ——
   async connect(input: ConnectInput): Promise<BackendSession> {
     if (!input.token) {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '缺少 token: 2B 要求建立认证连接', { reason: 'token_missing' })
     }
-    this.clearHandshakeTimer() // m4:重连挂起时手动 connect 防双 socket(旧握手 timer 一并清)
-    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
+    this.clearSourceOwnedOperations()
+    // A second explicit connect owns a new promise and transport.  Settle the
+    // previous promise before replacing its socket so it can never be left
+    // pending or later be resolved by B's server_info.
+    const superseded = this.pendingConnect
+    if (superseded) {
+      this.settleConnectAttempt(superseded, {
+        error: new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, '连接尝试已被新的连接替换')
+      })
+    }
     this.serverUrl = input.serverUrl
     this.token = input.token
+    // `connect` is the source boundary. The socket(s) created below all
+    // belong to this scope; the automatic reconnect loop never regenerates it.
+    this.connectionScopeId = randomUUID()
     this.reconnectAttempts = 0
     this.disconnected = false
     return new Promise<BackendSession>((resolve, reject) => {
-      this.connectResolve = resolve
-      this.connectReject = reject
-      this.setState({ status: 'connecting', serverUrl: this.serverUrl })
-      this.establishWs()
+      const attempt: PendingConnect = { resolve, reject, settled: false, reconnecting: false }
+      this.pendingConnect = attempt
+      this.setState({ status: 'connecting', serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
+      try {
+        this.establishWs(attempt)
+      } catch (error) {
+        // wsFactory failures happen synchronously before any socket callback
+        // can settle the attempt.  Keep the same per-attempt ownership rule.
+        this.settleConnectAttempt(attempt, { error })
+        this.setState({ status: 'error', lastError: error instanceof Error ? error.message : String(error), serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
+      }
     })
   }
 
-  private establishWs(): void {
+  private establishWs(connectAttempt?: PendingConnect): void {
     const wsBase = this.serverUrl.replace(/^http/, 'ws') + '/ws'
     const headers: Record<string, string> = {
       'X-Protocol-Version': '2',           // resolve_protocol_version 只认精确 "2"(两层取值,design §5.3)
       'X-Client-Platform': 'electron',
       Authorization: `Bearer ${this.token}`
     }
+    // A manual connect can replace a socket while its close/error callback is
+    // still queued.  Retire the old object first, then allocate a fresh
+    // incarnation even when a wsFactory happens to return the same object.
+    const previousWs = this.ws
+    if (previousWs) {
+      const previousIncarnation = this.transportIncarnation
+      this.retireTransport(previousWs, previousIncarnation)
+      try { previousWs.close() } catch { /* stale close is best effort */ }
+    }
     const factory = this.options.wsFactory
     // aiohttp 压缩连接空闲后可以 RSV 保留位错误拒绝首个客户端业务帧，控制面显式不协商压缩。
     const ws = factory ? factory(wsBase, headers) : new WebSocket(wsBase, { headers, perMessageDeflate: false })
+    const incarnation = ++this.transportIncarnation
     this.ws = ws
     this.mapper = new FrameMapper({ connectionId: this.serverUrl, onProtocolWarning: this.options.onProtocolWarning })
     // 握手超时:建 socket 后立即启动(先于 message 注册,保证同步推帧夹具的 server_info 也能在 handleServerInfo 清掉)。
-    // 超时按是否在用户 connect 流程分派:有 connect promise → fail-fast reject TIMEOUT + error;
-    // 自动重连(无 connect promise)→ 关闭后走指数退避继续。
+    // 显式 connect 的首个 socket 超时 fail-fast；一旦该请求已进入瞬态
+    // 重连，后续 socket 的握手超时只关闭并继续退避，直到同一个请求成功
+    // 握手或被硬错误/显式 disconnect/重连上限结算。
     const handshakeTimeoutMs = this.options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_DEFAULT_MS
     this.handshakeTimer = setTimeout(() => {
+      if (!this.isCurrentTransport(ws, incarnation)) return
       this.handshakeTimer = undefined
-      this.ws?.close(); this.ws = undefined
-      if (this.connectReject) {
+      if (connectAttempt && this.pendingConnect === connectAttempt && !connectAttempt.reconnecting) {
+        this.retireTransport(ws, incarnation)
+        try { ws.close() } catch { /* timeout close is best effort */ }
         const err = new CyreneError(CyreneErrorCode.TIMEOUT, `等待 server_info 超时(${handshakeTimeoutMs}ms)`)
-        this.connectReject(err); this.connectResolve = undefined; this.connectReject = undefined
-        this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
+        this.settleConnectAttempt(connectAttempt, { error: err })
+        this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
         this.options.onError?.(err)
       } else {
-        this.onSocketClosed()   // 自动重连:关闭后走指数退避
+        // Automatic reconnect must go through the normal close path so it
+        // retires the incarnation and schedules the next attempt.  Closing
+        // after that call is safe even for ws mocks that invoke `close`
+        // listeners synchronously.
+        this.onSocketClosed(ws, incarnation, connectAttempt)
+        try { ws.close() } catch { /* timeout close is best effort */ }
       }
     }, handshakeTimeoutMs)
     ws.on('message', (arg?: unknown, arg2?: unknown) => {
+      if (!this.isCurrentTransport(ws, incarnation)) return
       if (arg === undefined) return
       // P4-B Task 4：意外二进制接收（TTS audio_* 等二进制下行由 Task 5 分流；当前无消费方 → 告警忽略不崩）。
       // 判据用 ws 库第二参（isBinary 布尔）而非 Buffer.isBuffer——真实 ws 在 Node 22 下文本帧也以 Buffer 投递
       //（typeof=object），第二参才是二进制/文本的权威判别；文本帧(无论 string/Buffer)仍走 handleFrame。
       if (arg2 === true) { this.warn('UNEXPECTED_BINARY', '收到意外二进制帧,已忽略'); return }
-      this.handleFrame(typeof arg === 'string' ? arg : String(arg))
+      this.handleFrame(typeof arg === 'string' ? arg : String(arg), connectAttempt)
     })
-    ws.on('close', () => { this.onSocketClosed() })
-    ws.on('error', () => { this.onSocketClosed() })
-    ws.on('unexpected-response', (_req, res) => { this.onUnexpectedResponse(res) })
+    ws.on('close', () => { this.onSocketClosed(ws, incarnation, connectAttempt) })
+    ws.on('error', () => { this.onSocketClosed(ws, incarnation, connectAttempt) })
+    ws.on('unexpected-response', (_req, res) => { this.onUnexpectedResponse(ws, incarnation, res, connectAttempt) })
   }
 
   /** 非 101 升级响应:仅 400/401/403 fail-fast(协议/认证硬错);429 RATE_LIMITED/503 超限等瞬态状态码 → 走重连退避,
    *  避免限流下全 fail-fast 让重连永久失效(F3,whole-branch review) */
-  private onUnexpectedResponse(res: unknown): void {
+  private onUnexpectedResponse(ws: WebSocketLike, incarnation: number, res: unknown, connectAttempt?: PendingConnect): void {
+    if (!this.isCurrentTransport(ws, incarnation)) return
     this.clearHandshakeTimer() // 非 101 升级响应即握手失败,不再等超时
     const statusCode = typeof res === 'object' && res !== null && 'statusCode' in res
       ? (res as { statusCode?: number }).statusCode
@@ -573,46 +785,56 @@ export class RealBackend implements BackendAdapter {
         { statusCode }
       )
       if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
-      this.ws = undefined
-      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
-      this.connectReject?.(err)
-      this.connectResolve = undefined
-      this.connectReject = undefined
+      this.retireTransport(ws, incarnation)
+      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
+      this.settleConnectAttempt(connectAttempt, { error: err })
       this.options.onError?.(err)
       return
     }
     // 瞬态状态码:视为本次连接失败,关闭当前 socket 后进入指数退避重连(不置 error)
-    this.onSocketClosed()
+    this.onSocketClosed(ws, incarnation, connectAttempt, {
+      statusCode,
+      reason: 'unexpected-response'
+    })
   }
 
-  private onSocketClosed(): void {
+  private onSocketClosed(ws: WebSocketLike, incarnation: number, connectAttempt?: PendingConnect, _reconnectDetails?: Record<string, unknown>): void {
+    // Old close/error callbacks are deliberately inert.  In particular they
+    // must not clear a replacement socket or schedule a second reconnect.
+    if (!this.isCurrentTransport(ws, incarnation)) return
     this.clearHandshakeTimer() // socket 关闭即当前握手结束,避免超时回调在退避期间误触发
+    this.retireTransport(ws, incarnation)
     if (this.disconnected) return
     if (this.state.status === 'error') return // unexpected-response/版本不符 fail-fast 后,后续 close/error 不再翻回 reconnecting
-    this.ws = undefined
+    // Keep the explicit connect request pending across transient failures so
+    // a later server_info can resolve the original promise. The socket owner
+    // is still fenced by (ws, incarnation), so an old callback cannot affect
+    // a replacement request.
+    this.markConnectAttemptReconnecting(connectAttempt)
+    const reconnectOwner = connectAttempt && !connectAttempt.settled && this.pendingConnect === connectAttempt
+      ? connectAttempt
+      : undefined
     // P4-B：socket 掉线即语音会话随连接终止一并失效——后端侧会话已随连接销毁或不再送达 ended 回执。
     // 若此处不清位，重连后 activeVoice 恒存（无 ended 可清），所有 start* 永久抛「已有活动语音会话进行中」→ 语音输入锁死（task-4 review Important）。
     this.activeVoice = undefined
     this.lastSocketClosedAt = this.options.now?.() ?? Date.now() // F2:掉线时刻接入注入时钟(now())
-    this.scheduleReconnect()
+    this.scheduleReconnect(reconnectOwner)
   }
 
   /** 指数退避重连(1s ×2 上限 30s);连续失败超过 6 次 → error 状态 */
-  private scheduleReconnect(): void {
+  private scheduleReconnect(connectAttempt?: PendingConnect): void {
     if (this.disconnected) return
     if (this.state.status === 'error') return
     if (this.reconnectTimer) return // close+error 双触发只排一次
     this.reconnectAttempts += 1
     if (this.reconnectAttempts > RECONNECT_MAX_ATTEMPTS) {
       const err = new CyreneError(CyreneErrorCode.NOT_CONNECTED, `重连失败超过 ${RECONNECT_MAX_ATTEMPTS} 次,连接终止`)
-      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl })
-      this.connectReject?.(err)
-      this.connectResolve = undefined
-      this.connectReject = undefined
+      this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
+      this.settleConnectAttempt(this.pendingConnect, { error: err })
       this.options.onError?.(err)
       return
     }
-    this.setState({ status: 'reconnecting', serverUrl: this.serverUrl })
+    this.setState({ status: 'reconnecting', serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
     // 退避延迟 = base * 2^(attempts-1) 封顶 MAX;now() 注入时钟做差值判定(自上次掉线已流逝时间计入延迟,
     // 测试可注入时钟/缩短 reconnectBaseDelayMs 避免慢测试)
     const now = this.options.now?.() ?? Date.now()
@@ -620,10 +842,22 @@ export class RealBackend implements BackendAdapter {
     const backoffMs = Math.min(base * 2 ** (this.reconnectAttempts - 1), RECONNECT_MAX_DELAY_MS)
     const elapsed = this.lastSocketClosedAt !== undefined ? Math.max(0, now - this.lastSocketClosedAt) : 0
     const delay = Math.max(0, backoffMs - elapsed)
-    this.reconnectTimer = setTimeout(() => {
+    const scheduledIncarnation = this.transportIncarnation
+    const scheduledConnect = connectAttempt
+    const timer = setTimeout(() => {
+      // clearTimeout cannot cancel a callback which has already entered the
+      // event loop.  Keep the timer owner check alongside the socket fence so
+      // a stale callback cannot start a third socket or clear a newer timer.
+      if (this.reconnectTimer !== timer) return
       this.reconnectTimer = undefined
-      this.establishWs()
+      if (this.disconnected || this.transportIncarnation !== scheduledIncarnation || this.pendingConnect !== scheduledConnect) return
+      // Preserve the explicit request owner across transient retries. When
+      // there is no explicit request this remains an ordinary background
+      // reconnect. Capture the owner in the timer so a stale timer cannot
+      // start a socket for a newer manual connect request.
+      this.establishWs(scheduledConnect)
     }, delay)
+    this.reconnectTimer = timer
   }
 
   async disconnect(): Promise<void> {
@@ -635,17 +869,41 @@ export class RealBackend implements BackendAdapter {
       pending.reject(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,ack 未完成'))
     }
     this.pendingAcks.clear()
+    for (const pending of this.pendingSwitch.values()) {
+      clearTimeout(pending.timer)
+      pending.reject(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，模型切换已取消'))
+    }
+    this.pendingSwitch.clear()
+    if (this.pendingVoice) {
+      clearTimeout(this.pendingVoice.timer)
+      this.pendingVoice.reject(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，声音切换已取消'))
+      this.pendingVoice = undefined
+    }
     this.activeVoice = undefined // P4-B:显式 disconnect 即语音会话失效(同重连语义),防重连后语音输入锁死(task-4 review Important)
-    this.ws?.close()
-    this.ws = undefined
+    this.ttsBuffers.clear()
+    this.sessionBuffer = []
+    this.services = undefined
+    const ws = this.ws
+    // Retire before close: ws libraries may synchronously invoke close/error
+    // listeners, and queued callbacks must not re-enter after disconnect.
+    if (ws) {
+      this.transportIncarnation++
+      this.ws = undefined
+      try { ws.close() } catch { /* disconnect is idempotent */ }
+    } else {
+      // Also invalidate a callback that captured a socket just before it was
+      // detached by another lifecycle path.
+      this.transportIncarnation++
+    }
     // 握手未完成(connecting/reconnecting)时取消:reject 挂起的 connect promise,避免 await connect() 永久挂死
-    this.connectReject?.(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已取消'))
-    this.connectResolve = undefined
-    this.connectReject = undefined
+    this.settleConnectAttempt(this.pendingConnect, {
+      error: new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已取消')
+    })
     this.setState({ status: 'disconnected' })
     // T3:abort 全部在途 REST 请求(disconnected 已置 true → catch 走 NOT_CONNECTED,不误报 TIMEOUT)
     for (const c of this.activeControllers) c.abort()
     this.activeControllers.clear()
+    this.connectionScopeId = undefined
   }
 
   // —— WS 发送 ——
@@ -664,6 +922,8 @@ export class RealBackend implements BackendAdapter {
     }
     const promise = new Promise<ClientRequestRef>((resolve, reject) => {
       const timer = setTimeout(() => {
+        const current = this.pendingAcks.get(input.clientRequestId)
+        if (current?.timer !== timer) return
         this.pendingAcks.delete(input.clientRequestId)
         reject(new CyreneError(CyreneErrorCode.TIMEOUT, `user_message.ack 超时(${ackTimeoutMs}ms): ${input.clientRequestId}`))
       }, ackTimeoutMs)
@@ -698,6 +958,7 @@ export class RealBackend implements BackendAdapter {
       // F1:spec B-G6⑤——REST 方法需先 connect(serverUrl 自 connect 记录),connect 前调用显式失败而非打到空 url
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
     }
+    const sourceGeneration = this.sourceGeneration
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.restTimeoutMs)
     this.activeControllers.add(controller)
@@ -708,6 +969,7 @@ export class RealBackend implements BackendAdapter {
         signal: controller.signal,
         headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
       })
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
@@ -715,6 +977,7 @@ export class RealBackend implements BackendAdapter {
       }
       return res
     } catch (e) {
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (controller.signal.aborted) {
         // I3/D17:disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED;否则是超时 timer abort → TIMEOUT
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
@@ -763,7 +1026,7 @@ export class RealBackend implements BackendAdapter {
   }
 
   async createConversation(input: CreateConversationInput): Promise<Conversation> {
-    const res = await this.restFetch('/api/sessions', { method: 'POST', body: JSON.stringify(input.title !== undefined ? { title: input.title } : {}) })
+    const res = await this.restFetch('/api/sessions', { method: 'POST', body: JSON.stringify(toRestCreateSessionBody(input)) })
     const parsed = RestSessionSummarySchema.safeParse(await res.json())
     if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '创建会话响应校验失败')
     return this.restMapper.toConversation(parsed.data)
@@ -801,6 +1064,7 @@ export class RealBackend implements BackendAdapter {
 
   async uploadAttachments(files: UploadContent[], opts?: { signal?: AbortSignal }): Promise<AttachmentInfo[]> {
     if (!this.serverUrl) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
+    const sourceGeneration = this.sourceGeneration
     const uploadTimeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS
     const timeoutController = new AbortController()
     const timer = setTimeout(() => timeoutController.abort(), uploadTimeoutMs)
@@ -824,6 +1088,7 @@ export class RealBackend implements BackendAdapter {
         headers: { authorization: `Bearer ${this.token}` },   // multipart 不设 content-type（fetch 自动带 boundary）
         body: form
       })
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
@@ -833,6 +1098,7 @@ export class RealBackend implements BackendAdapter {
       if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '附件上传响应校验失败')
       return parsed.data.attachments
     } catch (e) {
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (opts?.signal?.aborted) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '附件上传已取消')   // 调用方取消（IPC attachments:cancel 触发）
       if (timeoutController.signal.aborted) {
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
@@ -1021,7 +1287,8 @@ export class RealBackend implements BackendAdapter {
       if (existing) { clearTimeout(existing.timer); existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `同声音切换未完成`)) }
       const timer = setTimeout(() => {
         // 所有权限定：仅当当前 pending 仍是本 timer 时才清（防御旧 timer 迟到清新 pending 的跨清竞态）
-        if (this.pendingVoice?.timer === timer) this.pendingVoice = undefined
+        if (this.pendingVoice?.timer !== timer) return
+        this.pendingVoice = undefined
         reject(new CyreneError(CyreneErrorCode.TIMEOUT, `set_tts_voice 超时`))
       }, this.switchTimeoutMs())
       this.pendingVoice = { voice: input.voice, resolve, reject, timer }
@@ -1034,7 +1301,11 @@ export class RealBackend implements BackendAdapter {
     return new Promise<void>((resolve, reject) => {
       const existing = this.pendingSwitch.get(input.service)
       if (existing) { clearTimeout(existing.timer); existing.reject(new CyreneError(CyreneErrorCode.GENERATION_CONFLICT, `同服务切换未完成`)) }
-      const timer = setTimeout(() => { this.pendingSwitch.delete(input.service); reject(new CyreneError(CyreneErrorCode.TIMEOUT, `switch_model 超时`)) }, this.switchTimeoutMs())
+      const timer = setTimeout(() => {
+        if (this.pendingSwitch.get(input.service)?.timer !== timer) return
+        this.pendingSwitch.delete(input.service)
+        reject(new CyreneError(CyreneErrorCode.TIMEOUT, `switch_model 超时`))
+      }, this.switchTimeoutMs())
       this.pendingSwitch.set(input.service, { model: input.profileId, resolve, reject, timer })
       ws.send(JSON.stringify({ type: 'switch_model', service: input.service, model: input.profileId }))
     })
@@ -1081,6 +1352,8 @@ export class RealBackend implements BackendAdapter {
     }
     const promise = new Promise<ClientRequestRef>((resolve, reject) => {
       const timer = setTimeout(() => {
+        const current = this.pendingAcks.get(input.clientRequestId)
+        if (current?.timer !== timer) return
         this.pendingAcks.delete(input.clientRequestId)
         reject(new CyreneError(CyreneErrorCode.TIMEOUT, `voice.commit user_message.ack 超时(${ackTimeoutMs}ms): ${input.clientRequestId}`))
       }, ackTimeoutMs)
@@ -1197,6 +1470,7 @@ export class RealBackend implements BackendAdapter {
    *  boundary（uploadAttachments L778 同款注释），故按同款纪律（fetchImpl 注入 + AbortController + activeControllers，代码 M2）直写。 */
   async uploadToolAttachment(callId: string, bytes: Uint8Array, mime: string, label?: string): Promise<ToolAttachment> {
     if (this.state.status !== 'connected' || !this.state.connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
+    const sourceGeneration = this.sourceGeneration
     const serverUrl = this.serverUrl
     const form = new FormData()
     const ext = mime === 'image/png' ? 'png' : mime === 'text/plain' ? 'txt' : mime.split('/')[1] ?? 'bin'
@@ -1214,10 +1488,12 @@ export class RealBackend implements BackendAdapter {
         headers: { authorization: `Bearer ${this.token}`, 'X-Client-Connection': this.state.connectionId },   // multipart 不设 content-type（fetch 自动带 boundary）
         body: form
       })
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (!res.ok) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, `上传失败 ${res.status}`)
       const data = (await res.json()) as { url: string }
       return { url: data.url, mimeType: mime, label }
     } catch (e) {
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (controller.signal.aborted) {
         // I3/D17：disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED；否则是超时 timer abort → TIMEOUT
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
@@ -1239,6 +1515,7 @@ export class RealBackend implements BackendAdapter {
     if (!this.serverUrl || this.state.status === 'disconnected') {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法读取工具附件')
     }
+    const sourceGeneration = this.sourceGeneration
     const controller = new AbortController()
     const timeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -1249,6 +1526,7 @@ export class RealBackend implements BackendAdapter {
         signal: controller.signal,
         headers: { authorization: `Bearer ${this.token}`, accept: 'image/png' }
       })
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (res.status === 404) return null
       if (!res.ok) throw new CyreneError(mapHttpError(res.status, 'HTTP_ERROR'), `工具附件读取失败 ${res.status}`)
       const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase()
@@ -1268,6 +1546,7 @@ export class RealBackend implements BackendAdapter {
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
+        if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
         if (!value) continue
         total += value.byteLength
         if (total > TOOL_CAPTURE_MAX_BYTES) {
@@ -1284,6 +1563,7 @@ export class RealBackend implements BackendAdapter {
       }
       return hasPngSignature(bytes) ? { bytes, mimeType: 'image/png' } : null
     } catch (e) {
+      if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (controller.signal.aborted) {
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，工具附件读取已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件读取超时(${timeoutMs}ms)`)

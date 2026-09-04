@@ -41,6 +41,22 @@ async function makeBackend(): Promise<{
 beforeEach(() => { vi.clearAllMocks() })
 
 describe('RealBackend live2d.directive 分发（C3 canary）', () => {
+  it('expression 帧经 RealBackend → FrameMapper 分发；legacy 无身份仍忽略，带身份原样保留', async () => {
+    const { ws, events } = await makeBackend()
+    ws.push({ type: 'expression', expression: 'idle' })
+    ws.push({
+      type: 'expression', expression: 'happy', intensity: 0.75,
+      conversationId: 'conv-1', generationId: 'gen-1', characterId: 'ch_elysia',
+      characterInstanceId: 'ci-1', characterRevision: 2
+    })
+    expect(events.filter((e) => e.event === 'expression')).toHaveLength(1)
+    expect(events.find((e) => e.event === 'expression')).toMatchObject({
+      event: 'expression', expression: 'happy', intensity: 0.75,
+      conversationId: 'conv-1', generationId: 'gen-1', characterId: 'ch_elysia',
+      characterInstanceId: 'ci-1', characterRevision: 2
+    })
+  })
+
   it('冻结契约形状：live2d.directive 帧 → Live2DDirectiveEvent（expression/state/priority 透传 + 信封）', async () => {
     const { ws, events } = await makeBackend()
     ws.push({ type: 'live2d.directive', state: 'happy', expression: 'expressions/F01.exp3.json', priority: 1 })

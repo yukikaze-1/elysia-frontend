@@ -8,41 +8,184 @@ import type {
   CharacterArchiveResult,
   CharacterBindingSnapshot,
   CharacterDetail,
+  CharacterDraft,
   CharacterGenerationRef,
+  CharacterListQuery,
   CharacterMutationResult,
   CharacterPresentation,
   CharacterPublicState,
   CharacterRevisionContent,
+  CharacterRevisionQuery,
   CharacterRevisionSummary,
   CharacterSummary,
   CharacterValidationResult,
+  CharacterPreviewCommand,
   CharacterPreviewResult,
   CharacterStateImpact,
+  CloneCharacterCommand,
+  CreateCharacterCommand,
   ResetCharacterEvolutionResult,
+  ResetCharacterEvolutionCommand,
+  RollbackCharacterCommand,
+  UpdateCharacterCommand,
+  UpdateUserIdentityCommand,
   UserIdentityProfile
 } from '@shared/contracts/character'
+import type { CreateConversationInput } from '@shared/contracts/conversation'
 import type {
   RestCharacterArchiveResult,
   RestCharacterBindingSnapshot,
+  RestCharacterDraft,
   RestCharacterDetail,
+  RestCharacterListQuery,
   RestCharacterListResponse,
   RestCharacterMutationResult,
   RestCharacterPresentation,
   RestCharacterPublicState,
+  RestCharacterRevisionQuery,
   RestCharacterRevisionsResponse,
   RestCharacterRevisionSummary,
   RestCharacterSummary,
   RestCharacterValidationResult,
   RestCharacterPreviewResult,
+  RestCloneCharacterBody,
+  RestCreateCharacterBody,
+  RestPreviewCharacterBody,
+  RestResetEvolutionBody,
+  RestRollbackCharacterBody,
+  RestUpdateCharacterBody,
+  RestUpdateMeBody,
+  RestValidateCharacterBody,
   RestResetEvolutionResult,
   RestUserIdentityProfile
 } from './character-rest-types'
+import type { RestCreateSessionBody } from './rest-types'
 
 /** wire character_profiles/character_state_stream === true 才映射 true；缺省/字符串/数字/其他形状一律 false（§5.2） */
 export function parseBackendFeatureFlags(features: Record<string, unknown> | undefined): BackendFeatureFlags {
   return {
     characterProfiles: features?.character_profiles === true,
     characterStateStream: features?.character_state_stream === true
+  }
+}
+
+/** POST /api/sessions 请求体：领域的可选 characterId 原样保留，legacy 仍可省略。 */
+export function toRestCreateSessionBody(input: CreateConversationInput): RestCreateSessionBody {
+  return {
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    ...(input.characterId !== undefined ? { characterId: input.characterId } : {})
+  }
+}
+
+/** PUT /api/me 请求体：领域命令的可选字段省略即按后端约定清空/回默认，不把 undefined 序列化成 null。 */
+export function toRestUpdateMeBody(input: UpdateUserIdentityCommand): RestUpdateMeBody {
+  return {
+    expectedRevision: input.expectedRevision,
+    displayName: input.displayName,
+    ...(input.preferredAddress !== undefined ? { preferredAddress: input.preferredAddress } : {}),
+    ...(input.pronouns !== undefined ? { pronouns: input.pronouns } : {}),
+    locale: input.locale,
+    timezone: input.timezone,
+    ...(input.defaultCharacterId !== undefined ? { defaultCharacterId: input.defaultCharacterId } : {})
+  }
+}
+
+/** Presentation domain → REST raw；只在 adapter 边界做显式字段复制。 */
+export function toRestPresentation(input: CharacterPresentation): RestCharacterPresentation {
+  return {
+    ...(input.avatarAssetId !== undefined ? { avatarAssetId: input.avatarAssetId } : {}),
+    ...(input.live2dModelId !== undefined ? { live2dModelId: input.live2dModelId } : {}),
+    ...(input.themeColor !== undefined ? { themeColor: input.themeColor } : {})
+  }
+}
+
+export function toRestCharacterDraft(input: CharacterDraft): RestCharacterDraft {
+  return {
+    displayName: input.displayName,
+    description: input.description,
+    aliases: [...input.aliases],
+    promptProfile: {
+      corePersonality: input.promptProfile.corePersonality,
+      relationshipStyle: input.promptProfile.relationshipStyle,
+      emotionStyle: input.promptProfile.emotionStyle,
+      speakingStyle: input.promptProfile.speakingStyle,
+      conversationInitiative: input.promptProfile.conversationInitiative,
+      examples: input.promptProfile.examples.map((example) => ({ user: example.user, assistant: example.assistant }))
+    },
+    runtimeDefaults: {
+      voice: {
+        ...(input.runtimeDefaults.voice.providerId !== undefined ? { providerId: input.runtimeDefaults.voice.providerId } : {}),
+        ...(input.runtimeDefaults.voice.voiceId !== undefined ? { voiceId: input.runtimeDefaults.voice.voiceId } : {})
+      },
+      emotion: { idleExpressions: [...input.runtimeDefaults.emotion.idleExpressions] },
+      wakeWords: [...input.runtimeDefaults.wakeWords],
+      proactive: {
+        enabled: input.runtimeDefaults.proactive.enabled,
+        intervalSeconds: input.runtimeDefaults.proactive.intervalSeconds,
+        triggers: [...input.runtimeDefaults.proactive.triggers]
+      }
+    },
+    presentation: toRestPresentation(input.presentation),
+    ...(input.openingMessage !== undefined ? { openingMessage: input.openingMessage } : {})
+  }
+}
+
+/** POST /api/characters：draft 在 wire 顶层，不额外包一层 draft。 */
+export function toRestCreateCharacterBody(input: CreateCharacterCommand): RestCreateCharacterBody {
+  return toRestCharacterDraft(input.draft)
+}
+
+/** PUT /api/characters/{id}：expectedRevision/statePolicy 与完整 draft 同层。 */
+export function toRestUpdateCharacterBody(input: UpdateCharacterCommand): RestUpdateCharacterBody {
+  return {
+    ...toRestCharacterDraft(input.draft),
+    expectedRevision: input.expectedRevision,
+    statePolicy: input.statePolicy
+  }
+}
+
+export function toRestCloneCharacterBody(input: CloneCharacterCommand): RestCloneCharacterBody {
+  return input.displayName === undefined ? {} : { displayName: input.displayName }
+}
+
+export function toRestRollbackCharacterBody(input: RollbackCharacterCommand): RestRollbackCharacterBody {
+  return {
+    targetRevision: input.targetRevision,
+    expectedRevision: input.expectedRevision,
+    statePolicy: input.statePolicy
+  }
+}
+
+/** POST /api/characters/validate：与 create 相同的顶层 draft。 */
+export function toRestValidateCharacterBody(input: CharacterDraft): RestValidateCharacterBody {
+  return toRestCharacterDraft(input)
+}
+
+/** POST /api/characters/preview：只有 preview 保留 {draft,userMessage} 包装。 */
+export function toRestPreviewCharacterBody(input: CharacterPreviewCommand): RestPreviewCharacterBody {
+  return { draft: toRestCharacterDraft(input.draft), userMessage: input.userMessage }
+}
+
+export function toRestResetEvolutionBody(input: ResetCharacterEvolutionCommand): RestResetEvolutionBody {
+  return { expectedStateVersion: input.expectedStateVersion }
+}
+
+/** GET /api/characters 查询：仅保留 raw query 白名单字段。 */
+export function toRestCharacterListQuery(input: CharacterListQuery): RestCharacterListQuery {
+  return {
+    ...(input.source !== undefined ? { source: input.source } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
+    ...(input.search !== undefined ? { search: input.search } : {}),
+    ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+    ...(input.limit !== undefined ? { limit: input.limit } : {})
+  }
+}
+
+/** GET /api/characters/{id}/revisions 查询：characterId 用 URL path，不重复进入 query。 */
+export function toRestCharacterRevisionQuery(input: CharacterRevisionQuery): RestCharacterRevisionQuery {
+  return {
+    ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
+    ...(input.limit !== undefined ? { limit: input.limit } : {})
   }
 }
 
@@ -162,7 +305,7 @@ export function toDomainMutationResult(raw: RestCharacterMutationResult): Charac
 export function toDomainArchiveResult(raw: RestCharacterArchiveResult): CharacterArchiveResult {
   return {
     character: toDomainSummary(raw.character),
-    ...(raw.userProfile ? { userProfile: toDomainProfile(raw.userProfile) } : {})
+    ...(raw.userProfile !== undefined ? { userProfile: toDomainProfile(raw.userProfile) } : {})
   }
 }
 

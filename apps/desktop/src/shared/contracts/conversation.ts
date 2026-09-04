@@ -1,4 +1,4 @@
-import type { CharacterBindingSnapshot } from './character'
+import type { CharacterBindingSnapshot, CharacterId } from './character'
 
 /** 会话分页查询(游标分页,后端为事实来源) */
 export interface PageQuery {
@@ -26,7 +26,7 @@ export interface Conversation {
 export interface CreateConversationInput {
   title?: string
   /** 多角色 FE-A：新建会话显式选角（§5.9；旧后端兼容模式省略）；已有会话不换角色 */
-  characterId?: string
+  characterId?: CharacterId
 }
 
 /** 每会话草稿 */

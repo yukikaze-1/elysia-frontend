@@ -1,4 +1,4 @@
-import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedEvent, Live2DDirectiveEvent, ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent } from '@shared/contracts/events'
+import type { BackendEvent, CharacterCatalogChangedEvent, CharacterEventIdentity, CharacterStateChangedEvent, ExpressionEvent, Live2DDirectiveEvent, ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent } from '@shared/contracts/events'
 import type { CharacterPublicStateView } from '@shared/contracts/character'
 import type { ConversationTokenUsage, SegmentChannel, SegmentKind, TokenUsage } from '@shared/contracts/message'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
@@ -26,6 +26,8 @@ interface SegmentMeta {
 export class FrameMapper {
   private nextSequence = 1
   private segmentMeta = new Map<string, SegmentMeta>()
+  /** audio_start 建立的身份表；audio_end/cancel wire 无需重复身份，transport 通过此表续接。 */
+  private audioIdentityByStream = new Map<number, CharacterEventIdentity>()
   private activeConversationId?: string
   private readonly connectionId: string
   private readonly onProtocolWarning: (warning: ProtocolWarning) => void
@@ -38,6 +40,11 @@ export class FrameMapper {
 
   setActiveConversationId(id: string | undefined): void {
     this.activeConversationId = id
+  }
+
+  /** audio 已 ready/丢弃后释放身份表项。 */
+  clearAudioIdentity(streamId: number): void {
+    this.audioIdentityByStream.delete(streamId)
   }
 
   /** 生成一帧领域事件;非 generation 帧与 status 段返回 null(不告警) */
@@ -55,6 +62,9 @@ export class FrameMapper {
         return this.mapCompleted(frame)
       case 'generation.failed':
         return this.mapFailed(frame)
+      case 'expression':
+        // 握手旧 expression 没有角色身份，保持既有“忽略握手帧”语义；带身份的新表现帧才进入领域事件。
+        return this.hasCharacterEventIdentity(frame) ? this.mapExpression(frame) : null
       case 'switch_model_result':
         // 模型 Profile 激活结果（D-A14：ok 必填；error 为 "<CODE>: <msg>" 前缀串，由连接层解析）
         return { ...this.envelope(), event: 'switch_model.result', service: frame.service, model: frame.model, ok: frame.ok, ...(frame.error ? { error: frame.error } : {}) }
@@ -82,9 +92,12 @@ export class FrameMapper {
         return { ...this.envelope(), event: 'dictation.cancelled', clientRequestId: frame.clientRequestId }
       // —— TTS 播放控制（BE-063）——
       case 'audio_start':
-        return { ...this.envelope(), event: 'audio.session.started', streamId: frame.stream_id, format: frame.format }
-      case 'audio_cancelled':
-        return { ...this.envelope(), event: 'audio.session.cancelled', streamId: frame.stream_id }
+        return this.mapAudioStarted(frame)
+      case 'audio_cancelled': {
+        const identity = this.audioIdentityByStream.get(frame.stream_id)
+        this.audioIdentityByStream.delete(frame.stream_id)
+        return { ...this.envelope(), event: 'audio.session.cancelled', streamId: frame.stream_id, ...(identity ?? {}) }
+      }
       case 'audio':
       case 'audio_end':
         return null // 音频二进制由 transport（real-backend TTS 缓冲）消费，不进 mapper（D-P9）
@@ -122,6 +135,18 @@ export class FrameMapper {
    * 与 mapFrame 共享 nextSequence 不碰撞、sequence 全局严格递增）。partial 已含 event/其余字段，缺 eventId/sequence。
    */
   stampEvent<T extends BackendEvent>(partial: Omit<T, 'eventId' | 'sequence'>): T {
+    // RealBackend assembles audio.session.ready after consuming audio_end rather
+    // than passing a raw frame through mapFrame. Continue the identity captured
+    // by audio_start across that pure assembly boundary, then release it.
+    if ((partial as { event?: string }).event === 'audio.session.ready' ||
+      (partial as { event?: string }).event === 'audio.session.cancelled') {
+      const streamId = (partial as { streamId?: unknown }).streamId
+      if (typeof streamId === 'number') {
+        const identity = this.audioIdentityByStream.get(streamId)
+        this.audioIdentityByStream.delete(streamId)
+        return { ...this.envelope(), ...partial, ...(identity ?? {}) } as T
+      }
+    }
     return { ...this.envelope(), ...partial } as T
   }
 
@@ -260,6 +285,57 @@ export class FrameMapper {
     }
   }
 
+  private characterEventIdentity(frame: {
+    conversationId?: string
+    generationId?: string
+    characterId?: string
+    characterInstanceId?: string
+    characterRevision?: number
+  }): CharacterEventIdentity {
+    return {
+      ...(frame.conversationId !== undefined ? { conversationId: frame.conversationId } : {}),
+      ...(frame.generationId !== undefined ? { generationId: frame.generationId } : {}),
+      ...(frame.characterId !== undefined ? { characterId: frame.characterId } : {}),
+      ...(frame.characterInstanceId !== undefined ? { characterInstanceId: frame.characterInstanceId } : {}),
+      ...(frame.characterRevision !== undefined ? { characterRevision: frame.characterRevision } : {})
+    }
+  }
+
+  private hasCharacterEventIdentity(frame: {
+    conversationId?: string
+    generationId?: string
+    characterId?: string
+    characterInstanceId?: string
+    characterRevision?: number
+  }): boolean {
+    return frame.conversationId !== undefined || frame.generationId !== undefined ||
+      frame.characterId !== undefined || frame.characterInstanceId !== undefined || frame.characterRevision !== undefined
+  }
+
+  private mapExpression(frame: Extract<RawFrame, { type: 'expression' }>): ExpressionEvent {
+    return {
+      ...this.envelope(),
+      event: 'expression',
+      expression: frame.expression,
+      ...(frame.intensity !== undefined ? { intensity: frame.intensity } : {}),
+      ...this.characterEventIdentity(frame)
+    }
+  }
+
+  private mapAudioStarted(frame: Extract<RawFrame, { type: 'audio_start' }>): BackendEvent {
+    const identity = this.characterEventIdentity(frame)
+    // 同 stream_id 重开必须覆盖旧身份；没有身份的新 legacy 流不能继承旧角色。
+    if (Object.keys(identity).length > 0) this.audioIdentityByStream.set(frame.stream_id, identity)
+    else this.audioIdentityByStream.delete(frame.stream_id)
+    return {
+      ...this.envelope(),
+      event: 'audio.session.started',
+      streamId: frame.stream_id,
+      format: frame.format,
+      ...identity
+    }
+  }
+
   /** character.state.changed raw 帧 → 领域事件（state 完整 view；null 归一 undefined，FE-E 消费顺序只看 stateVersion） */
   private mapCharacterStateChanged(frame: Extract<RawFrame, { type: 'character.state.changed' }>): CharacterStateChangedEvent {
     const view: CharacterPublicStateView = {
@@ -290,7 +366,8 @@ export class FrameMapper {
       ...(frame.motion !== undefined ? { motion: frame.motion } : {}),
       ...(frame.state !== undefined ? { state: frame.state } : {}),
       ...(frame.priority !== undefined ? { priority: frame.priority } : {}),
-      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {})
+      ...(frame.durationMs !== undefined ? { durationMs: frame.durationMs } : {}),
+      ...this.characterEventIdentity(frame)
     }
   }
 

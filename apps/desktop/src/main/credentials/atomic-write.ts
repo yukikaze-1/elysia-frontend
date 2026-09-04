@@ -1,6 +1,6 @@
 import { constants } from 'fs'
 import { realpath, rename, unlink } from 'fs/promises'
-import { basename, dirname, join, relative } from 'path'
+import { basename, dirname, isAbsolute, join, relative, sep } from 'path'
 import { openSafeFile, SafeOpenConflictError } from '../persistence/safe-open'
 
 const isPosix = process.platform !== 'win32'
@@ -12,7 +12,7 @@ async function assertParentContained(filePath: string, safeRoot: string): Promis
   const [safe, real] = await Promise.all([realpath(safeRoot), realpath(dir)])
     .catch(() => { throw new Error('父目录无法解析') })
   const rel = relative(safe, real)
-  if (rel.startsWith('..') || rel.includes('..')) throw new Error(`父目录逃逸安全根（${real}）`)
+  if (isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) throw new Error(`父目录逃逸安全根（${real}）`)
   return real
 }
 

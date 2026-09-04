@@ -31,6 +31,10 @@ import { createIpcHandler } from './executor'
 import { registerHandler } from './registry'
 import { appInfoSchema } from './channels'
 import { app } from 'electron'
+import { registerCharacterHandlers } from '../characters/character-handlers'
+import type { CharacterService } from '../characters/character-service'
+import { registerCharacterDraftHandlers } from '../characters/character-draft-handlers'
+import type { CharacterDraftStore } from '../persistence/character-draft-store'
 
 export function registerHandlers(deps: {
   credentials: CredentialStore; logger: Logger; chat: ChatService; connectionConfig: ConnectionConfig; sessionStore: SessionStore;
@@ -43,6 +47,8 @@ export function registerHandlers(deps: {
   grants: GrantStore                 // 批次 C（D6C-12）：目录授权仓库（tool 四新通道数据源）
   auditDir: string                   // 批次 C（D6C-12）：审计目录（toolHistory 回读）
   diagnostics: DiagnosticsService    // 阶段 7 批次 A（Task 5）：诊断五通道数据源
+  characters: { service: CharacterService } // 多角色角色域（无 Real REST）
+  characterDrafts?: CharacterDraftStore // FE-D2：本地未提交角色草稿（Main app-cache）
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -60,4 +66,6 @@ export function registerHandlers(deps: {
   registerLive2dHandlers({ registry: deps.live2d.registry, sanitize, logger: deps.logger })
   registerToolHandlers({ tools: deps.tools, sanitize, grants: deps.grants, history: readAuditEvents, auditDir: deps.auditDir })
   registerDiagnosticsHandlers({ service: deps.diagnostics, sanitize, logger: deps.logger })
+  registerCharacterHandlers({ service: deps.characters.service, drafts: deps.characterDrafts, sanitize, logger: deps.logger })
+  if (deps.characterDrafts) registerCharacterDraftHandlers({ drafts: deps.characterDrafts, sanitize, logger: deps.logger })
 }

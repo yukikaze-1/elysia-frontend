@@ -129,6 +129,28 @@ describe('desktopApi chat 面', () => {
     unsub()
   })
 
+  it('onChatReplay: preload MessageSchema 解析后保留 character generation ref', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const received: Array<{ messages: Message[] }> = []
+    const unsub = desktopApi.onChatReplay((p) => received.push(p))
+    const character = {
+      characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2,
+      displayName: 'Elysia', presentation: { themeColor: '#ff88aa' }
+    }
+    mockIpc.emit('chat:replay', {
+      conversationId: 'c1',
+      messages: [{
+        messageId: 'm-character', conversationId: 'c1', role: 'assistant', status: 'completed',
+        createdAt: '2026-08-11T00:00:00Z',
+        assistantSegments: [{ segmentId: 's1', segmentIndex: 0, channel: 'public_reply', kind: 'text', text: 'hi', completed: true }],
+        character
+      }]
+    })
+    expect(received).toHaveLength(1)
+    expect(received[0].messages[0].character).toEqual(character)
+    unsub()
+  })
+
   it('onChatReplay:整批 messages 非法 → 全部丢弃但 payload 仍达 handler(messages: [])', async () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     const received: unknown[] = []

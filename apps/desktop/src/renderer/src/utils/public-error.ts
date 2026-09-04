@@ -11,6 +11,8 @@ export interface PublicError {
   clientRequestId?: string
   retryAfterMs?: number
   idempotencyDurable?: boolean
+  currentRevision?: number
+  issues?: Array<{ severity: 'error' | 'warning'; code: string; path: string; message: string }>
 }
 
 export function parsePublicError(message: string): PublicError {
@@ -32,6 +34,25 @@ export function parsePublicError(message: string): PublicError {
       const value = Number(m[2])
       if (Number.isFinite(value)) out.retryAfterMs = value
     } else if (m[1] === 'idempotencyDurable') out.idempotencyDurable = m[2] === 'true'
+    else if (m[1] === 'currentRevision') {
+      const value = Number(m[2])
+      if (Number.isSafeInteger(value) && value >= 1) out.currentRevision = value
+    } else if (m[1] === 'issues' && m[2].length <= 32_768) {
+      try {
+        const decoded: unknown = JSON.parse(decodeURIComponent(m[2]))
+        if (Array.isArray(decoded) && decoded.length <= 20) {
+          const issues = decoded.flatMap((item) => {
+            if (!item || typeof item !== 'object') return []
+            const issue = item as Record<string, unknown>
+            if ((issue.severity !== 'error' && issue.severity !== 'warning') || typeof issue.code !== 'string' || typeof issue.path !== 'string' || typeof issue.message !== 'string') return []
+            if (issue.code.length > 80 || issue.path.length > 300 || issue.message.length > 500) return []
+            if (!issue.path.startsWith('/') || issue.path.includes('\\') || issue.path.includes('://') || /^\/[a-zA-Z]:/.test(issue.path)) return []
+            return [{ severity: issue.severity as 'error' | 'warning', code: issue.code, path: issue.path, message: issue.message }]
+          })
+          if (issues.length === decoded.length && issues.length) out.issues = issues
+        }
+      } catch { /* 非法编码/JSON fail closed，不回退暴露原文。 */ }
+    }
   }
   out.message = stripped.trim() || rest   // 无 kv 段时 rest 原样
   return out

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { isKeyAllowed, type ActivateModelProfileCommand, type CredentialStatus, type ModelProfileTestCommand, type SetTtsVoiceCommand, type TtsPreviewCommand, type UpsertModelProfileCommand } from '@shared/contracts'
-import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema, SettingsPatchSchema } from '@shared/schemas'
+import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema, SettingsPatchSchema, CharacterDraftListRequestSchema, CharacterDraftGetRequestSchema, CharacterDraftSaveRequestSchema, CharacterDraftDeleteRequestSchema, CreateConversationInputSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
   name: z.string(),
@@ -56,9 +56,7 @@ export const chatListConversationsSchema = z.object({
   cursor: z.string().optional(),
   limit: z.number().int().positive().optional()
 })
-export const chatCreateSchema = z.object({
-  title: z.string().max(200).optional()   // D7A-13：标题 200 上界（无界字段补值）
-})
+export const chatCreateSchema = CreateConversationInputSchema
 export const chatCancelSchema = z.object({
   generationId: z.string().min(1)
 })
@@ -75,6 +73,12 @@ export const chatOpenExternalSchema = OpenExternalInputSchema
 // 响应 schema：共享定义在 shared/schemas/ipc-response，别名保持引用兼容
 export const sessionPersistenceStateResponseSchema = SessionPersistenceStateSchema
 export const persistSessionResultResponseSchema = PersistSessionResultSchema
+
+// —— FE-D2 未提交角色草稿 request schema（response 由 character-draft-handlers 使用共享 schema）——
+export const characterDraftsListSchema = CharacterDraftListRequestSchema
+export const characterDraftsGetSchema = CharacterDraftGetRequestSchema
+export const characterDraftsSaveSchema = CharacterDraftSaveRequestSchema
+export const characterDraftsDeleteSchema = CharacterDraftDeleteRequestSchema
 
 // —— attachments 命令 request schema（spec §4.2/§4.5；响应 schema 在 shared/schemas/ipc-response）——
 export const UploadFileDescriptorSchema = z.object({

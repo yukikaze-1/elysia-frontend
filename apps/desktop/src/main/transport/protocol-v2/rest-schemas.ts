@@ -1,22 +1,43 @@
 import { z } from 'zod'
-import type { RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestPendingQueryResponse, RestSearchMessagesResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult, RestStickerListResponse } from './rest-types'
+import type { RestCreateSessionBody, RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestPendingQueryResponse, RestSearchMessagesResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult, RestStickerListResponse } from './rest-types'
 
 // —— 多角色 FE-A：会话/消息内嵌角色绑定快照 wire schema——
 // check:contract 以 Node ESM 直接加载本文件（DesktopCallStatusSchema 同款约束）→ 运行时值导入只允许 zod，
 // isSafeRegistryId/isSafeThemeColor 在此自包含一份镜像副本，与 shared/schemas/character.ts、
-// character-rest-schemas.ts 三处同形（任意一处修改需同步）。
+// character-rest-schemas.ts、raw-schemas.ts 四处同形（任意一处修改需同步）。
 function isSafeRegistryId(v: string): boolean {
-  if (v.length === 0 || v.length > 200) return false
+  if (v.trim().length === 0 || v.length > 200) return false
   if (v.startsWith('/') || v.startsWith('\\')) return false
-  if (v.includes('://') || v.includes(':\\')) return false
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(v)) return false
   if (v.includes('..')) return false
   return true
 }
+
+const SAFE_CSS_NAMED_COLORS = new Set([
+  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black', 'blanchedalmond',
+  'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse', 'chocolate', 'coral', 'cornflowerblue',
+  'cornsilk', 'crimson', 'cyan', 'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray', 'darkgrey', 'darkgreen',
+  'darkkhaki', 'darkmagenta', 'darkolivegreen', 'darkorange', 'darkorchid', 'darkred', 'darksalmon',
+  'darkseagreen', 'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet', 'deeppink',
+  'deepskyblue', 'dimgray', 'dimgrey', 'dodgerblue', 'firebrick', 'floralwhite', 'forestgreen', 'fuchsia',
+  'gainsboro', 'ghostwhite', 'gold', 'goldenrod', 'gray', 'grey', 'green', 'greenyellow', 'honeydew', 'hotpink',
+  'indianred', 'indigo', 'ivory', 'khaki', 'lavender', 'lavenderblush', 'lawngreen', 'lemonchiffon', 'lightblue',
+  'lightcoral', 'lightcyan', 'lightgoldenrodyellow', 'lightgray', 'lightgrey', 'lightgreen', 'lightpink',
+  'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray', 'lightslategrey', 'lightsteelblue',
+  'lightyellow', 'lime', 'limegreen', 'linen', 'magenta', 'maroon', 'mediumaquamarine', 'mediumblue',
+  'mediumorchid', 'mediumpurple', 'mediumseagreen', 'mediumslateblue', 'mediumspringgreen', 'mediumturquoise',
+  'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose', 'moccasin', 'navajowhite', 'navy', 'oldlace',
+  'olive', 'olivedrab', 'orange', 'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise',
+  'palevioletred', 'papayawhip', 'peachpuff', 'peru', 'pink', 'plum', 'powderblue', 'purple', 'rebeccapurple',
+  'red', 'rosybrown', 'royalblue', 'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell', 'sienna',
+  'silver', 'skyblue', 'slateblue', 'slategray', 'slategrey', 'snow', 'springgreen', 'steelblue', 'tan', 'teal',
+  'thistle', 'tomato', 'turquoise', 'violet', 'wheat', 'white', 'whitesmoke', 'yellow', 'yellowgreen', 'transparent'
+])
 function isSafeThemeColor(v: string): boolean {
   if (v.length === 0 || v.length > 64) return false
   if (/^#[0-9a-fA-F]{3,8}$/.test(v)) return true
   if (/^(rgba?|hsla?)\(\s*[\d.,%\s]+\s*\)$/.test(v)) return true
-  return /^[a-z]+$/i.test(v)
+  return SAFE_CSS_NAMED_COLORS.has(v.toLowerCase())
 }
 export const RestCharacterPresentationSchema = z.object({
   avatarAssetId: z.string().refine(isSafeRegistryId, '注册表 ID 不得为路径/URL').nullable().optional(),
@@ -24,12 +45,21 @@ export const RestCharacterPresentationSchema = z.object({
   themeColor: z.string().refine(isSafeThemeColor, '颜色仅支持 hex/rgb(a)/hsl(a)/命名色').nullable().optional()
 }).strict()
 export const RestCharacterBindingSnapshotSchema = z.object({
-  characterId: z.string().min(1),
-  characterInstanceId: z.string().min(1),
+  characterId: z.string().min(1).refine((v) => v.trim().length > 0),
+  characterInstanceId: z.string().min(1).refine((v) => v.trim().length > 0),
   characterRevision: z.number().int().min(1),
-  displayName: z.string().min(1),
+  displayName: z.string().min(1).max(64).refine((v) => v.trim().length > 0),
   presentation: RestCharacterPresentationSchema
 }).strict()
+
+/** POST /api/sessions 请求体：legacy 允许省略 characterId；角色能力开启后的必填门留给运行时。 */
+export const RestCreateSessionBodySchema: z.ZodType<RestCreateSessionBody> = z.object({
+  title: z.string().optional(),
+  characterId: z.string().min(1).refine((v) => v.trim().length > 0).optional()
+}).strict()
+export function parseRestCreateSessionBody(input: unknown): { success: true; data: RestCreateSessionBody } | { success: false; error: z.ZodError } {
+  return RestCreateSessionBodySchema.safeParse(input)
+}
 
 export const RestSessionSummarySchema = z.object({
   conversationId: z.string().min(1),

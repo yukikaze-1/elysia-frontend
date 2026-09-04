@@ -92,11 +92,19 @@ describe('IPC 领域响应 Schema', () => {
         serverUrl: 'ws://localhost:8000/ws',
         protocolVersion: '1.0',
         serverVersion: 'v1.0',
+        connectionScopeId: 'local-scope-1',
         connectionId: 'conn-1',
         activeConversationId: 'c1',
         lastError: undefined
       }).success
     ).toBe(true)
+  })
+
+  it('IPC/domain 相关顶层 schema 拒绝未知字段；分页严格镜像', () => {
+    expect(MessageSchema.safeParse({ ...assistantMsg, revision: 2 }).success).toBe(false)
+    expect(ConversationSchema.safeParse({ id: 'c', title: 't', updatedAt: 'd', extra: true }).success).toBe(false)
+    expect(ConnectionStateSchema.safeParse({ status: 'connected', extra: true }).success).toBe(false)
+    expect(PageSchema(ConversationSchema).safeParse({ items: [], hasMore: false, cursor: 'opaque' }).success).toBe(false)
   })
 
   it('ReplayPayloadSchema:messages 单条非法 → 整 payload 校验失败(逐条丢弃在 preload 层处理)', () => {

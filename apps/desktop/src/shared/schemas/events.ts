@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { BackendEvent } from '../contracts'
-import { CharacterPublicStateViewSchema } from './character'
+import { CharacterPublicStateViewSchema, UtcIsoTimestampSchema } from './character'
 
 export const SegmentChannelSchema = z.enum(['inner_voice', 'public_reply'])
 export const SegmentKindSchema = z.enum([
@@ -15,18 +15,28 @@ export const BackendEventEnvelopeSchema = z.object({
   timestamp: z.string().optional()
 })
 
+/** 表现/TTS 事件的角色归属（迁移期 optional；能力开启后的必填由运行时 gate 校验）。 */
+const eventIdentityText = () => z.string().min(1).refine((v) => v.trim().length > 0, '身份字段不能全为空白')
+const CharacterEventIdentitySchemaFields = {
+  conversationId: eventIdentityText().optional(),
+  generationId: eventIdentityText().optional(),
+  characterId: eventIdentityText().optional(),
+  characterInstanceId: eventIdentityText().optional(),
+  characterRevision: z.number().int().min(1).optional()
+}
+
 export const GenerationStartedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('generation.started'),
   generationId: z.string().min(1),
   messageId: z.string().min(1),
   responseId: z.string().min(1),
-  conversationId: z.string().min(1),
+  conversationId: eventIdentityText(),
   model: z.string().optional(),
   // 多角色 FE-A：generation 角色身份（CHAR-FE-08；迁移期 optional，flag=true 后必填）
-  characterId: z.string().min(1).optional(),
-  characterInstanceId: z.string().min(1).optional(),
+  characterId: eventIdentityText().optional(),
+  characterInstanceId: eventIdentityText().optional(),
   characterRevision: z.number().int().min(1).optional()
-})
+}).strict()
 
 export const GenerationSegmentStartedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('generation.segment.started'),
@@ -92,10 +102,10 @@ export const GenerationCompletedEventSchema = BackendEventEnvelopeSchema.extend(
   model: z.string().optional(),
   emotion: z.string().optional(),
   finishReason: z.string().optional(),
-  characterId: z.string().min(1).optional(),
-  characterInstanceId: z.string().min(1).optional(),
+  characterId: eventIdentityText().optional(),
+  characterInstanceId: eventIdentityText().optional(),
   characterRevision: z.number().int().min(1).optional()
-})
+}).strict()
 
 export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('generation.failed'),
@@ -107,10 +117,10 @@ export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({
     retryable: z.boolean().optional(),
     details: z.unknown().optional()
   }),
-  characterId: z.string().min(1).optional(),
-  characterInstanceId: z.string().min(1).optional(),
+  characterId: eventIdentityText().optional(),
+  characterInstanceId: eventIdentityText().optional(),
   characterRevision: z.number().int().min(1).optional()
-})
+}).strict()
 
 /** 模型 Profile 激活结果（switch_model.result；判别字段 event 对齐 BackendEvent 契约；沿用既有成员写法，不注 z.ZodType 以免判别联合丢失形状信息） */
 export const SwitchModelResultEventSchema = BackendEventEnvelopeSchema.extend({
@@ -167,21 +177,32 @@ export const DictationCancelledEventSchema = BackendEventEnvelopeSchema.extend({
 /** TTS 句开始（audio.session.started） */
 export const AudioSessionStartedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('audio.session.started'), streamId: z.number().int().nonnegative(),
-  format: z.enum(['wav', 'mp3']).optional()
-})
+  format: z.enum(['wav', 'mp3']).optional(),
+  ...CharacterEventIdentitySchemaFields
+}).strict()
 /** TTS 整段就绪（audio.session.ready；format 枚举 wav|mp3 可选） */
 export const AudioSessionReadyEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('audio.session.ready'), streamId: z.number().int().nonnegative(), url: z.string().min(1),
-  durationMs: z.number().nonnegative().optional(), format: z.enum(['wav', 'mp3']).optional()
-})
+  durationMs: z.number().nonnegative().optional(), format: z.enum(['wav', 'mp3']).optional(),
+  ...CharacterEventIdentitySchemaFields
+}).strict()
 /** TTS 播放取消/中断（audio.session.cancelled） */
 export const AudioSessionCancelledEventSchema = BackendEventEnvelopeSchema.extend({
-  event: z.literal('audio.session.cancelled'), streamId: z.number().int().nonnegative()
-})
+  event: z.literal('audio.session.cancelled'), streamId: z.number().int().nonnegative(),
+  ...CharacterEventIdentitySchemaFields
+}).strict()
 /** 语音族错误（voice.error；D-P15） */
 export const VoiceErrorEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('voice.error'), code: z.string().min(1), message: z.string().optional()
 })
+
+/** 后端 expression 表现帧归一后的领域事件；角色身份在迁移期可选，但未知字段仍 fail-closed。 */
+export const ExpressionEventSchema = BackendEventEnvelopeSchema.extend({
+  event: z.literal('expression'),
+  expression: z.string().min(1),
+  intensity: z.number().optional(),
+  ...CharacterEventIdentitySchemaFields
+}).strict()
 
 // —— 阶段 5 批次 C（C3）：后端 Live2D 表现指令建议 schema 镜像（缺镜像 → preload parseBackendEvent 丢弃，P4-B 先例）——
 /** 后端 Live2D 表现指令建议（live2d.directive；state 七值，priority ∈ [0,3] 字面量联合，durationMs ∈ [0,30_000]；`.strict()` fail-closed 拒未知字段） */
@@ -191,7 +212,8 @@ export const Live2DDirectiveEventSchema = BackendEventEnvelopeSchema.extend({
   motion: z.string().optional(),
   state: z.enum(['idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised']).optional(),
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
-  durationMs: z.number().int().min(0).max(30000).optional()
+  durationMs: z.number().int().min(0).max(30000).optional(),
+  ...CharacterEventIdentitySchemaFields
 }).strict()
 
 // —— 阶段 6 批次 A（F-6-03）：工具双轨领域事件 schema 镜像（spec §3.3；缺镜像 → preload parseBackendEvent 丢弃，P4-B 先例）——
@@ -245,9 +267,12 @@ export const ToolCompletedEventSchema = BackendEventEnvelopeSchema.extend({
 /** 角色公开状态变化（character.state.changed；完整 view 整体替换） */
 export const CharacterStateChangedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('character.state.changed'),
-  conversationId: z.string().min(1),
-  characterId: z.string().min(1),
-  characterInstanceId: z.string().min(1),
+  // Added by Main after raw-wire mapping; RawCharacterStateChangedSchema
+  // intentionally does not accept this desktop-local field.
+  connectionScopeId: z.string().min(1).optional(),
+  conversationId: z.string().min(1).refine((v) => v.trim().length > 0),
+  characterId: z.string().min(1).refine((v) => v.trim().length > 0),
+  characterInstanceId: z.string().min(1).refine((v) => v.trim().length > 0),
   characterRevision: z.number().int().min(1),
   stateVersion: z.number().int().min(1),
   state: CharacterPublicStateViewSchema
@@ -256,10 +281,13 @@ export const CharacterStateChangedEventSchema = BackendEventEnvelopeSchema.exten
 /** 角色目录失效通知（character.catalog.changed；不携带完整 Prompt） */
 export const CharacterCatalogChangedEventSchema = BackendEventEnvelopeSchema.extend({
   event: z.literal('character.catalog.changed'),
-  characterId: z.string().min(1),
+  // Added by Main after raw-wire mapping; RawCharacterCatalogChangedSchema
+  // intentionally does not accept this desktop-local field.
+  connectionScopeId: z.string().min(1).optional(),
+  characterId: z.string().min(1).refine((v) => v.trim().length > 0),
   currentRevision: z.number().int().min(1),
   status: z.enum(['active', 'archived']),
-  updatedAt: z.string().min(1)
+  updatedAt: UtcIsoTimestampSchema
 }).strict()
 
 export const BackendEventSchema = z.discriminatedUnion('event', [
@@ -284,6 +312,7 @@ export const BackendEventSchema = z.discriminatedUnion('event', [
   AudioSessionReadyEventSchema,
   AudioSessionCancelledEventSchema,
   VoiceErrorEventSchema,
+  ExpressionEventSchema,
   Live2DDirectiveEventSchema,
   ToolRequestEventSchema,
   ToolStartedEventSchema,
