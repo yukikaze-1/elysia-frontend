@@ -6,13 +6,22 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export type AppView = 'chat' | 'tasks' | 'settings'
+export type SettingsSection = 'model' | 'identity' | 'characters' | 'voice' | 'appearance' | 'security' | 'diagnostics'
 
 export const useAppStore = defineStore('app', () => {
   const currentView = ref<AppView>('chat')
+  const settingsSection = ref<SettingsSection>('model')
+  const settingsCharacterId = ref<string>()
 
   function setView(v: AppView): void {
     currentView.value = v
   }
 
-  return { currentView, setView }
+  function openSettings(section: SettingsSection = 'model', characterId?: string): void {
+    settingsSection.value = section
+    settingsCharacterId.value = section === 'characters' ? characterId : undefined
+    currentView.value = 'settings'
+  }
+
+  return { currentView, settingsSection, settingsCharacterId, setView, openSettings }
 })

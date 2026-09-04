@@ -10,9 +10,17 @@ import CyLive2DPane from './CyLive2DPane.vue'
 import CySecurityPane from './CySecurityPane.vue'
 import CyDiagnosticsPane from './CyDiagnosticsPane.vue'
 import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
+import CyIdentityPane from './characters/CyIdentityPane.vue'
+import CyCharacterPane from './characters/CyCharacterPane.vue'
 import { useVoiceStore } from '../stores/voice.store'
+import { useIdentityStore } from '../stores/identity.store'
+import { useCharacterEditorStore } from '../stores/character-editor.store'
+import { useAppStore } from '../stores/app.store'
 
 const voiceStore = useVoiceStore()
+const identityStore = useIdentityStore()
+const characterEditorStore = useCharacterEditorStore()
+const appStore = useAppStore()
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -28,15 +36,17 @@ onBeforeUnmount(() => { if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer) })
 // 面包屑去「· 阶段 N」。placeholder 仅占位兜底（五项都已实现，实际不触发）。
 const NAV_ITEMS = [
   { key: 'model', label: '模型服务', placeholder: '' },
+  { key: 'identity', label: '我的档案', placeholder: '' },
+  { key: 'characters', label: '角色', placeholder: '' },
   { key: 'voice', label: '语音', placeholder: '普通录音/实时语音会话/输入法转写/TTS 自动朗读' },
+  { key: 'appearance', label: '外观与 Live2D', placeholder: '' },
   { key: 'security', label: '安全与权限', placeholder: '安全策略/权限审批/已授权命令' },
-  { key: 'character', label: '角色与外观', placeholder: 'Live2D 角色与外观' },
   { key: 'diagnostics', label: '开发与诊断', placeholder: '开发者模式/日志' }
 ] as const
 
 type NavKey = (typeof NAV_ITEMS)[number]['key']
 
-const activeNav = ref<NavKey>('model')
+const activeNav = ref<NavKey>(appStore.settingsSection)
 
 const overlay = ref<HTMLElement>()
 const closeBtn = ref<HTMLElement>()
@@ -52,8 +62,27 @@ onMounted(() => {
 })
 
 function close(): void {
+  if (!canLeaveActivePane()) return
   emit('close')
   if (triggerElement instanceof HTMLElement) triggerElement.focus()
+}
+
+function selectNav(next: NavKey): void {
+  if (next === activeNav.value) return
+  if (!canLeaveActivePane()) return
+  activeNav.value = next
+}
+
+function canLeaveActivePane(): boolean {
+  if (activeNav.value === 'identity' && identityStore.dirty) {
+    return window.confirm('“我的档案”还有未保存修改。确定要离开并保留当前输入吗？')
+  }
+  if (activeNav.value === 'characters' && characterEditorStore.dirty) {
+    const leave = window.confirm('“角色”还有未保存修改。确定离开并保留本地恢复草稿吗？')
+    if (leave) void characterEditorStore.flushDraft()
+    return leave
+  }
+  return true
 }
 
 /** Tab 焦点陷阱:循环回拦在可聚焦元素内；Esc 关闭（子组件 keydown 会 stopPropagation，互不冲突） */
@@ -90,16 +119,19 @@ onBeforeUnmount(() => { triggerElement = null })
             class="cy-settings-nav-item"
             :class="{ active: activeNav === item.key }"
             :aria-pressed="activeNav === item.key"
-            @click="activeNav = item.key"
+            @click="selectNav(item.key)"
           >
             <span>{{ item.label }}</span>
+            <span v-if="item.key === 'identity' && identityStore.profile && !identityStore.initialized" class="cy-nav-mark" aria-label="未完成初始化">未完成</span>
           </button>
         </nav>
 
         <div class="cy-settings-body">
           <CyModelServicesPane v-if="activeNav === 'model'" />
+          <CyIdentityPane v-else-if="activeNav === 'identity'" />
+          <CyCharacterPane v-else-if="activeNav === 'characters'" :initial-character-id="appStore.settingsCharacterId" />
           <CyVoicePane v-else-if="activeNav === 'voice'" />
-          <CyLive2DPane v-else-if="activeNav === 'character'" />
+          <CyLive2DPane v-else-if="activeNav === 'appearance'" />
           <CySecurityPane v-else-if="activeNav === 'security'" />
           <CyDiagnosticsPane v-else-if="activeNav === 'diagnostics'" />
           <div v-else class="cy-settings-placeholder" role="status">
@@ -176,6 +208,8 @@ onBeforeUnmount(() => { triggerElement = null })
 }
 .cy-settings-nav-item:hover { background: var(--cy-surface-hover); }
 .cy-settings-nav-item.active { color: var(--cy-accent-text); background: var(--cy-accent); }
+.cy-nav-mark { padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: 999px; color: var(--cy-warning); font-size: 9px; }
+.cy-settings-nav-item.active .cy-nav-mark { color: currentColor; border-color: currentColor; }
 .cy-settings-body {
   flex: 1 1 0;
   min-width: 0;
@@ -210,4 +244,9 @@ onBeforeUnmount(() => { triggerElement = null })
   box-shadow: var(--cy-shadow);
 }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
+@media (max-width: 680px) {
+  .cy-settings { width: min(96vw, 920px); height: min(92vh, 640px); }
+  .cy-settings-nav { flex-basis: 150px; }
+  .cy-settings-body { padding: 13px; }
+}
 </style>

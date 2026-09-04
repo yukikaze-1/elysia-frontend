@@ -1,0 +1,293 @@
+<script setup lang="ts">
+import { computed, nextTick, onMounted } from 'vue'
+import type { CharacterDetail, CharacterDraft, CharacterStatePolicy } from '@shared/contracts'
+import type { PublicError } from '../../utils/public-error'
+import { useCharacterEditorStore } from '../../stores/character-editor.store'
+import { characterErrorMessage } from './character-error'
+import CyCharacterPromptFields from './CyCharacterPromptFields.vue'
+import CyCharacterPresentationFields from './CyCharacterPresentationFields.vue'
+import CyCharacterValidation from './CyCharacterValidation.vue'
+import CyCharacterPreview from './CyCharacterPreview.vue'
+
+const props = defineProps<{ detail?: CharacterDetail; busy?: boolean }>()
+const emit = defineEmits<{ back: []; saved: []; reload: [] }>()
+const editor = useCharacterEditorStore()
+
+const modeLabel = computed(() => {
+  if (editor.mode === 'create') return '新建角色'
+  if (editor.mode === 'clone') return '克隆并自定义'
+  return '编辑角色'
+})
+const baselineLabel = computed(() => editor.mode === 'create'
+  ? '尚未创建远端角色'
+  : `基线 revision ${editor.baseRevision ?? '未知'}`)
+const saveDisabled = computed(() => !editor.hasEditor || !editor.dirty || editor.saveStatus === 'saving' || props.busy === true || !editor.remoteAvailable)
+const saveError = computed<PublicError | undefined>(() => editor.saveError ?? editor.persistenceError)
+const saveErrorMessage = computed(() => characterErrorMessage(saveError.value, '保存失败，请检查校验结果后重试。'))
+const validationErrorMessage = computed(() => characterErrorMessage(editor.validationError, '角色校验失败，请稍后重试。'))
+const conflictMessage = computed(() => characterErrorMessage(
+  editor.conflict ? { code: 'BACKEND_REJECTED', backendCode: editor.conflict.backendCode, message: editor.conflict.message } : undefined,
+  '远端角色已被更新，当前草稿未覆盖远端内容。'
+))
+
+function updateField(path: string, value: unknown): void {
+  // Store.updateField deliberately refuses to create arbitrary object keys. The
+  // editor still needs to author optional contract fields, so add only this
+  // explicit allow-list through updateDraft (never accept an arbitrary path).
+  const draft = editor.draft
+  if (!draft) return
+  if (path === 'openingMessage') {
+    editor.updateDraft({ openingMessage: typeof value === 'string' && value ? value : undefined })
+    return
+  }
+  const optionalPaths = new Set([
+    'runtimeDefaults.voice.providerId', 'runtimeDefaults.voice.voiceId',
+    'presentation.avatarAssetId', 'presentation.live2dModelId', 'presentation.themeColor'
+  ])
+  if (optionalPaths.has(path)) {
+    const [group, section, field] = path.split('.')
+    if (group === 'runtimeDefaults' && section === 'voice' && field) {
+      editor.updateDraft({ runtimeDefaults: { ...draft.runtimeDefaults, voice: { ...draft.runtimeDefaults.voice, [field]: typeof value === 'string' && value ? value : undefined } } })
+    } else if (group === 'presentation' && section) {
+      editor.updateDraft({ presentation: { ...draft.presentation, [section]: typeof value === 'string' && value ? value : undefined } })
+    }
+    return
+  }
+  editor.updateField(path, value)
+}
+
+function updateBasic(path: keyof CharacterDraft, event: Event): void {
+  updateField(path, (event.target as HTMLInputElement | HTMLTextAreaElement).value)
+}
+
+function updateAliases(event: Event): void {
+  const aliases = (event.target as HTMLInputElement).value.split(',').map((item) => item.trim()).filter(Boolean)
+  updateField('aliases', aliases)
+}
+
+function aliasesValue(): string {
+  return editor.draft?.aliases.join(', ') ?? ''
+}
+
+async function validate(): Promise<void> {
+  try { await editor.validate() } catch { /* Store exposes the safe public error. */ }
+}
+
+function pathSegments(path: string): string[] {
+  const source = path.trim()
+  if (!source) return []
+  if (source.startsWith('/')) {
+    return source.slice(1).split('/').map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~')).filter(Boolean)
+  }
+  return source.replace(/\[(\d+)\]/g, '.$1').split('.').filter(Boolean)
+}
+
+function focusPath(path: string): void {
+  const issue = pathSegments(path)
+  if (issue.length === 0) {
+    document.querySelector<HTMLElement>('.cy-character-editor-form')?.focus()
+    return
+  }
+  const fields = [...document.querySelectorAll<HTMLElement>('[data-field-path]')]
+    .map((field) => ({ field, segments: pathSegments(field.dataset.fieldPath ?? '') }))
+    .filter(({ segments }) => segments.length > 0)
+  const startsWith = (whole: string[], prefix: string[]): boolean => prefix.every((part, index) => whole[index] === part)
+  // Prefer an exact field, then the nearest descendant for container issues
+  // (/presentation, /promptProfile/examples), then the deepest known ancestor
+  // for leaf/extra-index issues. This never builds a selector from backend data.
+  const exact = fields.find(({ segments }) => segments.length === issue.length && startsWith(segments, issue))
+  const descendant = fields
+    .filter(({ segments }) => segments.length > issue.length && startsWith(segments, issue))
+    .sort((left, right) => left.segments.length - right.segments.length)[0]
+  const ancestor = fields
+    .filter(({ segments }) => segments.length < issue.length && startsWith(issue, segments))
+    .sort((left, right) => right.segments.length - left.segments.length)[0]
+  const target = exact?.field ?? descendant?.field ?? ancestor?.field
+  if (target) {
+    target.closest('details')?.setAttribute('open', '')
+    target.focus()
+    target.scrollIntoView?.({ block: 'center' })
+    return
+  }
+  // Unknown paths are still safe to show in the issue list; focus the form
+  // instead of attempting to construct a selector from untrusted backend data.
+  document.querySelector<HTMLElement>('.cy-character-editor-form')?.focus()
+}
+
+function confirm(message: string): boolean {
+  return typeof window.confirm !== 'function' || window.confirm(message)
+}
+
+async function save(): Promise<void> {
+  if (saveDisabled.value) return
+  const policyMessage = editor.mode === 'edit' && editor.statePolicy === 'reset_evolution'
+    ? '将以当前 revision 为基线保存，并按后端返回的范围重置演化状态。确定继续吗？'
+    : editor.mode === 'edit'
+      ? `将以 expected revision ${editor.baseRevision ?? '未知'} 保存新版本，已有会话继续沿用其绑定。确定继续吗？`
+      : '将创建一个新的自定义角色。确定保存吗？'
+  if (!confirm(policyMessage)) return
+  try {
+    const result = await editor.save()
+    if (result && !editor.dirty) emit('saved')
+  } catch { /* Error status is rendered below. */ }
+}
+
+async function discard(): Promise<void> {
+  if (!editor.dirty || !confirm('确定放弃当前未保存的角色修改吗？本地恢复草稿也会被删除。')) return
+  await editor.discardDraft()
+  emit('back')
+}
+
+function reloadLatest(): void {
+  if (!props.detail || !editor.remoteAvailable || !confirm('重新加载最新版本会丢弃当前编辑内容，确定继续吗？')) return
+  emit('reload')
+}
+
+async function saveAsNew(): Promise<void> {
+  if (!editor.remoteAvailable) return
+  if (!confirm('将当前内容另存为一个新的自定义角色，不覆盖远端历史。确定继续吗？')) return
+  try {
+    const result = await editor.saveAsNew()
+    if (result && !editor.dirty) emit('saved')
+  } catch { /* Error status is rendered below. */ }
+}
+
+function policyChanged(event: Event): void {
+  editor.setStatePolicy((event.target as HTMLSelectElement).value as CharacterStatePolicy)
+}
+
+function showSuccess(): boolean {
+  return editor.saveStatus === 'success' && !editor.dirty
+}
+
+onMounted(() => {
+  void nextTick(() => {
+    document.querySelector<HTMLElement>('.cy-character-editor-form input, .cy-character-editor-form textarea')?.focus()
+  })
+})
+</script>
+
+<template>
+  <section class="cy-character-editor" aria-labelledby="cy-character-editor-title">
+    <header class="cy-editor-heading">
+      <div>
+        <button type="button" class="cy-back" @click="emit('back')">← 返回</button>
+        <h2 id="cy-character-editor-title">{{ modeLabel }}</h2>
+        <p>{{ baselineLabel }} · <span :class="{ dirty: editor.dirty }">{{ editor.dirty ? '有未保存修改' : '未修改' }}</span></p>
+      </div>
+      <div class="cy-editor-status" aria-live="polite">
+        <span v-if="editor.remoteAvailable" class="online">已连接</span>
+        <span v-else class="offline">离线：可编辑并保存本地草稿</span>
+        <span v-if="editor.persistenceStatus === 'loading'">本地草稿保存中…</span>
+        <span v-else-if="editor.persistenceStatus === 'success' && editor.lastPersistedAt">草稿已保存 {{ new Date(editor.lastPersistedAt).toLocaleTimeString() }}</span>
+        <span v-else-if="editor.persistenceStatus === 'error'">本地草稿保存失败，可稍后重试</span>
+      </div>
+    </header>
+
+    <div v-if="editor.mode === 'clone'" class="cy-editor-note" role="status">这是从现有角色复制出的新草稿，首次保存会创建新角色。</div>
+    <div v-if="!editor.remoteAvailable" class="cy-editor-note offline-note" role="status">当前无法执行远端校验、预览或保存；继续编辑会保存在本地恢复草稿中。</div>
+
+    <form class="cy-character-editor-form" tabindex="-1" @submit.prevent="save">
+      <fieldset class="cy-basic-fields">
+        <legend>基本信息</legend>
+        <label>
+          <span>角色名称 <em>*</em></span>
+          <input data-field-path="/displayName" :value="editor.draft?.displayName ?? ''" name="displayName" maxlength="120" required @input="updateBasic('displayName', $event)" />
+        </label>
+        <label>
+          <span>简介</span>
+          <textarea data-field-path="/description" :value="editor.draft?.description ?? ''" rows="3" maxlength="2000" @input="updateBasic('description', $event)" />
+        </label>
+        <label>
+          <span>别名（逗号分隔）</span>
+          <input data-field-path="/aliases" :value="aliasesValue()" maxlength="500" @input="updateAliases" />
+        </label>
+        <label>
+          <span>开场白</span>
+          <textarea data-field-path="/openingMessage" :value="editor.draft?.openingMessage ?? ''" rows="3" maxlength="4000" @input="updateBasic('openingMessage', $event)" />
+        </label>
+      </fieldset>
+
+      <CyCharacterPromptFields v-if="editor.draft" :draft="editor.draft" @update="updateField" />
+      <CyCharacterPresentationFields v-if="editor.draft" :draft="editor.draft" @update="updateField" />
+
+      <CyCharacterValidation
+        :result="editor.validation"
+        :error="editor.validationError ? { ...editor.validationError, message: validationErrorMessage } : undefined"
+        :status="editor.validationStatus"
+        @validate="validate"
+        @focus="focusPath"
+      />
+      <CyCharacterPreview />
+
+      <div v-if="editor.saveStatus === 'conflict'" class="cy-editor-error conflict" role="alert">
+        <strong>角色版本发生冲突</strong>
+        <span>{{ conflictMessage }}{{ editor.conflict?.currentRevision ? ` 当前 revision：${editor.conflict.currentRevision}` : '' }}</span>
+        <div>
+          <button type="button" :disabled="busy || !editor.remoteAvailable" @click="reloadLatest">重新加载（丢弃当前草稿）</button>
+          <button type="button" :disabled="busy || !editor.remoteAvailable" @click="saveAsNew">另存为新角色</button>
+        </div>
+      </div>
+      <div v-else-if="editor.saveStatus === 'error'" class="cy-editor-error" role="alert">{{ saveErrorMessage }}</div>
+      <div v-else-if="showSuccess()" class="cy-editor-success" role="status">角色已保存为 revision {{ editor.baseRevision }}。</div>
+
+      <footer class="cy-editor-actions">
+        <div>
+          <button type="button" @click="emit('back')">返回</button>
+          <button type="button" :disabled="!editor.dirty || editor.saveStatus === 'saving'" @click="discard">放弃修改</button>
+        </div>
+        <div class="cy-save-group">
+          <label>
+            <span>演化状态策略</span>
+            <select :value="editor.statePolicy" :disabled="editor.saveStatus === 'saving'" @change="policyChanged">
+              <option value="preserve">保留现有演化状态</option>
+              <option value="reset_evolution">按后端范围重置演化状态</option>
+            </select>
+          </label>
+          <button type="submit" class="primary" :disabled="saveDisabled">
+            {{ editor.saveStatus === 'saving' ? '保存中…' : editor.remoteAvailable ? '保存角色' : '离线不可保存' }}
+          </button>
+        </div>
+      </footer>
+    </form>
+  </section>
+</template>
+
+<style scoped>
+.cy-character-editor { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+.cy-editor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.cy-editor-heading h2 { margin: 3px 0 0; color: var(--cy-text); font-size: 18px; }
+.cy-editor-heading p { margin: 4px 0 0; color: var(--cy-muted); font-size: 11px; }
+.cy-back { padding: 0; border: 0; background: transparent; color: var(--cy-accent-strong); }
+.cy-editor-status { display: grid; justify-items: end; gap: 3px; color: var(--cy-muted); font-size: 10px; text-align: right; }
+.online { color: var(--cy-success); }
+.offline, .offline-note { color: var(--cy-warning); }
+.dirty { color: var(--cy-warning); }
+.cy-editor-note, .cy-editor-error, .cy-editor-success { padding: 10px 12px; border: 1px solid var(--cy-border); border-radius: 10px; background: var(--cy-surface-soft); color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
+.cy-editor-error { display: grid; gap: 6px; color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
+.cy-editor-error.conflict { color: var(--cy-warning); }
+.cy-editor-error div { display: flex; gap: 7px; flex-wrap: wrap; }
+.cy-editor-success { color: var(--cy-success); }
+.cy-character-editor-form { display: grid; gap: 12px; min-width: 0; outline: none; }
+.cy-basic-fields { display: grid; gap: 11px; min-width: 0; padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
+legend { padding: 0 5px; color: var(--cy-text); font-size: 13px; font-weight: 650; }
+label { display: grid; gap: 5px; min-width: 0; color: var(--cy-muted); font-size: 11px; }
+em { color: var(--cy-danger); font-style: normal; }
+input, textarea, select { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-pane); color: var(--cy-text); font: inherit; }
+textarea { resize: vertical; line-height: 1.5; }
+.cy-editor-actions { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 12px 0 2px; border-top: 1px solid var(--cy-border); }
+.cy-editor-actions > div { display: flex; align-items: flex-end; gap: 8px; }
+.cy-save-group { flex-wrap: wrap; justify-content: flex-end; }
+.cy-save-group label { min-width: 190px; }
+button { padding: 6px 11px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-pane); color: var(--cy-text); font-size: 12px; }
+button.primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
+button:hover:not(:disabled) { background: var(--cy-surface-hover); }
+button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
+@media (max-width: 720px) {
+  .cy-editor-heading { flex-direction: column; }
+  .cy-editor-status { justify-items: start; text-align: left; }
+  .cy-editor-actions { align-items: stretch; flex-direction: column; }
+  .cy-editor-actions > div { justify-content: flex-end; }
+}
+</style>
