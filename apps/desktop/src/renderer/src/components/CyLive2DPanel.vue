@@ -15,6 +15,7 @@ import { LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH } from '../layout/constants'
 import type { CharacterState } from '../live2d/state-machine'
 import type { PerformanceMode } from '@shared/contracts'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
+import CyCharacterPublicState from './CyCharacterPublicState.vue'
 
 const layout = useLayoutStore()
 const store = useLive2dStore()
@@ -26,7 +27,7 @@ const dragging = ref(false)
 const stageRef = ref<HTMLElement>()
 const canvasRef = ref<HTMLCanvasElement>()
 
-// —— Task 5：状态徽标文案（CharacterState → 中文），经 store.characterState（controller 'state' 事件镜像）——
+// —— Task 5：本地 Live2D 呈现状态徽标（不是角色公开心情），经 store.characterState 镜像——
 const CHARACTER_STATE_TEXT: Record<CharacterState, string> = {
   offline: '未连接',
   idle: '空闲',
@@ -414,9 +415,10 @@ onBeforeUnmount(() => {
     <div class="cy-live-status">
       <span class="cy-live-status-main">{{ statusText }}</span>
       <span v-if="settings.live2d.enabled && store.status === 'ready'" class="cy-live-badge" :class="badgeClass">
-        状态：{{ charBadge }}
+        本地呈现：{{ charBadge }}
       </span>
     </div>
+    <CyCharacterPublicState />
   </aside>
 </template>
 
@@ -598,6 +600,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   margin: 0 12px 14px;
+  min-width: 0;
   padding: 10px;
   text-align: center;
   color: var(--cy-accent-text);
@@ -608,7 +611,11 @@ onBeforeUnmount(() => {
 }
 
 .cy-live-status-main {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-size: 12px;
+  word-break: break-word;
 }
 
 .cy-live-badge {
