@@ -35,7 +35,7 @@ export const CHARACTER_SERVICE_BACKEND_CODES = {
 export interface CharacterServiceOptions {
   /** 角色领域端口；所有角色/身份能力都通过领域端口收敛，不得传入 transport raw adapter。 */
   backend: CharacterServiceBackendPort
-  /** server_info 能力快照。缺省即全部 false（Real 未实现角色 REST 时的安全默认）。 */
+  /** server_info 能力快照。未提供时全部 false，作为安全默认。 */
   getFeatures?: () => BackendFeatureFlags | undefined
   /** 连接世代。每次新连接/断线/重连必须变化；没有 provider 时可由 setConnectionEpoch 手动驱动。 */
   getConnectionEpoch?: () => number

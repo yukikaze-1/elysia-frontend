@@ -32,7 +32,8 @@ import { createSanitizePublicMessage } from './diagnostics/sanitize'
 import type { BackendAdapter } from './transport/backend-adapter'
 import { MockBackend, parseMockHistoryCountEnv, parseMockVoiceTranscriptDelayEnv, parseMockVoiceTranscriptEnv, parseMockEmitDelayEnv, parseMockEmotionEnv, parseMockMouthLevelEnv, parseMockMouthWindowEnv, parseMockDirectiveEnv, parseMockToolFlowEnv, parseMockToolHistoryEnv, parseMockDisconnectAfterMsEnv, parseMockMultiSegmentEnv } from './transport/mock-backend'
 import { RealBackend } from './transport/real-backend'
-import { createCharacterService, UnavailableCharacterBackend } from './characters/character-service'
+import { createCharacterService } from './characters/character-service'
+import { resolveCharacterServiceBackend } from './characters/character-service-assembly'
 import { MockCharacterBackend } from './characters/mock-character-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
@@ -224,7 +225,7 @@ async function main(): Promise<void> {
     // 批次 B（Task 6）：tool-service 桥容器（MockBackend 构造 options 的 toolRequestSink 闭包读取——
     // toolSvc 在 adapter 之后构造，回调只在桌面工具请求到达时触发，此时已装配完）
     const toolBridge: { svc: ToolService | undefined } = { svc: undefined }
-    // FE-B：角色读服务维护独立连接世代；不把角色 REST 方法加入 RealBackend。
+    // FE-B：角色服务维护独立连接世代；Real/Mock 均通过结构化角色端口装配。
     let characterConnectionEpoch = 0
     const onState = (state: ConnectionState) => {
       characterConnectionEpoch++
@@ -260,10 +261,15 @@ async function main(): Promise<void> {
               : undefined
           })
         })()
+    const characterBackend = resolveCharacterServiceBackend({
+      useMock,
+      adapter,
+      mockBackend: mockCharacterBackend,
+      getMockFeatures: () => mockCharacterBackend?.features
+    })
     const characterService = createCharacterService({
-      backend: mockCharacterBackend ?? new UnavailableCharacterBackend(),
-      // Real 模式角色后端尚未接入，能力安全默认为 false；Mock 显式开启角色闭环。
-      getFeatures: () => mockCharacterBackend?.features,
+      backend: characterBackend.backend,
+      getFeatures: characterBackend.getFeatures,
       getConnectionEpoch: () => characterConnectionEpoch
     })
     // —— 阶段 7 批次 A（Task 5，spec §6.3）：诊断服务装配（F-08 定案——adapter deps 注入、构造期 subscribe，无 attachAdapter 方法；
