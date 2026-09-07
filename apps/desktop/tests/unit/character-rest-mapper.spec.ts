@@ -125,6 +125,17 @@ describe('raw wire schema 先行校验（strict 接纳）', () => {
       summary: { ...rawSummary, presentation: { live2dModelId: 'C:/models/x.model3.json' } }
     }).success).toBe(false)
   })
+  it('public state 只接受身份元数据 + 嵌套 state，旧扁平形状拒绝', () => {
+    const nested = {
+      characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
+      state: { mood: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00Z' }
+    }
+    expect(RestCharacterPublicStateSchema.safeParse(nested).success).toBe(true)
+    expect(RestCharacterPublicStateSchema.safeParse({
+      characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
+      mood: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00Z'
+    }).success).toBe(false)
+  })
   it('raw 角色时间统一要求 UTC ISO-8601；合法 +00:00 可通过', () => {
     expect(RestUserIdentityProfileSchema.safeParse({ ...rawProfile, createdAt: 't' }).success).toBe(false)
     expect(RestUserIdentityProfileSchema.safeParse({
@@ -141,14 +152,14 @@ describe('raw wire schema 先行校验（strict 接纳）', () => {
     }).success).toBe(false)
     expect(RestCharacterPublicStateSchema.safeParse({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
-      mood: { label: '平静', intensity: 0.2, updatedAt: 't' }, proactiveEnabled: false,
-      updatedAt: '2026-08-30T00:00:00Z'
+      state: { mood: { label: '平静', intensity: 0.2, updatedAt: 't' }, proactiveEnabled: false,
+        updatedAt: '2026-08-30T00:00:00Z' }
     }).success).toBe(false)
     expect(RestCharacterPublicStateSchema.safeParse({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
-      mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00+00:00' },
-      lastInteractionAt: '2026-08-30T00:00:00+00:00', proactiveEnabled: false,
-      updatedAt: '2026-08-30T00:00:00Z'
+      state: { mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00+00:00' },
+        lastInteractionAt: '2026-08-30T00:00:00+00:00', proactiveEnabled: false,
+        updatedAt: '2026-08-30T00:00:00Z' }
     }).success).toBe(true)
   })
   it('raw 角色必填文本拒绝全空白；emotion/initiative 允许空串但字段必须存在', () => {
@@ -295,27 +306,29 @@ describe('mutation / archive / validation / preview 映射（CHAR-FE-03/04/05）
 })
 
 describe('state / reset 映射（CHAR-FE-09/15）', () => {
-  it('public state：mood:null 归一无键；身份字段透传', () => {
+  it('public state：解包嵌套 view，mood:null 归一无键；身份字段透传', () => {
     const s = toDomainPublicState({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 8,
-      mood: null, currentActivity: null, lastInteractionAt: null,
-      proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z'
+      state: { mood: null, currentActivity: null, lastInteractionAt: null,
+        proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
     })
     expect('mood' in s).toBe(false)
     expect('currentActivity' in s).toBe(false)
     expect(s).toMatchObject({ characterId: 'ch_elysia', stateVersion: 8, proactiveEnabled: false })
     const withMood = toDomainPublicState({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 8,
-      mood: { label: '开心', intensity: 0.4, updatedAt: '2026-08-30T00:00:00+00:00' },
-      proactiveEnabled: true, updatedAt: '2026-08-30T00:00:00.000Z'
+      state: { mood: { label: '开心', intensity: 0.4, updatedAt: '2026-08-30T00:00:00+00:00' },
+        currentActivity: '整理回忆', lastInteractionAt: '2026-08-30T00:00:00+00:00',
+        proactiveEnabled: true, updatedAt: '2026-08-30T00:00:00.000Z' }
     })
     expect(withMood.mood).toEqual({ label: '开心', intensity: 0.4, updatedAt: '2026-08-30T00:00:00+00:00' })
+    expect(withMood).toMatchObject({ currentActivity: '整理回忆', lastInteractionAt: '2026-08-30T00:00:00+00:00' })
   })
   it('reset result：resetFields 以后端返回为权威', () => {
     const r = toDomainResetResult({
       state: {
         characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 9,
-        proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z'
+        state: { mood: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
       },
       resetFields: ['self_l2', 'state_l3']
     })

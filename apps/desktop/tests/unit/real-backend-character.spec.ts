@@ -80,8 +80,10 @@ const validation: RestCharacterValidationResult = { valid: false, issues: [{ sev
 const preview: RestCharacterPreviewResult = { ephemeral: true, reply: '临时回复', model: 'model-1', usage: { input: 3, output: 4, total: 7 } }
 const state: RestCharacterPublicState = {
   characterId: 'character-1', characterInstanceId: 'instance-1', characterRevision: 2, stateVersion: 3,
-  mood: { label: '开心', intensity: 0.4, updatedAt: '2026-09-01T00:00:00.000Z' },
-  currentActivity: null, lastInteractionAt: null, proactiveEnabled: false, updatedAt: '2026-09-01T00:00:00.000Z'
+  state: {
+    mood: { label: '开心', intensity: 0.4, updatedAt: '2026-09-01T00:00:00.000Z' },
+    currentActivity: null, lastInteractionAt: null, proactiveEnabled: false, updatedAt: '2026-09-01T00:00:00.000Z'
+  }
 }
 
 const draft: CharacterDraft = {

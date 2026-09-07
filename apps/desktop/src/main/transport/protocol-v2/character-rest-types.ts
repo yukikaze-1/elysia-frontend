@@ -230,13 +230,16 @@ export interface RestCharacterPreviewResult {
   }
 }
 
-/** GET /api/character-instances/{id}/state：完整公开状态（无 conversationId——同一 instance 可绑多会话，CHAR-FE-09） */
+/** GET /api/character-instances/{id}/state：身份元数据 + 嵌套公开视图（无 conversationId——同一 instance 可绑多会话，CHAR-FE-09） */
 export interface RestCharacterPublicState {
   characterId: string
   characterInstanceId: string
   characterRevision: number
   stateVersion: number
-  mood?: RestCharacterMood | null
+  state: RestCharacterPublicStateView
+}
+export interface RestCharacterPublicStateView {
+  mood: RestCharacterMood | null
   currentActivity?: string | null
   lastInteractionAt?: string | null
   proactiveEnabled: boolean

@@ -367,16 +367,20 @@ const RestCharacterMoodSchema = z.object({
   updatedAt: utcIsoTimestamp()
 }).strict()
 
+const RestCharacterPublicStateViewSchema = z.object({
+  mood: RestCharacterMoodSchema.nullable(),
+  currentActivity: emptyOrText(200).nullable().optional(),
+  lastInteractionAt: utcIsoTimestamp().nullable().optional(),
+  proactiveEnabled: z.boolean(),
+  updatedAt: utcIsoTimestamp()
+}).strict()
+
 export const RestCharacterPublicStateSchema: z.ZodType<RestCharacterPublicState> = z.object({
   characterId: requiredText(),
   characterInstanceId: requiredText(),
   characterRevision: revisionInt(),
   stateVersion: revisionInt(),
-  mood: RestCharacterMoodSchema.nullable().optional(),
-  currentActivity: emptyOrText(200).nullable().optional(),
-  lastInteractionAt: utcIsoTimestamp().nullable().optional(),
-  proactiveEnabled: z.boolean(),
-  updatedAt: utcIsoTimestamp()
+  state: RestCharacterPublicStateViewSchema
 }).strict()
 
 export const RestResetEvolutionResultSchema: z.ZodType<RestResetEvolutionResult> = z.object({

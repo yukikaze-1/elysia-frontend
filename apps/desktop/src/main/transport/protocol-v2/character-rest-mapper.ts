@@ -349,12 +349,13 @@ export function toDomainGenerationRef(raw: RestCharacterBindingSnapshot): Charac
 }
 
 export function toDomainPublicState(raw: RestCharacterPublicState): CharacterPublicState {
+  const state = raw.state
   return {
-    ...(raw.mood ? { mood: { label: raw.mood.label, intensity: raw.mood.intensity, updatedAt: raw.mood.updatedAt } } : {}),
-    ...(un(raw.currentActivity) !== undefined ? { currentActivity: un(raw.currentActivity) } : {}),
-    ...(un(raw.lastInteractionAt) !== undefined ? { lastInteractionAt: un(raw.lastInteractionAt) } : {}),
-    proactiveEnabled: raw.proactiveEnabled,
-    updatedAt: raw.updatedAt,
+    ...(state.mood ? { mood: { label: state.mood.label, intensity: state.mood.intensity, updatedAt: state.mood.updatedAt } } : {}),
+    ...(un(state.currentActivity) !== undefined ? { currentActivity: un(state.currentActivity) } : {}),
+    ...(un(state.lastInteractionAt) !== undefined ? { lastInteractionAt: un(state.lastInteractionAt) } : {}),
+    proactiveEnabled: state.proactiveEnabled,
+    updatedAt: state.updatedAt,
     characterId: raw.characterId,
     characterInstanceId: raw.characterInstanceId,
     characterRevision: raw.characterRevision,
