@@ -22,12 +22,54 @@ import type {
 export type { ConnectionState, ConnectionStatus } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
 import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
+import type {
+  CharacterArchiveResult,
+  CharacterDetail,
+  CharacterDraft,
+  CharacterId,
+  CharacterListQuery,
+  CharacterMutationResult,
+  CharacterPreviewCommand,
+  CharacterPreviewResult,
+  CharacterRevisionQuery,
+  CharacterPublicState,
+  CharacterRevisionSummary,
+  CharacterValidationResult,
+  CloneCharacterCommand,
+  CreateCharacterCommand,
+  RollbackCharacterCommand,
+  UpdateCharacterCommand,
+  UpdateUserIdentityCommand,
+  UserIdentityProfile,
+  CharacterSummary
+} from '@shared/contracts/character'
 import type { ActiveModelSelection, ModelProfile, ModelProfileTestCommand, ModelServiceType, SetTtsVoiceCommand, TtsPreviewCommand, TtsVoiceListResult, UpsertModelProfileCommand } from '@shared/contracts/model'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import { parseRawFrame } from './protocol-v2/raw-schemas'
-import { parseBackendFeatureFlags, toRestCreateSessionBody } from './protocol-v2/character-rest-mapper'
+import {
+  parseBackendFeatureFlags,
+  toDomainArchiveResult,
+  toDomainCharacterList,
+  toDomainDetail,
+  toDomainMutationResult,
+  toDomainPreviewResult,
+  toDomainProfile,
+  toDomainPublicState,
+  toDomainRevisionList,
+  toDomainValidationResult,
+  toRestCharacterListQuery,
+  toRestCharacterRevisionQuery,
+  toRestCloneCharacterBody,
+  toRestCreateCharacterBody,
+  toRestPreviewCharacterBody,
+  toRestRollbackCharacterBody,
+  toRestUpdateCharacterBody,
+  toRestUpdateMeBody,
+  toRestValidateCharacterBody,
+  toRestCreateSessionBody
+} from './protocol-v2/character-rest-mapper'
 import type {
   RawAudioCancelled,
   RawAudioChunk,
@@ -43,12 +85,33 @@ import type {
 import { FrameMapper } from './protocol-v2/frame-mapper'
 import { RestMapper, compareBySortKey, pairToolCalls } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
+import {
+  parseRestMe,
+  parseRestCharacterList,
+  parseRestCharacterDetail,
+  parseRestCharacterRevisions,
+  parseRestCharacterMutation,
+  parseRestCharacterArchive,
+  parseRestCharacterValidation,
+  parseRestCharacterPreview,
+  parseRestCharacterState,
+  RestUpdateMeBodySchema,
+  RestCharacterListQuerySchema,
+  RestCharacterRevisionQuerySchema,
+  RestCreateCharacterBodySchema,
+  RestUpdateCharacterBodySchema,
+  RestCloneCharacterBodySchema,
+  RestRollbackCharacterBodySchema,
+  RestValidateCharacterBodySchema,
+  RestPreviewCharacterBodySchema
+} from './protocol-v2/character-rest-schemas'
 import { DesktopCallStatusSchema } from '@shared/schemas/ipc-response'   // 批次 C（D6C-11）：GET tools/calls 响应解析
 import { providersToModelProfiles } from './providers-mapper'
 import type { RestSearchMessagesResponse } from './protocol-v2/rest-types'
 import { VOICE_ERROR_CODES } from '@shared/contracts'
 import type { HistoryCategory, StickerManifest, VoiceErrorEvent, AudioCancelInput, DictationStartInput, DictationStopInput, RealtimeVoiceControlInput, RealtimeVoiceStartInput, VoiceCommitInput, VoiceDiscardInput, VoiceInputMode, VoiceRecordStartInput, VoiceRecordStopInput, AudioSessionReadyEvent } from '@shared/contracts'
 import type { BackendAdapter, BackendEventHandler, UploadContent } from './backend-adapter'
+import type { CharacterServiceBackendPort } from '../characters/character-backend-port'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
 import type { DesktopToolRequest } from '../tools/tool-service'
@@ -171,6 +234,35 @@ function mapHttpError(status: number, code: string): CyreneErrorCode {
   return CyreneErrorCode.UNKNOWN
 }
 
+type CharacterResponseParser<T> = (input: unknown) =>
+  | { success: true; data: T }
+  | { success: false; error: unknown }
+
+type CharacterRequestSchema<T> = {
+  safeParse(input: unknown): { success: true; data: T } | { success: false; error: unknown }
+}
+
+function characterRequest<T>(schema: CharacterRequestSchema<T>, value: unknown, label: string): T {
+  const parsed = schema.safeParse(value)
+  if (!parsed.success) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `${label}请求校验失败`)
+  return parsed.data
+}
+
+function requireCharacterId(value: string, label: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `${label}标识无效`)
+  }
+  return value
+}
+
+function characterQuery(params: object): string {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === 'string' || typeof value === 'number') query.set(key, String(value))
+  }
+  return query.toString()
+}
+
 /**
  * RealBackend:真实后端适配器(WS 连接核心 + REST 会话方法)。
  * 协议差异全部收敛在此(URL/字段名/WS 帧),UI 只消费领域事件。
@@ -179,7 +271,7 @@ function mapHttpError(status: number, code: string): CyreneErrorCode {
  * P4-A 模型/TTS 方法已真实落成;P4-B 语音控制帧/sendAudioBytes/voice.error 路由已落地(Task 4);
  * 批次 B（Task 6）submitToolResult（tool.status 帧）与 tool.request 路由（onToolRequest）已落地。
  */
-export class RealBackend implements BackendAdapter {
+export class RealBackend implements BackendAdapter, CharacterServiceBackendPort {
   private ws?: WebSocketLike
   private readonly options: RealBackendOptions
   private readonly handler = new Set<BackendEventHandler>()
@@ -959,6 +1051,10 @@ export class RealBackend implements BackendAdapter {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
     }
     const sourceGeneration = this.sourceGeneration
+    // A reconnect keeps the user-facing source scope, but it is a new
+    // transport incarnation. REST responses that outlive that socket must not
+    // be accepted by the character adapter (or any other REST caller).
+    const requestTransportIncarnation = this.transportIncarnation
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.restTimeoutMs)
     this.activeControllers.add(controller)
@@ -970,6 +1066,10 @@ export class RealBackend implements BackendAdapter {
         headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
       })
       if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
+      if (requestTransportIncarnation !== this.transportIncarnation) {
+        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
+        throw this.sourceBoundaryError()
+      }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
@@ -978,6 +1078,7 @@ export class RealBackend implements BackendAdapter {
       return res
     } catch (e) {
       if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
+      if (requestTransportIncarnation !== this.transportIncarnation && !this.disconnected) throw this.sourceBoundaryError()
       if (controller.signal.aborted) {
         // I3/D17:disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED;否则是超时 timer abort → TIMEOUT
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
@@ -1053,6 +1154,124 @@ export class RealBackend implements BackendAdapter {
       this.ws.send(JSON.stringify({ type: 'activate_session', conversationId }))
     }
     return { conversationId: parsed.data.activeConversationId }
+  }
+
+  // —— 多角色角色域 REST（FE-B）：raw 只在 Main 经 character-rest schema + mapper 转换 ——
+  /**
+   * Character REST responses are deliberately parsed in one place.  The
+   * parser receives unknown JSON and only its typed success branch is allowed
+   * to reach the domain mapper; malformed or non-JSON responses fail closed.
+   */
+  private async parseCharacterResponse<T>(
+    response: Response,
+    parser: CharacterResponseParser<T>,
+    label: string
+  ): Promise<T> {
+    let body: unknown
+    try {
+      body = await response.json()
+    } catch {
+      throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, `${label}响应不是有效 JSON`)
+    }
+    const parsed = parser(body)
+    if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, `${label}响应校验失败`)
+    return parsed.data
+  }
+
+  async getMe(): Promise<UserIdentityProfile> {
+    const res = await this.restFetch('/api/me')
+    const raw = await this.parseCharacterResponse(res, parseRestMe, '用户档案')
+    return toDomainProfile(raw)
+  }
+
+  async updateMe(input: UpdateUserIdentityCommand): Promise<UserIdentityProfile> {
+    const body = characterRequest(RestUpdateMeBodySchema, toRestUpdateMeBody(input), '用户档案更新')
+    const res = await this.restFetch('/api/me', { method: 'PUT', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestMe, '用户档案更新')
+    return toDomainProfile(raw)
+  }
+
+  async listCharacters(input: CharacterListQuery = {}): Promise<Page<CharacterSummary>> {
+    const body = characterRequest(RestCharacterListQuerySchema, toRestCharacterListQuery(input), '角色列表查询')
+    const query = characterQuery(body)
+    const res = await this.restFetch(`/api/characters${query ? `?${query}` : ''}`)
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterList, '角色列表')
+    return toDomainCharacterList(raw)
+  }
+
+  async getCharacter(characterId: CharacterId): Promise<CharacterDetail> {
+    const id = requireCharacterId(characterId, '角色')
+    const res = await this.restFetch(`/api/characters/${encodeURIComponent(id)}`)
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterDetail, '角色详情')
+    return toDomainDetail(raw)
+  }
+
+  async createCharacter(input: CreateCharacterCommand): Promise<CharacterDetail> {
+    const body = characterRequest(RestCreateCharacterBodySchema, toRestCreateCharacterBody(input), '创建角色')
+    const res = await this.restFetch('/api/characters', { method: 'POST', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterDetail, '创建角色')
+    return toDomainDetail(raw)
+  }
+
+  async updateCharacter(input: UpdateCharacterCommand): Promise<CharacterMutationResult> {
+    const id = requireCharacterId(input.characterId, '角色')
+    const body = characterRequest(RestUpdateCharacterBodySchema, toRestUpdateCharacterBody(input), '更新角色')
+    const res = await this.restFetch(`/api/characters/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterMutation, '更新角色')
+    return toDomainMutationResult(raw)
+  }
+
+  async cloneCharacter(input: CloneCharacterCommand): Promise<CharacterDetail> {
+    const id = requireCharacterId(input.characterId, '角色')
+    const body = characterRequest(RestCloneCharacterBodySchema, toRestCloneCharacterBody(input), '克隆角色')
+    const res = await this.restFetch(`/api/characters/${encodeURIComponent(id)}/clone`, { method: 'POST', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterDetail, '克隆角色')
+    return toDomainDetail(raw)
+  }
+
+  async archiveCharacter(characterId: CharacterId): Promise<CharacterArchiveResult> {
+    const id = requireCharacterId(characterId, '角色')
+    const res = await this.restFetch(`/api/characters/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterArchive, '归档角色')
+    return toDomainArchiveResult(raw)
+  }
+
+  async listCharacterRevisions(input: CharacterRevisionQuery): Promise<Page<CharacterRevisionSummary>> {
+    const id = requireCharacterId(input.characterId, '角色')
+    const body = characterRequest(RestCharacterRevisionQuerySchema, toRestCharacterRevisionQuery(input), '角色版本查询')
+    const query = characterQuery(body)
+    const res = await this.restFetch(`/api/characters/${encodeURIComponent(id)}/revisions${query ? `?${query}` : ''}`)
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterRevisions, '角色版本列表')
+    return toDomainRevisionList(raw)
+  }
+
+  async rollbackCharacter(input: RollbackCharacterCommand): Promise<CharacterMutationResult> {
+    const id = requireCharacterId(input.characterId, '角色')
+    const body = characterRequest(RestRollbackCharacterBodySchema, toRestRollbackCharacterBody(input), '回滚角色')
+    const res = await this.restFetch(`/api/characters/${encodeURIComponent(id)}/rollback`, { method: 'POST', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterMutation, '回滚角色')
+    return toDomainMutationResult(raw)
+  }
+
+  async validateCharacter(draft: CharacterDraft): Promise<CharacterValidationResult> {
+    const body = characterRequest(RestValidateCharacterBodySchema, toRestValidateCharacterBody(draft), '校验角色')
+    const res = await this.restFetch('/api/characters/validate', { method: 'POST', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterValidation, '角色校验')
+    return toDomainValidationResult(raw)
+  }
+
+  async previewCharacter(input: CharacterPreviewCommand): Promise<CharacterPreviewResult> {
+    const body = characterRequest(RestPreviewCharacterBodySchema, toRestPreviewCharacterBody(input), '预览角色')
+    const res = await this.restFetch('/api/characters/preview', { method: 'POST', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterPreview, '角色预览')
+    return toDomainPreviewResult(raw)
+  }
+
+  async getCharacterState(instanceId: string): Promise<CharacterPublicState> {
+    const id = requireCharacterId(instanceId, '角色实例')
+    const res = await this.restFetch(`/api/character-instances/${encodeURIComponent(id)}/state`)
+    const raw = await this.parseCharacterResponse(res, parseRestCharacterState, '角色公开状态')
+    return toDomainPublicState(raw)
   }
 
   // —— 阶段 3 G3 附件上传/签发（spec §4.4/§4.5）——
