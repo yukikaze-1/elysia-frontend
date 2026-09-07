@@ -15,6 +15,8 @@ import type {
   CharacterValidationResult,
   CloneCharacterCommand,
   CreateCharacterCommand,
+  ResetCharacterEvolutionCommand,
+  ResetCharacterEvolutionResult,
   RollbackCharacterCommand,
   UpdateCharacterCommand,
   UpdateUserIdentityCommand,
@@ -116,6 +118,7 @@ export class CharacterService {
   private catalogGeneration = 0
   private stateGeneration = 0
   private readonly characterGenerations = new Map<string, number>()
+  private readonly stateGenerations = new Map<string, number>()
   /** 未注入连接世代 provider 时的唯一手动事实源。 */
   private ownedEpoch = 0
   private readonly activeMutations = new Map<string, number>()
@@ -235,6 +238,13 @@ export class CharacterService {
     return this.read(`state:${instanceId}`, () => this.backend.getCharacterState(instanceId))
   }
 
+  resetCharacterEvolution(input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult> {
+    const instanceId = input.characterInstanceId
+    return this.mutate(`state:${instanceId}`, undefined, () => this.backend.resetCharacterEvolution(cloneValue(input)), () => {
+      this.invalidateState(instanceId)
+    })
+  }
+
   private read<T>(key: string, operation: () => Promise<T>): Promise<T> {
     try {
       this.requireProfiles()
@@ -325,7 +335,7 @@ export class CharacterService {
   private scopeGeneration(key: string): number {
     if (key === 'profile') return this.profileGeneration
     if (key.startsWith('catalog:')) return this.catalogGeneration
-    if (key.startsWith('state:')) return this.stateGeneration
+    if (key.startsWith('state:')) return this.stateGeneration + (this.stateGenerations.get(key.slice('state:'.length)) ?? 0)
     if (key.startsWith('detail:')) return this.characterGenerations.get(key.slice('detail:'.length)) ?? 0
     if (key.startsWith('revisions:')) {
       const characterId = revisionKeyCharacterId(key)
@@ -344,6 +354,14 @@ export class CharacterService {
     for (const key of this.inFlight.keys()) {
       if (key.startsWith('catalog:') || key === `detail:${characterId}` || revisionKeyCharacterId(key) === characterId || key.startsWith('state:')) this.inFlight.delete(key)
     }
+  }
+
+  /** 角色实例演化 reset 只失效目标 instance 的 state cache/in-flight。 */
+  private invalidateState(instanceId: string): void {
+    this.stateGenerations.set(instanceId, (this.stateGenerations.get(instanceId) ?? 0) + 1)
+    const key = `state:${instanceId}`
+    this.cache.delete(key)
+    this.inFlight.delete(key)
   }
 
   private readEpoch(): number {
@@ -393,4 +411,5 @@ export class UnavailableCharacterBackend implements CharacterServiceBackendPort 
   getCharacter(_characterId: string): Promise<CharacterDetail> { return Promise.reject(this.fail()) }
   listCharacterRevisions(_input: CharacterRevisionQuery): Promise<Page<CharacterRevisionSummary>> { return Promise.reject(this.fail()) }
   getCharacterState(_instanceId: string): Promise<CharacterPublicState> { return Promise.reject(this.fail()) }
+  resetCharacterEvolution(_input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult> { return Promise.reject(this.fail()) }
 }

@@ -14,6 +14,8 @@ import type {
   CharacterDraftSummary,
   CharacterListQuery,
   CharacterPublicState,
+  ResetCharacterEvolutionCommand,
+  ResetCharacterEvolutionResult,
   CharacterRevisionQuery,
   CharacterRevisionSummary,
   CharacterSummary,
@@ -108,6 +110,7 @@ declare global {
       getCharacter(characterId: string): Promise<CharacterDetail>
       listCharacterRevisions(input: CharacterRevisionQuery): Promise<Page<CharacterRevisionSummary>>
       getCharacterState(characterInstanceId: string): Promise<CharacterPublicState>
+      resetCharacterEvolution(input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult>
       createCharacter(input: CreateCharacterCommand): Promise<CharacterDetail>
       updateCharacter(input: UpdateCharacterCommand): Promise<CharacterMutationResult>
       cloneCharacter(input: CloneCharacterCommand): Promise<CharacterDetail>

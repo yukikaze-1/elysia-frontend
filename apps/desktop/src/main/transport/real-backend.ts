@@ -37,6 +37,8 @@ import type {
   CharacterValidationResult,
   CloneCharacterCommand,
   CreateCharacterCommand,
+  ResetCharacterEvolutionCommand,
+  ResetCharacterEvolutionResult,
   RollbackCharacterCommand,
   UpdateCharacterCommand,
   UpdateUserIdentityCommand,
@@ -57,6 +59,7 @@ import {
   toDomainPreviewResult,
   toDomainProfile,
   toDomainPublicState,
+  toDomainResetResult,
   toDomainRevisionList,
   toDomainValidationResult,
   toRestCharacterListQuery,
@@ -64,6 +67,7 @@ import {
   toRestCloneCharacterBody,
   toRestCreateCharacterBody,
   toRestPreviewCharacterBody,
+  toRestResetEvolutionBody,
   toRestRollbackCharacterBody,
   toRestUpdateCharacterBody,
   toRestUpdateMeBody,
@@ -95,6 +99,7 @@ import {
   parseRestCharacterValidation,
   parseRestCharacterPreview,
   parseRestCharacterState,
+  parseRestResetEvolution,
   RestUpdateMeBodySchema,
   RestCharacterListQuerySchema,
   RestCharacterRevisionQuerySchema,
@@ -103,7 +108,8 @@ import {
   RestCloneCharacterBodySchema,
   RestRollbackCharacterBodySchema,
   RestValidateCharacterBodySchema,
-  RestPreviewCharacterBodySchema
+  RestPreviewCharacterBodySchema,
+  RestResetEvolutionBodySchema
 } from './protocol-v2/character-rest-schemas'
 import { DesktopCallStatusSchema } from '@shared/schemas/ipc-response'   // 批次 C（D6C-11）：GET tools/calls 响应解析
 import { providersToModelProfiles } from './providers-mapper'
@@ -1272,6 +1278,14 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     const res = await this.restFetch(`/api/character-instances/${encodeURIComponent(id)}/state`)
     const raw = await this.parseCharacterResponse(res, parseRestCharacterState, '角色公开状态')
     return toDomainPublicState(raw)
+  }
+
+  async resetCharacterEvolution(input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult> {
+    const id = requireCharacterId(input.characterInstanceId, '角色实例')
+    const body = characterRequest(RestResetEvolutionBodySchema, toRestResetEvolutionBody(input), '重置角色演化')
+    const res = await this.restFetch(`/api/character-instances/${encodeURIComponent(id)}/reset-evolution`, { method: 'POST', body: JSON.stringify(body) })
+    const raw = await this.parseCharacterResponse(res, parseRestResetEvolution, '重置角色演化')
+    return toDomainResetResult(raw)
   }
 
   // —— 阶段 3 G3 附件上传/签发（spec §4.4/§4.5）——

@@ -9,6 +9,7 @@ import type {
   RestCharacterPreviewResult,
   RestCharacterPublicState,
   RestCharacterRevisionsResponse,
+  RestResetEvolutionResult,
   RestCharacterValidationResult,
   RestUserIdentityProfile
 } from '../../src/main/transport/protocol-v2/character-rest-types'
@@ -85,6 +86,10 @@ const state: RestCharacterPublicState = {
     currentActivity: null, lastInteractionAt: null, proactiveEnabled: false, updatedAt: '2026-09-01T00:00:00.000Z'
   }
 }
+const resetResult: RestResetEvolutionResult = {
+  state: { ...state, stateVersion: 4 },
+  resetFields: ['self_l2', 'state_l3', 'speaking_style_c6', 'reflector', 'mood']
+}
 
 const draft: CharacterDraft = {
   displayName: 'Elysia', description: '温柔的同伴', aliases: ['小爱'],
@@ -130,6 +135,7 @@ describe('RealBackend 角色 REST 适配器', () => {
         case 'POST /api/characters/validate': return jsonResponse(validation)
         case 'POST /api/characters/preview': return jsonResponse(preview)
         case 'GET /api/character-instances/instance-1/state': return jsonResponse(state)
+        case 'POST /api/character-instances/instance-1/reset-evolution': return jsonResponse(resetResult)
         default: throw new Error(`unexpected request: ${key}`)
       }
     })
@@ -153,18 +159,22 @@ describe('RealBackend 角色 REST 适配器', () => {
     await expect(backend.validateCharacter(draft)).resolves.toMatchObject({ valid: false, issues: [{ path: '/promptProfile/speakingStyle' }] })
     await expect(backend.previewCharacter({ draft, userMessage: '你好，今天过得怎么样？' })).resolves.toMatchObject({ ephemeral: true, reply: '临时回复' })
     await expect(backend.getCharacterState('instance-1')).resolves.toMatchObject({ stateVersion: 3, mood: { intensity: 0.4 } })
+    await expect(backend.resetCharacterEvolution({ characterInstanceId: 'instance-1', expectedStateVersion: 3 }))
+      .resolves.toMatchObject({ state: { stateVersion: 4, mood: { label: '开心' } }, resetFields: expect.arrayContaining(['mood']) })
 
     expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
       'GET /api/me', 'PUT /api/me', 'GET /api/characters', 'GET /api/characters/character-1', 'POST /api/characters',
       'PUT /api/characters/character-1', 'POST /api/characters/character-1/clone', 'DELETE /api/characters/character-1',
       'GET /api/characters/character-1/revisions', 'POST /api/characters/character-1/rollback', 'POST /api/characters/validate',
-      'POST /api/characters/preview', 'GET /api/character-instances/instance-1/state'
+      'POST /api/characters/preview', 'GET /api/character-instances/instance-1/state',
+      'POST /api/character-instances/instance-1/reset-evolution'
     ])
     expect(calls.every((call) => call.authorization === 'Bearer token-1')).toBe(true)
     expect(new URL(calls[2]!.url).search).toBe('?source=custom&status=active&search=Ely&cursor=cursor-1&limit=10')
     expect(JSON.parse(calls[1]!.body ?? '')).toEqual({ expectedRevision: 1, displayName: '旅人', locale: 'zh-CN', timezone: 'Asia/Shanghai' })
     expect(JSON.parse(calls[4]!.body ?? '')).not.toHaveProperty('draft')
     expect(JSON.parse(calls[11]!.body ?? '')).toHaveProperty('draft')
+    expect(JSON.parse(calls[13]!.body ?? '')).toEqual({ expectedStateVersion: 3 })
   })
 
   it('严格拒绝 malformed 角色响应，并在显式 source 切换后丢弃旧请求', async () => {
@@ -195,6 +205,25 @@ describe('RealBackend 角色 REST 适配器', () => {
     await secondConnect
     await expect(oldRequest).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
     await expect(backend.getCharacter('character-1')).rejects.toMatchObject({ code: CyreneErrorCode.SCHEMA_VALIDATION_FAILED })
+    await backend.disconnect()
+  })
+
+  it('reset endpoint 的 request/response 均 fail closed，并保留状态 mapper 边界', async () => {
+    const socket = new FakeWs()
+    const fetchImpl = vi.fn(async (): Promise<Response> => jsonResponse({
+      ...resetResult,
+      state: { ...resetResult.state, state: { ...resetResult.state.state, mood: null } }
+    }))
+    const backend = new RealBackend({ fetchImpl: fetchImpl as unknown as typeof fetch, wsFactory: () => socket })
+    const connecting = backend.connect({ serverUrl: 'https://backend.example', token: 'token-1' })
+    socket.handshake({ character_profiles: true })
+    await connecting
+
+    await expect(backend.resetCharacterEvolution({ characterInstanceId: 'instance-1', expectedStateVersion: 3 }))
+      .rejects.toMatchObject({ code: CyreneErrorCode.SCHEMA_VALIDATION_FAILED })
+    await expect(backend.resetCharacterEvolution({ characterInstanceId: 'instance-1', expectedStateVersion: 0 }))
+      .rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
     await backend.disconnect()
   })
 

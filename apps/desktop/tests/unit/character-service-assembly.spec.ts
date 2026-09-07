@@ -17,7 +17,8 @@ function makeCharacterPort(): CharacterServiceBackendPort {
     validateCharacter: vi.fn(),
     previewCharacter: vi.fn(),
     listCharacterRevisions: vi.fn(),
-    getCharacterState: vi.fn()
+    getCharacterState: vi.fn(),
+    resetCharacterEvolution: vi.fn()
   }
 }
 

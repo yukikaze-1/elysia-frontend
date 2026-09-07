@@ -14,6 +14,8 @@ import type {
   CharacterValidationResult,
   CloneCharacterCommand,
   CreateCharacterCommand,
+  ResetCharacterEvolutionCommand,
+  ResetCharacterEvolutionResult,
   RollbackCharacterCommand,
   UpdateCharacterCommand,
   UpdateUserIdentityCommand,
@@ -33,6 +35,8 @@ import {
   CharacterValidationResultSchema,
   CloneCharacterCommandSchema,
   CreateCharacterCommandSchema,
+  ResetCharacterEvolutionCommandSchema,
+  ResetCharacterEvolutionResultSchema,
   RollbackCharacterCommandSchema,
   UpdateCharacterCommandSchema,
   UpdateUserIdentityCommandSchema,
@@ -345,6 +349,33 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
     const state = this.states.get(instanceId)
     if (!state) return Promise.reject(this.notFound('CHARACTER_INSTANCE_NOT_FOUND', `角色实例不存在: ${instanceId}`))
     return Promise.resolve(cloneValue(state))
+  }
+
+  resetCharacterEvolution(input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult> {
+    return Promise.resolve().then(() => {
+      const command = parseStrict(ResetCharacterEvolutionCommandSchema, input, 'reset-evolution')
+      const current = this.states.get(command.characterInstanceId)
+      if (!current) throw this.notFound('CHARACTER_INSTANCE_NOT_FOUND', `角色实例不存在: ${command.characterInstanceId}`)
+      if (current.stateVersion !== command.expectedStateVersion) {
+        throw new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '角色状态版本冲突', {
+          backendCode: 'CHARACTER_STATE_VERSION_CONFLICT', currentStateVersion: current.stateVersion
+        })
+      }
+      const now = this.now()
+      const next = parseStrict(CharacterPublicStateSchema, {
+        ...cloneValue(current),
+        stateVersion: current.stateVersion + 1,
+        mood: { label: '平静', intensity: 0, updatedAt: now },
+        currentActivity: '等待交流',
+        lastInteractionAt: now,
+        updatedAt: now
+      }, `state:${command.characterInstanceId}`)
+      this.states.set(command.characterInstanceId, next)
+      return parseStrict(ResetCharacterEvolutionResultSchema, {
+        state: cloneValue(next),
+        resetFields: ['self_l2', 'state_l3', 'speaking_style_c6', 'reflector', 'mood']
+      }, 'reset-evolution-result')
+    })
   }
 
   private makeCharacter(input: {

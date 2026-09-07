@@ -21,7 +21,8 @@ function makePort(): { port: CharacterServiceBackendPort; mock: MockCharacterBac
       validateCharacter: vi.fn((draft) => mock.validateCharacter(draft)),
       previewCharacter: vi.fn((input) => mock.previewCharacter(input)),
       listCharacterRevisions: vi.fn((input) => mock.listCharacterRevisions(input)),
-      getCharacterState: vi.fn((id) => mock.getCharacterState(id))
+      getCharacterState: vi.fn((id) => mock.getCharacterState(id)),
+      resetCharacterEvolution: vi.fn((input) => mock.resetCharacterEvolution(input))
     }
   }
 }
@@ -138,6 +139,48 @@ describe('CharacterService 角色编排', () => {
     const current = await service.getMe()
     expect(current.userId).toBe('user-mock')
     expect(port.getMe).toHaveBeenCalledTimes(1)
+  })
+
+  it('reset evolution 受能力/epoch/实例互斥保护，并只失效目标 state cache', async () => {
+    let epoch = 1
+    const { port, mock } = makePort()
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, getConnectionEpoch: () => epoch })
+
+    await service.getMe()
+    await service.listCharacters()
+    await service.getCharacter('builtin/elysia')
+    await service.getCharacterState('instance-elysia')
+    await service.getCharacterState('instance-cyrene')
+
+    await expect(service.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: 1 }))
+      .resolves.toMatchObject({ state: { stateVersion: 2 }, resetFields: expect.arrayContaining(['mood']) })
+
+    await service.getMe()
+    await service.listCharacters()
+    await service.getCharacter('builtin/elysia')
+    await service.getCharacterState('instance-elysia')
+    await service.getCharacterState('instance-cyrene')
+    expect(port.getMe).toHaveBeenCalledTimes(1)
+    expect(port.listCharacters).toHaveBeenCalledTimes(1)
+    expect(port.getCharacter).toHaveBeenCalledTimes(1)
+    expect(port.getCharacterState).toHaveBeenCalledTimes(3)
+
+    let release: ((value: Awaited<ReturnType<MockCharacterBackend['resetCharacterEvolution']>>) => void) | undefined
+    vi.mocked(port.resetCharacterEvolution).mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    const pending = service.resetCharacterEvolution({ characterInstanceId: 'instance-cyrene', expectedStateVersion: 1 })
+    await Promise.resolve()
+    await Promise.resolve()
+    await expect(service.resetCharacterEvolution({ characterInstanceId: 'instance-cyrene', expectedStateVersion: 1 }))
+      .rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.mutationInProgress } })
+
+    epoch = 2
+    release?.(await mock.resetCharacterEvolution({ characterInstanceId: 'instance-cyrene', expectedStateVersion: 1 }))
+    await expect(pending).rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.staleConnection } })
+
+    const disabled = new CharacterService({ backend: port, getFeatures: () => undefined })
+    await expect(disabled.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: 2 }))
+      .rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.profilesUnavailable } })
+    expect(port.resetCharacterEvolution).toHaveBeenCalledTimes(2)
   })
 
   it('clearCache 使在途结果不再复用或回填缓存，但不伪装成连接变化错误', async () => {

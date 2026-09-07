@@ -15,6 +15,8 @@ import {
   RollbackCharacterCommandSchema, CharacterDraftSchema, CharacterPreviewCommandSchema,
   CharacterMutationResultSchema, CharacterArchiveResultSchema, CharacterValidationResultSchema,
   CharacterPreviewResultSchema,
+  ResetCharacterEvolutionCommandSchema,
+  ResetCharacterEvolutionResultSchema,
   CharacterDraftKeySchema, CharacterDraftSummarySchema, PersistedCharacterDraftSchema
 } from './character'
 
@@ -29,6 +31,7 @@ export const CharacterListRequestSchema = CharacterListQuerySchema
 export const CharacterGetRequestSchema = z.object({ characterId: CharacterIdSchema }).strict()
 export const CharacterListRevisionsRequestSchema = CharacterRevisionQuerySchema
 export const CharacterStateRequestSchema = z.object({ characterInstanceId: CharacterInstanceIdSchema }).strict()
+export const CharacterResetEvolutionRequestSchema = ResetCharacterEvolutionCommandSchema
 export const CharacterCreateRequestSchema = CreateCharacterCommandSchema
 export const CharacterUpdateRequestSchema = UpdateCharacterCommandSchema
 export const CharacterCloneRequestSchema = CloneCharacterCommandSchema
@@ -43,6 +46,7 @@ export const CharacterListResponseSchema = CharacterPageSchema(CharacterSummaryS
 export const CharacterGetResponseSchema = CharacterDetailSchema
 export const CharacterListRevisionsResponseSchema = CharacterPageSchema(CharacterRevisionSummarySchema)
 export const CharacterStateResponseSchema = CharacterPublicStateSchema
+export const CharacterResetEvolutionResponseSchema = ResetCharacterEvolutionResultSchema
 export const CharacterCreateResponseSchema = CharacterDetailSchema
 export const CharacterUpdateResponseSchema = CharacterMutationResultSchema
 export const CharacterCloneResponseSchema = CharacterDetailSchema
@@ -78,3 +82,4 @@ export const CharacterListInputSchema = CharacterListRequestSchema
 export const CharacterGetInputSchema = CharacterGetRequestSchema
 export const CharacterRevisionListInputSchema = CharacterListRevisionsRequestSchema
 export const CharacterStateInputSchema = CharacterStateRequestSchema
+export const CharacterResetEvolutionInputSchema = CharacterResetEvolutionRequestSchema

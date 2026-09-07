@@ -40,7 +40,8 @@ describe('FE-B 角色 IPC Main handler', () => {
       IpcChannels.charactersList,
       IpcChannels.charactersGet,
       IpcChannels.charactersListRevisions,
-      IpcChannels.characterInstancesGetState
+      IpcChannels.characterInstancesGetState,
+      IpcChannels.characterInstancesResetEvolution
     ]))
     const profile = await invoke(handlers, IpcChannels.profileGetMe)
     expect(profile).toMatchObject({ ok: true, data: { userId: 'user-mock' } })
@@ -52,6 +53,8 @@ describe('FE-B 角色 IPC Main handler', () => {
     expect(detail).toMatchObject({ ok: true, data: { summary: { characterId: 'builtin/elysia' }, current: { characterId: 'builtin/elysia' } } })
     const state = await invoke(handlers, IpcChannels.characterInstancesGetState, { characterInstanceId: 'instance-elysia' })
     expect(state).toMatchObject({ ok: true, data: { characterId: 'builtin/elysia', characterInstanceId: 'instance-elysia' } })
+    const reset = await invoke(handlers, IpcChannels.characterInstancesResetEvolution, { characterInstanceId: 'instance-elysia', expectedStateVersion: 1 })
+    expect(reset).toMatchObject({ ok: true, data: { state: { stateVersion: 2 }, resetFields: expect.arrayContaining(['mood']) } })
   })
 
   it('请求/响应均 strict：未知字段和错误 arity 在 Main 边界拒绝', async () => {
@@ -60,6 +63,8 @@ describe('FE-B 角色 IPC Main handler', () => {
     expect(badRequest).toMatchObject({ ok: false, error: { code: 'SCHEMA_VALIDATION_FAILED' } })
     const badGet = await invoke(handlers, IpcChannels.charactersGet, { characterId: 'builtin/elysia', revision: 1 })
     expect(badGet).toMatchObject({ ok: false, error: { code: 'SCHEMA_VALIDATION_FAILED' } })
+    const badReset = await invoke(handlers, IpcChannels.characterInstancesResetEvolution, { characterInstanceId: 'instance-elysia', expectedStateVersion: 1, unknown: true })
+    expect(badReset).toMatchObject({ ok: false, error: { code: 'SCHEMA_VALIDATION_FAILED' } })
     const badUpdate = await invoke(handlers, IpcChannels.profileUpdateMe, {
       expectedRevision: 1, displayName: '小雨', locale: 'zh-CN', timezone: 'Asia/Shanghai', unknown: true
     })
@@ -104,7 +109,8 @@ describe('FE-B 角色 IPC Main handler', () => {
       validateCharacter: backend.validateCharacter.bind(backend),
       previewCharacter: backend.previewCharacter.bind(backend),
       listCharacterRevisions: backend.listCharacterRevisions.bind(backend),
-      getCharacterState: backend.getCharacterState.bind(backend)
+      getCharacterState: backend.getCharacterState.bind(backend),
+      resetCharacterEvolution: backend.resetCharacterEvolution.bind(backend)
     }
     const handlers = new Map<string, (raw: unknown) => Promise<IpcResult<unknown>>>()
     registerCharacterHandlers({ service, sanitize, register: (channel, invoke) => { handlers.set(channel, invoke) } })
@@ -219,6 +225,16 @@ describe('FE-B 角色 IPC Preload', () => {
     await expect(desktopApi.createCharacter({ draft, unknown: true } as never)).rejects.toThrow('SCHEMA_VALIDATION_FAILED')
     mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: { ephemeral: true, reply: 'ok', unknown: true } })
     await expect(desktopApi.previewCharacter({ draft, userMessage: 'hi' })).rejects.toThrow('SCHEMA_VALIDATION_FAILED')
+
+    const initialState = await backend.getCharacterState('instance-elysia')
+    const resetResult = await backend.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: initialState.stateVersion })
+    mockIpc.invoke.mockResolvedValueOnce({ ok: true, data: resetResult })
+    await desktopApi.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: initialState.stateVersion })
+    expect(mockIpc.invoke).toHaveBeenLastCalledWith(IpcChannels.characterInstancesResetEvolution, {
+      characterInstanceId: 'instance-elysia', expectedStateVersion: initialState.stateVersion
+    })
+    await expect(desktopApi.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: initialState.stateVersion, unknown: true } as never))
+      .rejects.toThrow('SCHEMA_VALIDATION_FAILED')
 
     mockIpc.invoke.mockResolvedValueOnce({ ok: false, error: {
       code: 'BACKEND_REJECTED', message: '校验失败', backendCode: 'CHARACTER_VALIDATION',

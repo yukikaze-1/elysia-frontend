@@ -68,9 +68,9 @@ export const IpcChannels = {
   diagnosticsClearLogs: 'diagnostics:clear-logs',         // 阶段 7 批次 A：清理日志（invoke）
   diagnosticsExport: 'diagnostics:export',                 // 阶段 7 批次 A：导出脱敏诊断包（invoke）
   diagnosticsLastCrash: 'diagnostics:last-crash',    // 阶段 7 批次 B：读取最近 Renderer 崩溃 marker（invoke，一次性——读后清空）
-  // —— 多角色角色域（不接 RealBackend REST；Mock/contract fake 可用）——
+  // —— 多角色角色域（Real/Mock 均经 Main 领域端口；raw REST 不越 IPC）——
   profileGetMe: 'profile:get-me',
-  // —— 多角色身份与角色操作；具名通道，仍不接 RealBackend REST ——
+  // —— 多角色身份与角色操作；具名通道 ——
   profileUpdateMe: 'profile:update-me',
   charactersList: 'characters:list',
   charactersGet: 'characters:get',
@@ -83,6 +83,7 @@ export const IpcChannels = {
   charactersPreview: 'characters:preview',
   charactersListRevisions: 'characters:list-revisions',
   characterInstancesGetState: 'character-instances:get-state',
+  characterInstancesResetEvolution: 'character-instances:reset-evolution',
   characterDraftsList: 'character-drafts:list',
   characterDraftsGet: 'character-drafts:get',
   characterDraftsSave: 'character-drafts:save',

@@ -16,7 +16,7 @@ import type { Page } from '@shared/contracts/conversation'
  *
  * 角色契约的完整接口仍由 shared/contracts/character.ts 统一维护；Main 这里只
  * 暴露读路径所需的最窄 GET 子集，避免 CharacterService 依赖传输 raw 类型或把
- * 尚未存在的 RealBackend REST 方法伪装成可用能力。
+ * 传输层的通用能力扩散到角色领域。
  */
 export type ReadonlyCharacterBackendPort = Pick<
   CharacterBackendPort,
@@ -35,8 +35,11 @@ export type CharacterMutationPort = Pick<
   'createCharacter' | 'updateCharacter' | 'cloneCharacter' | 'archiveCharacter' | 'rollbackCharacter' | 'validateCharacter' | 'previewCharacter'
 >
 
+/** 角色实例演化写端口；命令/结果继续复用 shared 冻结契约。 */
+export type CharacterEvolutionPort = Pick<CharacterBackendPort, 'resetCharacterEvolution'>
+
 /** CharacterService 当前阶段所需最窄组合端口。 */
-export type CharacterServiceBackendPort = ReadonlyCharacterBackendPort & CharacterIdentityWritePort & CharacterMutationPort
+export type CharacterServiceBackendPort = ReadonlyCharacterBackendPort & CharacterIdentityWritePort & CharacterMutationPort & CharacterEvolutionPort
 
 /** 便于 fake/Mock 以最窄的返回类型实现端口，仍然引用 shared 领域契约。 */
 export type CharacterReadMethods = {

@@ -12,6 +12,8 @@ import {
   CharacterListRevisionsResponseSchema,
   CharacterStateRequestSchema,
   CharacterStateResponseSchema,
+  CharacterResetEvolutionRequestSchema,
+  CharacterResetEvolutionResponseSchema,
   CharacterCreateRequestSchema, CharacterCreateResponseSchema,
   CharacterUpdateRequestSchema, CharacterUpdateResponseSchema,
   CharacterCloneRequestSchema, CharacterCloneResponseSchema,
@@ -31,7 +33,7 @@ type Handler = (raw: unknown) => Promise<IpcResult<unknown>>
 type Register = (channel: IpcChannelName, executor: Handler, arity?: 0 | 1) => void
 
 export interface CharacterHandlersDeps {
-  service: Pick<CharacterService, 'getMe' | 'updateMe' | 'listCharacters' | 'getCharacter' | 'listCharacterRevisions' | 'getCharacterState' | 'createCharacter' | 'updateCharacter' | 'cloneCharacter' | 'archiveCharacter' | 'rollbackCharacter' | 'validateCharacter' | 'previewCharacter'>
+  service: Pick<CharacterService, 'getMe' | 'updateMe' | 'listCharacters' | 'getCharacter' | 'listCharacterRevisions' | 'getCharacterState' | 'resetCharacterEvolution' | 'createCharacter' | 'updateCharacter' | 'cloneCharacter' | 'archiveCharacter' | 'rollbackCharacter' | 'validateCharacter' | 'previewCharacter'>
   /** 归档成功后清理同角色未提交草稿；清理失败不得翻转远端归档结果。 */
   drafts?: Pick<CharacterDraftStore, 'deleteByCharacterId'>
   sanitize: MessageSanitizer
@@ -94,6 +96,11 @@ export function registerCharacterHandlers(deps: CharacterHandlersDeps): void {
   register(
     IpcChannels.characterInstancesGetState,
     createIpcHandler(CharacterStateRequestSchema, CharacterStateResponseSchema, (input) => deps.service.getCharacterState(input.characterInstanceId), options(IpcChannels.characterInstancesGetState)),
+    1
+  )
+  register(
+    IpcChannels.characterInstancesResetEvolution,
+    createIpcHandler(CharacterResetEvolutionRequestSchema, CharacterResetEvolutionResponseSchema, (input) => deps.service.resetCharacterEvolution(input), options(IpcChannels.characterInstancesResetEvolution)),
     1
   )
 }

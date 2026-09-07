@@ -17,6 +17,8 @@ import type {
   CharacterDraftSummary,
   CharacterListQuery,
   CharacterPublicState,
+  ResetCharacterEvolutionCommand,
+  ResetCharacterEvolutionResult,
   CharacterRevisionQuery,
   CharacterRevisionSummary,
   CharacterSummary,
@@ -100,6 +102,8 @@ import {
   CharacterListRevisionsResponseSchema,
   CharacterStateRequestSchema,
   CharacterStateResponseSchema,
+  CharacterResetEvolutionRequestSchema,
+  CharacterResetEvolutionResponseSchema,
   CharacterCreateRequestSchema, CharacterCreateResponseSchema,
   CharacterUpdateRequestSchema, CharacterUpdateResponseSchema,
   CharacterCloneRequestSchema, CharacterCloneResponseSchema,
@@ -340,6 +344,11 @@ async function listCharacterRevisions(input: CharacterRevisionQuery): Promise<Pa
 async function getCharacterState(characterInstanceId: string): Promise<CharacterPublicState> {
   const request = parseRequest(CharacterStateRequestSchema, { characterInstanceId })
   return unwrap(await invokeWithArgs<CharacterPublicState>(IpcChannels.characterInstancesGetState, request), CharacterStateResponseSchema)
+}
+
+async function resetCharacterEvolution(input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult> {
+  const request = parseRequest(CharacterResetEvolutionRequestSchema, input)
+  return unwrap(await invokeWithArgs<ResetCharacterEvolutionResult>(IpcChannels.characterInstancesResetEvolution, request), CharacterResetEvolutionResponseSchema)
 }
 async function createCharacter(input: CreateCharacterCommand): Promise<CharacterDetail> {
   const request = parseRequest(CharacterCreateRequestSchema, input)
@@ -701,6 +710,7 @@ export const desktopApi = {
   getCharacter,
   listCharacterRevisions,
   getCharacterState,
+  resetCharacterEvolution,
   createCharacter,
   updateCharacter,
   cloneCharacter,

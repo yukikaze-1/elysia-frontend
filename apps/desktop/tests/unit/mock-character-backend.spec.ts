@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MOCK_CHARACTER_BACKEND_CODES, MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
-import { CharacterBindingSnapshotSchema, CharacterDetailSchema, CharacterPublicStateSchema, CharacterSummarySchema, UserIdentityProfileSchema } from '@shared/schemas'
+import { CharacterBindingSnapshotSchema, CharacterDetailSchema, CharacterPublicStateSchema, CharacterSummarySchema, ResetCharacterEvolutionResultSchema, UserIdentityProfileSchema } from '@shared/schemas'
 import type { CharacterDraft } from '@shared/contracts'
 
 function draft(name = '自定义角色'): CharacterDraft {
@@ -62,6 +62,19 @@ describe('MockCharacterBackend 多角色闭环', () => {
     expect(page.hasMore).toBe(true)
     await expect(backend.getCharacter('missing')).rejects.toMatchObject({ details: { backendCode: 'CHARACTER_NOT_FOUND' } })
     await expect(backend.getCharacterState('missing')).rejects.toMatchObject({ details: { backendCode: 'CHARACTER_INSTANCE_NOT_FOUND' } })
+  })
+
+  it('reset evolution 使用状态版本 CAS，返回严格领域结果并只重置目标实例', async () => {
+    const backend = new MockCharacterBackend()
+    const before = await backend.getCharacterState('instance-elysia')
+    const result = await backend.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: before.stateVersion })
+    expect(ResetCharacterEvolutionResultSchema.safeParse(result).success).toBe(true)
+    expect(result).toMatchObject({ state: { stateVersion: before.stateVersion + 1, mood: { label: '平静', intensity: 0 } } })
+    expect((await backend.getCharacterState('instance-cyrene')).stateVersion).toBe(1)
+    await expect(backend.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: before.stateVersion }))
+      .rejects.toMatchObject({ details: { backendCode: 'CHARACTER_STATE_VERSION_CONFLICT', currentStateVersion: before.stateVersion + 1 } })
+    await expect(backend.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: before.stateVersion + 1, unknown: true } as never))
+      .rejects.toMatchObject({ code: 'SCHEMA_VALIDATION_FAILED' })
   })
 
   it('未知数字 cursor 不回退到第一页，而是稳定拒绝并保留 backendCode', async () => {
