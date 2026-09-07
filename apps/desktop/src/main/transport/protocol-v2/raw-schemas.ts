@@ -509,7 +509,7 @@ const RawCharacterStateViewSchema = z.object({
     label: nonBlankText(100),
     intensity: z.number().min(0).max(1),
     updatedAt: utcIsoTimestamp()
-  }).strict().nullable().optional(),
+  }).strict(),
   currentActivity: z.string().max(200).nullable().optional(),
   lastInteractionAt: utcIsoTimestamp().nullable().optional(),
   proactiveEnabled: z.boolean(),

@@ -368,7 +368,7 @@ const RestCharacterMoodSchema = z.object({
 }).strict()
 
 const RestCharacterPublicStateViewSchema = z.object({
-  mood: RestCharacterMoodSchema.nullable(),
+  mood: RestCharacterMoodSchema,
   currentActivity: emptyOrText(200).nullable().optional(),
   lastInteractionAt: utcIsoTimestamp().nullable().optional(),
   proactiveEnabled: z.boolean(),

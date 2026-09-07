@@ -239,7 +239,7 @@ export interface RestCharacterPublicState {
   state: RestCharacterPublicStateView
 }
 export interface RestCharacterPublicStateView {
-  mood: RestCharacterMood | null
+  mood: RestCharacterMood
   currentActivity?: string | null
   lastInteractionAt?: string | null
   proactiveEnabled: boolean

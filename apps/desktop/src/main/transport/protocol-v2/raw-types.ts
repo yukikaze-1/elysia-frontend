@@ -364,9 +364,9 @@ export interface RawCharacterStateChanged {
   state: RawCharacterStateView
 }
 
-/** 完整公开状态 view（mood/currentActivity/lastInteractionAt 可为 null，mapper 归一 undefined） */
+/** 完整公开状态 view（mood 由后端默认填充且必填非 null；其余 optional null 由 mapper 归一） */
 export interface RawCharacterStateView {
-  mood?: { label: string; intensity: number; updatedAt: string } | null
+  mood: { label: string; intensity: number; updatedAt: string }
   currentActivity?: string | null
   lastInteractionAt?: string | null
   proactiveEnabled: boolean

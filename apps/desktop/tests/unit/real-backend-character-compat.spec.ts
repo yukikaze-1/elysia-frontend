@@ -1,5 +1,5 @@
 // FE-A2：RealBackend 连接边界的角色能力与身份分发回归。
-// 这里不接角色 REST API；只证明 server_info 能力旗标是 literal true 且每次连接状态
+// 证明 server_info 能力旗标是 literal true 且每次连接状态
 // 采用整体替换，不把旧连接的 character feature 泄漏到 connecting/reconnecting/error。
 import { describe, expect, it, vi } from 'vitest'
 import { RealBackend, type WebSocketLike } from '../../src/main/transport/real-backend'
@@ -281,7 +281,7 @@ describe('RealBackend typed character features / connection replacement', () => 
     const scope = backend.getConnectionState().connectionScopeId
     ws.push({
       type: 'character.state.changed', conversationId: 'conv-1', characterId: 'character-a', characterInstanceId: 'instance-a', characterRevision: 1, stateVersion: 1,
-      state: { proactiveEnabled: false, updatedAt: '2026-09-01T00:00:00.000Z' }
+      state: { mood: { label: '平静', intensity: 0.2, updatedAt: '2026-09-01T00:00:00.000Z' }, proactiveEnabled: false, updatedAt: '2026-09-01T00:00:00.000Z' }
     })
     ws.push({ type: 'character.catalog.changed', characterId: 'character-a', currentRevision: 1, status: 'active', updatedAt: '2026-09-01T00:00:00.000Z' })
     expect(events.filter((event) => event.event === 'character.state.changed' || event.event === 'character.catalog.changed')).toEqual([

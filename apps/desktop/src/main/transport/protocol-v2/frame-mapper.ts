@@ -336,7 +336,7 @@ export class FrameMapper {
     }
   }
 
-  /** character.state.changed raw 帧 → 领域事件（state 完整 view；null 归一 undefined，FE-E 消费顺序只看 stateVersion） */
+  /** character.state.changed raw 帧 → 领域事件（state 完整 view；raw mood 必填非 null，其他 null 归一 undefined） */
   private mapCharacterStateChanged(frame: Extract<RawFrame, { type: 'character.state.changed' }>): CharacterStateChangedEvent {
     const view: CharacterPublicStateView = {
       ...(frame.state.mood ? { mood: { label: frame.state.mood.label, intensity: frame.state.mood.intensity, updatedAt: frame.state.mood.updatedAt } } : {}),

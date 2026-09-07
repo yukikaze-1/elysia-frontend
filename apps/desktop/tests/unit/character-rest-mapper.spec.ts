@@ -128,9 +128,13 @@ describe('raw wire schema 先行校验（strict 接纳）', () => {
   it('public state 只接受身份元数据 + 嵌套 state，旧扁平形状拒绝', () => {
     const nested = {
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
-      state: { mood: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00Z' }
+      state: { mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00Z' }, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00Z' }
     }
     expect(RestCharacterPublicStateSchema.safeParse(nested).success).toBe(true)
+    const withoutMood = { ...nested, state: { ...nested.state } }
+    delete (withoutMood.state as { mood?: unknown }).mood
+    expect(RestCharacterPublicStateSchema.safeParse(withoutMood).success).toBe(false)
+    expect(RestCharacterPublicStateSchema.safeParse({ ...nested, state: { ...nested.state, mood: null } }).success).toBe(false)
     expect(RestCharacterPublicStateSchema.safeParse({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 1, stateVersion: 1,
       mood: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00Z'
@@ -306,13 +310,13 @@ describe('mutation / archive / validation / preview 映射（CHAR-FE-03/04/05）
 })
 
 describe('state / reset 映射（CHAR-FE-09/15）', () => {
-  it('public state：解包嵌套 view，mood:null 归一无键；身份字段透传', () => {
+  it('public state：解包嵌套 view，mood 与身份字段透传；其他 null 归一无键', () => {
     const s = toDomainPublicState({
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 8,
-      state: { mood: null, currentActivity: null, lastInteractionAt: null,
+      state: { mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00.000Z' }, currentActivity: null, lastInteractionAt: null,
         proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
     })
-    expect('mood' in s).toBe(false)
+    expect(s.mood).toEqual({ label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00.000Z' })
     expect('currentActivity' in s).toBe(false)
     expect(s).toMatchObject({ characterId: 'ch_elysia', stateVersion: 8, proactiveEnabled: false })
     const withMood = toDomainPublicState({
@@ -328,7 +332,7 @@ describe('state / reset 映射（CHAR-FE-09/15）', () => {
     const r = toDomainResetResult({
       state: {
         characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 9,
-        state: { mood: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
+        state: { mood: { label: '平静', intensity: 0.1, updatedAt: '2026-08-30T00:00:00.000Z' }, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
       },
       resetFields: ['self_l2', 'state_l3']
     })

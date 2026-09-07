@@ -143,16 +143,16 @@ describe('generation 事件角色身份（CHAR-FE-08）', () => {
 })
 
 describe('character.state.changed / character.catalog.changed（§7.1/CHAR-FE-09）', () => {
-  it('frame-mapper：state.changed 完整 view 映射，null 归一 undefined', () => {
+  it('frame-mapper：state.changed 完整 view 映射，optional null 归一 undefined', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const ev = mapper.mapFrame({
       type: 'character.state.changed', conversationId: 'c1',
       characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2, stateVersion: 8,
-      state: { mood: null, currentActivity: null, lastInteractionAt: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
+      state: { mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00.000Z' }, currentActivity: null, lastInteractionAt: null, proactiveEnabled: false, updatedAt: '2026-08-30T00:00:00.000Z' }
     }) as CharacterStateChangedEvent
     expect(ev.event).toBe('character.state.changed')
     expect(ev.stateVersion).toBe(8)
-    expect('mood' in ev.state).toBe(false)
+    expect(ev.state.mood).toEqual({ label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00.000Z' })
     expect('currentActivity' in ev.state).toBe(false)
     expect(ev.sequence).toBeGreaterThan(0)
   })
@@ -182,6 +182,19 @@ describe('character.state.changed / character.catalog.changed（§7.1/CHAR-FE-09
     expect(parseRawFrame({
       type: 'character.catalog.changed', characterId: 'ch', currentRevision: 1, status: 'hidden', updatedAt: '2026-08-30T00:00:00.000Z'
     }).success).toBe(false)
+  })
+  it('parseRawFrame：state.changed 的 mood 必填且非 null', () => {
+    const base = {
+      type: 'character.state.changed', conversationId: 'c1', characterId: 'ch', characterInstanceId: 'ci',
+      characterRevision: 1, stateVersion: 1,
+      state: { proactiveEnabled: true, updatedAt: '2026-08-30T00:00:00.000Z' }
+    }
+    expect(parseRawFrame(base).success).toBe(false)
+    expect(parseRawFrame({ ...base, state: { ...base.state, mood: null } }).success).toBe(false)
+    expect(parseRawFrame({
+      ...base,
+      state: { ...base.state, mood: { label: '平静', intensity: 0.2, updatedAt: '2026-08-30T00:00:00.000Z' } }
+    }).success).toBe(true)
   })
   it('parseBackendEvent：领域事件经 IPC schema 校验通过（state 为完整 view）', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
