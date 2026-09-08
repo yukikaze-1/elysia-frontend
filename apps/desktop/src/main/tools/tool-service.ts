@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import { computeParamHash, canonicalJsonStringify } from './param-hash'
 import type { RegisteredTool } from './tool-registry'
-import { isPathBlacklisted, normalizeToolPath } from './tool-policy'
+import { isPathBlacklisted, isPathWithinRoot, normalizeToolPath } from './tool-policy'
 import { redactToolArguments } from './input-summary'
 import { createExecutors, ToolExecError, type ExecResult } from './tool-executors'
 import { computeTextDiff, detectTextFormat } from './text-diff'
@@ -464,7 +464,8 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
           realPath = r.realPath
         } catch { return reject(req, 'PATH_UNSAFE', '路径不安全') }   // lint：e 未使用 → 省略绑定
         const rp = realPath   // 局部 const 供闭包（TS CFA 不把外层 let 窄化传入闭包）
-        const blacklisted = isPathBlacklisted(rp) && !(deps.allowRoots ?? []).some(root => rp === root || rp.startsWith(root + '/'))
+        const blacklisted = isPathBlacklisted(rp, undefined, { platform: deps.platform })
+          && !(deps.allowRoots ?? []).some(root => isPathWithinRoot(rp, root, deps.platform))
         if (blacklisted) return reject(req, 'PATH_BLOCKLISTED', '路径被黑名单拦截')
       }
     }

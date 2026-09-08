@@ -15,7 +15,7 @@ afterEach(() => { rmSync(tmp, { recursive: true, force: true }) })
 
 function mkDeps(over: Partial<ToolServiceDeps> = {}): ToolServiceDeps {
   return {
-    platform: 'posix', audit: () => {}, submitStatus: async () => {},
+    platform: process.platform === 'win32' ? 'windows' : 'posix', audit: () => {}, submitStatus: async () => {},
     uploadAttachment: vi.fn().mockResolvedValue({ url: 'mock://a/1', mimeType: 'text/plain' }),
     pushEvent: () => {}, pickFile: async () => ({ canceled: true }), enumerateSources: async () => [], ...over,
   } as ToolServiceDeps
@@ -54,7 +54,10 @@ describe('desktop.file.select', () => {
     expect((r.output as { size: number }).size).toBe(2 * 1024 * 1024 + 1)
   })
   it('黑名单路径命中 → {cancelled:true, reason:PATH_BLOCKLISTED}（M-7/L10）', async () => {
-    const ex = createExecutors(mkDeps({ pickFile: async () => ({ canceled: false, path: '/etc/passwd' }) }))
+    const blacklistedPath = process.platform === 'win32'
+      ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
+      : '/etc/passwd'
+    const ex = createExecutors(mkDeps({ pickFile: async () => ({ canceled: false, path: blacklistedPath }) }))
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(r.output).toEqual({ cancelled: true, reason: 'PATH_BLOCKLISTED' })
   })
@@ -65,7 +68,10 @@ describe('desktop.file.select', () => {
     await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(selectedAdd).toHaveBeenCalledTimes(1)
     expect(selectedAdd).toHaveBeenCalledWith(p)   // normalize 后路径（L3：与豁免检查同口径）
-    const ex2 = createExecutors(mkDeps({ selectedAdd, pickFile: async () => ({ canceled: false, path: '/etc/passwd' }) }))
+    const blacklistedPath = process.platform === 'win32'
+      ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
+      : '/etc/passwd'
+    const ex2 = createExecutors(mkDeps({ selectedAdd, pickFile: async () => ({ canceled: false, path: blacklistedPath }) }))
     await ex2.execute(rec('desktop.file.select', {}), undefined)
     expect(selectedAdd).toHaveBeenCalledTimes(1)   // 伪装取消时不调用
   })

@@ -25,48 +25,67 @@ export const PATH_BLACKLIST_DEFAULTS: BlacklistEntry[] = [
   { root: '~\\AppData' }, { root: '~\\AppData\\Local\\Temp' },
 ]
 
-const SEP = path.sep
+export type PolicyPlatform = 'posix' | 'windows'
+
+function pathResolver(platform: PolicyPlatform): path.PlatformPath {
+  return platform === 'windows' ? path.win32 : path.posix
+}
 
 export function isPathBlacklisted(
   normalized: string,
   blacklist: BlacklistEntry[] = PATH_BLACKLIST_DEFAULTS,
-  opts: { currentHome?: string } = {},
+  opts: { currentHome?: string; platform?: PolicyPlatform } = {},
 ): boolean {
+  const platform = opts.platform ?? (process.platform === 'win32' ? 'windows' : 'posix')
+  const resolver = pathResolver(platform)
+  const sep = resolver.sep
   const home = opts.currentHome ?? os.homedir()
-  const lower = process.platform === 'win32' ? normalized.toLowerCase() : normalized
+  const lower = platform === 'windows' ? normalized.toLowerCase() : normalized
   for (const entry of blacklist) {
     let root = entry.root
-    if (root.startsWith('~')) root = path.join(home, root.slice(1))
-    const r = process.platform === 'win32' ? root.toLowerCase() : root
+    if (root.startsWith('~')) root = resolver.join(home, root.slice(1))
+    const r = platform === 'windows' ? root.toLowerCase() : root
     if (entry.exactFile) {
-      if (lower === r || path.basename(lower) === r) return true
+      if (lower === r || resolver.basename(lower) === r) return true
       continue
     }
     if (entry.pathSeg) {
       // **/.kube/config 语义：任一路径段序列匹配（L5）
-      if (lower === r || lower.endsWith(SEP + r) || lower.includes(SEP + r + SEP)) return true
+      const pathSeg = resolver.normalize(r)
+      if (lower === pathSeg || lower.endsWith(sep + pathSeg) || lower.includes(sep + pathSeg + sep)) return true
       continue
     }
     // 段边界前缀（等于 root 或以 root+分隔符开头）
-    if (lower === r || lower.startsWith(r + SEP)) return true
+    if (lower === r || lower.startsWith(r + sep)) return true
   }
   // /home/* 排除当前用户（POSIX）
-  if (process.platform !== 'win32') {
+  if (platform !== 'windows') {
     const h = home.replace(/\/+$/, '')
     const m = lower.match(/^\/home\/[^/]+(?:\/|$)/)
-    if (m && !(lower === h || lower.startsWith(h + SEP))) return true
+    if (m && !(lower === h || lower.startsWith(h + sep))) return true
   }
   return false
 }
 
-export interface NormalizeOpts { platform?: 'posix' | 'windows'; realPath?: (p: string) => string }
+/** Compare a canonical path against an allowed root using the selected platform's separator/case rules. */
+export function isPathWithinRoot(realPath: string, root: string, platform: PolicyPlatform): boolean {
+  const resolver = pathResolver(platform)
+  const candidate = resolver.normalize(realPath)
+  const normalizedRoot = resolver.normalize(root)
+  const candidateForCompare = platform === 'windows' ? candidate.toLowerCase() : candidate
+  const rootForCompare = platform === 'windows' ? normalizedRoot.toLowerCase() : normalizedRoot
+  const relative = resolver.relative(rootForCompare, candidateForCompare)
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${resolver.sep}`) && !resolver.isAbsolute(relative))
+}
+
+export interface NormalizeOpts { platform?: PolicyPlatform; realPath?: (p: string) => string }
 
 /** full realpath（含父链；新建写场景 dirname realpath + basename 拼接，H-3）；Windows 保留名/ADS/\\?\ 拒 */
 export function normalizeToolPath(rawPath: string, opts: NormalizeOpts = {}): { realPath: string; exists: boolean } {
   const realPathFn = opts.realPath ?? ((p: string) => fs.realpathSync.native(p))
   const platform = opts.platform ?? (process.platform === 'win32' ? 'windows' : 'posix')
   // A-9/新发现3/M7：POSIX 主机上 path 是 posix——Windows 语义必须用 path.win32（resolve/dirname/basename/join 全用）
-  const resolver = platform === 'windows' ? path.win32 : path
+  const resolver = pathResolver(platform)
   if (!rawPath || rawPath.length === 0) throw new PolicyError('PATH_UNSAFE', 'empty path')
   if (platform === 'windows') {
     const lower = rawPath.toLowerCase()

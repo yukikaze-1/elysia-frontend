@@ -45,7 +45,7 @@ import { createToolStatusSender } from './tools/tool-status-sender'
 import { createToolService, type ToolService } from './tools/tool-service'
 import { createToolRegistry } from './tools/tool-registry'
 import { createGrantStore } from './tools/grant-store'   // 批次 C（D6C-03/06）：目录授权仓库
-import { isPathBlacklisted, normalizeToolPath } from './tools/tool-policy'   // 批次 C（F-4）：grant 目录归一 + 黑名单复核
+import { isPathBlacklisted, isPathWithinRoot, normalizeToolPath } from './tools/tool-policy'   // 批次 C（F-4）：grant 目录归一 + 黑名单复核
 import { MOCK_THUMBNAIL_DATA_URL, parseMockCaptureSourcesEnv, parseMockGrantDirectoryEnv, parseMockToolAllowRootEnv } from './tools/env-bridge'
 
 let diagnostics: Diagnostics | undefined
@@ -338,7 +338,7 @@ async function main(): Promise<void> {
       settings: settingsSvc,
       audit,
       normalizeDirectory: (raw) => normalizeToolPath(raw, { platform }).realPath,
-      isBlacklisted: (real) => isPathBlacklisted(real) && !(toolAllowRoot ?? []).some((r) => real === r || real.startsWith(r + '/')),   // F-3：调用方放宽形态（tool-service.ts:403 同款）
+      isBlacklisted: (real) => isPathBlacklisted(real, undefined, { platform }) && !(toolAllowRoot ?? []).some((r) => isPathWithinRoot(real, r, platform)),   // F-3：调用方放宽形态（tool-service.ts:403 同款）
       backendIdentity,
       platform,   // V-20：matches 平台门控（win32 toLowerCase / posix 直比）
       logger: diagnostics.logger,

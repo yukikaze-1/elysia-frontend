@@ -5,7 +5,7 @@ import * as path from 'node:path'
 import { dialog } from 'electron'
 import { atomicWriteFile } from '../credentials/atomic-write'      // A-13：原子写复用（fsync + 安全写）
 import { computeTextDiff, detectTextFormat, normalizeToFormat } from './text-diff'
-import { normalizeToolPath, isPathBlacklisted } from './tool-policy'
+import { normalizeToolPath, isPathBlacklisted, isPathWithinRoot } from './tool-policy'
 import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS, THUMBNAIL_DATA_URL_MAX } from './tool-service'
 import type { ToolRecord, ToolServiceDeps } from './tool-service'
 import type { ToolAttachment } from '@shared/contracts/tool'       // 新发现7：类型 import 补齐
@@ -29,7 +29,8 @@ export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecor
     if (r.canceled || !r.path) return { output: { cancelled: true }, summary: '用户取消选择' }
     // 黑名单复核（M-7/L10/H9）：命中 → 伪装取消；allowRoots 与服务层同口径（/tmp 黑名单经注入放宽）
     const norm = normalizeToolPath(r.path, { platform: deps.platform })
-    const blacklisted = isPathBlacklisted(norm.realPath) && !(deps.allowRoots ?? []).some(root => norm.realPath === root || norm.realPath.startsWith(root + '/'))
+    const blacklisted = isPathBlacklisted(norm.realPath, undefined, { platform: deps.platform })
+      && !(deps.allowRoots ?? []).some(root => isPathWithinRoot(norm.realPath, root, deps.platform))
     if (blacklisted) {
       return { output: { cancelled: true, reason: 'PATH_BLOCKLISTED' }, summary: '用户取消选择' }
     }
