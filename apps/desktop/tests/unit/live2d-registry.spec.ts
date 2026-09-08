@@ -23,6 +23,23 @@ vi.mock('../../src/main/live2d/manifest', async (importOriginal) => {
 })
 
 const roots: string[] = []
+
+function canCreateSymlink(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), 'cy-live2d-symlink-probe-'))
+  try {
+    const target = join(probe, 'target')
+    writeFileSync(target, 'probe')
+    symlinkSync(target, join(probe, 'link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { recursive: true, force: true })
+  }
+}
+
+const symlinkSupported = canCreateSymlink()
+
 function tmpModelsRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'cy-live2d-'))
   roots.push(root)
@@ -267,7 +284,7 @@ describe('resolveModelFile containment + 白名单', () => {
     expect(await registry.resolveModelFile('A', 'f%name.json')).toBe(join(await realpath(dir), 'f%name.json'))
   })
 
-  it('symlink 逃逸 → null（realpath containment + lstat 非普通文件双拒）', async () => {
+  it.skipIf(!symlinkSupported)('symlink 逃逸 → null（realpath containment + lstat 非普通文件双拒）', async () => {
     const outside = join(root, 'outside.txt')
     writeFileSync(outside, 'secret')
     symlinkSync(outside, join(root, 'A', 'escape-link'))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, symlinkSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
@@ -11,6 +11,23 @@ function makeDir(): string {
   mkdirSync(join(root, 'sub'), { recursive: true })
   return root
 }
+
+function canCreateSymlink(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), 'cy-safe-open-symlink-probe-'))
+  try {
+    const target = join(probe, 'target')
+    writeFileSync(target, 'probe')
+    symlinkSync(target, join(probe, 'link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { recursive: true, force: true })
+  }
+}
+
+const symlinkSupported = canCreateSymlink()
+
 const root = makeDir()
 const safeRoot = root // 测试锚点 = 临时根
 
@@ -55,20 +72,20 @@ describe.skipIf(process.platform === 'win32')('openSafeFile', () => {
     expect(r.created).toBe(false)
     await r.fd.close()
   })
-  it('symlink 文件 → 拒绝（O_NOFOLLOW）', async () => {
+  it.skipIf(!symlinkSupported)('symlink 文件 → 拒绝（O_NOFOLLOW）', async () => {
     const p = join(root, 'sub', 'link.log')
     const target = join(root, 'outside.log')
     writeFileSync(target, 'x', { mode: 0o600 })
     symlinkSync(target, p)
     await expect(openSafeFile(p, { mode: 'existing', purpose: 'append', safeRoot })).rejects.toThrow()
   })
-  it('realpath 逃逸 safeRoot → 拒绝', async () => {
+  it.skipIf(!symlinkSupported)('realpath 逃逸 safeRoot → 拒绝', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'cy-outside-'))
     const p = join(root, 'sub', 'escape.log')
     symlinkSync(join(outside, 'f'), p) // 悬空 symlink → realpath 解析到 outside
     await expect(openSafeFile(p, { mode: 'create', purpose: 'append', safeRoot })).rejects.toThrow()
   })
-  it('中间目录换链逃逸 safeRoot → 拒绝（realpath 包含性真正覆盖）', async () => {
+  it.skipIf(!symlinkSupported)('中间目录换链逃逸 safeRoot → 拒绝（realpath 包含性真正覆盖）', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'cy-escape-out-'))
     const linkDir = join(root, 'escape-sub')
     symlinkSync(outside, linkDir) // 中间组件 symlink→outside：open 跟随成功，realpath 逃逸
@@ -125,7 +142,7 @@ describe('openSafeFile（非普通文件拒绝 / 平台注入）', () => {
     await expect(openSafeFile(p, { mode: 'existing', purpose: 'read', safeRoot }, windowsPlatform))
       .rejects.toMatchObject({ code: 'ENOENT' })
   })
-  it('windowsPlatform 注入：symlink 被 lstat 拒', async () => {
+  it.skipIf(!symlinkSupported)('windowsPlatform 注入：symlink 被 lstat 拒', async () => {
     const p = join(root, 'sub', 'win-link.log')
     const target = join(root, 'outside.log')
     writeFileSync(target, 'x', { mode: 0o600 })

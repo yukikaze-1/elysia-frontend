@@ -5,6 +5,27 @@ import { describe, expect, it, afterEach } from 'vitest'
 import { ensureUserDataDirs, UserDataDirError } from '../../src/main/persistence/user-data-dirs'
 
 const dirs: string[] = []
+
+function canCreateDirectoryLink(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), 'cyrene-symlink-probe-'))
+  try {
+    const target = join(probe, 'target')
+    mkdirSync(target)
+    symlinkSync(target, join(probe, 'link'), process.platform === 'win32' ? 'junction' : 'dir')
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { recursive: true, force: true })
+  }
+}
+
+const directoryLinkSupported = canCreateDirectoryLink()
+
+function createDirectoryLink(target: string, linkPath: string): void {
+  symlinkSync(target, linkPath, process.platform === 'win32' ? 'junction' : 'dir')
+}
+
 function tmpBase(): string {
   const d = mkdtempSync(join(tmpdir(), 'cyrene-test-'))
   dirs.push(d)
@@ -27,21 +48,21 @@ describe('ensureUserDataDirs', () => {
     writeFileSync(base, 'x')
     await expect(ensureUserDataDirs(base)).rejects.toBeInstanceOf(UserDataDirError)
   })
-  it('base 为符号链接 → 抛 UserDataDirError（lstat 非目录否定判定）', async () => {
+  it.skipIf(!directoryLinkSupported)('base 为符号链接 → 抛 UserDataDirError（lstat 非目录否定判定）', async () => {
     const base = tmpBase()
     const target = mkdtempSync(join(tmpdir(), 'cyrene-tgt-'))
     dirs.push(target)
-    symlinkSync(target, base)
+    createDirectoryLink(target, base)
     await expect(ensureUserDataDirs(base)).rejects.toBeInstanceOf(UserDataDirError)
   })
-  it('叶子为符号链接 → 抛 UserDataDirError', async () => {
+  it.skipIf(!directoryLinkSupported)('叶子为符号链接 → 抛 UserDataDirError', async () => {
     const base = tmpBase()
     await ensureUserDataDirs(base, { baseCreated: true })
     const target = mkdtempSync(join(tmpdir(), 'cyrene-tgt2-'))
     dirs.push(target)
     const logs = join(base, 'logs')
     rmSync(logs, { recursive: true, force: true })
-    symlinkSync(target, logs)
+    createDirectoryLink(target, logs)
     await expect(ensureUserDataDirs(base, { baseCreated: true })).rejects.toBeInstanceOf(UserDataDirError)
   })
   it.skipIf(process.platform === 'win32')('既有 base/叶子非 0700（group/other 位）→ 拒绝', async () => {
