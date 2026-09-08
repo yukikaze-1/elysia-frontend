@@ -16,7 +16,7 @@ class FakeWs {
   push(frame: unknown): void { this.handlers['message']?.(JSON.stringify(frame)) }
 }
 
-async function makeBackend(): Promise<{
+async function makeBackend(features: Record<string, unknown> = {}): Promise<{
   backend: RealBackend
   ws: FakeWs
   warnings: ProtocolWarning[]
@@ -33,7 +33,7 @@ async function makeBackend(): Promise<{
   backend.subscribe((e) => events.push(e))
   const p = backend.connect({ serverUrl: 'http://test.local', token: 'sk-test' })
   ws.push({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })
-  ws.push({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-1' })
+  ws.push({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features, services: {}, connectionId: 'conn-1' })
   await p
   return { backend, ws, warnings, events }
 }
@@ -84,5 +84,22 @@ describe('RealBackend live2d.directive 分发（C3 canary）', () => {
     ws.push({ type: 'live2d.directive', state: 'happy', priority: 5 })
     expect(events.filter((e) => e.event === 'live2d.directive')).toHaveLength(0)
     expect(warnings.some((w) => w.code === 'RAW_FRAME_INVALID')).toBe(true)
+  })
+
+  it('character_profiles=true 时无身份表现帧不进入 Renderer；完整身份帧仍透传', async () => {
+    const { ws, warnings, events } = await makeBackend({ character_profiles: true })
+    ws.push({ type: 'expression', expression: 'idle' })
+    ws.push({ type: 'live2d.directive', state: 'happy' })
+    ws.push({
+      type: 'expression', expression: 'happy', conversationId: 'conv-1', generationId: 'gen-1',
+      characterId: 'ch_elysia', characterInstanceId: 'ci-1', characterRevision: 2
+    })
+    ws.push({
+      type: 'live2d.directive', state: 'happy', conversationId: 'conv-1', generationId: 'gen-1',
+      characterId: 'ch_elysia', characterInstanceId: 'ci-1', characterRevision: 2
+    })
+    expect(events.filter((e) => e.event === 'expression')).toHaveLength(1)
+    expect(events.filter((e) => e.event === 'live2d.directive')).toHaveLength(1)
+    expect(warnings.filter((w) => w.code === 'RAW_FRAME_INVALID')).toHaveLength(2)
   })
 })

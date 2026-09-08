@@ -445,6 +445,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       case 'session': this.handleSession(frame); return
       case 'server_info': this.handleServerInfo(frame, connectAttempt); return
       case 'expression': {
+        if (!this.requireCharacterIdentityWhenProfilesEnabled(frame, 'expression')) return
         // expression 与 Live2D 指令一样必须经过 FrameMapper：legacy 无身份帧由 mapper
         // 返回 null，带 character identity 的帧则进入领域事件并保持身份。
         const ev = this.mapper?.mapFrame(frame)
@@ -499,11 +500,16 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
         if (ev) this.emit(ev)
         return
       }
-      case 'audio_start': this.handleAudioStart(frame); return
+      case 'audio_start': {
+        if (!this.requireCharacterIdentityWhenProfilesEnabled(frame, 'audio_start')) return
+        this.handleAudioStart(frame)
+        return
+      }
       case 'audio': this.handleAudioChunk(frame); return
       case 'audio_end': this.handleAudioEnd(frame); return
       case 'audio_cancelled': this.handleAudioCancelled(frame); return
       case 'live2d.directive': {
+        if (!this.requireCharacterIdentityWhenProfilesEnabled(frame, 'live2d.directive')) return
         // 批次 C（C3）：后端 Live2D 表现指令建议——经 FrameMapper（Task 1）映射为扁平 Live2DDirectiveEvent
         // 后 emit（store handleDirective 消费）；形状不符已被 raw-schema（Task 1）拒在 parseRawFrame，
         // 不再需要运行时 canary（漂移 canary 放单测级）。
@@ -559,6 +565,23 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       // B-6:旧后端 session 帧缺 conversationId → 缓冲,待活动会话经 REST active:true 解析后投递(Task 5)
       this.sessionBuffer = frame.messages
     }
+  }
+
+  /**
+   * Raw schemas stay migration-compatible with old servers, while a server
+   * that advertises character_profiles has a stronger runtime guarantee:
+   * character-bound presentation/audio frames must carry the full immutable
+   * character tuple.  Drop legacy/unattributed frames before they can reach
+   * Renderer stores or the TTS identity table.
+   */
+  private requireCharacterIdentityWhenProfilesEnabled(
+    frame: { characterId?: string; characterInstanceId?: string; characterRevision?: number },
+    type: string
+  ): boolean {
+    if (this.state.features?.characterProfiles !== true) return true
+    if (frame.characterId !== undefined && frame.characterInstanceId !== undefined && frame.characterRevision !== undefined) return true
+    this.warn('RAW_FRAME_INVALID', `${type} 在 character_profiles=true 时必须携带完整角色身份`)
+    return false
   }
 
   private handleServerInfo(frame: RawServerInfo, connectAttempt?: PendingConnect): void {

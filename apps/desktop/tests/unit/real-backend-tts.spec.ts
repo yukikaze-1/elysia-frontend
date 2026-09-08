@@ -41,7 +41,7 @@ interface Ctx {
   events: BackendEvent[]
 }
 
-async function makeBackend(opts: Partial<RealBackendOptions> = {}): Promise<Ctx> {
+async function makeBackend(opts: Partial<RealBackendOptions> = {}, features: Record<string, unknown> = {}): Promise<Ctx> {
   const ws = new FakeWs()
   const sink = new FakeSink()
   const warnings: ProtocolWarning[] = []
@@ -56,7 +56,7 @@ async function makeBackend(opts: Partial<RealBackendOptions> = {}): Promise<Ctx>
   backend.subscribe((e) => events.push(e))
   const p = backend.connect({ serverUrl: 'http://test.local', token: 'sk-test' })
   ws.push({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })
-  ws.push({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features: {}, services: {}, connectionId: 'conn-1' })
+  ws.push({ type: 'server_info', protocol_version: '2.0', server_version: '0.4.0', features, services: {}, connectionId: 'conn-1' })
   await p
   return { backend, ws, sink, warnings, events }
 }
@@ -208,5 +208,16 @@ describe('RealBackend TTS audio_* 帧缓冲 + sink（Task 5）', () => {
     expect(starts).toHaveLength(2)
     expect(starts[0]).toMatchObject({ characterId: 'ch_elysia', characterRevision: 2 })
     expect(starts[1]).not.toHaveProperty('characterId')
+  })
+
+  it('character_profiles=true 时无身份 audio_start 不建立播放流', async () => {
+    const { ws, sink, events, warnings } = await makeBackend({}, { character_profiles: true })
+    ws.push({ type: 'audio_start', stream_id: 9, format: 'wav' })
+    ws.push({ type: 'audio', stream_id: 9, seq: 0, data: Buffer.from([1]).toString('base64'), is_final: false })
+    ws.push({ type: 'audio_end', stream_id: 9, format: 'wav' })
+    expect(startedEventsOf(events).filter((e) => e.streamId === 9)).toHaveLength(0)
+    expect(readyEventsOf(events).filter((e) => e.streamId === 9)).toHaveLength(0)
+    expect(sink.calls).toHaveLength(0)
+    expect(warnings.some((w) => w.code === 'RAW_FRAME_INVALID')).toBe(true)
   })
 })
