@@ -91,8 +91,9 @@ describe('决策链', () => {
     expect(events.at(-1)!.error?.code).toBe('PARAM_HASH_MISMATCH')
   })
   it('黑名单路径命中 → PATH_BLOCKLISTED 不弹窗（压过一切）', async () => {
-    const { svc, events } = mkService()
+    const platform = process.platform === 'win32' ? 'windows' : 'posix'
     const blacklistedPath = process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd'
+    const { svc, events } = mkService({ platform, allowRoots: [] })
     await svc.handleRequest(mkReq({ arguments: { path: blacklistedPath } }))
     expect(events.at(-1)!.error?.code).toBe('PATH_BLOCKLISTED')
     expect(events.some(e => e.status === 'awaiting_permission')).toBe(false)
