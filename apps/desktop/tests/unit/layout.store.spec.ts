@@ -164,15 +164,15 @@ describe('layoutStore', () => {
   it('effective 与 gridTemplateFor 一致（4 组合 columns/areas）', () => {
     const store = useLayoutStore()
     store.handleViewportChange(1200) // 全四区
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"title title title title" "nav conv chat live"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat live"')
     store.handleViewportChange(1100) // 仅 Live2D（会话栏自动折叠）
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"title title title" "nav chat live"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav chat live"')
     store.prefs.live2dVisible = false // 仅会话栏
     store.handleViewportChange(1200)
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"title title title" "nav conv chat"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat"')
     store.prefs.conversationCollapsed = true // 均隐藏
     store.handleViewportChange(1200)
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"title title" "nav chat"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav chat"')
     // store.effective 与同一输入纯函数推导一致
     expect(store.effective).toEqual(computeEffectiveLayout(1200, store.prefs, store.overrides, LAYOUT_CONSTANTS))
   })
