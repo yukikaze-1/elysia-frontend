@@ -128,6 +128,31 @@ describe('generation 事件角色身份（CHAR-FE-08）', () => {
     expect(parseBackendEvent({ ...completed, revision: 2 }).success).toBe(false)
     expect(parseBackendEvent({ ...failed, revision: 2 }).success).toBe(false)
   })
+  it('与后端 wire validator 一致：角色身份允许全缺省/完整三元组，但拒绝部分三元组', () => {
+    const identity = { characterId: 'ch_elysia', characterInstanceId: 'ci_1', characterRevision: 2 }
+    const frames: Record<string, unknown>[] = [
+      { type: 'generation.started', generationId: 'g1', messageId: 'm1', ...identity },
+      {
+        type: 'generation.completed', generationId: 'g1', messageId: 'm1', channel: 'public_reply',
+        finishReason: 'stop', usage: { rounds: [], turn_total: 0 }, model: 'model', ...identity
+      },
+      {
+        type: 'generation.failed', generationId: 'g1', code: 'FAILED', message: 'bad', retryable: false,
+        details: {}, ...identity
+      },
+      { type: 'expression', expression: 'happy', ...identity },
+      { type: 'live2d.directive', state: 'happy', ...identity },
+      { type: 'audio_start', stream_id: 7, format: 'wav', ...identity }
+    ]
+    for (const frame of frames) {
+      expect(parseRawFrame(frame).success).toBe(true)
+      for (const field of ['characterId', 'characterInstanceId', 'characterRevision']) {
+        const partial = { ...frame }
+        delete partial[field]
+        expect(parseRawFrame(partial).success, `${String(frame.type)} missing ${field}`).toBe(false)
+      }
+    }
+  })
   it('frame-mapper：started/completed/failed 身份透传（undefined 不写键）', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const started = mapper.mapFrame({

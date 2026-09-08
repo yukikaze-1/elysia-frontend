@@ -60,6 +60,26 @@ const rawCharacterEventIdentityFields = {
   characterRevision: z.number().int().min(1).optional()
 }
 
+/**
+ * The backend keeps the character identity fields optional during rollout,
+ * but its wire validator rejects a partial identity tuple.  Keep the same
+ * invariant at the raw boundary so a malformed frame cannot reach a mapper
+ * with an attribution that is impossible to complete later.
+ */
+const hasCompleteCharacterIdentity = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) return true
+  const record = value as Record<string, unknown>
+  const present = [
+    record.characterId !== undefined,
+    record.characterInstanceId !== undefined,
+    record.characterRevision !== undefined
+  ]
+  return !present.some(Boolean) || present.every(Boolean)
+}
+
+const completeCharacterIdentityMessage =
+  'characterId、characterInstanceId、characterRevision 必须同时提供'
+
 const SAFE_CSS_NAMED_COLORS = new Set([
   'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque', 'black', 'blanchedalmond',
   'blue', 'blueviolet', 'brown', 'burlywood', 'cadetblue', 'chartreuse', 'chocolate', 'coral', 'cornflowerblue',
@@ -163,7 +183,7 @@ const RawExpressionSchema = z.object({
   expression: z.string().min(1),
   intensity: z.number().optional(),
   ...rawCharacterEventIdentityFields
-}).strict()
+}).strict().refine(hasCompleteCharacterIdentity, completeCharacterIdentityMessage)
 
 const RawGenerationStartedSchema = z.object({
   type: z.literal('generation.started'),
@@ -176,7 +196,7 @@ const RawGenerationStartedSchema = z.object({
   characterId: nonBlankText().optional(),
   characterInstanceId: nonBlankText().optional(),
   characterRevision: z.number().int().min(1).optional()
-}).strict()
+}).strict().refine(hasCompleteCharacterIdentity, completeCharacterIdentityMessage)
 
 const RawGenerationSegmentStartedSchema = z.object({
   type: z.literal('generation.segment.started'),
@@ -224,7 +244,7 @@ const RawGenerationCompletedSchema = z.object({
   characterId: nonBlankText().optional(),
   characterInstanceId: nonBlankText().optional(),
   characterRevision: z.number().int().min(1).optional()
-}).strict()
+}).strict().refine(hasCompleteCharacterIdentity, completeCharacterIdentityMessage)
 
 const RawGenerationFailedSchema = z.object({
   type: z.literal('generation.failed'),
@@ -239,7 +259,7 @@ const RawGenerationFailedSchema = z.object({
   characterId: nonBlankText().optional(),
   characterInstanceId: nonBlankText().optional(),
   characterRevision: z.number().int().min(1).optional()
-}).strict()
+}).strict().refine(hasCompleteCharacterIdentity, completeCharacterIdentityMessage)
 
 const RawAckErrorSchema = z.object({
   code: z.string().min(1),
@@ -402,7 +422,7 @@ const RawAudioStartSchema = z.object({
   sampleRate: z.number().int().optional(),
   durationMs: z.number().int().optional(),
   ...rawCharacterEventIdentityFields
-}).strict()
+}).strict().refine(hasCompleteCharacterIdentity, completeCharacterIdentityMessage)
 /** 音频流 chunk（audio；data 为 base64 字符串） */
 const RawAudioChunkSchema = z.object({
   type: z.literal('audio'),
@@ -434,7 +454,7 @@ const RawLive2DDirectiveSchema = z.object({
   priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional(),
   durationMs: z.number().int().min(0).max(30000).optional(),
   ...rawCharacterEventIdentityFields
-}).strict()
+}).strict().refine(hasCompleteCharacterIdentity, completeCharacterIdentityMessage)
 
 // —— 阶段 6 批次 A（F-6-02）：工具双轨 wire schema（镜像 frontend_contract/contract.raw.ts；.strict() 未知字段整帧拒）——
 
