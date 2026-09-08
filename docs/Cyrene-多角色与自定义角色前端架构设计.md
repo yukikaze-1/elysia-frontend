@@ -5,12 +5,13 @@
 > **初始前端事实基线：** `elysia-frontend@23e7108`
 > **初始后端契约基线：** `elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture-design.md`（该文档事实基线 `elysia-agent@a410a9d`）
 > **前后端契约冻结：** `character-contract-v1`（2026-08-30；与后端 §11～§12 同形）  
-> **权威范围：** Electron Main/Preload/Renderer 中用户最小身份、角色目录与编辑、会话选角、角色公开状态、Live2D/TTS 角色关联、缓存迁移和前后端联调  
+> **权威范围：** Electron Main/Preload/Renderer 中用户最小身份、角色目录与编辑、会话选角、角色公开状态、Live2D/TTS 角色关联、本地数据边界和前后端联调
 > **初始验证口径：** 本文按 2026-08-30 立项事实基线与后端目标设计静态核对；设计章节中的新类型、接口、页面和事件在当时不代表已经实现，后续实施状态以顶部快照及带日期的验收记录为准。
 > **明确排除：** 任务中心继续暂缓；Neo4j 关系图谱暂不实现；本文不重写后端 Prompt Compiler、人格演化或记忆隔离实现
 
-> **实施状态快照（2026-09-08）：** 前端 Stage H 静态对齐已完成；后端 `server_info.features.character_profiles=true` 已开启；最终 Windows Electron 连接真实后端的人工冒烟仍待验收。
-> **状态来源说明：** `docs/16-Cyrene-前端实施任务清单与进度跟踪.md` 仍是阶段 0～8 的总体状态文件，最后核验日为 2026-08-29；其中仅记录到多角色 FE-A，未覆盖本次 Stage H，因此不再把该旧条目当作角色领域实时状态。角色批次当前状态以本快照及后续带日期的 `docs/review/` 验收记录为准。
+> **实施状态快照（2026-09-08）：** 前端 Stage H 静态对齐已完成；后端 `elysia-agent@65295a90` 已完成 Stage H 收口并开启 `character_profiles=true` / `character_state_stream=true`；当前只待干净数据基线下的 Windows Electron 真实联调。
+> **旧数据决策（2026-09-08）：** 开发阶段不迁移旧后端数据、旧会话或旧前端缓存；联调前清理开发数据库并使用干净前端测试数据。能力关闭、缺字段和旧后端的协议防护仍保留，但不构成对旧持久化数据的迁移承诺。详见 [旧数据不迁移决策记录](review/2026-09-08-多角色旧数据不迁移决策记录.md)。
+> **状态来源说明：** `docs/16-Cyrene-前端实施任务清单与进度跟踪.md` 是当前项目状态的单一事实源，已于 2026-09-08 更新 Stage H 基线。本文保留角色领域架构决策，具体真实联调证据以带日期的 `docs/review/` 验收记录为准。
 
 ---
 
@@ -37,8 +38,9 @@
 15. **产品品牌与角色身份分离。** 窗口名、应用名可继续叫 Cyrene；消息气泡里的发送者、头像、会话角色和角色栏标题必须动态化。
 16. **本功能作为阶段 1～7 之后的独立功能批次推进。** 本文不代表阶段 8 已启动，也不恢复已暂缓的任务中心。
 17. **开工 wire 口径以 `character-contract-v1` 为准。** REST/WS 字段、状态策略、返回对象、错误信封和放量顺序已在本文 §5～§7、§14、§19 冻结；实现过程中不得各自“顺手优化”命名，变更必须先同时更新前后端文档和契约 fixture。
+18. **开发阶段不迁移旧数据。** 后端不建 legacy instance、不复制旧 character state/LTM/pending；前端不对旧会话、旧离线缓存或旧 Live2D 设置做产品级迁移。清理是部署/联调前的显式操作，不在应用启动时隐式触发。
 
-推荐前端实施顺序：**契约与严格 schema → 能力协商与只读目录 → “我的档案” → 角色编辑/版本 → 新建会话选角 → 公开状态 → Live2D/TTS 身份联动 → 缓存迁移与真实联调。**
+推荐前端实施顺序：**契约与严格 schema → 能力协商与只读目录 → “我的档案” → 角色编辑/版本 → 新建会话选角 → 公开状态 → Live2D/TTS 身份联动 → 干净数据初始化与真实联调。**
 
 ---
 
@@ -67,7 +69,7 @@ Cyrene 面向情感陪伴，但在 2026-08-30 立项事实基线中，前端对�
 - 将角色身份带入会话缓存、消息回放、流式 generation、角色状态、Live2D 和 TTS；
 - 只展示后端明确公开的角色产品态状态；
 - 保持 Electron 的 Main/Preload/Renderer 信任边界；
-- 保持旧后端、旧会话和旧本地缓存可读；
+- 对能力关闭、旧后端或缺失角色字段保持显式防护，但不迁移、不保证保留旧持久化数据；
 - 给出可分批实现、可测试、可真实联调的文件和契约方案。
 
 ### 1.3 非目标
@@ -1784,7 +1786,7 @@ Renderer 业务分支主要看稳定 `backendCode`，通用 `CyreneErrorCode` �
 
 ---
 
-## 15. 兼容、迁移与放量顺序
+## 15. 协议兼容、不迁移决策与放量顺序
 
 ### 15.1 三种运行模式
 
@@ -1799,7 +1801,7 @@ Renderer 业务分支主要看稳定 `backendCode`，通用 `CyreneErrorCode` �
 1. 前端先加入 optional character 字段、feature schema 和 mapper；
 2. 前端 fixture/mock/IPC 全链通过；
 3. 后端生成产物/golden 已包含 optional 字段/新事件，但运行时 feature=false 时仍发送 legacy 形状；双端先离线对拍；
-4. 双端契约测试确认旧会话与新字段；
+4. 双端契约测试确认新数据完整字段，并确认 capability=false/缺字段时客户端不会误启用角色功能；
 5. 后端完成 Prompt、runtime、memory 隔离后才置 `character_profiles=true`；
 6. 状态事件完成后再置 `character_state_stream=true`；
 7. 真实联调通过后才把 UI 入口视为正式能力。
@@ -1808,11 +1810,12 @@ Renderer 业务分支主要看稳定 `backendCode`，通用 `CyreneErrorCode` �
 
 ### 15.3 旧会话
 
-- `character` 缺失即 legacy；
-- 不从 title、消息自称或当前 Live2D 猜角色；
-- 在线时后端迁移完成后，以新 SessionSummary 覆盖；
-- 离线时继续中性展示；
-- 不因缺角色字段删除缓存消息。
+2026-09-08 决策为**开发阶段不迁移旧会话**：
+
+- 联调/部署前由操作者清理旧开发数据库，应用不自动建 legacy instance；
+- 前端不把旧会话转换为新 binding，也不从 title、消息自称或当前 Live2D 猜角色；
+- capability=false/缺 `character` 时仍保留中性降级和 fail-closed 守卫，这是协议韧性，不是数据迁移；
+- `character_profiles=true` 的联调基线下，新会话和生成事件必须带完整角色身份，不用 legacy 路径补数据。
 
 ### 15.4 旧硬编码 UI
 
@@ -1825,7 +1828,7 @@ Renderer 业务分支主要看稳定 `backendCode`，通用 `CyreneErrorCode` �
 
 ### 15.5 旧 Live2D 设置
 
-按 §11.2 显式迁移 selectionMode，保证用户已有固定模型不被角色默认悄悄替换。
+本批不承诺迁移旧 Live2D 设置；联调使用干净前端用户数据，由新 schema 直接生成 `selectionMode`。现有容错归一逻辑可保留作防御，但不纳入旧数据保留验收。
 
 ---
 
@@ -2002,9 +2005,9 @@ apps/desktop/src/renderer/src/
 
 退出条件：快速切换、迟到事件和 TTS 都不串角色。
 
-### 前端 G：迁移、真机联调与文档
+### 前端 G：干净数据初始化、真机联调与文档
 
-- 旧会话/旧缓存/旧 Live2D 设置迁移；
+- 确认开发数据库和前端测试数据已清理，不执行旧会话/旧缓存/旧 Live2D 设置迁移；
 - mock/real contract 对拍；
 - Windows Electron 真机；
 - 断线/重连；
@@ -2025,7 +2028,7 @@ apps/desktop/src/renderer/src/
 | FE-D 自定义与版本 | BE-D |
 | FE-E 会话绑定 | BE-E；feature 暂不放量 |
 | FE-F 状态/Live2D/TTS | BE-F + BE-G |
-| FE-G 迁移联调 | BE-H |
+| FE-G 干净数据联调 | BE-H |
 
 并行开工口径：后端可同时推进 BE-A/BE-B 和 BE-C0（只做 `frontend_contract` DTO/事件/golden，feature 恒 false）；前端 FE-A 可立即按本文建立领域/strict schema/Mock 骨架，但只有拿到 BE-C0 同一 backend commit/schemaHash 的 handoff bundle 并通过交叉门禁后才能退出。后续批次严格按上表，不以“接口能 200”替代 runtime/memory 隔离门禁。
 
@@ -2226,7 +2229,7 @@ apps/desktop/src/renderer/src/
 - [ ] 已有会话没有换角色入口；
 - [ ] 会话列表、消息和角色栏显示正确角色；
 - [ ] app 品牌与角色身份不混用；
-- [ ] legacy 会话中性兼容；
+- [ ] capability=false/缺角色字段时中性降级且不猜测身份（协议防护，非旧数据迁移验收）；
 - [ ] offline cache 保留角色摘要；
 - [ ] generation 身份与 revision 可审计。
 
@@ -2287,7 +2290,7 @@ apps/desktop/src/renderer/src/
 | doc 02 | REST/WS、领域事件、角色审计字段和错误 |
 | doc 03 | 档案、目录、编辑、新建会话、角色状态交互 |
 | doc 05 | follow character/fixed、身份守卫、状态分离 |
-| doc 06 | 四个 Store、缓存、角色草稿和迁移 |
+| doc 06 | 四个 Store、缓存、角色草稿和旧数据不迁移边界 |
 | doc 07 | authored 内容、IPC、资产与日志安全 |
 | doc 08 | schema/store/集成/真机验收矩阵 |
 | doc 10 | 实施任务和 DoD |
@@ -2320,7 +2323,7 @@ elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture
 - 会话、消息、generation、状态、Live2D 和 TTS 使用同一组角色身份；
 - 迟到事件不会串角色；
 - 内部人格、记忆和框架 Prompt 没有越过产品边界；
-- legacy/离线/重连都不会靠名字猜身份；
-- strict schema、feature rollout、迁移和真实 Electron 联调全部通过。
+- capability=false/离线/重连都不会靠名字猜身份；
+- strict schema、feature rollout、干净数据初始化和真实 Electron 联调全部通过。
 
 如果只实现“一个角色编辑页面”，而会话、消息、Live2D、TTS 和缓存仍然共享全局角色，那么它仍然是单角色应用外加一个配置表单，不是本设计要求的多角色前端。
