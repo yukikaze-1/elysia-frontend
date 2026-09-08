@@ -1,13 +1,16 @@
 # Cyrene 多角色、用户身份与自定义角色前端架构设计
 
-> **文档状态：** 架构设计稿（目标设计；前端 A 契约层已实施，实时进度以 doc 16 为准）  
-> **日期：** 2026-08-30  
-> **前端事实基线：** `elysia-frontend@23e7108`  
-> **后端契约基线：** `elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture-design.md`（该文档事实基线 `elysia-agent@a410a9d`）  
+> **文档性质：** 2026-08-30 架构设计稿与立项事实基线；2026-09-08 的实施状态见下方快照。
+> **历史设计日期：** 2026-08-30
+> **初始前端事实基线：** `elysia-frontend@23e7108`
+> **初始后端契约基线：** `elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture-design.md`（该文档事实基线 `elysia-agent@a410a9d`）
 > **前后端契约冻结：** `character-contract-v1`（2026-08-30；与后端 §11～§12 同形）  
 > **权威范围：** Electron Main/Preload/Renderer 中用户最小身份、角色目录与编辑、会话选角、角色公开状态、Live2D/TTS 角色关联、缓存迁移和前后端联调  
-> **验证口径：** 本文基于当前前端代码与后端目标设计静态核对；文中的新类型、接口、页面和事件均不代表已经实现  
+> **初始验证口径：** 本文按 2026-08-30 立项事实基线与后端目标设计静态核对；设计章节中的新类型、接口、页面和事件在当时不代表已经实现，后续实施状态以顶部快照及带日期的验收记录为准。
 > **明确排除：** 任务中心继续暂缓；Neo4j 关系图谱暂不实现；本文不重写后端 Prompt Compiler、人格演化或记忆隔离实现
+
+> **实施状态快照（2026-09-08）：** 前端 Stage H 静态对齐已完成；后端 `server_info.features.character_profiles=true` 已开启；最终 Windows Electron 连接真实后端的人工冒烟仍待验收。
+> **状态来源说明：** `docs/16-Cyrene-前端实施任务清单与进度跟踪.md` 仍是阶段 0～8 的总体状态文件，最后核验日为 2026-08-29；其中仅记录到多角色 FE-A，未覆盖本次 Stage H，因此不再把该旧条目当作角色领域实时状态。角色批次当前状态以本快照及后续带日期的 `docs/review/` 验收记录为准。
 
 ---
 
@@ -30,7 +33,7 @@
 11. **所有实时表现事件必须经过角色身份守卫。** 迟到的 generation、state、expression、Live2D directive 或 TTS 音频不得作用到另一会话或另一角色。
 12. **离线只读、在线写入。** 离线可以显示已缓存会话中的角色摘要和最后公开状态；角色创建、更新、归档、回滚、身份更新和演化重置不进入离线写队列。
 13. **能力开关缺省为 false。** 旧后端没有 `character_profiles` 时继续走单角色兼容模式；前端不能靠接口 404 或名字猜测能力。
-14. **严格 schema 要求“前端契约先落、后端字段后放量”。** 当前多个 wire/REST schema 使用 `.strict()`；后端提前增加字段会让旧前端整包校验失败，feature flag 本身不能消除未知字段。
+14. **严格 schema 要求“前端契约先落、后端字段后放量”。** 2026-08-30 立项事实基线中的多个 wire/REST schema 使用 `.strict()`；后端提前增加字段会让旧前端整包校验失败，feature flag 本身不能消除未知字段。
 15. **产品品牌与角色身份分离。** 窗口名、应用名可继续叫 Cyrene；消息气泡里的发送者、头像、会话角色和角色栏标题必须动态化。
 16. **本功能作为阶段 1～7 之后的独立功能批次推进。** 本文不代表阶段 8 已启动，也不恢复已暂缓的任务中心。
 17. **开工 wire 口径以 `character-contract-v1` 为准。** REST/WS 字段、状态策略、返回对象、错误信封和放量顺序已在本文 §5～§7、§14、§19 冻结；实现过程中不得各自“顺手优化”命名，变更必须先同时更新前后端文档和契约 fixture。
@@ -43,7 +46,7 @@
 
 ### 1.1 产品背景
 
-Cyrene 面向情感陪伴，但当前前端对“角色”的表达仍主要是：
+Cyrene 面向情感陪伴，但在 2026-08-30 立项事实基线中，前端对“角色”的表达仍主要是：
 
 - 消息气泡固定显示 `Cyrene` 和 `Cy`；
 - 用户头像固定显示“我”，没有用户身份初始化流程；
@@ -82,9 +85,9 @@ Cyrene 面向情感陪伴，但当前前端对“角色”的表达仍主要是�
 
 ### 1.4 与现有阶段的关系
 
-本文是新功能的目标设计，不记录“当前阶段”或完成状态。后续真正立项时：
+本文是新功能的目标设计；2026-08-30 编写时不记录实时实施状态。后续实施时：
 
-- 当前状态只写入 doc 16；
+- 阶段 0～8 的总体状态仍写入 doc 16；角色批次状态由本文顶部快照和带日期的 `docs/review/` 记录补充；
 - 批次进入/退出条件写入 doc 12；
 - 具体技术任务写入 doc 10 或独立 plan；
 - 真实联调结果写入 `docs/review/`；
@@ -92,13 +95,13 @@ Cyrene 面向情感陪伴，但当前前端对“角色”的表达仍主要是�
 
 ---
 
-## 2. 当前前端实现事实基线
+## 2. 立项事实基线：前端实现（2026-08-30）
 
-本节只描述 `elysia-frontend@23e7108` 已存在的行为。
+本节保留 `elysia-frontend@23e7108` 在 2026-08-30 立项时已存在的行为，不代表 2026-09-08 之后的实施状态；后续增量另行标注日期和批次。
 
 ### 2.1 会话领域没有角色身份
 
-`shared/contracts/conversation.ts` 当前为：
+在该立项事实基线中，`shared/contracts/conversation.ts` 为：
 
 ```typescript
 export interface Conversation {
@@ -117,13 +120,13 @@ export interface CreateConversationInput {
 
 - 会话列表只能用会话标题首字作为头像；
 - 新建按钮不能选择角色；
-- `conversationStore.currentId` 只能表达当前会话，不能表达当前角色实例；
+- `conversationStore.currentId` 只能表达活动会话，不能表达会话绑定的角色实例；
 - 离线缓存无法知道会话属于谁；
 - 前端如果显示 `Cyrene`，只能依赖硬编码而不是数据。
 
 ### 2.2 REST 会话 schema 是严格的
 
-`main/transport/protocol-v2/rest-schemas.ts` 中 `RestSessionSummarySchema` 使用 `.strict()`，当前只接受：
+`main/transport/protocol-v2/rest-schemas.ts` 中 `RestSessionSummarySchema` 使用 `.strict()`，在该立项事实基线中只接受：
 
 - `conversationId`；
 - `title`；
@@ -133,7 +136,7 @@ export interface CreateConversationInput {
 
 `RestMapper.toConversation()` 只映射 `id/title/updatedAt`。
 
-后端若直接给 SessionSummary 增加 `character`，当前前端不会“自动忽略”，而是会让会话列表、创建或重命名响应校验失败。这是联调顺序中的 P0 约束。
+后端若直接给 SessionSummary 增加 `character`，该立项事实基线中的前端不会“自动忽略”，而是会让会话列表、创建或重命名响应校验失败。这是联调顺序中的 P0 约束。
 
 ### 2.3 WS feature 已解析但被丢弃
 
@@ -143,11 +146,11 @@ export interface CreateConversationInput {
 features: Record<string, unknown>
 ```
 
-但 `RealBackend.handleServerInfo()` 只保留协议版本、服务版本、连接 ID 和模型服务摘要，没有把 feature 映射到 `ConnectionState` 或独立能力模型。Renderer 当前无法可靠判断角色系统是否可用。
+但 `RealBackend.handleServerInfo()` 只保留协议版本、服务版本、连接 ID 和模型服务摘要，没有把 feature 映射到 `ConnectionState` 或独立能力模型。该立项事实基线中的 Renderer 无法可靠判断角色系统是否可用。
 
 ### 2.4 generation 只按会话隔离
 
-当前 `GenerationStartedEvent` 有 `conversationId`，中间帧通过 `generationByConversation` 找归属。`generation.completed` 和 `generation.failed` 不包含角色身份。
+在该立项事实基线中，`GenerationStartedEvent` 有 `conversationId`，中间帧通过 `generationByConversation` 找归属。`generation.completed` 和 `generation.failed` 不包含角色身份。
 
 这能阻止 A 会话的 delta 进入 B 会话，但不能处理：
 
@@ -158,7 +161,7 @@ features: Record<string, unknown>
 
 ### 2.5 消息 UI 固定角色名
 
-`CyMessageBubble.vue` 当前固定：
+在该立项事实基线中，`CyMessageBubble.vue` 固定：
 
 - assistant 头像为 `Cy`；
 - assistant 名称为 `Cyrene`；
@@ -170,7 +173,7 @@ features: Record<string, unknown>
 
 `CySettingsView.vue` 现有五项：模型服务、语音、安全与权限、角色与外观、开发与诊断。其中“角色与外观”只渲染 `CyLive2DPane`。
 
-当前没有：
+在该立项事实基线中没有：
 
 - 我的档案；
 - 角色目录；
@@ -181,9 +184,9 @@ features: Record<string, unknown>
 
 ### 2.7 Live2D 是全局本地设置
 
-`Live2DSettings` 当前保存一个全局 `modelId`，`live2dStore.init()` 读取它并加载模型。模型选择会调用 `settingsStore.setLive2d({ modelId })` 持久化。
+在该立项事实基线中，`Live2DSettings` 保存一个全局 `modelId`，`live2dStore.init()` 读取它并加载模型。模型选择会调用 `settingsStore.setLive2d({ modelId })` 持久化。
 
-当前右侧面板中的 `characterState` 不是后端人格状态，而是由以下本地现实推导的表现状态：
+在该立项事实基线中，右侧面板的 `characterState` 不是后端人格状态，而是由以下本地现实推导的表现状态：
 
 - 是否连接；
 - 是否生成；
@@ -192,15 +195,15 @@ features: Record<string, unknown>
 - 是否等待工具权限；
 - 后端 `live2d.directive` 建议。
 
-代码注释也明确指出，当前没有 `conversation → 角色态` 映射。
+该基线代码的注释也明确指出，没有 `conversation → 角色态` 映射。
 
 ### 2.8 TTS 没有角色归属
 
-当前 `audio_start/audio/audio_end` 通过 `stream_id` 组装，领域事件只有 `streamId/url/format/durationMs`。如果用户在音频准备期间切换会话，协议本身无法证明音频属于哪个角色。多角色模式下仅靠 `streamId` 不足以安全自动播放或驱动口型。
+在该立项事实基线中，`audio_start/audio/audio_end` 通过 `stream_id` 组装，领域事件只有 `streamId/url/format/durationMs`。如果用户在音频准备期间切换会话，协议本身无法证明音频属于哪个角色。多角色模式下仅靠 `streamId` 不足以安全自动播放或驱动口型。
 
 ### 2.9 本地缓存会丢角色字段
 
-`SessionStore` 当前缓存：
+在该立项事实基线中，`SessionStore` 缓存：
 
 - `Conversation[]`；
 - 每会话 `Message[]`；
@@ -208,9 +211,9 @@ features: Record<string, unknown>
 
 `ConversationSchema` 和 `MessageSchema` 都没有角色快照。即使在线接口先改，若本地 schema/mapper 没有同步，应用重启或离线查看仍会退回固定角色展示。
 
-### 2.10 当前模块可复用与不可复用边界
+### 2.10 立项基线模块的可复用与不可复用边界
 
-| 当前模块 | 可复用 | 不应承担的新职责 |
+| 立项基线模块 | 可复用 | 不应承担的新职责 |
 |---|---|---|
 | `BackendAdapter/RealBackend` | 认证 REST、WS、错误与协议适配基础 | 把所有角色 UI 状态塞进 transport |
 | `chat-service` | 会话命令和事件桥 | 角色目录、编辑草稿、版本冲突的全部编排 |
@@ -221,20 +224,22 @@ features: Record<string, unknown>
 | `voiceStore` | 录音、TTS 播放和口型播放状态 | 决定角色应使用哪个声音 |
 | `SessionStore` | 会话离线缓存 | 完整角色数据库或后端写入队列 |
 
+> 以下 FE-F1a/F1b 是 2026-09-04 记录的后续实现增量，不回写上面的 2026-08-30 立项事实基线。
+
 ### 2.11 FE-F1a 已实现事实（运行时接线）
 
-当前前端已落地角色公开状态的运行时接线，但尚未在角色栏或其他页面展示其内容：
+后续 FE-F1a 已落地角色公开状态的运行时接线，但尚未在角色栏或其他页面展示其内容：
 
 - `characterRuntimeStore` 按 `characterInstanceId` 缓存 `CharacterPublicState`，以连接 epoch、请求序号、请求时 binding、实例/角色身份和 `stateVersion` 做防迟到与 fail-closed 守卫；脱敏错误沿用 `PublicError`。
-- `createCharacterRuntimeCoordinator` 只监听当前会话的权威 `character` binding 与连接能力；离线保留 binding 供后续 stale cache 展示，只有 connected 且 `characterProfiles=true` 且存在 binding 时才发起 state snapshot GET。
+- `createCharacterRuntimeCoordinator` 只监听活动会话的权威 `character` binding 与连接能力；离线保留 binding 供后续 stale cache 展示，只有 connected 且 `characterProfiles=true` 且存在 binding 时才发起 state snapshot GET。
 - Renderer bootstrap 为角色能力计算包含状态、规范化 endpoint、connectionId、角色能力和 state-stream 能力的连接签名；connected→connected 的 endpoint/transport 变化会推进角色 epoch，并同步 identity/catalog/editor/runtime。`character.state.changed` 只旁路到 runtime store，不进入 messageStore。
-- WS 状态事件不会改写 active binding；不同会话仍可更新同一 canonical instance 的共享缓存。Live2D/TTS 仍待后续 FE-F 批次接线，后端真实联调尚未宣称完成。
+- WS 状态事件不会改写 active binding；不同会话仍可更新同一 canonical instance 的共享缓存。该批次记录时 Live2D/TTS 仍待后续 FE-F 批次接线，后端真实联调尚未宣称完成；2026-09-08 的最终人工冒烟状态见顶部快照。
 
 ### 2.12 FE-F1b 已实现事实（公开状态 UI，2026-09-04）
 
 FE-F1b 已将角色公开状态接入 Live2D 侧栏；该批次只做只读展示，不改变会话角色绑定、selectionMode、TTS identity 或 autoplay：
 
-- 新增 `CyCharacterPublicState`，唯一数据源是 `characterRuntimeStore.activeBinding`、`activeState`、`activeStatus` 和 `activeError`；组件再次校验 `characterId + characterInstanceId + characterRevision`，不从兼容性的 `statesByInstanceId` 推导当前视图。
+- 新增 `CyCharacterPublicState`，唯一数据源是 `characterRuntimeStore.activeBinding`、`activeState`、`activeStatus` 和 `activeError`；组件再次校验 `characterId + characterInstanceId + characterRevision`，不从兼容性的 `statesByInstanceId` 推导该视图。
 - 展示角色 binding 的 `displayName`、`mood.label`、非空 `currentActivity` 和最近互动时间（`lastInteractionAt` 优先、`updatedAt` 回退）。相对时间由纯函数格式化，组件只按分钟刷新并在卸载时清理定时器。
 - 已覆盖无 binding、legacy/能力不可用、loading、ready、stale/离线和 error 分支。断线保留已有精确 revision 快照并标识“离线 · 可能过期”；在线且 `characterProfiles=true` 时才显示并执行重试，`characterStateStream=false` 仍使用 REST snapshot fallback。
 - 原 Live2D `CharacterState` 徽标明确标为“本地呈现”，不再冒充角色公开心情；组件不输出 L2/L3/L4、reflection、memory、relationship、internal state 或原始 JSON 等内部字段。
@@ -1906,7 +1911,9 @@ apps/desktop/src/renderer/src/
 
 ---
 
-## 17. 分阶段实施计划与后端依赖
+## 17. 分阶段实施计划与后端依赖（2026-08-30 初始计划）
+
+下列 A～H 保留 2026-08-30 设计时的目标分批、依赖和退出条件，不是当前完成状态表。2026-09-08 的 Stage H 静态对齐与最终真实后端验收状态以顶部实施状态快照为准。
 
 ### 前端 A：契约、schema 与兼容门
 
@@ -2188,7 +2195,7 @@ apps/desktop/src/renderer/src/
 - `CharacterStatePolicy` 只取 `preserve | reset_evolution`；
 - 后端 raw 使用 `characterRevision`，不再用含义模糊的顶层 `revision` 表示绑定或公开状态。
 
-本表解决的是开工接口口径，不代表对应实现已完成。Renderer 仍只能消费 Main 映射后的领域对象，不能直接使用 raw wire。
+本表保留 2026-08-30 的开工接口口径，不作为当前实现状态表；Renderer 仍只能消费 Main 映射后的领域对象，不能直接使用 raw wire。
 
 ---
 
@@ -2286,7 +2293,7 @@ apps/desktop/src/renderer/src/
 | doc 10 | 实施任务和 DoD |
 | doc 11 | 设置中心新导航和各子页 |
 | doc 12 | 新功能批次进入/退出条件 |
-| doc 16 | 仅在实际启动批次后写当前状态 |
+| doc 16 | 维护阶段 0～8 总体状态；角色批次当前状态由本文顶部快照及带日期的 `docs/review/` 验收记录补充 |
 
 后端权威设计仍是：
 
@@ -2299,7 +2306,7 @@ elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture
 - Prompt、角色状态、记忆、存储与后端 REST/WS 业务语义以后端设计为准；
 - Electron 进程边界、IPC、Renderer 状态与本地资源安全以本文和前端 doc 01/07 为准；
 - 精确字段最终以后端生成 contract + 前端 Main schema/mapper 的契约测试为准；
-- 当前进度永远以 doc 16 为准。
+- 阶段 0～8 总体进度以 doc 16 的最新记录为准；角色批次实施状态以本文顶部带日期快照及对应 `docs/review/` 验收记录为准。
 
 ---
 
