@@ -72,6 +72,14 @@ beforeEach(() => {
 })
 
 describe('CyChatInput 语音入口守卫（Minor 24，UII02rev 独立按钮）', () => {
+  it('会话激活请求在途时禁用发送，避免消息落到旧活动会话', () => {
+    useDraftStore().drafts['conv-1'] = '等待切换完成'
+    useConversationStore().$patch({ busy: true })
+    const wrapper = mountInput()
+    expect(isDisabled(wrapper, '[aria-label="发送"]')).toBe(true)
+    wrapper.unmount()
+  })
+
   it('realtimeEnabled=false 时 🎧 实时会话禁用、🎤 普通录音(独立按钮)不禁用', () => {
     useSettingsStore().voice.realtimeEnabled = false
     const wrapper = mountInput()

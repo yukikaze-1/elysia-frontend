@@ -468,7 +468,7 @@ export const useConversationStore = defineStore('conversation', () => {
     await activate(activeId)
   }
 
-  /** §4.2.3 activate:epoch 大者胜;currentId 立即切走;resetConversation + applyPendingReplay + 拉首屏。
+  /** §4.2.3 activate:epoch 大者胜;后端确认后提交 currentId;resetConversation + applyPendingReplay + 拉首屏。
    *  G4 扩展（D5）：anchor 存在时改拉 loadContextWindow 上下文窗口（替代首页）+ setHighlight；anchor 缺省行为完全不变。 */
   async function activate(id: string, anchor?: { messageId: string; segmentId?: string }): Promise<void> {
     // D-P5 会话切换守卫：语音会话活跃（mode≠idle）→ 禁止切换，UI 提示先结束（实时模式同理）
@@ -487,13 +487,20 @@ export const useConversationStore = defineStore('conversation', () => {
     const capturedGeneration = connectionGeneration
     const myEpoch = ++epoch
     const owner = acquireOperation()
-    currentId.value = id               // 立即切走:保护 send/canSend 与事件守卫(即使后续失败也留在目标会话)
     const messageStore = useMessageStore()
-    messageStore.resetConversation(id) // 选项 A:清空旧消息 + activeGenerationId + generationByConversation
-    messageStore.applyPendingReplay(id)
     try {
+      // TTS 不属于 voice mode 守卫。切换前主动取消旧会话的播放流；否则后端可能因
+      // 尚在合成而返回 AGENT_BUSY，且旧会话音频可能在目标会话中迟到播放。
+      if (currentId.value !== id) await useVoiceStore().stopTtsPlayback()
+      if (myEpoch !== epoch || !conversationStateIsCurrent(capturedSignature, capturedGeneration)) return
       await api.activate(id)
       if (myEpoch !== epoch || !conversationStateIsCurrent(capturedSignature, capturedGeneration)) return    // 已被更新的切换/连接取代,不提交
+      // Backend activation is the authority boundary.  Keeping the previous
+      // currentId until this point prevents a rejected activation from leaving
+      // Renderer on a conversation that Backend never activated.
+      currentId.value = id
+      messageStore.resetConversation(id)
+      messageStore.applyPendingReplay(id)
       if (anchor) {
         const ok = await messageStore.loadContextWindow(anchor.messageId)
         if (myEpoch !== epoch || !conversationStateIsCurrent(capturedSignature, capturedGeneration)) return

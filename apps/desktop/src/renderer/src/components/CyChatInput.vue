@@ -155,7 +155,7 @@ const canSend = computed(() =>
   voiceStore.mode === 'idle' &&
   (draft.value.trim().length > 0 || attachmentStore.hasReady || pendingStickers.value.length > 0) &&
   !messageStore.sending && (pendingStickers.value.length > 0 || !attachmentStore.canSend.blockReason) &&
-  !!conversationStore.currentId && connectionStore.state.status === 'connected' && conversationStore.ready
+  !!conversationStore.currentId && connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy
 )
 
 /** 断线横幅:reconnecting/error(流式不可继续,提示用户) */

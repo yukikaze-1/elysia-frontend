@@ -292,6 +292,7 @@ describe('conversationStore', () => {
     mockApi.activate.mockResolvedValue({ conversationId: 'c' })
     mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
     const late = store.activate('c1')          // epoch=1,挂起于 api.activate
+    await vi.waitFor(() => expect(mockApi.activate).toHaveBeenCalledTimes(1))
     mockApi.getMessages.mockResolvedValue({ items: [msgB], hasMore: false })
     await store.activate('c2')                 // epoch=2 完整完成
     expect(store.currentId).toBe('c2')
@@ -315,7 +316,7 @@ describe('conversationStore', () => {
     mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
     mockApi.getMessages.mockImplementationOnce(() => new Promise((r) => { resolveStalePage = r }))  // 第一次 A:getMessages 挂起
     const first = store.activate('c1')             // epoch=1,到达 getMessages 后挂起
-    await Promise.resolve(); await Promise.resolve(); await Promise.resolve()  // 让 first 推进到 getMessages 挂起点
+    await vi.waitFor(() => expect(mockApi.getMessages).toHaveBeenCalledTimes(1))
     mockApi.getMessages.mockResolvedValue({ items: [msgB], hasMore: false })
     await store.activate('c2')                     // epoch=2 完整完成
     expect(store.currentId).toBe('c2')
@@ -444,13 +445,34 @@ describe('conversationStore', () => {
     expect(store.ready).toBe(true)
   })
 
-  it('activate 失败写 error + busy 复位', async () => {
+  it('activate 等后端确认再切换；失败保留原会话并复位 busy', async () => {
     const store = useConversationStore()
-    mockApi.activate.mockRejectedValue(new Error('activate boom'))
-    await store.activate('c1')
+    store.$patch({ currentId: 'c2', items: [convA, convB] })
+    let rejectActivate!: (reason: Error) => void
+    mockApi.activate.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectActivate = reject }))
+    const pending = store.activate('c1')
+    await vi.waitFor(() => expect(mockApi.activate).toHaveBeenCalledTimes(1))
+    expect(store.currentId).toBe('c2')
+    expect(store.busy).toBe(true)
+    rejectActivate(new Error('activate boom'))
+    await pending
     expect(store.error?.message).toContain('activate boom')
     expect(store.busy).toBe(false)
-    expect(store.currentId).toBe('c1')   // currentId 已立即切走(失败也留在目标会话)
+    expect(store.currentId).toBe('c2')
+  })
+
+  it('切换会话前取消当前 TTS 播放流', async () => {
+    const store = useConversationStore()
+    store.$patch({ currentId: 'c2', items: [convA, convB] })
+    useVoiceStore().$patch({ tts: { playing: true, playingStreamId: 42, url: 'cyrene://renderer/test.wav' } })
+    mockApi.activate.mockResolvedValue({ conversationId: 'c1' })
+    mockApi.getMessages.mockResolvedValue({ items: [], hasMore: false })
+
+    await store.activate('c1')
+
+    expect(mockApi.audioCancel).toHaveBeenCalledWith({ streamId: 42 })
+    expect(store.currentId).toBe('c1')
+    expect(useVoiceStore().tts.playing).toBe(false)
   })
 })
 
