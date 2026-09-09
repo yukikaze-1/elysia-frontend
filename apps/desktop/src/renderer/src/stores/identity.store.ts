@@ -41,6 +41,12 @@ export const useIdentityStore = defineStore('character-identity', () => {
     if (!Number.isFinite(epoch) || epoch < 0) return
     const next = Math.floor(epoch)
     if (next === connectionEpoch.value) return
+    // A connection epoch invalidates the authoritative profile and every
+    // in-flight request, but it must not erase user-authored form input.  The
+    // next successful GET supplies the new revision baseline while load()
+    // deliberately leaves a dirty draft untouched.  Clean drafts are derived
+    // data and may be rebuilt from the new backend profile.
+    const retainedDraft = dirty.value && draft.value ? { ...draft.value } : undefined
     connectionEpoch.value = next
     identityGeneration++
     requestSequence.value++
@@ -48,8 +54,8 @@ export const useIdentityStore = defineStore('character-identity', () => {
     pending = undefined
     pendingSave = undefined
     profile.value = undefined
-    draft.value = undefined
-    dirty.value = false
+    draft.value = retainedDraft
+    dirty.value = retainedDraft !== undefined
     loadedEpoch = -1
     status.value = 'idle'
     error.value = undefined
