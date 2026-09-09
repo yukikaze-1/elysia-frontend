@@ -775,9 +775,74 @@ describe('voiceStore', () => {
     useSettingsStore().voice.autoReadReply = false
     const store = useVoiceStore()
     const handler = subscribe(store)
+    handler(ev({ event: 'audio.session.started', streamId: 1 }))
     handler(ev({ event: 'audio.session.ready', streamId: 1, url: 'u' }))
     expect(store.tts.playing).toBe(false)
     expect(store.tts.url).toBeUndefined()
+  })
+
+  it('tts：多角色能力开启后仅接收当前会话的完整角色快照', () => {
+    useConnectionStore().state = {
+      status: 'connected',
+      connectionId: 'cid-character',
+      features: { characterProfiles: true, characterStateStream: true }
+    }
+    useConversationStore().$patch({
+      currentId: 'conv-b',
+      items: [{
+        id: 'conv-b',
+        title: 'B',
+        updatedAt: '2026-09-09T00:00:00.000Z',
+        character: {
+          characterId: 'character-b',
+          characterInstanceId: 'instance-b',
+          characterRevision: 3,
+          displayName: 'B',
+          presentation: {}
+        }
+      }]
+    })
+    const activeIdentity = {
+      conversationId: 'conv-b',
+      characterId: 'character-b',
+      characterInstanceId: 'instance-b',
+      characterRevision: 3
+    }
+    const staleIdentity = {
+      conversationId: 'conv-a',
+      characterId: 'character-a',
+      characterInstanceId: 'instance-a',
+      characterRevision: 1
+    }
+    const store = useVoiceStore()
+    const handler = subscribe(store)
+
+    handler(ev({ event: 'audio.session.started', streamId: 9 }))
+    expect(store.tts.playingStreamId).toBeUndefined()
+
+    handler(ev({ event: 'audio.session.started', streamId: 10, ...staleIdentity }))
+    handler(ev({ event: 'audio.session.ready', streamId: 10, url: 'stale', ...staleIdentity }))
+    expect(store.tts.playingStreamId).toBeUndefined()
+    expect(store.ttsReadySeen).toBe(false)
+
+    handler(ev({ event: 'audio.session.started', streamId: 11, ...activeIdentity }))
+    handler(ev({ event: 'audio.session.ready', streamId: 11, url: 'active', ...activeIdentity }))
+    expect(store.tts).toMatchObject({ playingStreamId: 11, url: 'active', playing: true })
+    expect(store.ttsReadySeen).toBe(true)
+  })
+
+  it('tts：迟到的旧 stream ready/cancelled 不覆盖当前播放', () => {
+    const store = useVoiceStore()
+    const handler = subscribe(store)
+
+    handler(ev({ event: 'audio.session.started', streamId: 20 }))
+    handler(ev({ event: 'audio.session.started', streamId: 21 }))
+    handler(ev({ event: 'audio.session.ready', streamId: 20, url: 'stale' }))
+    expect(store.tts).toMatchObject({ playingStreamId: 21, playing: false })
+
+    handler(ev({ event: 'audio.session.ready', streamId: 21, url: 'active' }))
+    handler(ev({ event: 'audio.session.cancelled', streamId: 20 }))
+    expect(store.tts).toMatchObject({ playingStreamId: 21, url: 'active', playing: true })
   })
 
   it('tts：新句 started 打断旧播放（playing 且 streamId 不同 → 清态 + 记新 streamId）', () => {

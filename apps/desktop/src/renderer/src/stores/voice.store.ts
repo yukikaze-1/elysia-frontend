@@ -122,6 +122,30 @@ export const useVoiceStore = defineStore('voice', () => {
     tts.value = { playing: false }
   }
 
+  /**
+   * 多角色能力开启后，TTS 生命周期事件只允许作用于当前会话的当前角色快照。
+   *
+   * 音频可能在切换会话后才由 Main 组装完成；只按 streamId 路由会让旧角色的
+   * started/ready/cancelled 污染新会话，甚至触发自动播放。旧后端没有角色身份，
+   * 因此仅在 characterProfiles=true 时启用 fail-closed 门禁。
+   */
+  function belongsToActiveCharacter(e: {
+    conversationId?: string
+    characterId?: string
+    characterInstanceId?: string
+    characterRevision?: number
+  }): boolean {
+    if (useConnectionStore().state.features?.characterProfiles !== true) return true
+
+    const conversations = useConversationStore()
+    const binding = conversations.currentCharacter
+    return binding !== undefined
+      && e.conversationId === conversations.currentId
+      && e.characterId === binding.characterId
+      && e.characterInstanceId === binding.characterInstanceId
+      && e.characterRevision === binding.characterRevision
+  }
+
   // —— 事件路由（D-P10：独立订阅 onChatEvent，voice_store.spec 经 mockApi.onChatEvent handler 驱动） ——
 
   function handleEvent(e: BackendEvent): void {
@@ -180,6 +204,7 @@ export const useVoiceStore = defineStore('voice', () => {
         return
       }
       case 'audio.session.started': {
+        if (!belongsToActiveCharacter(e)) return
         // 新句打断旧播放（若有且不同 streamId；后端已 supersede 旧流，本处只清本地播放态）
         if (tts.value.playing && tts.value.playingStreamId !== undefined && tts.value.playingStreamId !== e.streamId) {
           clearTtsState()
@@ -188,6 +213,9 @@ export const useVoiceStore = defineStore('voice', () => {
         return
       }
       case 'audio.session.ready': {
+        if (!belongsToActiveCharacter(e)) return
+        // ready 必须属于最近一次 accepted started；拒绝同一角色旧 stream 的迟到完成事件。
+        if (tts.value.playingStreamId !== e.streamId) return
         // C1 诊断：ready 曾到达（无论 autoReadReply 是否放行；放行与否都记，供失败转储区分断点）
         ttsReadySeen.value = true
         // D-P8 播放门：autoReadReply 为真才置 playing（触发 CyTtsPlayer）；为假忽略（不播、不置 playing）
@@ -199,6 +227,9 @@ export const useVoiceStore = defineStore('voice', () => {
         return
       }
       case 'audio.session.cancelled': {
+        if (!belongsToActiveCharacter(e)) return
+        // 旧 stream 的迟到取消不得清掉当前 stream 的播放状态。
+        if (tts.value.playingStreamId !== e.streamId) return
         clearTtsState()
         return
       }
