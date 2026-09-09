@@ -269,6 +269,7 @@ async function main(): Promise<void> {
     })
     const characterService = createCharacterService({
       backend: characterBackend.backend,
+      isConnected: () => adapter.getConnectionState().status === 'connected',
       getFeatures: characterBackend.getFeatures,
       getConnectionEpoch: () => characterConnectionEpoch
     })

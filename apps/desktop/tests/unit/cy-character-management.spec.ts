@@ -37,6 +37,7 @@ function draft(displayName: string): CharacterDraft {
 let pinia: ReturnType<typeof createPinia>
 let backend: MockCharacterBackend
 let createCharacter: ReturnType<typeof vi.fn>
+let cloneCharacter: ReturnType<typeof vi.fn>
 let updateCharacter: ReturnType<typeof vi.fn>
 let updateMe: ReturnType<typeof vi.fn>
 let archiveCharacter: ReturnType<typeof vi.fn>
@@ -51,6 +52,7 @@ beforeEach(() => {
   setActivePinia(pinia)
   backend = new MockCharacterBackend()
   createCharacter = vi.fn((input) => backend.createCharacter(input))
+  cloneCharacter = vi.fn((input) => backend.cloneCharacter(input))
   updateCharacter = vi.fn((input) => backend.updateCharacter(input))
   updateMe = vi.fn((input) => backend.updateMe(input))
   archiveCharacter = vi.fn((id: string) => backend.archiveCharacter(id))
@@ -65,7 +67,7 @@ beforeEach(() => {
     getCharacter: vi.fn((id: string) => backend.getCharacter(id)),
     createCharacter,
     updateCharacter,
-    cloneCharacter: vi.fn((input) => backend.cloneCharacter(input)),
+    cloneCharacter,
     archiveCharacter,
     listCharacterRevisions,
     rollbackCharacter,
@@ -364,6 +366,41 @@ describe('角色管理 UI FE-D3', () => {
     expect(button.attributes('disabled')).toBeDefined()
     await button.trigger('click')
     expect(updateMe).not.toHaveBeenCalled()
+    const clone = wrapper.findAll('button').find((candidate) => candidate.text() === '克隆并自定义')!
+    expect(clone.attributes('disabled')).toBeDefined()
+    await clone.trigger('click')
+    expect(cloneCharacter).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('离线时禁用已缓存 revision 的回滚与继续分页入口', async () => {
+    const listRevisions = vi.fn(async (input: { cursor?: string }) => input.cursor
+      ? { items: [], hasMore: false }
+      : {
+          items: [
+            { revision: 2, checksum: 'current', createdBy: 'user', createdAt: '2026-09-01T02:00:00.000Z' },
+            { revision: 1, checksum: 'previous', createdBy: 'user', createdAt: '2026-09-01T01:00:00.000Z' }
+          ],
+          hasMore: true,
+          nextCursor: 'cursor-1'
+        })
+    setDesktopApi({ listCharacterRevisions: listRevisions } as never)
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const wrapper = mount(CyCharacterRevisionList, {
+      props: { characterId: 'custom/offline', currentRevision: 2, enabled: true },
+      global: { plugins: [pinia] }
+    })
+    await flushPromises()
+    await wrapper.setProps({ enabled: false } as never)
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.text()).toContain('当前连接或角色状态不支持版本操作')
+    expect(wrapper.findAll('.cy-revision-list button')).toHaveLength(0)
+    expect(wrapper.get('.cy-load-more').attributes('disabled')).toBeDefined()
+    const calls = listRevisions.mock.calls.length
+    await wrapper.get('.cy-load-more').trigger('click')
+    expect(listRevisions).toHaveBeenCalledTimes(calls)
     wrapper.unmount()
   })
 

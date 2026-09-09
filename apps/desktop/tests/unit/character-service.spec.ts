@@ -28,6 +28,25 @@ function makePort(): { port: CharacterServiceBackendPort; mock: MockCharacterBac
 }
 
 describe('CharacterService 角色编排', () => {
+  it('生产连接门禁优先于 feature 判断，离线角色读写统一返回 NOT_CONNECTED', async () => {
+    const { port, mock } = makePort()
+    const service = new CharacterService({
+      backend: port,
+      isConnected: () => false,
+      getFeatures: () => mock.features
+    })
+    await expect(service.getMe()).rejects.toMatchObject({
+      code: CyreneErrorCode.NOT_CONNECTED,
+      details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.backendUnavailable }
+    })
+    await expect(service.archiveCharacter('builtin/elysia')).rejects.toMatchObject({
+      code: CyreneErrorCode.NOT_CONNECTED,
+      details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.backendUnavailable }
+    })
+    expect(port.getMe).not.toHaveBeenCalled()
+    expect(port.archiveCharacter).not.toHaveBeenCalled()
+  })
+
   it('能力缺省/关闭时稳定拒绝，不调用后端端口', async () => {
     const { port } = makePort()
     const service = new CharacterService({ backend: port, getFeatures: () => undefined })

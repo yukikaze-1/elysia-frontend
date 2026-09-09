@@ -98,12 +98,12 @@ watch(() => [props.characterId, props.currentRevision, props.enabled], () => {
           <small>{{ new Date(revision.createdAt).toLocaleString() }} · {{ revision.createdBy }}</small>
           <code :title="revision.checksum">{{ revision.checksum }}</code>
         </div>
-        <button type="button" :disabled="busy || revision.revision === currentRevision" @click="emit('rollback', { revision: revision.revision, statePolicy })">基于此版本创建新版本</button>
+        <button type="button" :disabled="enabled !== true || busy || revision.revision === currentRevision" @click="emit('rollback', { revision: revision.revision, statePolicy })">基于此版本创建新版本</button>
       </li>
     </ol>
     <div v-if="enabled === true && status === 'error' && page" class="cy-revision-state error" role="alert">版本列表刷新失败，当前仍显示旧数据。<button type="button" @click="load(true)">重试</button></div>
     <div v-if="loaded.hasMore" class="cy-load-more-wrap">
-      <button type="button" class="cy-load-more" :disabled="loaded.loading" @click="loadMore">{{ loaded.loading ? '加载中…' : '加载更多版本' }}</button>
+      <button type="button" class="cy-load-more" :disabled="enabled !== true || loaded.loading" @click="loadMore">{{ loaded.loading ? '加载中…' : '加载更多版本' }}</button>
       <span v-if="loaded.error" class="cy-load-more-error" role="alert">下一页加载失败。<button type="button" @click="loadMore">重试</button></span>
     </div>
   </section>

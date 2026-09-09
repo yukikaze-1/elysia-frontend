@@ -89,7 +89,7 @@ async function setDefault(): Promise<void> {
           <button
             v-if="canClone"
             type="button"
-            :disabled="busy"
+            :disabled="busy || remoteAvailable !== true"
             @click="emit('clone')"
           >{{ busy ? '处理中…' : '克隆并自定义' }}</button>
           <button

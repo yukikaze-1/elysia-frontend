@@ -132,6 +132,20 @@ describe('RealBackend typed character features / connection replacement', () => 
     await backend.disconnect()
   })
 
+  it('显式断开后所有 REST 入口 fail-closed，不沿用保留的 endpoint/token 写入后端', async () => {
+    const ws = new FakeWs()
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }))
+    const backend = new RealBackend({ now: () => Date.now(), wsFactory: () => ws as WebSocketLike, fetchImpl })
+    const connecting = backend.connect({ serverUrl: 'http://test.local', token: 'sk-test' })
+    pushHandshake(ws, { character_profiles: true })
+    await connecting
+    await backend.disconnect()
+
+    await expect(backend.createConversation({ title: '不得创建', characterId: 'ch_elysia' }))
+      .rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('显式 connect B 清除 A activeVoice；B 可用同 sessionId 开始 realtime', async () => {
     const sockets: FakeWs[] = []
     const backend = new RealBackend({

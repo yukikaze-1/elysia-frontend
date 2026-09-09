@@ -1072,9 +1072,15 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   }
 
   // —— REST 会话方法(Task 5)——
-  /** 统一 REST 请求:serverUrl 尾斜杠剥除 + Authorization Bearer + content-type;非 2xx → CyreneError(mapHttpError)。
-   *  T3:每请求一个 AbortController,restTimeoutMs 超时 timer abort → TIMEOUT;disconnect 主动 abort → NOT_CONNECTED(不误报超时)。 */
+  /** 统一 REST 请求:仅在当前 WS 握手已完成时开放，serverUrl 尾斜杠剥除 + Authorization Bearer + content-type;
+   *  非 2xx → CyreneError(mapHttpError)。T3:每请求一个 AbortController,restTimeoutMs 超时 timer abort → TIMEOUT;
+   *  disconnect 主动 abort → NOT_CONNECTED(不误报超时)。 */
   private async restFetch(path: string, init?: RequestInit): Promise<Response> {
+    // serverUrl/token 会为重连与显式再次连接保留，不能把“曾经连接过”当作当前 REST 写权限。
+    // 所有 REST 方法共用此门禁，避免 Renderer IPC 或其他 Main 调用方绕过离线 UI 门控。
+    if (this.state.status !== 'connected' || this.disconnected) {
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '当前未连接，无法执行后端请求')
+    }
     if (!this.serverUrl) {
       // F1:spec B-G6⑤——REST 方法需先 connect(serverUrl 自 connect 记录),connect 前调用显式失败而非打到空 url
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')

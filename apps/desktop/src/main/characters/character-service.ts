@@ -37,6 +37,8 @@ export const CHARACTER_SERVICE_BACKEND_CODES = {
 export interface CharacterServiceOptions {
   /** 角色领域端口；所有角色/身份能力都通过领域端口收敛，不得传入 transport raw adapter。 */
   backend: CharacterServiceBackendPort
+  /** 当前连接是否已经完成握手。生产装配必须提供；省略仅供纯领域单测/独立端口使用。 */
+  isConnected?: () => boolean
   /** server_info 能力快照。未提供时全部 false，作为安全默认。 */
   getFeatures?: () => BackendFeatureFlags | undefined
   /** 连接世代。每次新连接/断线/重连必须变化；没有 provider 时可由 setConnectionEpoch 手动驱动。 */
@@ -105,6 +107,7 @@ function staleConnectionError(): CyreneError {
  */
 export class CharacterService {
   private readonly backend: CharacterServiceBackendPort
+  private readonly isConnected?: () => boolean
   private readonly getFeatures?: () => BackendFeatureFlags | undefined
   private readonly getConnectionEpoch?: () => number
   private readonly now: () => number
@@ -125,6 +128,7 @@ export class CharacterService {
 
   constructor(options: CharacterServiceOptions) {
     this.backend = options.backend
+    this.isConnected = options.isConnected
     this.getFeatures = options.getFeatures
     this.getConnectionEpoch = options.getConnectionEpoch
     this.now = options.now ?? (() => Date.now())
@@ -312,6 +316,13 @@ export class CharacterService {
   }
 
   private requireProfiles(): void {
+    if (this.isConnected && !this.isConnected()) {
+      throw new CyreneError(
+        CyreneErrorCode.NOT_CONNECTED,
+        '当前未连接，无法执行角色操作',
+        { backendCode: CHARACTER_SERVICE_BACKEND_CODES.backendUnavailable }
+      )
+    }
     if (this.getFeatures?.()?.characterProfiles === true) return
     throw new CyreneError(
       CyreneErrorCode.NOT_IMPLEMENTED,
