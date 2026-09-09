@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
-import type { CharacterDetail, CharacterListQuery, CharacterSummary, Page } from '@shared/contracts'
+import type { CharacterDetail, CharacterListQuery, CharacterSummary, CloneCharacterCommand, Page } from '@shared/contracts'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import CyCharacterPane from '../../src/renderer/src/components/characters/CyCharacterPane.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -12,6 +12,7 @@ import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 
 let details: CharacterDetail[]
 let listCharacters: ReturnType<typeof vi.fn>
+let cloneCharacter: ReturnType<typeof vi.fn>
 let backend: MockCharacterBackend
 let pinia: ReturnType<typeof createPinia>
 
@@ -43,11 +44,24 @@ beforeEach(async () => {
       .filter((item) => input.search ? item.displayName.toLocaleLowerCase().includes(input.search.toLocaleLowerCase()) : true)
     return { items, hasMore: false }
   })
+  cloneCharacter = vi.fn(async (input: CloneCharacterCommand): Promise<CharacterDetail> => {
+    const source = details.find((item) => item.summary.characterId === input.characterId)!
+    const cloned = clone(source)
+    cloned.summary.characterId = 'custom/cloned-elysia'
+    cloned.summary.source = 'custom'
+    cloned.summary.mutable = true
+    cloned.summary.displayName = input.displayName ?? `${source.summary.displayName} 副本`
+    cloned.current.characterId = cloned.summary.characterId
+    cloned.current.displayName = cloned.summary.displayName
+    details.push(cloned)
+    return clone(cloned)
+  })
   setDesktopApi({
     getMe: vi.fn(() => backend.getMe()),
     updateMe: vi.fn((input) => backend.updateMe(input)),
     listCharacters,
-    getCharacter: vi.fn(async (id: string) => clone(details.find((item) => item.summary.characterId === id)!))
+    getCharacter: vi.fn(async (id: string) => clone(details.find((item) => item.summary.characterId === id)!)),
+    cloneCharacter
   } as never)
   useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
 })
@@ -180,6 +194,23 @@ describe('CyCharacterPane FE-C', () => {
     expect(labels).not.toContain('归档')
     expect(labels).not.toContain('预览')
     expect(wrapper.text()).toContain('内置角色定义保持只读')
+    wrapper.unmount()
+  })
+
+  it('内置角色克隆调用后端 clone 契约，并以服务端返回的 custom revision 进入编辑器', async () => {
+    Object.defineProperty(window, 'confirm', { configurable: true, value: vi.fn(() => true) })
+    const wrapper = mountPane()
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text() === '查看详情')!.trigger('click')
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === '克隆并自定义')!.trigger('click')
+    await flushPromises()
+
+    expect(cloneCharacter).toHaveBeenCalledWith({ characterId: 'builtin/elysia', displayName: 'Elysia（自定义）' })
+    expect(wrapper.text()).toContain('编辑角色')
+    expect(wrapper.text()).toContain(`基线 revision ${details.find((item) => item.summary.characterId === 'custom/cloned-elysia')!.current.revision}`)
+    expect((wrapper.get('input[name="displayName"]').element as HTMLInputElement).value).toBe('Elysia（自定义）')
     wrapper.unmount()
   })
 

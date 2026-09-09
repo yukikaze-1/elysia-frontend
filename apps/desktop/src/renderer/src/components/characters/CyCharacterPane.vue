@@ -76,12 +76,28 @@ function startEdit(): void {
   view.value = 'editor'
 }
 
-function startClone(): void {
+async function startClone(): Promise<void> {
   const detail = selectedDetail.value
-  if (!detail || busy.value) return
+  if (!detail || detail.summary.status !== 'active' || busy.value || !remoteAvailable.value) return
   if (editor.hasEditor && editor.dirty && !canLeaveEditor('克隆另一个角色', true)) return
-  editor.beginClone(detail, `${detail.summary.displayName}（自定义）`)
-  view.value = 'editor'
+  if (!window.confirm('将在后端创建一份独立的自定义角色副本，然后进入编辑器。原角色不会改变。确定继续吗？')) return
+  actionBusy.value = true
+  actionError.value = undefined
+  try {
+    const cloned = await catalog.cloneCharacter({
+      characterId: detail.summary.characterId,
+      displayName: `${detail.summary.displayName}（自定义）`
+    })
+    if (!cloned) return
+    selectedCharacterId.value = cloned.summary.characterId
+    editor.beginEdit(cloned)
+    view.value = 'editor'
+    void catalog.loadList(catalog.lastQuery, { force: true })
+  } catch (cause) {
+    actionError.value = parsePublicError(cause instanceof Error ? cause.message : String(cause))
+  } finally {
+    actionBusy.value = false
+  }
 }
 
 async function recover(key: string): Promise<void> {
