@@ -67,7 +67,14 @@
 | 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） | PASS（22 files / 136 passed + 2 skipped，连续三轮全绿；孤儿根因已消除，见下） | PASS（22 files / 136 passed + 2 skipped；`electron-live2d` 27/27、`perf-gate` 实测 `found=500`） | PASS（22 files / 136 passed + 2 skipped；`markdown-xss` 2/2、`electron-live2d` 27/27、`electron-voice` 16/16 均复绿） |
 | 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 |
 | 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 |
-| GitHub CI | `.github/workflows/ci.yml` | **PASS**（`b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：5 个 job 全绿；自 2026-08-16 以来首次） | **PASS**（`79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：5 个 job 全绿） | **PASS**（`5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：5 个 job 全绿；含此前两批 `58008a8`／`91e399f`） | 待推送后补记（本地门禁已全绿） | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿——typecheck + lint、unit tests、integration tests、windows build-level、packaged artifact smoke） |
+| GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿） |
+
+CI 历史（本表 CI 行只记当前批次，历史见下）：
+
+- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
+- `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
+- `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。
+- `98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：多套 UI 基础批次，5 个 job 全绿（typecheck + lint、unit tests、integration tests、windows build-level、packaged artifact smoke）。
 
 多套 UI 基础批次（本地）落地了「换 UI 风格不必改功能层」的基础设施，并立起**三条此前完全缺失的门禁**：`token-contract.spec.ts`（组件引用的 `--cy-*` 必须已定义、不得私自定义、不得带兜底值）、`store-graph.spec.ts`（store 间循环依赖，Tarjan SCC）、`error-message.spec.ts`（错误文案回退链 + 全部本地码有映射）。三条门禁均做过**变异测试**（注入缺陷确认变红），而非只看绿灯。本轮同时把 46 条用户可见文案、代码块 HTML 模板、markdown 渲染缓存控制、Live2D 面板可见性与 TTS DOM 宿主四处功能层对 UI 的反向依赖全部反转。完整审计结论、规模与残余风险见[多套 UI 基础与模块耦合整改](review/2026-09-10-多套UI基础与模块耦合整改-决策记录.md)。
 
