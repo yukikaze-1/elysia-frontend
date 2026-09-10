@@ -42,7 +42,7 @@ const localValidation = ref<CharacterValidationResult>()
 /** 表单里可参与约束校验的控件 */
 type FormControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
 
-/** 字段级错误文案（nativeLabel 是原生约束原因的可读说明，作为兜底） */
+/** 字段级原生约束原因的可读说明 */
 const NATIVE_REASON: Record<string, string> = {
   valueMissing: '为必填项',
   rangeUnderflow: '小于允许的最小值',
@@ -92,10 +92,12 @@ function checkNativeBlock(form: HTMLFormElement): boolean {
   }
   const issues: CharacterValidationResult['issues'] = []
   let first: FormControl | undefined
+  // first 取第一个失败控件（不要求它有 data-field-path）；issues 只登记能定位的字段。
+  // 两者分开的理由：提示（含展开折叠区）必须覆盖所有失败控件，否则会回到「静默不保存」——
+  // 那正是本次修复要消灭的失效模式。
   for (const control of invalid) {
+    first ??= control
     const path = control.getAttribute('data-field-path')
-    if (!path) continue
-    if (!first) first = control
     const reasons: string[] = []
     if (control.validity.valueMissing) reasons.push(NATIVE_REASON.valueMissing)
     if (control.validity.rangeUnderflow || control.validity.rangeOverflow) {
@@ -105,9 +107,8 @@ function checkNativeBlock(form: HTMLFormElement): boolean {
     for (const key of ['stepMismatch', 'typeMismatch', 'patternMismatch', 'tooLong', 'tooShort', 'badInput'] as const) {
       if (control.validity[key]) reasons.push(NATIVE_REASON[key])
     }
-    issues.push({ severity: 'error', code: 'NATIVE_CONSTRAINT', path, message: reasons.join('、') || '不符合输入要求' })
+    if (path) issues.push({ severity: 'error', code: 'NATIVE_CONSTRAINT', path, message: reasons.join('、') || '不符合输入要求' })
   }
-  // 没有 data-field-path 的控件（理论上不存在）也要给出原因，否则会回到「静默不保存」
   blockedMessage.value = first
     ? `${fieldLabel(first)} 不符合输入要求，已阻止保存：请修正后重试。`
     : '表单存在不符合输入要求的字段，已阻止保存：请检查后重试。'

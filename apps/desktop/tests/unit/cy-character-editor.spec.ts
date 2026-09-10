@@ -338,6 +338,40 @@ describe('CyCharacterEditor 角色编辑器', () => {
     }
   })
 
+  // 同一失效模式的第二个入口：必填项为空（valueMissing）。角色名称是 `required` 且不在折叠区内，
+  // 因此这里同时钉住「提示用字段标签 + 原因」，以及「失败字段不在 details 里时不抛错」。
+  it('必填项为空时给出「为必填项」原因，且不依赖折叠区', async () => {
+    const editor = useCharacterEditorStore()
+    editor.beginEdit(detailFixture())
+    const wrapper = mountEditor({ detail: detailFixture() }, document.body)
+    await wrapper.get('input[name="displayName"]').setValue('')
+    expect(editor.dirty).toBe(true)
+
+    const name = wrapper.get('input[name="displayName"]').element as HTMLInputElement
+    const form = wrapper.get('.cy-character-editor-form').element as HTMLFormElement
+    const checkValidity = vi.spyOn(form, 'checkValidity').mockImplementation(() => {
+      name.dispatchEvent(new Event('invalid', { bubbles: true, cancelable: true }))
+      return false
+    })
+    try {
+      const confirm = setConfirm(true)
+      await wrapper.get('.cy-character-editor-form').trigger('submit')
+      await flushPromises()
+
+      expect(confirm).not.toHaveBeenCalled()
+      expect(updateCharacter).not.toHaveBeenCalled()
+      const block = wrapper.get('.cy-editor-error.native-block').text()
+      // 标签文本取自 <label><span>角色名称 <em>*</em></span>，`*` 被剥掉、em 标记不出现在文本里
+      expect(block).toContain('角色名称（/displayName）')
+      expect(block).toContain('不符合输入要求')
+      expect(block).toContain('已阻止保存')
+      expect(wrapper.get('.cy-issue-list button').text()).toContain('/displayName')
+    } finally {
+      checkValidity.mockRestore()
+      wrapper.unmount()
+    }
+  })
+
   it('校验问题的深层路径会展开高级折叠区并聚焦对应输入', async () => {
     const editor = useCharacterEditorStore()
     editor.beginEdit(detailFixture())
