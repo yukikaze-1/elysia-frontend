@@ -1,7 +1,7 @@
 // tests/unit/tool-executors.spec.ts（node；临时目录 mkdtemp；picker/enumerate 注入）
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs'   // readdirSync/statSync：L4/M2 断言
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync, realpathSync, symlinkSync } from 'node:fs'   // readdirSync/statSync：L4/M2 断言
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createExecutors } from '../../src/main/tools/tool-executors'
@@ -10,8 +10,38 @@ import type { ToolServiceDeps } from '../../src/main/tools/tool-service'
 vi.mock('electron', () => ({ dialog: {} }))   // executor 默认 picker 回退引用 electron.dialog；本测试全部注入 pickFile 不触达
 
 let tmp: string
-beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), 'cyrene-exec-')) })
+/** tmp 的**规范化**形态（2026-09-10 修复，见 beforeEach 注释）：注入 allowRoots 与断言路径都须用它 */
+let tmpReal: string
+beforeEach(() => {
+  tmp = mkdtempSync(join(tmpdir(), 'cyrene-exec-'))
+  // 2026-09-10 修复（CI Windows 红 3 项）：desktop.file.select 复核链里，候选路径经
+  // `normalizeToolPath` → `fs.realpathSync.native` 解析为**长名**，而注入的 allowRoots 与断言里的 `p`
+  // 若保持 mkdtemp 原样，在 Windows CI runner 上会是 8.3 短名（`C:\Users\RUNNER~1\AppData\Local\Temp\...`）——
+  // 短名 root 与长名候选做 `path.relative` 得到 `..\..\runneradmin\...` → `isPathWithinRoot` 判否
+  // → 黑名单（`~\AppData\Local\Temp` 是 Windows 默认黑名单项）不被 allowRoots 放宽 → 伪装取消
+  // `{cancelled:true, reason:'PATH_BLOCKLISTED'}`。本机 tmpdir 恰为长名，故此前只在 CI Windows 上红。
+  // 与 production 口径一致：allowRoots 的真实来源（grant 目录）经 normalizeToolPath 归一化后存入。
+  // 注：allowRoots 是 mock/测试注入面（main/index.ts 由 CYRENE_MOCK_TOOL_ALLOW_ROOT env 桥提供），
+  // 真实模式不注入——本处修的是夹具归一化，不是放宽产品黑名单。
+  tmpReal = realpathSync.native(tmp)
+})
 afterEach(() => { rmSync(tmp, { recursive: true, force: true }) })
+
+/** 符号链接能力探测（Windows 需开发者模式/特权；与 live2d-registry.spec.ts 同款守卫） */
+function canCreateSymlink(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), 'cyrene-exec-symlink-probe-'))
+  try {
+    const target = join(probe, 'target')
+    writeFileSync(target, 'probe')
+    symlinkSync(target, join(probe, 'link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { recursive: true, force: true })
+  }
+}
+const symlinkSupported = canCreateSymlink()
 
 function mkDeps(over: Partial<ToolServiceDeps> = {}): ToolServiceDeps {
   return {
@@ -32,22 +62,22 @@ function rec(toolName: string, args: Record<string, unknown>) {
     arguments_: args, toolVersion: '1.0', statusSent: false, queue: false } as FakeRec
 }
 
-describe('desktop.file.select', () => {
-  it('picker 取消 → {cancelled:true} 非错误', async () => {
+describe('desktop.file.select', () => {  it('picker 取消 → {cancelled:true} 非错误', async () => {
     const ex = createExecutors(mkDeps())
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(r.output).toEqual({ cancelled: true })
   })
   it('选中文件 → 元数据结果', async () => {
     const p = join(tmp, 'a.txt'); writeFileSync(p, 'hello')
-    const ex = createExecutors(mkDeps({ allowRoots: [tmp], pickFile: async () => ({ canceled: false, path: p }) }))   // H9：mkdtemp 在 /tmp → allowRoots 注入（select 复核与服务层同口径）
+    const ex = createExecutors(mkDeps({ allowRoots: [tmpReal], pickFile: async () => ({ canceled: false, path: p }) }))   // H9：mkdtemp 在 /tmp（Windows 为 %TEMP%）→ allowRoots 注入（select 复核与服务层同口径）
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
-    expect(r.output).toMatchObject({ cancelled: false, path: p, name: 'a.txt', size: 5 })
+    // path 断言用规范化形态：select 返回的是 normalizeToolPath 的 realPath（见 tool-executors.ts select 分支）
+    expect(r.output).toMatchObject({ cancelled: false, path: realpathSync.native(p), name: 'a.txt', size: 5 })
     expect((r.output as { hash: string }).hash).toMatch(/^[0-9a-f]{64}$/)
   })
   it('M-1（批次最终 review）：>2MiB 文件不做整读哈希（省略 hash，防 Main 阻塞）', async () => {
     const p = join(tmp, 'big.txt'); writeFileSync(p, 'x'.repeat(2 * 1024 * 1024 + 1))
-    const ex = createExecutors(mkDeps({ allowRoots: [tmp], pickFile: async () => ({ canceled: false, path: p }) }))
+    const ex = createExecutors(mkDeps({ allowRoots: [tmpReal], pickFile: async () => ({ canceled: false, path: p }) }))
     const r = await ex.execute(rec('desktop.file.select', {}), undefined)
     expect((r.output as { cancelled: boolean }).cancelled).toBe(false)
     expect((r.output as { hash?: string }).hash).toBeUndefined()
@@ -64,16 +94,34 @@ describe('desktop.file.select', () => {
   it('selectedAdd 只对通过复核的路径调用（L3）', async () => {
     const selectedAdd = vi.fn()
     const p = join(tmp, 'ok.txt'); writeFileSync(p, 'x')
-    const ex = createExecutors(mkDeps({ allowRoots: [tmp], selectedAdd, pickFile: async () => ({ canceled: false, path: p }) }))
+    const ex = createExecutors(mkDeps({ allowRoots: [tmpReal], selectedAdd, pickFile: async () => ({ canceled: false, path: p }) }))
     await ex.execute(rec('desktop.file.select', {}), undefined)
     expect(selectedAdd).toHaveBeenCalledTimes(1)
-    expect(selectedAdd).toHaveBeenCalledWith(p)   // normalize 后路径（L3：与豁免检查同口径）
+    expect(selectedAdd).toHaveBeenCalledWith(realpathSync.native(p))   // normalize 后路径（L3：与豁免检查同口径）
     const blacklistedPath = process.platform === 'win32'
       ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'drivers', 'etc', 'hosts')
       : '/etc/passwd'
     const ex2 = createExecutors(mkDeps({ selectedAdd, pickFile: async () => ({ canceled: false, path: blacklistedPath }) }))
     await ex2.execute(rec('desktop.file.select', {}), undefined)
     expect(selectedAdd).toHaveBeenCalledTimes(1)   // 伪装取消时不调用
+  })
+
+  // 2026-09-10：把 CI Windows 那 3 项红灯背后的**不变量**钉住——allowRoots 必须是规范化（已 realpath）形态。
+  // isPathWithinRoot 是字典序比较，同一目录的两种拼写（8.3 短名 vs 长名、符号链接 vs 真身）会互相判否，
+  // 于是黑名单不被放宽、选择被伪装取消。本机 tmpdir 恰为长名故原夹具通过；CI runner 是 RUNNER~1 短名故红。
+  // 用符号链接复刻同一机制（跨平台可复现），不依赖 Windows 8.3 是否启用。
+  it.skipIf(!symlinkSupported)('allowRoots 必须规范化：同一目录的非规范拼写不放宽黑名单，规范化拼写才放宽', async () => {
+    const linkRoot = join(tmp, 'link-root')
+    symlinkSync(tmpReal, linkRoot, 'dir')   // 指向同一目录的另一种拼写
+    const p = join(tmp, 'spelling.txt'); writeFileSync(p, 'x')
+
+    const bad = await createExecutors(mkDeps({ allowRoots: [linkRoot], pickFile: async () => ({ canceled: false, path: p }) }))
+      .execute(rec('desktop.file.select', {}), undefined)
+    expect(bad.output).toEqual({ cancelled: true, reason: 'PATH_BLOCKLISTED' })
+
+    const good = await createExecutors(mkDeps({ allowRoots: [tmpReal], pickFile: async () => ({ canceled: false, path: p }) }))
+      .execute(rec('desktop.file.select', {}), undefined)
+    expect((good.output as { cancelled: boolean }).cancelled).toBe(false)
   })
 })
 describe('desktop.file.read', () => {

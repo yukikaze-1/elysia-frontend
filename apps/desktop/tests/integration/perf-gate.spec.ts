@@ -37,11 +37,21 @@ const POLL = { timeout: 15000, interval: 300 }   // 堆/节点 poll 需更长（
 // MUST track mock-backend generateMultiSegmentEvents 的 multiSegmentCount——seed 数变更此处同步，否则断言失效。
 const MULTI_SEGMENT_N = 100
 
-// Live2D rAF 停复核的非封闭性守卫：需本机已装配模型（~/.config/Cyrene/models）。CI 干净镜像无模型时跳过本用例——
+// Live2D rAF 停复核的非封闭性守卫：需本机已装配模型（userData/models）。CI 干净镜像无模型时跳过本用例——
 // Live2D rAF 停已由 electron-live2d.spec.ts「折叠：live2dShown=false → rAF 无新帧」覆盖，本批仅 7C 复核不重复覆盖。
 // 缺失模型时不要硬失败（否则 CI 伪红）。用 existsSync 判目录存在（无模型渲染循环恒不启动，rAF 恒 0，无法测「停」）。
-const LIVE2D_MODELS = join(process.env.HOME!, '.config/Cyrene/models')
-const LIVE2D_MODELS_EXIST = existsSync(LIVE2D_MODELS) && readdirSync(LIVE2D_MODELS).length > 0
+//
+// 2026-09-10 修复：原写法 `join(process.env.HOME!, '.config/Cyrene/models')` 在**收集期**求值——
+// Windows 上 HOME 未定义（用 USERPROFILE/APPDATA），`path.join(undefined, …)` 抛 TypeError，整个文件加载失败、
+// 本 spec 的 4 个用例（含 2 个硬门禁）从未执行；`!` 非空断言恰好把类型检查挡在外面，所以本地看不出来。
+// 现按平台解析，公式与 Main 的 userData 解析（main/app/lifecycle.ts expectedUserDataBase()）及装配工具
+// scripts/live2d-install.mjs resolveModelsDir() 保持一致（三处同公式，改动须同步）：
+//   Windows: %APPDATA%\Cyrene\models ｜ Linux: XDG_CONFIG_HOME ?? $HOME/.config → <base>/Cyrene/models
+const homeBaseDir = process.platform === 'win32'
+  ? process.env.APPDATA
+  : (process.env.XDG_CONFIG_HOME || (process.env.HOME ? join(process.env.HOME, '.config') : undefined))
+const LIVE2D_MODELS = homeBaseDir ? join(homeBaseDir, 'Cyrene', 'models') : ''
+const LIVE2D_MODELS_EXIST = LIVE2D_MODELS !== '' && existsSync(LIVE2D_MODELS) && readdirSync(LIVE2D_MODELS).length > 0
 
 // 固定内容视口 1184×721（对齐 history-viewer-layout.spec 的 ≤60 标定；默认窗 1200×760 需 setContentSize）。
 // 关键：≤60 的有界上界 = f(1184×721 内容视口, OVERSCAN_PX=400)。改视口/overscan 时须与 history-viewer-layout.spec.ts

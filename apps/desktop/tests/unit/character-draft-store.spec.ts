@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CharacterDraft, PersistedCharacterDraft } from '@shared/contracts'
@@ -77,6 +77,20 @@ async function makeStore(options: { writer?: typeof atomicWriteFile; base?: stri
   return { base, safeRoot, store, counts, logger }
 }
 
+/**
+ * 直接向 safeRoot 内写根文件时必须**复刻生产写入形态**：0o600（owner-only）。
+ *
+ * 2026-09-10 修复（CI Linux 红）：原夹具用裸 `writeFile`（POSIX 下 umask 022 → 0o644），而 load() 走
+ * openSafeFile(purpose:'read')，其 POSIX 分支要求 (mode & 0o400) === 0o400 且 (mode & 0o077) === 0
+ * （safe-open.ts checkModeMask，Windows 恒 false）→ 0644 被判「权限不正确」→ load() fail-closed 返回空。
+ * 生产写入经 atomicWriteFile → openSafeFile(mode:'create') 固定 0o600 + fchmod 兜底，故真实文件满足该判据；
+ * 夹具写 0644 属**夹具与生产契约不符**，不是产品缺陷。Windows 上 checkModeMask=false 故原夹具碰巧通过——
+ * 同一 commit 三环境三结果（本地 Windows 全绿 / CI Windows 3 红 / CI Linux 2 红）即源于此类差异。
+ */
+function writeRootFile(base: string, payload: string | Buffer): Promise<void> {
+  return writeFile(join(base, CHARACTER_DRAFT_FILE_NAME), payload, { mode: 0o600 })
+}
+
 describe('CharacterDraftStore FE-D2', () => {
   const environments: string[] = []
   afterEach(async () => {
@@ -100,7 +114,7 @@ describe('CharacterDraftStore FE-D2', () => {
       ...Array.from({ length: CHARACTER_DRAFT_MAX_ENTRIES + 2 }, (_, index) => entry(`create:${index}`, `2026-08-31T00:${String(index).padStart(2, '0')}:00.000Z`, `角色${index}`)),
       { key: 'bad', mode: 'create', displayName: 'bad', updatedAt: 'not-time', draft: {} }
     ]
-    await writeFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), JSON.stringify({ schemaVersion: 1, entries: records }), 'utf8')
+    await writeRootFile(env.base, JSON.stringify({ schemaVersion: 1, entries: records }))
     await env.store.load()
     expect(env.store.list()).toHaveLength(CHARACTER_DRAFT_MAX_ENTRIES)
     expect(env.store.list()[0].key).toBe('create:11')
@@ -112,7 +126,7 @@ describe('CharacterDraftStore FE-D2', () => {
   it('损坏/超限根文件 fail-open 并隔离现场，不把正文或绝对路径写入日志', async () => {
     const env = await makeStore(); environments.push(env.base)
     const secret = 'PRIVATE_PROMPT_SHOULD_NOT_BE_LOGGED'
-    await writeFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), `${secret}${'x'.repeat(2 * 1024 * 1024)}`, 'utf8')
+    await writeRootFile(env.base, `${secret}${'x'.repeat(2 * 1024 * 1024)}`)
     await env.store.load()
     expect(env.store.list()).toEqual([])
     const logs = JSON.stringify(env.logger.warn.mock.calls)
@@ -293,13 +307,28 @@ describe('CharacterDraftStore FE-D2', () => {
     const invalidEditBaseline = { ...sourcedEntry('edit:bad-base', 'edit', 'custom/x', 1, '2026-08-31T06:03:00.000Z') } as Record<string, unknown>
     delete invalidEditBaseline.baseRevision
     const invalidName = { ...sourcedEntry('clone:bad-name', 'clone', 'custom/x', 1, '2026-08-31T06:04:00.000Z'), displayName: '摘要不一致' }
-    await writeFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), JSON.stringify({
+    await writeRootFile(env.base, JSON.stringify({
       schemaVersion: 1,
       entries: [validCreate, invalidCreateSource, validEdit, invalidEditBaseline, invalidName]
-    }), 'utf8')
+    }))
 
     await env.store.load()
     expect(env.store.list().map((item) => item.key)).toEqual(['edit:valid', 'create:valid'])
     expect(env.counts.filter((code) => code === 'character-drafts:drop-invalid')).toHaveLength(3)
+  })
+
+  // 2026-09-10 新增：把「非 0600 根文件 → 全量丢弃」这一 fail-closed 语义**显式钉住**。
+  // 它此前只以 CI Linux 红灯的形式偶然暴露（见 writeRootFile 注释）；本用例让语义与可用性取舍可见。
+  // 记录的开放项：POSIX 上这是「为保密性检查牺牲可用性且不告知用户」——用户若从备份恢复/被同步工具改写
+  // 权限，草稿会静默全丢、列表为空且无可见错误。是否改为「拒绝读取但显式告知 + 隔离现场」需单独决策，
+  // 本批只钉住现状语义、不改安全策略。
+  it('非 0600 根文件（group/other 位）→ POSIX 上 fail-closed 丢弃全部草稿（Windows 无权限位语义）', async () => {
+    const env = await makeStore(); environments.push(env.base)
+    await env.store.save(entry('create:one', '2026-08-31T00:00:00.000Z', '角色一'))
+    expect(env.store.list()).toHaveLength(1)
+    if (process.platform === 'win32') return   // NTFS 合成权限位，checkModeMask=false，该语义不适用
+    await chmod(join(env.base, CHARACTER_DRAFT_FILE_NAME), 0o644)
+    await env.store.load()
+    expect(env.store.list()).toEqual([])
   })
 })
