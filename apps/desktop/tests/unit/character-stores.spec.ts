@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { isProxy, isReactive } from 'vue'
 import type { CharacterCatalogChangedEvent, CharacterDraft, CharacterStateChangedEvent, UpdateUserIdentityCommand, UserIdentityProfile } from '@shared/contracts'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -839,6 +840,64 @@ describe('characterCatalogStore FE-B', () => {
     cleanup.mockRejectedValueOnce(new Error('async cleanup failure'))
     const asyncArchived = await store.archiveCharacter(asyncFailure.summary.characterId)
     expect(asyncArchived?.character.status).toBe('archived')
+  })
+
+  // 真机缺陷回归：default 会话首条 assistant 回复渲染时，CyMessageList.revisionIdentityFor()
+  // → catalog.revisionIdentity() → cloneValue(summary.presentation) 抛出
+  // `DataCloneError: #<Object> could not be cloned`（Vue Proxy 不可 structuredClone），
+  // 异常逃逸渲染函数 → 根元素坍缩 → 消息列表消失、输入框被顶到聊天区顶部。
+  it('revisionIdentity 对响应式 summary.presentation 不抛 DataCloneError，返回独立副本且不反向污染 Store', async () => {
+    const custom = new MockCharacterBackend()
+    const detail = await custom.createCharacter({
+      draft: { ...characterDraft('可克隆角色'), presentation: { themeColor: '#f2a7c6', live2dModelId: 'haru' } }
+    })
+    baseApi.listCharacters.mockResolvedValueOnce({ items: [detail.summary], hasMore: false })
+    const store = useCharacterCatalogStore()
+    await store.loadList({})
+
+    // 前提：确认读到的确实是 Vue reactive/Proxy 路径（回归必须走真场景，不能只喂普通对象）
+    const reactiveSummary = store.summaries[0]
+    expect(isProxy(reactiveSummary)).toBe(true)
+    expect(isReactive(reactiveSummary)).toBe(true)
+    expect(isProxy(reactiveSummary.presentation)).toBe(true)
+
+    let identity: ReturnType<typeof store.revisionIdentity>
+    expect(() => { identity = store.revisionIdentity(reactiveSummary.characterId, reactiveSummary.currentRevision) }).not.toThrow()
+    // structuredClone 失败后必须走 JSON 回退并交出真实数据，而不是静默 undefined
+    expect(identity!).toBeDefined()
+    expect(identity).toMatchObject({
+      characterId: detail.summary.characterId,
+      characterRevision: 1,
+      displayName: '可克隆角色',
+      presentation: { themeColor: '#f2a7c6', live2dModelId: 'haru' }
+    })
+    // 副本是纯数据（脱离 Proxy），历史快照语义不变
+    expect(isProxy(identity!.presentation)).toBe(false)
+    // 修改返回值不得反向污染 Store 中的权威数据
+    identity!.presentation.themeColor = '#000000'
+    identity!.displayName = '被改写'
+    expect(store.summaries[0].presentation.themeColor).toBe('#f2a7c6')
+    expect(store.summaries[0].displayName).toBe('可克隆角色')
+  })
+
+  it('revisionIdentity 经 detail 缓存路径同样守卫（cacheRevisionIdentity 存的是响应式 Proxy）', async () => {
+    const store = useCharacterCatalogStore()
+    await store.loadDetail('builtin/elysia')
+    const detail = store.details['builtin/elysia']
+    expect(isProxy(detail.current.presentation)).toBe(true)
+
+    let identity: ReturnType<typeof store.revisionIdentity>
+    expect(() => { identity = store.revisionIdentity('builtin/elysia', detail.current.revision) }).not.toThrow()
+    expect(identity!).toBeDefined()
+    expect(identity!.characterId).toBe('builtin/elysia')
+    expect(identity!.presentation).toEqual(detail.current.presentation)
+    expect(isProxy(identity!.presentation)).toBe(false)
+
+    // 二次读取命中 revisionIdentityCache（同样是 Proxy）也不得抛
+    let cached: ReturnType<typeof store.revisionIdentity>
+    expect(() => { cached = store.revisionIdentity('builtin/elysia', detail.current.revision) }).not.toThrow()
+    expect(cached!.displayName).toBe(identity!.displayName)
+    expect(isProxy(cached!.presentation)).toBe(false)
   })
 })
 
