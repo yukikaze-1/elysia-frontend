@@ -11,6 +11,7 @@
     "docs:index": "node scripts/docs-check.mjs --write-indexes",
     "docs:check": "node scripts/docs-check.mjs",
     "dev": "pnpm --filter @cyrene/desktop dev",
+    "start": "pnpm --filter @cyrene/desktop start",
     "build": "pnpm --filter @cyrene/desktop build",
     "typecheck": "pnpm --filter @cyrene/desktop typecheck",
     "lint": "pnpm --filter @cyrene/desktop lint",
@@ -21,6 +22,7 @@
     "test:e2e": "pnpm --filter @cyrene/desktop test:e2e",
     "package": "pnpm --filter @cyrene/desktop package",
     "make": "pnpm --filter @cyrene/desktop make",
-    "verify:artifact": "pnpm --filter @cyrene/desktop verify:artifact"
+    "verify:artifact": "pnpm --filter @cyrene/desktop verify:artifact",
+    "live2d:install": "pnpm --filter @cyrene/desktop live2d:install"
   }
 }

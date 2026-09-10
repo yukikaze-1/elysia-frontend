@@ -76,6 +76,40 @@ pnpm dev
 
 Electron 所需系统库因发行版而异，不在仓库文档中复制一份易失效的 `apt` 清单。CI 的 [integration job](../.github/workflows/ci.yml) 使用 Playwright `install --with-deps chromium` 和 `xvfb-run`，是当前 Linux 无头验证参考。
 
+## 3.1 Live2D 模型装配（首次启动后必做）
+
+**模型不随仓库分发。** 仓库只含 Cubism 运行时与 shader（`apps/desktop/src/renderer/public/live2d/`，14 个 tracked 文件），模型本身因授权原因不纳入版本控制（`EXT-01`，见 [doc 16 §4.1](16-Cyrene-前端实施任务清单与进度跟踪.md)）。
+
+因此**全新环境首次启动时，角色面板会显示「模型不可用」——这是预期现象，不是故障**。装配自有模型：
+
+```powershell
+pnpm live2d:install --model-dir <模型目录> --id <slug> --display-name "<显示名>"
+```
+
+参数与约束：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `--model-dir` | 是 | 原始模型目录。须含 `model3.json`、`.moc3`、至少一张贴图 |
+| `--id` | 是 | 安装目录名，须匹配 `^[A-Za-z0-9._-]+$` 且非 `.` / `..` |
+| `--display-name` | 是 | 界面显示名 |
+| `--license-note` | 否 | 注入为 `LICENSE.txt` 的许可说明文件 |
+| `--force` | 否 | 覆盖已存在的同 id 安装 |
+
+脚本做的事（`apps/desktop/scripts/live2d-install.mjs`）：校验模型结构 → 非 symlink 拷贝 → 注入 `LICENSE.txt` → 生成 `preview.png`（源目录有 `icon.png` 时）→ 写 `manifest.json` → 计算 `integrity.json`（逐文件 SHA-256）→ 输出文件数与哈希数报告。
+
+安装位置为 userData 下的 `models/`：
+
+| 平台 | 路径 |
+|---|---|
+| Windows | `%APPDATA%\Cyrene\models\<id>\` |
+| Linux | `${XDG_CONFIG_HOME:-$HOME/.config}/Cyrene/models/<id>/` |
+| macOS | `~/Library/Application Support/Cyrene/models/<id>/` |
+
+> **路径口径以本表为准**：[doc 05 §4](05-Cyrene-Live2D前端接入设计-v0.2.md) 里写的 `assets/live2d/<model-id>/` 是早期设计的目录示意，**实际运行时读取的是上表的 userData `models/`**，且模型目录必须由本脚本生成（含 `manifest.json` + `integrity.json`），手工摆放的目录会因缺 manifest 或完整性清单不匹配而被注册表跳过或在列表中标记 `available=false`。
+
+授权红线：只装配来源与授权明确的模型。`EXT-01` 未解除前，不得把任何模型纳入仓库或对外分发。
+
 ## 4. Real 与 Mock 启动
 
 未打包开发态默认 Real，打包产物恒为 Real。只有显式设置 `CYRENE_BACKEND=mock` 才进入 Mock。
@@ -106,16 +140,22 @@ CYRENE_BACKEND=mock pnpm dev
 
 Real 模式启动后，在连接面板设置 Endpoint 和 Token，再发起连接。Token 与 Endpoint origin 绑定；修改 origin 会清除旧 Token。
 
-### 4.1 完整同源运行（Live2D / 媒体 / 真实联调）
+### 4.1 打包产物运行（发布形态验证）
 
-`pnpm dev` 的 Renderer 是 `http://localhost`，适合界面与逻辑开发；Live2D 与媒体资源按安全策略走 `cyrene://` 同源供给，`http://localhost` 跨源访问会被 `corsEnabled:false` 拒绝。需要 Live2D、媒体或正式联调时使用生产构建的 preview：
+`pnpm dev` 的 Renderer 是 `http://localhost:5173`，打包产物加载 `cyrene://renderer/index.html`。两种形态下 `cyrene://` 协议处理器都会注册，且 dev CSP 显式放行 `cyrene:`（`connect-src` 供 Cubism Framework 取 shader 文本，`img-src`/`media-src` 供媒体）——见 `src/main/config/dev-csp.ts`。
+
+因此本节**不是跑 Live2D 的前置条件**，而是用来验证与发布形态一致的行为：自定义协议、产物 CSP、打包后资源解析：
 
 ```powershell
 pnpm build
-pnpm --filter @cyrene/desktop start
+pnpm start
 ```
 
-`electron-vite preview` 加载 `cyrene://renderer/index.html`，与 Live2D/媒体代理同源。产物直启的等价方式：`cd apps\desktop` 后运行 `..\..\node_modules\electron\dist\electron.exe .`。自动化调试需要 CDP 时使用项目测试 harness，或显式传 `--remote-debugging-port=0`（随机端口；固定端口仍被安全门拒绝），实际端口从 `%APPDATA%\Cyrene\DevToolsActivePort` 读取。
+`electron-vite preview` 加载 `cyrene://renderer/index.html`。产物直启的等价方式：`cd apps\desktop` 后运行 `..\..\node_modules\electron\dist\electron.exe .`。
+
+> **待实测确认**：上述「dev 下 Live2D 可用」是按代码推断（dev CSP + 协议注册），尚未在 dev 形态下实测过渲染。若你在 `pnpm dev` 下看到 Live2D 报资源加载失败，请记录到 doc 16 并改用本节形态验证——那说明存在 `corsEnabled` 层面的限制，本节措辞需要相应修正。
+
+自动化调试需要 CDP 时使用项目测试 harness，或显式传 `--remote-debugging-port=0`（随机端口；固定端口仍被安全门拒绝），实际端口从 `%APPDATA%\Cyrene\DevToolsActivePort` 读取。
 
 ## 5. 团队当前真实后端环境
 
@@ -174,9 +214,26 @@ pnpm verify:artifact
 
 ## 7. 常见问题
 
+### 一键脚本（Windows）
+
+上面 §2 的步骤可交给 `scripts\setup-windows.ps1`（检查 Node/pnpm 版本 → 按需安装依赖 → 可选启动）。脚本刻意**不**代装 fnm/Node/pnpm——那些会改系统 PATH 或全局包，静默代劳会让新用户不知道机器被改过什么；脚本只把「装什么、装哪个版本」讲清楚并在失败时给出下一步命令。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1        # 检查 + 装依赖
+powershell -ExecutionPolicy Bypass -File scripts\setup-windows.ps1 -Run   # 再启动 pnpm dev
+```
+
+### 角色面板显示「模型不可用」
+
+**预期现象**：Live2D 模型不随仓库分发，未装配前必然如此。按 §3.1 用 `pnpm live2d:install` 装配模型。这不是故障，也无需改代码。
+
+### `pnpm start` 报 `ERR_PNPM_NO_SCRIPT_OR_SERVER`
+
+根目录缺少 `start` 别名所致，已在 `package.json` 补上。请更新到最新 `main`；临时可用 `pnpm -F @cyrene/desktop start`。
+
 ### Node 版本错误
 
-症状：`engineStrict`、predev 或 pretest 拒绝启动。
+症状：`predev` / `prebuild` / `pretest` 拒绝启动，或 `pnpm check:node` 非零退出。
 
 处理：
 
@@ -185,13 +242,19 @@ fnm use 22.23.0
 pnpm check:node
 ```
 
+注意 fnm 是 **per-shell** 的：每开一个新终端都要重新 `fnm use`。若 `fnm use` 后版本仍不对，检查 PATH 里是否有另一个 Node 抢先。
+
+### 首次 `pnpm install` 很慢
+
+正常：需要下载 Electron 二进制（约 215MB）。不是卡住。CI 会缓存该下载目录，本机不应把下载产物提交进仓库。
+
 ### Electron 二进制缺失
 
 ```powershell
 pnpm -F @cyrene/desktop ensure:electron
 ```
 
-随后重跑原命令。CI 会缓存 Electron 下载目录，本机不应把下载产物提交进仓库。
+随后重跑原命令。
 
 ### Real 模式无法连接
 

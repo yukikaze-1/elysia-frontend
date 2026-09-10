@@ -6,33 +6,61 @@ Cyrene 是基于 Electron、Vue 3 和 TypeScript 的桌面 AI 助手前端，包
 
 ## 快速开始
 
-仓库固定使用 Node.js 22.23.0 和 pnpm 11.20.0。完整的 Windows、Linux 与真实后端联调说明见 [doc 17：开发环境与依赖安装记录](docs/17-Cyrene-前端开发环境与依赖安装记录.md)。
+仓库固定使用 Node.js **22.23.0** 和 pnpm **11.20.0**（版本来源：`.nvmrc`、`package.json` 的 `engines` 与 `packageManager`）。用其他主版本会由 `check:node` 直接拒绝，不会静默跑偏。
 
-Windows PowerShell：
+### 首次准备（每条命令各跑一次）
 
 ```powershell
+# 1) Node 版本管理器（若已装 fnm 可跳过；Windows 推荐 winget）
+winget install Schniz.fnm
+#    装完重开一个终端，让 fnm 进入 PATH
+
+# 2) 固定 Node 版本（.nvmrc 也是 22.23.0）
 fnm install 22.23.0
 fnm use 22.23.0
+node --version          # 期望 v22.23.0
+
+# 3) pnpm
 npm install -g pnpm@11.20.0
+pnpm --version          # 期望 11.20.0
+
+# 4) 依赖（首次会下载 Electron 二进制，约 215MB，耗时取决于网络；不是卡住）
 pnpm install --frozen-lockfile
+
+# 5) 自检
+pnpm check:node         # 期望 exit 0
+```
+
+### 每次启动
+
+```powershell
+fnm use 22.23.0         # 新开的终端需要重新激活 Node 版本
 pnpm dev
 ```
 
-等价的前端直启命令：
+`pnpm dev` 会构建主进程/preload 并在 `http://localhost:5173` 起 Renderer，然后拉起 Electron 窗口（标题 `Cyrene`）。开发态 CI 之外的启动只需这一条命令。
+
+Linux 把 `winget install Schniz.fnm` 换成 `curl -fsSL https://fnm.vercel.app/install | bash`，其余命令相同。
+
+> **一键脚本**：Windows 可用 `scripts\setup-windows.ps1`（检查 Node/pnpm 版本、按需安装依赖、可选启动）。它只是把上面几步串起来，不替代理解——脚本做的事就是这几条命令。
+
+### 启动后还需一步：Live2D 模型
+
+**仓库不分发 Live2D 模型**（只含 Cubism 运行时与 shader，见 `apps/desktop/src/renderer/public/live2d/`）。没有模型时角色面板会显示「模型不可用」，这是预期现象而非故障。装配自己的模型：
 
 ```powershell
-pnpm -F @cyrene/desktop exec electron-vite dev
+pnpm live2d:install --model-dir <模型目录> --id <slug> --display-name "<显示名>"
 ```
 
-Linux shell：
+模型目录需含 `model3.json`、`.moc3` 与至少一张贴图（可选 `icon.png` 作为预览图；可选 `--license-note <file>` 注入许可说明）。脚本会计算 SHA-256 完整性清单并安装到 userData 的 `models/`（Windows：`%APPDATA%\Cyrene\models`）。详见 [doc 17 §2.1](docs/17-Cyrene-前端开发环境与依赖安装记录.md)。
 
-```bash
-fnm install 22.23.0
-fnm use 22.23.0
-npm install -g pnpm@11.20.0
-pnpm install --frozen-lockfile
-pnpm dev
-```
+模型授权见 `EXT-01`（doc 16 §4.1）：**只装配来源与授权明确的模型**。
+
+### 常见坑
+
+- **`pnpm start` 报 `ERR_PNPM_NO_SCRIPT_OR_SERVER`**：旧版仓库根目录没有 `start` 别名，现已补上；请更新到最新 `main`。
+- **`node --version` 不是 v22.23.0**：`fnm use 22.23.0` 后仍不对，说明终端没重开或 PATH 里有另一个 Node 抢先。
+- **换了终端就必须重跑 `fnm use`**：fnm 是 per-shell 的。
 
 应用默认使用真实后端。仅在显式需要 Mock 演示时设置 `CYRENE_BACKEND=mock`：
 
@@ -44,18 +72,20 @@ Remove-Item Env:CYRENE_BACKEND
 
 固定远程调试端口不属于正常启动参数；当前安全策略会拒绝 `--remote-debugging-port=9223` 等固定端口。自动化调试应使用项目测试 harness 或 Playwright Electron 启动方式。
 
-## 完整同源运行（Live2D / 媒体 / 真实联调）
+## 打包产物运行与 Live2D/媒体协议验证
 
-`pnpm dev` 的 Renderer 运行在 `http://localhost`，适合界面与逻辑开发；Live2D 和媒体资源走 `cyrene://` 且安全策略禁止跨源，因此这类验证必须使用同源运行形态：
+`pnpm dev` 下 Renderer 在 `http://localhost:5173`，而打包产物加载 `cyrene://renderer/index.html`。**Live2D 与媒体在两种形态下都可用**：dev CSP 已放行 `cyrene:`（`connect-src` 供 Framework 取 shader 文本，`img-src`/`media-src` 供媒体），`cyrene://` 协议处理器在未打包时同样注册。
+
+因此下面这一步**不是跑 Live2D 的前置条件**，而是用来验证与发布形态一致的行为（自定义协议、产物 CSP、打包资源解析）：
 
 ```powershell
 pnpm build
-pnpm --filter @cyrene/desktop start
+pnpm start
 ```
 
-等价方式：`cd apps\desktop` 后直接运行 `..\..\node_modules\electron\dist\electron.exe .`。
+等价方式：`cd apps\desktop` 后运行 `..\..\node_modules\electron\dist\electron.exe .`。
 
-`electron-vite preview` / 产物直启加载的是 `cyrene://renderer/index.html`，与 Live2D、媒体代理同源。需要自动化调试通道时使用项目测试 harness，或显式传随机端口 `--remote-debugging-port=0`（固定端口仍被安全门拒绝）。
+需要自动化调试通道时使用项目测试 harness，或显式传随机端口 `--remote-debugging-port=0`（固定端口仍被安全门拒绝）。
 
 ## 文档入口
 
@@ -100,6 +130,8 @@ third_party/         经审计的第三方资源
 |---|---|
 | `pnpm dev` | 启动 Electron 开发环境 |
 | `pnpm build` | 构建应用 |
+| `pnpm start` | 以打包产物形态运行（`cyrene://`，发布形态验证） |
+| `pnpm live2d:install` | 装配 Live2D 模型到 userData（首次启动后必做，见上） |
 | `pnpm typecheck` | TypeScript 类型检查 |
 | `pnpm lint` | ESLint |
 | `pnpm test` | 单元测试 |

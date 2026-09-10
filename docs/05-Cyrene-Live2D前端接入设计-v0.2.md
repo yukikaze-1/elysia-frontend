@@ -100,7 +100,7 @@ type PerformanceMode = "auto" | "quality" | "balanced" | "low_power";
 
 ## 4. 模型资源包
 
-推荐资源目录：
+推荐资源目录（**源目录**形态——装配前的原始模型；装配后落到 userData `models/<id>/`，见下方注）：
 
 ```text
 assets/live2d/<model-id>/
@@ -114,6 +114,14 @@ assets/live2d/<model-id>/
 ├── pose3.json
 └── preview.png
 ```
+
+> **注（实际落地口径，2026-09-10 校正）**：运行时读取的是 **userData 下的 `models/<id>/`**，不是仓库内的 `assets/live2d/`——模型因授权原因不随仓库分发（`EXT-01`）。且模型目录**必须经装配工具生成**（含 `manifest.json` 与 `integrity.json`），不能手工摆放：
+>
+> ```powershell
+> pnpm live2d:install --model-dir <源目录> --id <slug> --display-name "<显示名>"
+> ```
+>
+> 工具由源目录产出 `LICENSE.txt` / `preview.png` / `manifest.json` / `integrity.json` 并拷贝到目标目录。安装路径与参数约束见 [doc 17 §3.1](17-Cyrene-前端开发环境与依赖安装记录.md)。
 
 客户端自定义 `manifest.json`：
 
