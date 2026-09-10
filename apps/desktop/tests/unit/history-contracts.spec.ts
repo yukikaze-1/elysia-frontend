@@ -6,6 +6,13 @@ import { IpcChannels } from '../../src/shared/contracts'
 import type { ChatHistoryItem, ChatHistoryPage, ChatHistoryQuery, ChatHistoryScope, ConversationResource, HistoryCategory } from '../../src/shared/contracts/backend'
 import type { StickerItem, StickerManifest } from '../../src/shared/contracts/sticker'
 import type { SendMessageInput } from '../../src/shared/contracts/message'
+import { chatGetMessageContextSchema, chatListStickersSchema, chatQueryHistorySchema, chatSendSchema } from '../../src/main/ipc/channels'
+
+/** 编译期相等断言（仓库先例：`stores/desktop-api.types.ts`）——导出仅为满足 noUnusedLocals */
+type AssertAssignable<A extends B, B> = A extends B ? true : never
+type UnionOf<T> = T extends string ? T : never
+export type _HistoryCategoryMatchesSchema = AssertAssignable<HistoryCategory, UnionOf<(typeof chatQueryHistorySchema)['shape']['category']['options'][number]>>
+export type _HistoryCategorySchemaMatchesUnion = AssertAssignable<UnionOf<(typeof chatQueryHistorySchema)['shape']['category']['options'][number]>, HistoryCategory>
 
 describe('历史查看器契约（spec §4.3）', () => {
   it('ChatHistoryQuery 收敛形状：scope/query/localDate/timeZone/category/limit', () => {
@@ -14,9 +21,10 @@ describe('历史查看器契约（spec §4.3）', () => {
     expect(q.scope).toBe(scope)
     expect(q.category).toBe('sticker')
     expect(q.limit).toBe(50)
-    // 废弃占位字段不再存在（编译期：此处若引用 keyword/fromDate 会 TS 报错，故以运行时不出现为断言）
-    expect('keyword' in q).toBe(false)
-    expect('fromDate' in q).toBe(false)
+    // 2026-09-10 陈旧性审查：原作 `expect('keyword' in q).toBe(false)` —— 断言测试自己刚写的字面量，恒真；
+    // 且 chatQueryHistorySchema **不是** .strict()（zod 默认剥未知键），故「补回废弃字段会被拒」并不成立。
+    // 这里只锁真正有效的两条：合法查询能过 IPC 请求 schema（limit 上下界已在下方 schema 用例单独锁定）。
+    expect(chatQueryHistorySchema.safeParse(q).success).toBe(true)
   })
   it('ChatHistoryItem 形状：hitId 稳定键 + 可跳转 messageId + 稳定排序键', () => {
     const item: ChatHistoryItem = {
@@ -30,9 +38,13 @@ describe('历史查看器契约（spec §4.3）', () => {
     expect(r.kind).toBe('sticker')
     expect(r.stickerId).toBe('st_1')
   })
-  it('HistoryCategory 六值', () => {
-    const categories: HistoryCategory[] = ['all', 'image_video', 'sticker', 'file', 'audio', 'link']
-    expect(categories).toHaveLength(6)
+  // 2026-09-10 陈旧性审查重写：原作
+  //   `const categories: HistoryCategory[] = [...]; expect(categories).toHaveLength(6)`
+  // 是「字面量与旁边的数字对一遍」，两侧都是测试自己写的。改为把**类型联合**与 **IPC schema 枚举**闭合：
+  // 任一新增分类而另一侧没跟上即编译失败（编译期），并锁顺序（运行时）。
+  it('HistoryCategory 六值与 IPC schema 枚举双向一致', () => {
+    expect(chatQueryHistorySchema.shape.category.options)
+      .toEqual(['all', 'image_video', 'sticker', 'file', 'audio', 'link'])
   })
   it('ChatHistoryPage 保留游标分页字段 + snapshotId 可选', () => {
     const page: ChatHistoryPage = { items: [], hasMore: false }
@@ -62,7 +74,6 @@ describe('IPC 三新通道（spec §4.3）', () => {
   })
 })
 
-import { chatGetMessageContextSchema, chatListStickersSchema, chatQueryHistorySchema, chatSendSchema } from '../../src/main/ipc/channels'
 import { ChatHistoryPageSchema, MessagePageSchema, StickerManifestSchema } from '../../src/shared/schemas'
 
 describe('IPC request schema（spec §4.3）', () => {
@@ -102,6 +113,12 @@ describe('IPC 响应 schema 严格镜像（C1）', () => {
   it('StickerManifestSchema 接受 {stickers}（P0-2）；getMessageContext 复用 MessagePageSchema', () => {
     expect(StickerManifestSchema.safeParse({ stickers: [{ stickerId: 'st_1', src: '/static/stickers/st_1.png' }] }).success).toBe(true)
     expect(StickerManifestSchema.safeParse({ stickers: [{ stickerId: '' }] }).success).toBe(false)
-    expect(MessagePageSchema).toBeDefined()
+    // 2026-09-10 陈旧性审查：原作 `expect(MessagePageSchema).toBeDefined()` 只证明符号存在，
+  // 「getMessageContext 复用 MessagePageSchema」这条声称完全没被验证。改为断言它真能校验消息页形状。
+    expect(MessagePageSchema.safeParse({
+      items: [{ messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't', content: 'hi' }],
+      hasMore: false
+    }).success).toBe(true)
+    expect(MessagePageSchema.safeParse({ items: [{ conversationId: 'c1' }], hasMore: false }).success).toBe(false)
   })
 })

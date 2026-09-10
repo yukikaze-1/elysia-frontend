@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageAttachment, MessageAttachmentRef } from '../../src/shared/contracts/message'
 import { AssistantSegmentSchema, MessageAttachmentSchema, MessageSchema } from '../../src/shared/schemas'
-import { ATTACHMENT_MAX_FILES, ATTACHMENT_AGGREGATE_BYTES, ATTACHMENT_MAX_BYTES_BY_KIND, ATTACHMENT_KIND_MIME, type PendingSendItem, type UploadFileDescriptor } from '../../src/shared/contracts/attachments'
+import { ATTACHMENT_MAX_FILES, ATTACHMENT_AGGREGATE_BYTES, ATTACHMENT_MAX_BYTES_BY_KIND, ATTACHMENT_KIND_MIME, type PendingAttachmentStatus, type PendingSendItem, type UploadFileDescriptor } from '../../src/shared/contracts/attachments'
 import { IpcChannels } from '../../src/shared/contracts'
 import { attachmentsUploadSchema, attachmentsValidateSchema, attachmentsCancelSchema, attachmentsCheckSchema, chatSendSchema } from '../../src/main/ipc/channels'
 import { AttachmentsUploadResponseSchema, AttachmentCheckResultSchema, FileValidationResultSchema } from '../../src/shared/schemas'
@@ -23,10 +23,12 @@ describe('附件领域模型（spec §4.2）', () => {
   it('MessageAttachmentSchema 拒非法 kind', () => {
     expect(MessageAttachmentSchema.safeParse({ attachmentId: 'att_1', kind: 'bogus', mediaType: 'x' }).success).toBe(false)
   })
+  // 2026-09-10 陈旧性审查：原用例把字面量与自身比较（`expect(ref).toEqual({…同一份字面量…})`），
+  // 永真；真正的守卫是 TS 类型标注（pnpm typecheck）与 chatSendSchema 的运行时校验（见下方用例）。
   it('MessageAttachmentRef 三字段形状（wire 提示值）', () => {
     const ref: MessageAttachmentRef = { attachmentId: 'att_1', kind: 'image', mime: 'image/png' }
-    expect(AssistantSegmentSchema).toBeDefined()
-    expect(ref).toEqual({ attachmentId: 'att_1', kind: 'image', mime: 'image/png' })
+    expect(chatSendSchema.safeParse({ conversationId: 'c1', text: 'hi', clientRequestId: 'cr1', attachments: [ref] }).success).toBe(true)
+    expect(chatSendSchema.safeParse({ conversationId: 'c1', text: 'hi', clientRequestId: 'cr1', attachments: [{ attachmentId: 'att_1', kind: 'image' }] }).success).toBe(false)
   })
   it('AssistantSegmentSchema 接受媒体引用字段（媒体分段形状）', () => {
     const r = AssistantSegmentSchema.safeParse({
@@ -59,12 +61,17 @@ describe('附件/队列/上传契约（spec §4.2）', () => {
     expect(ATTACHMENT_KIND_MIME.audio).toEqual(['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/webm'])
     expect(ATTACHMENT_KIND_MIME.image).toEqual(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'])
   })
-  it('队列联合可判别：attachment 分支状态机枚举无 uploaded 瞬态（D4）', () => {
+  // 2026-09-10 陈旧性审查：原用例只断言本地字面量
+  //   `const statuses: ReadonlyArray<string> = […]; expect(statuses).not.toContain('uploaded')`
+  // ——对自己的数组取反，恒真。该语义已由 attachment-state.spec.ts 改为「跑真实 reducer 并核对
+  // 产出的状态全集」；此处只保留联合可判别性（kind 判别 + attachment 分支形状）这一条真实契约。
+  it('队列联合可判别：attachment 分支挂入队列且 status 落在状态机全集内', () => {
     const item: PendingSendItem = { kind: 'attachment', localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'drag_drop', status: 'selected' }
     expect(item.kind).toBe('attachment')
-    const statuses: ReadonlyArray<string> = ['selected', 'validating', 'ready', 'uploading', 'failed', 'cancelled']
-    for (const s of statuses) expect(statuses).toContain(s)
-    expect(statuses).not.toContain('uploaded')
+    const declared: Record<PendingAttachmentStatus, true> = {
+      selected: true, validating: true, ready: true, uploading: true, failed: true, cancelled: true
+    }
+    expect(Object.keys(declared)).toContain(item.status)
   })
   it('G4 PendingSticker 分支挂入队列（入队即 ready）', () => {
     const st: PendingSendItem = { kind: 'sticker', stickerId: 'st_1', status: 'ready' }

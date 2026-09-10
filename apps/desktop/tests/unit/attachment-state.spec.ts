@@ -1,8 +1,8 @@
 // tests/unit/attachment-state.spec.ts
 // Task 13:附件状态机（spec §4.3，D4）——全转移 + source 不变性 + 发送阻断 + 省略 uploaded 态。纯函数无 Vue。
 import { describe, expect, it } from 'vitest'
-import type { PendingAttachment, PendingSendItem } from '@shared/contracts'
-import { attachmentQueueReducer, canSendQueue, clientPrecheck, emptyQueue, type PendingQueueState } from '../../src/renderer/src/attachments/attachment-state'
+import type { PendingAttachment, PendingAttachmentStatus, PendingSendItem } from '@shared/contracts'
+import { attachmentQueueReducer, canSendQueue, clientPrecheck, emptyQueue, type AttachmentQueueAction, type PendingQueueState } from '../../src/renderer/src/attachments/attachment-state'
 
 function item(localId: string, over: Partial<PendingAttachment> = {}): PendingSendItem {
   return { kind: 'attachment', localId, name: 'a.png', size: 10, mediaType: 'image/png', source: 'drag_drop', status: 'selected', ...over }
@@ -60,9 +60,36 @@ describe('attachmentQueueReducer（D4 状态机）', () => {
     s = attachmentQueueReducer(s, { type: 'clear' })
     expect(s).toEqual(emptyQueue())
   })
+  // 2026-09-10 陈旧性审查重写：原实现是
+  //   `const statuses: ReadonlyArray<string> = ['selected',…,'cancelled']; expect(statuses).not.toContain('uploaded')`
+  // ——对自己的字面量取反，且注解放宽成 string[] 后连 typecheck 都不再约束它，源码怎么改都不会失败。
+  // 改成断言真正在跑的状态机：reducer 产出的状态必须全部落在 PendingAttachmentStatus 内（含'uploaded' 即失败）。
   it('状态枚举省略 uploaded 瞬态（D4，对齐 docs/06 §7）', () => {
-    const statuses: ReadonlyArray<string> = ['selected', 'validating', 'ready', 'uploading', 'failed', 'cancelled']
-    expect(statuses).not.toContain('uploaded')
+    const declared: Record<PendingAttachmentStatus, true> = {
+      selected: true, validating: true, ready: true, uploading: true, failed: true, cancelled: true
+    }
+    expect(Object.keys(declared)).not.toContain('uploaded')
+
+    // 走一遍全部转移（顺序累积），确认 reducer 只会产出声明过的状态（新增隐式瞬态态会在此暴露）
+    const seen = new Set<PendingAttachmentStatus>()
+    let s = withItem(emptyQueue(), item('l1'))
+    seen.add((s.pendingById['l1'] as PendingAttachment).status)
+    const transitions: AttachmentQueueAction[] = [
+      { type: 'validate', localId: 'l1' },
+      { type: 'validate-ok', localId: 'l1' },
+      { type: 'upload', localIds: ['l1'] }
+    ]
+    for (const action of transitions) {
+      s = attachmentQueueReducer(s, action)
+      const status = (s.pendingById['l1'] as PendingAttachment | undefined)?.status
+      if (status) seen.add(status)
+    }
+    const failed = attachmentQueueReducer(
+      attachmentQueueReducer(withItem(emptyQueue(), item('l1')), { type: 'validate', localId: 'l1' }),
+      { type: 'validate-fail', localId: 'l1', reason: 'too_large', message: '超过大小上限' }
+    )
+    seen.add((failed.pendingById['l1'] as PendingAttachment).status)
+    expect([...seen].sort()).toEqual(['failed', 'ready', 'selected', 'uploading', 'validating'].sort())
   })
   it('source 不变性：picker/drag_drop/paste 只影响 source 字段，状态流转一致', () => {
     for (const source of ['picker', 'drag_drop', 'paste'] as const) {

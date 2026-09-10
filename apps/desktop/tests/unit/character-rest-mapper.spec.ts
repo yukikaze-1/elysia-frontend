@@ -258,9 +258,21 @@ describe('profile / detail 映射（null → undefined 归一）', () => {
 })
 
 describe('raw 分页 → Page（CHAR-FE-02）', () => {
+  // 2026-09-10 陈旧性审查修复：原期望值写成 `toDomainDetail(rawDetail).summary` —— 因为 fixture 里
+  // `rawDetail.summary === rawSummary`，且 `toDomainDetail`/`toDomainCharacterList` 两侧都走同一个
+  // `toDomainSummary`，实际与 `toDomainSummary(rawSummary)` 全等：**用被测函数生成期望值**，items 那一半
+  // 恒真。改为写出字面量期望，映射改动才会失败。
   it('{items,has_more,cursor} → {items,hasMore,nextCursor}；无 cursor → nextCursor 缺省', () => {
     const page = toDomainCharacterList({ items: [rawSummary], has_more: true, cursor: 'c9' })
-    expect(page).toEqual({ items: [toDomainDetail(rawDetail).summary], hasMore: true, nextCursor: 'c9' })
+    expect(page).toEqual({
+      items: [{
+        characterId: 'ch_elysia', source: 'builtin', mutable: false, status: 'active',
+        currentRevision: 2, displayName: 'Elysia', description: '默认同伴',
+        aliases: [], presentation: { themeColor: '#ff88aa' },
+        updatedAt: '2026-08-30T00:00:00.000Z'
+      }],
+      hasMore: true, nextCursor: 'c9'
+    })
     const last = toDomainCharacterList({ items: [], has_more: false })
     expect(last).toEqual({ items: [], hasMore: false })
     expect('nextCursor' in last).toBe(false)
