@@ -17,6 +17,14 @@ const POLL = { timeout: 5000, interval: 200 }
 // （对齐 electron-live2d.spec.ts:450 `{ ...POLL, timeout: 15000 }` 的慢渲染放宽）。
 const SLOW_POLL = { timeout: 15000, interval: 200 }
 const FIXTURE_ROOT = '/tmp/cyrene-fixtures'
+/**
+ * 「黑名单目录」用例的注入值（2026-09-10 修复）：必须取**本平台** PATH_BLACKLIST_DEFAULTS 里真实存在的根。
+ * 原写死 `/etc` 只在 POSIX 成立——Windows 上 normalizeToolPath 用 path.win32.resolve 解析成 `C:\etc`，
+ * 黑名单条目 `/etc` 按字面比较不命中（Windows 条目是 C:\Windows / C:\Program Files / ~\AppData 等），
+ * 于是 grant 成功、错误提示永不出现，用例在 Windows 长期红灯（2026-08-22 阶段7批次A 决策记录已记录
+ * 「Windows 平台前提，非产品回归」）。改用 C:\Windows 后两个平台都真正走到 PATH_BLOCKLISTED 分支。
+ */
+const BLACKLISTED_DIR = process.platform === 'win32' ? 'C:\\Windows' : '/etc'
 const FIXTURE = `${FIXTURE_ROOT}/note.txt`
 const FLOW_READ = JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: FIXTURE } } })
 
@@ -272,12 +280,12 @@ describe('阶段 6 批次 C 目录授权与审批历史', () => {
     await closeApp(launched)
   })
 
-  it('黑名单目录拒：mock pickDirectory /etc → 授权失败（PATH_BLOCKLISTED）→ 权限窗保持打开 + 错误提示 + 卡片保持 awaiting', async () => {
+  it(`黑名单目录拒：mock pickDirectory ${BLACKLISTED_DIR} → 授权失败（PATH_BLOCKLISTED）→ 权限窗保持打开 + 错误提示 + 卡片保持 awaiting`, async () => {
     await ensureFixture()
     const launched = await launchApp(undefined, { env: {
       CYRENE_MOCK_TOOL_FLOW: FLOW_READ,
       CYRENE_MOCK_TOOL_ALLOW_ROOT: JSON.stringify([FIXTURE_ROOT]),
-      CYRENE_MOCK_GRANT_DIRECTORY: JSON.stringify('/etc'),   // 黑名单目录（PATH_BLOCKLIST_DEFAULTS 含 /etc，allowRoots 不含）
+      CYRENE_MOCK_GRANT_DIRECTORY: JSON.stringify(BLACKLISTED_DIR),   // 黑名单目录（取本平台 PATH_BLACKLIST_DEFAULTS 命中项；allowRoots 不含）
     } })
     const { page } = launched
     await connectAndActivateFirst(page)

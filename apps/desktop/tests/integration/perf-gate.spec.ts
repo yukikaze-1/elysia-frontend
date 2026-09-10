@@ -135,9 +135,18 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       await connectAndActivateFirst(page)
       // 真实发送触发流式回复（经既有 send 入口）
       await page.locator('textarea[aria-label="消息输入框"]').fill(`测试 ${MULTI_SEGMENT_N} 分段`)
+      const assistantsBefore = await page.evaluate(() => document.querySelectorAll('.cy-assistant-row').length)
       await page.getByRole('button', { name: '发送', exact: true }).click()
-      // 等 generation.completed（mock 多分段种子回放完成）——「回放不停顿」：N 分段回放不阻塞到 completed
-      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-response-cluster .cy-muted')?.textContent ?? ''), POLL).toMatch(/completed/)
+      // 等 generation.completed（mock 多分段种子回放完成）——「回放不停顿」：N 分段回放不阻塞到 completed。
+      //
+      // 2026-09-10 修复：原断言读 `.cy-response-cluster .cy-muted` 的 /completed/ 文案，但
+      // `c2d92c2`（feat(desktop): 重构 QQ 风格聊天界面）已删除 `.cy-response-cluster`（源码 0 命中），
+      // 且 CyMessageBubble 明确「正常 completed 不展示」（UII-QQ 状态噪音清零，terminalNote 仅 failed/
+      // interrupted 有文案）——该选择器恒为空串，断言必然超时。改为两个稳定的 DOM 事实：
+      // ① 新 assistant 行已创建（乐观/generation.started 即建行，早于完成，不会与「已完成」竞态）；
+      // ② 没有任何 assistant 行仍处 streaming（is-streaming 绑定 status==='streaming'，见 CyMessageBubble:154）。
+      await expect.poll(() => page.evaluate(() => document.querySelectorAll('.cy-assistant-row').length), POLL).toBeGreaterThan(assistantsBefore)
+      await expect.poll(() => page.evaluate(() => document.querySelectorAll('.cy-assistant-row.is-streaming').length), POLL).toBe(0)
       const r = await sample(page, '.cy-segment')
       // 正确性（聚合计数，M-3）：mock 生成恰 MULTI_SEGMENT_N 个 public_reply 分段，completed 后全部渲染为 .cy-segment。
       // 视图感知暂停已落地（7D）：行内 segment 经 CyMessageBubble.needsDeferredRender 门控——视口内完成态全量渲染，
@@ -210,11 +219,12 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       // 后续新 segment 有 CyMarkdown 80ms 尾沿防抖，采样瞬间可存在少数临时空段——只要非全空即证全量渲染
       const mid = streamingOff!.id
       // 等 completed：仍保持视口外 → 内容仍非空（全量渲染，不再折叠/空 source）
+      // 2026-09-10 修复：原读 `.cy-response-head .cy-muted` 的 'completed'，同 ② 的根因——该结构与
+      // 「completed 不展示」一起被 QQ 重构（c2d92c2）移除，源码 0 命中。改用 is-streaming 消失判定完成。
       await expect.poll(() => page.evaluate((id) => {
         const cont = document.querySelector<HTMLElement>('.cy-messages')
-        if (!cont) return false
-        const row = cont.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
-        return row?.querySelector('.cy-response-head .cy-muted')?.textContent?.includes('completed') ?? false
+        const row = cont?.querySelector<HTMLElement>(`[data-message-id="${id}"]`)
+        return row != null && !row.classList.contains('is-streaming')
       }, mid), POLL).toBe(true)
       await page.waitForTimeout(150)
       const completedOff = await page.evaluate((id) => {

@@ -12,12 +12,36 @@ const escapeLink = join(rendererRoot, 'escape-link')
 const escapeDirIndex = join(rendererRoot, 'escape-dir', 'index.html')
 const emptyDir = join(rendererRoot, 'empty-dir')
 
+/**
+ * 符号链接能力探测（2026-09-10 修复）：Windows 上创建 symlink 需要开发者模式/特权，
+ * 无特权时 `symlinkSync` 抛 EPERM。原实现在 beforeAll 里无条件建 link → **整个文件加载失败**、
+ * 9 个用例全部 skipped（含 7 个与 symlink 无关的协议拒绝分支），本机 `pnpm test:integration`
+ * 因此长期红一项；Linux CI 允许 symlink 故不暴露。现改为「探测 + 仅 symlink 相关两例按需跳过」，
+ * 与 safe-open/live2d-registry 等 spec 同款守卫（tests/unit/live2d-registry.spec.ts canCreateSymlink）。
+ */
+function canCreateSymlink(): boolean {
+  const probe = mkdtempSync(join(tmpdir(), 'cy-protocol-symlink-probe-'))
+  try {
+    const target = join(probe, 'target')
+    writeFileSync(target, 'probe')
+    symlinkSync(target, join(probe, 'link'))
+    return true
+  } catch {
+    return false
+  } finally {
+    rmSync(probe, { recursive: true, force: true })
+  }
+}
+const symlinkSupported = canCreateSymlink()
+
 beforeAll(async () => {
   mkdirSync(join(rendererRoot, 'escape-dir'), { recursive: true })
-  mkdirSync(emptyDir)
+  mkdirSync(emptyDir, { recursive: true })                       // recursive：上次崩溃残留目录不再让整文件失败
   writeFileSync(join(outside, 'secret.txt'), 'secret')           // 先写 target 再建 symlink（Windows 可移植）
-  symlinkSync(join(outside, 'secret.txt'), escapeLink)           // 文件级 symlink → 外部
-  symlinkSync(join(outside, 'secret.txt'), escapeDirIndex)       // 目录内 index.html → 外部
+  if (symlinkSupported) {
+    symlinkSync(join(outside, 'secret.txt'), escapeLink)         // 文件级 symlink → 外部
+    symlinkSync(join(outside, 'secret.txt'), escapeDirIndex)     // 目录内 index.html → 外部
+  }
   launched = await launchApp()
 })
 afterAll(async () => {
@@ -52,6 +76,6 @@ describe('protocol handler（F1 拒绝分支实测）', () => {
   it('孤立 % → 403（decode 抛错）', async () => expect(await fetchStatus('cyrene://renderer/%')).toBe(403))
   it('缺失文件 → 404', async () => expect(await fetchStatus('cyrene://renderer/nonexistent.js')).toBe(404))
   it('空目录无 index.html → 404', async () => expect(await fetchStatus('cyrene://renderer/empty-dir/')).toBe(404))
-  it('文件 symlink 逃逸 → 403', async () => expect(await fetchStatus('cyrene://renderer/escape-link')).toBe(403))
-  it('目录内 index.html symlink 逃逸 → 403', async () => expect(await fetchStatus('cyrene://renderer/escape-dir/')).toBe(403))
+  it.skipIf(!symlinkSupported)('文件 symlink 逃逸 → 403', async () => expect(await fetchStatus('cyrene://renderer/escape-link')).toBe(403))
+  it.skipIf(!symlinkSupported)('目录内 index.html symlink 逃逸 → 403', async () => expect(await fetchStatus('cyrene://renderer/escape-dir/')).toBe(403))
 })

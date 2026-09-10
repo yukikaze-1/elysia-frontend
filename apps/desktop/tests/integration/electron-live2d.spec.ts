@@ -494,11 +494,20 @@ async function sendChat(page: Page, text: string): Promise<void> {
   await page.getByRole('button', { name: '发送', exact: true }).click()
 }
 
-/** 打开设置中心 → 「角色与外观」子页（CyLive2DPane） */
+/**
+ * 打开设置中心 → 「外观与 Live2D」子页（CyLive2DPane）。
+ *
+ * 2026-09-10 修复：本 helper 原用 `角色与外观`，而 `3afc4de`（feat(character): add identity and
+ * character management UI）已把设置导航项改名为 `外观与 Live2D`（CySettingsView.vue NAV_ITEMS）。
+ * 改名是有意的，且被单测锁定：cy-settings-character-nav.spec.ts 断言文本**包含** `外观与 Live2D`
+ * 且**不包含** `角色与外观`。本 spec 停留在旧名 → Playwright 找不到元素 → 30s 超时，
+ * 连带 B4/B5/C2.1/恢复默认/禁用启用 共 5 个用例长期红灯。注意 getByRole 严格模式也不会误配：
+ * 邻近的「角色」按钮 name 恰为「角色」，与旧名不同。
+ */
 async function openCharacterPane(page: Page): Promise<void> {
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await expect.poll(() => page.locator('.cy-settings').count(), POLL).toBe(1)
-  await page.getByRole('button', { name: /角色与外观/ }).click()
+  await page.getByRole('button', { name: /外观与 Live2D/ }).click()
   await expect.poll(() => page.locator('.cy-l2d-pane').count(), POLL).toBe(1)
 }
 
@@ -938,7 +947,7 @@ describe('阶段7批次D Live2D Electron 集成（7D：Live2D 数值读数接入
       await page.locator('button[data-testid="diag-dev-toggle"]').click()
       await expect.poll(() => page.getByTestId('diag-dev-perf').textContent(), POLL).toMatch(/未启动|无读数/)
       // 重新启用 → 面板隐藏态也能 init → ready（关闭设置后 rAF 恢复、画布非空）
-      await page.locator('.cy-settings-nav-item', { hasText: '角色与外观' }).click()
+      await page.locator('.cy-settings-nav-item', { hasText: '外观与 Live2D' }).click()
       await page.locator('.cy-l2d-pane input[type="checkbox"]').first().check()
       await expect.poll(() => statusText(page), POLL).toContain('就绪')
       await closeSettings(page)

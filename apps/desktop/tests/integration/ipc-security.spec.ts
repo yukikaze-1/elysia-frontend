@@ -22,21 +22,30 @@ describe('IPC 安全', () => {
       }
     })
     // 阶段 7 后为 74 键；角色 FE-B/C 增加 6 个方法，FE-D1 增加 7 个写/校验/预览方法，
-    // FE-D2 增加 4 个具名本地草稿方法，共 91 键。
-    expect(surface.keys).toEqual([
+    // FE-D2 增加 4 个具名本地草稿方法，FE-E 增加 resetCharacterEvolution，共 92 键。
+    //
+    // 2026-09-10 修复：本表曾停留在 91 键（漏 `resetCharacterEvolution`，由 e9d2897 加入 preload），
+    // 于是这条「暴露面不得未经 review 增长」的唯一哨兵长期红灯、保护意义归零——任何真实的意外面扩张
+    // 都会被同一个红灯掩盖。表**刻意硬编码**、不从 IpcChannels 派生（派生会让断言恒真）；
+    // 为让下次漂移一眼可读，先断言 added/removed 差集，再断言全等（原写法只给一个 92 元素大 diff）。
+    const EXPECTED_SURFACE = [
       'activate', 'activateModelProfile', 'archiveCharacter', 'attachmentsCancel', 'attachmentsCheck', 'attachmentsUpload', 'attachmentsValidate',
       'audioCancel',
       'cacheMessages', 'cancel', 'clearBackendToken', 'cloneCharacter', 'connect', 'createCharacter', 'createConversation', 'deleteCharacterDraft', 'deleteConversation', 'deleteModelProfile',
       'diagnosticsClearLogs', 'diagnosticsDevModeSet', 'diagnosticsExport', 'diagnosticsOpenLogDir', 'diagnosticsState',
       'disconnect', 'getActiveModelSelection', 'getAppInfo', 'getCharacter', 'getCharacterDraft', 'getCharacterState', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getLastCrash', 'getMe', 'getMessageContext', 'getMessages',
       'getRuntimeInfo', 'hydratePersistence', 'listCharacterDrafts', 'listCharacterRevisions', 'listCharacters', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'onDiagnosticsDevEvent', 'onToolEvent',
-      'openExternal', 'persistSession', 'previewCharacter', 'previewTts', 'queryChatHistory', 'renameConversation', 'rollbackCharacter', 'saveCharacterDraft', 'saveModelProfile',
+      'openExternal', 'persistSession', 'previewCharacter', 'previewTts', 'queryChatHistory', 'renameConversation', 'resetCharacterEvolution', 'rollbackCharacter', 'saveCharacterDraft', 'saveModelProfile',
       'send', 'setBackendToken', 'setEndpoint', 'setTtsVoice', 'settingsLoad', 'settingsSave', 'testModelProfile',
       'toolCancel', 'toolConfirmUpload', 'toolDecide', 'toolGrantDirectory', 'toolList', 'toolListGrants', 'toolListHistory', 'toolPickSource', 'toolRevokeGrant',
       'updateCharacter', 'updateMe', 'validateCharacter',
       'voiceCancelDictation', 'voiceCancelRealtime', 'voiceCommit', 'voiceDiscard', 'voiceSendAudio',
       'voiceStartDictation', 'voiceStartRealtime', 'voiceStartRecord', 'voiceStopDictation', 'voiceStopRealtime', 'voiceStopRecord'
-    ])
+    ]
+    expect(surface.keys.length, '暴露面键数变化必须同步 EXPECTED_SURFACE 并过 review').toBe(EXPECTED_SURFACE.length)
+    expect(surface.keys.filter((k) => !EXPECTED_SURFACE.includes(k)), 'preload 暴露面出现未经 review 的新方法').toEqual([])
+    expect(EXPECTED_SURFACE.filter((k) => !surface.keys.includes(k)), 'preload 暴露面缺少已审方法（被删/改名？）').toEqual([])
+    expect(surface.keys).toEqual(EXPECTED_SURFACE)
     expect(surface.hasIpc).toBe(false)
     expect(surface.hasRequire).toBe('undefined')
     expect(surface.hasProcess).toBe('undefined')
