@@ -969,7 +969,27 @@ export class MockBackend implements BackendAdapter {
   }
 
   async audioCancel(input: AudioCancelInput): Promise<void> {
-    this.emit({ ...this.stamp(), event: 'audio.session.cancelled', streamId: input.streamId } satisfies AudioSessionCancelledEvent)
+    this.emit({ ...this.stamp(), ...this.characterEventStamp(), event: 'audio.session.cancelled', streamId: input.streamId } satisfies AudioSessionCancelledEvent)
+  }
+
+  /**
+   * CharacterEventIdentity 戳（2026-09-10 修复，Stage H 语音围栏的 mock 保真缺口）。
+   *
+   * `audio.session.started/ready/cancelled` 与 `expression` 在契约里都 extends `CharacterEventIdentity`
+   * （shared/contracts/events.ts），即**必须**携带 conversationId + characterId/InstanceId/Revision。
+   * 但本 backend 这几帧只走 `stamp()`（仅 eventId/sequence），只有在夹具路径的
+   * generation.started/completed/failed 上才 Object.assign(characterIdentity)。
+   *
+   * 后果：mock 的 `features.characterProfiles` 恒为 true（MockCharacterBackend.features），于是
+   * voice.store `belongsToActiveCharacter` 的围栏生效，而 `e.conversationId === undefined` 恒不等 →
+   * **audio.session.started / ready / cancelled 三帧被整帧丢弃**，TTS 自动朗读静默失效
+   * （readySeen 恒 false、<audio> 永不置 src），集成用例 electron-voice「5. TTS 自动朗读」长期红灯。
+   * 真实后端这几帧带身份（围栏正是为它加的），故本修复是补齐 mock 契约保真，不改前端围栏语义。
+   */
+  private characterEventStamp(): { conversationId?: string } & Partial<Pick<CharacterBindingSnapshot, 'characterId' | 'characterInstanceId' | 'characterRevision'>> {
+    const conversationId = this.activeConversationId
+    if (conversationId === undefined) return {}
+    return { conversationId, ...this.captureGenerationIdentity(conversationId) }
   }
 
   /** options.voiceError 注入：各语音 start* 时 emit voice.error（替代继续）；falsy 时返回 false 正常继续 */
@@ -1201,6 +1221,9 @@ export class MockBackend implements BackendAdapter {
         // 不触发 onerror 快速回落），并延迟 audio.session.cancelled 触发停止——给 renderer 口部采样一个确定性窗口
         // （headless 音频推进/ended 不可靠；否则 ~1 帧窗口无法断言 step 序列变化）。
         if (event.event === 'generation.completed' && this.ttsActive) {
+          // 2026-09-10：三帧 audio.session.* 必须带 CharacterEventIdentity（见 characterEventStamp 注）——
+          // 复用本代已捕获的 characterIdentity（不可变归属，与 generation.* 同源）+ 本代 conversationId。
+          const ttsIdentity = { conversationId, ...characterIdentity }
           if (this.ttsAudioSink && this.mockMouthLevel !== undefined) {
             this.ttsAudioSink('mock-silent', makeSilentWav((this.mouthTtsWindowMs + 1000) / 1000)) // WAV 时长 ≥ 窗口+1s：<audio> 在 cancelled 前持续播放，口部窗口不坍缩
             if (this.ttsCancelTimer) clearTimeout(this.ttsCancelTimer)
@@ -1208,12 +1231,12 @@ export class MockBackend implements BackendAdapter {
               if (this.ttsCancelTimer !== cancelTimer) return
               this.ttsCancelTimer = undefined
               if (!this.connected || this.connectionIncarnation !== incarnation) return
-              this.emit({ ...this.stamp(), event: 'audio.session.cancelled', streamId: 1 } satisfies AudioSessionCancelledEvent)
+              this.emit({ ...this.stamp(), ...ttsIdentity, event: 'audio.session.cancelled', streamId: 1 } satisfies AudioSessionCancelledEvent)
             }, this.mouthTtsWindowMs)
             this.ttsCancelTimer = cancelTimer
           }
-          this.emit({ ...this.stamp(), event: 'audio.session.started', streamId: 1, format: 'wav' } satisfies AudioSessionStartedEvent)
-          this.emit({ ...this.stamp(), event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/mock-silent', format: 'wav' } satisfies AudioSessionReadyEvent)
+          this.emit({ ...this.stamp(), ...ttsIdentity, event: 'audio.session.started', streamId: 1, format: 'wav' } satisfies AudioSessionStartedEvent)
+          this.emit({ ...this.stamp(), ...ttsIdentity, event: 'audio.session.ready', streamId: 1, url: 'cyrene://renderer/__cyrene-media/tts-live/mock-silent', format: 'wav' } satisfies AudioSessionReadyEvent)
         }
       }, index * this.emitDelayMs)
       genTimers.push(timer)

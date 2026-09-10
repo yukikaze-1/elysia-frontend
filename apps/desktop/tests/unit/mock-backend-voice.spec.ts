@@ -447,3 +447,58 @@ describe('parseMockMouthLevelEnv（批次 C C1，合成包络源选择）', () =
     expect(parseMockMouthLevelEnv('sine')).toBe('sine')
   })
 })
+
+// 2026-09-10 回归：Stage H 的「按角色围栏」修复（voice.store belongsToActiveCharacter）要求 audio.session.*
+// 携带 CharacterEventIdentity；mock 当时只给 generation.started/completed/failed 盖了戳，于是 characterProfiles
+// 开启（mock 恒为 true）后 audio.session.started/ready 被整帧丢弃 → TTS 自动朗读静默失效：
+// readySeen 恒 false、<audio> 永不置 src，且**没有任何用户可见错误**。
+// 表现为 electron-voice「5. TTS 自动朗读」与 electron-live2d「C1 口型链路」长期红灯（后者依赖 tts.playing→attach）。
+describe('MockBackend 语音事件角色身份（CharacterEventIdentity，2026-09-10 修复）', () => {
+  const binding = {
+    characterId: 'char-1',
+    characterInstanceId: 'inst-1',
+    characterRevision: 3,
+    displayName: '角色一',
+    presentation: {}
+  }
+
+  it('characterProfiles 开启时 audio.session.started/ready 必须带 conversationId + 角色三元组', async () => {
+    backend = new MockBackend({
+      emitDelayMs: 1,
+      features: { characterProfiles: true, characterStateStream: true },
+      characterBindings: { 'char-1': binding }   // 按序装配到首个会话 conv-1001
+    })
+    const ev: BackendEvent[] = []
+    backend.subscribe((e) => ev.push(e))
+    await backend.connect({ serverUrl: 'mock://test' })
+    await backend.activateModelProfile({ profileId: 'edge/edge-tts', service: 'tts' })
+    await backend.sendMessage({ conversationId: 'conv-1001', text: '你好', clientRequestId: 'c1' })
+    await sleep(80)
+
+    const audio = ev.filter((e) => e.event === 'audio.session.started' || e.event === 'audio.session.ready')
+    expect(audio.length, '应发出 started + ready 两帧（ttsActive 已置）').toBe(2)
+    for (const e of audio) {
+      expect(e, `${e.event} 缺失角色身份会被 renderer 围栏整帧丢弃`).toMatchObject({
+        conversationId: 'conv-1001',
+        characterId: 'char-1',
+        characterInstanceId: 'inst-1',
+        characterRevision: 3
+      })
+    }
+  })
+
+  it('未开启 characterProfiles（legacy mock）时不盖角色戳，保持旧形状', async () => {
+    backend = new MockBackend({ emitDelayMs: 1 })
+    const ev: BackendEvent[] = []
+    backend.subscribe((e) => ev.push(e))
+    await backend.connect({ serverUrl: 'mock://test' })
+    await backend.activateModelProfile({ profileId: 'edge/edge-tts', service: 'tts' })
+    await backend.sendMessage({ conversationId: 'conv-1001', text: '你好', clientRequestId: 'c1' })
+    await sleep(80)
+
+    const ready = ev.find((e) => e.event === 'audio.session.ready')
+    expect(ready).toBeDefined()
+    expect(ready?.characterId).toBeUndefined()
+    expect(ready?.characterRevision).toBeUndefined()
+  })
+})
