@@ -11,6 +11,7 @@ import { atomicWriteFile } from '../credentials/atomic-write'
 import { openSafeFile } from './safe-open'
 import { createCorruptIsolation, type CorruptIsolation } from './corrupt-isolation'
 import type { Logger } from '../diagnostics/logger'
+import { cloneValue } from '@shared/domain'
 
 export const CHARACTER_DRAFT_FILE_NAME = 'character-drafts-v1.json'
 export const CHARACTER_DRAFT_SCHEMA_VERSION = 1 as const
@@ -38,12 +39,6 @@ export interface CharacterDraftStoreDeps {
 export interface CharacterDraftStorageError {
   code: typeof CyreneErrorCode.CHARACTER_DRAFT_STORAGE_UNAVAILABLE
   operation: 'load' | 'save' | 'delete' | 'retry'
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) return structured(value)
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function utf8Bytes(value: string): number {

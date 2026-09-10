@@ -7,6 +7,7 @@ import type {
 } from '@shared/contracts'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { cloneValue } from '@shared/domain'
 
 export type CharacterRuntimeLoadState = 'idle' | 'loading' | 'ready' | 'stale' | 'error'
 
@@ -20,14 +21,6 @@ function stateIdentityError(): Error {
 
 function missingApiError(): Error {
   return new Error('[CHARACTER_PROFILES_UNAVAILABLE] 角色状态 API 尚未装配')
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) {
-    try { return structured(value) } catch { /* Vue reactive proxies use JSON fallback. */ }
-  }
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 /**

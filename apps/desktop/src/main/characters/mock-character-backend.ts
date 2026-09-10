@@ -43,6 +43,7 @@ import {
   UserIdentityProfileSchema
 } from '@shared/schemas'
 import type { CharacterServiceBackendPort } from './character-backend-port'
+import { cloneValue } from '@shared/domain'
 
 const MOCK_NOW = '2026-08-31T00:00:00.000Z'
 
@@ -55,12 +56,6 @@ export const MOCK_CHARACTER_BACKEND_CODES = {
   notFound: 'CHARACTER_NOT_FOUND',
   archived: 'CHARACTER_ARCHIVED'
 } as const
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) return structured(value)
-  return JSON.parse(JSON.stringify(value)) as T
-}
 
 function invalidData(label: string, details: unknown): never {
   throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, `Mock 角色数据无效: ${label}`, details)

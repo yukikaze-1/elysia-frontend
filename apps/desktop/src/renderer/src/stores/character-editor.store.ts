@@ -20,6 +20,7 @@ import type {
 import { CharacterDraftKeySchema, CharacterDraftSummarySchema, PersistedCharacterDraftSchema } from '@shared/schemas'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { cloneValue } from '@shared/domain'
 
 export const CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS = 800
 
@@ -51,14 +52,6 @@ interface SaveFlight {
   editorGeneration: number
   connectionEpoch: number
   promise: Promise<SavedCharacter | undefined>
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) {
-    try { return structured(value) } catch { /* Vue Proxy or unsupported value; JSON domain fallback */ }
-  }
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function publicError(cause: unknown): PublicError {

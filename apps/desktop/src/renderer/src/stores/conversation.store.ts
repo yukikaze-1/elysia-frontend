@@ -13,6 +13,7 @@ import { useDraftStore } from './draft.store'
 import { useVoiceStore } from './voice.store'
 import { useIdentityStore } from './identity.store'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { cloneValue } from '@shared/domain'
 
 /** F8:messageOf 仅在 message.store 内定义(非导出),conversation.store 自定模块内 helper */
 function messageOf(e: unknown): string {
@@ -35,17 +36,6 @@ function parseActivationError(e: unknown): PublicError {
     return { ...parsed, message: AGENT_BUSY_ACTIVATE_MESSAGE }
   }
   return parsed
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  // Pinia/Vue refs can expose reactive Proxies which structuredClone rejects;
-  // fall back to the plain JSON snapshot path instead of turning a successful
-  // list/create result into a misleading clone error.
-  if (structured) {
-    try { return structured(value) } catch { /* JSON fallback below */ }
-  }
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 type BackendIdentity = {

@@ -71,12 +71,7 @@ import type { ToolAttachment } from '@shared/contracts/tool'
 import type { DesktopToolRequest } from '../tools/tool-service'
 import { DESKTOP_TOOL_VERSION } from '../tools/tool-registry'
 import fixtureRaw from '../fixtures/domain/streaming-reply.jsonl?raw'
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) return structured(value)
-  return JSON.parse(JSON.stringify(value)) as T
-}
+import { cloneValue } from '@shared/domain'
 
 /** 上传 MIME → kind 提示值（Mock 确定性；真实后端以魔数真值为准） */
 function kindFromMimeForMock(mime: string): string {

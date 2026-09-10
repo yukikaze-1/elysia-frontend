@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { MAX_IPC_MESSAGE_BYTES, type Conversation, type Message, type SessionPersistenceState } from '@shared/contracts'
 import { api } from './desktop-api'
+import { cloneValue } from '@shared/domain'
 
 export const CACHE_PUSH_CHUNK = 200
 
@@ -13,16 +14,6 @@ function msgBytes(m: Message): number {
   n += estBytes(m.content ?? '')
   for (const seg of m.assistantSegments ?? []) n += estBytes(seg.text ?? '')
   return n
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  // Cache snapshots may be passed through Pinia/Vue reactive proxies;
-  // structuredClone rejects those, so use the plain-data fallback.
-  if (structured) {
-    try { return structured(value) } catch { /* JSON fallback below */ }
-  }
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 /** 分片（P1-2）：先按条数 ≤200，再按字节预算拆；单条超限整条跳过（Main 侧另有整批拒绝兜底 IPC_MESSAGE_TOO_LARGE） */

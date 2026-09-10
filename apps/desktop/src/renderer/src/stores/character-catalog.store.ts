@@ -24,6 +24,7 @@ import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 import { useIdentityStore } from './identity.store'
 import { useCharacterEditorStore } from './character-editor.store'
+import { cloneValue } from '@shared/domain'
 
 export type CharacterCatalogLoadState = 'idle' | 'loading' | 'ready' | 'empty' | 'stale' | 'error'
 
@@ -38,19 +39,6 @@ export interface CharacterRevisionIdentity {
 
 function missingApiError(): Error {
   return new Error('[CHARACTER_PROFILES_UNAVAILABLE] 角色目录 API 尚未装配')
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  // Pinia/Vue refs expose reactive Proxies, which structuredClone rejects with
-  // DataCloneError.  revisionIdentity() reads summaries straight out of this
-  // store, so an unguarded call would throw from CyMessageList's render path
-  // and collapse the message list.  Fall back to a plain JSON snapshot rather
-  // than letting the clone error escape into rendering.
-  if (structured) {
-    try { return structured(value) } catch { /* Vue reactive proxies use the JSON fallback. */ }
-  }
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function stableKey(value: unknown): string {

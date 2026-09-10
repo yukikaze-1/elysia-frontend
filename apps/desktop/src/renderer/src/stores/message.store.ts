@@ -27,6 +27,7 @@ import { useCacheStore } from './cache.store'
 import { cmpMsg } from '../utils/message-order'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 import { clearMarkdownCache } from '../utils/markdown'   // 阶段 7 批次 C（Task 3）：会话切换清空 markdown 渲染缓存（M-2 单一挂载点）
+import { cloneValue } from '@shared/domain'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -34,14 +35,6 @@ function nowIso(): string {
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
-}
-
-function cloneValue<T>(value: T): T {
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) {
-    try { return structured(value) } catch { /* Vue proxies are handled by the JSON fallback. */ }
-  }
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 type GenerationIdentity = {

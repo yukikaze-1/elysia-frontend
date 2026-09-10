@@ -25,6 +25,7 @@ import type {
 import type { Page } from '@shared/contracts/conversation'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type { CharacterServiceBackendPort } from './character-backend-port'
+import { cloneValue } from '@shared/domain'
 
 /** 角色服务向 Renderer/IPC 暴露的稳定 backendCode。 */
 export const CHARACTER_SERVICE_BACKEND_CODES = {
@@ -60,14 +61,6 @@ type InFlightEntry = {
   cacheGeneration: number
   scopeGeneration: number
   promise: Promise<unknown>
-}
-
-function cloneValue<T>(value: T): T {
-  // Main 运行时为 Node 22；保留 JSON fallback 只为测试环境/旧 Electron 兼容，
-  // 不把任何 authored prompt 写入磁盘或日志。
-  const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
-  if (structured) return structured(value)
-  return JSON.parse(JSON.stringify(value)) as T
 }
 
 function stableKey(value: unknown): string {
