@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted } from 'vue'
-import type { CharacterDetail, CharacterDraft, CharacterStatePolicy } from '@shared/contracts'
+import { computed, nextTick, onMounted, ref } from 'vue'
+import type { CharacterDetail, CharacterDraft, CharacterStatePolicy, CharacterValidationResult } from '@shared/contracts'
 import type { PublicError } from '../../utils/public-error'
 import { useCharacterEditorStore } from '../../stores/character-editor.store'
 import { characterErrorMessage } from './character-error'
@@ -29,6 +29,92 @@ const conflictMessage = computed(() => characterErrorMessage(
   editor.conflict ? { code: 'BACKEND_REJECTED', backendCode: editor.conflict.backendCode, message: editor.conflict.message } : undefined,
   '远端角色已被更新，当前草稿未覆盖远端内容。'
 ))
+
+// 原生约束拦截的非空提示与就地校验结果。
+//
+// 2026-09-10 修复：表单原先把保存的反馈完全交给浏览器原生约束校验，而本表单的无效字段
+// 可能藏在折叠的 `<details>`（高级：主动对话）里——Chrome 既不展开该区域，也不移动
+// 焦点，控件仍在 `display:none` 子树中导致原生气泡无处渲染。用户看到的是「点保存没反应
+// 且零提示」。表单加 `novalidate` 后原生气泡消失，因此这里必须自己把原因说出来。
+const blockedMessage = ref('')
+const localValidation = ref<CharacterValidationResult>()
+
+/** 表单里可参与约束校验的控件 */
+type FormControl = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+
+/** 字段级错误文案（nativeLabel 是原生约束原因的可读说明，作为兜底） */
+const NATIVE_REASON: Record<string, string> = {
+  valueMissing: '为必填项',
+  rangeUnderflow: '小于允许的最小值',
+  rangeOverflow: '大于允许的最大值',
+  stepMismatch: '不是允许的步进值',
+  typeMismatch: '格式不正确',
+  patternMismatch: '格式不正确',
+  tooLong: '超出长度上限',
+  tooShort: '短于长度下限',
+  badInput: '不是有效数值'
+}
+
+/** 相对表单的字段定位（标签文本 + 字段名），不依赖任何选择器 */
+function fieldLabel(control: FormControl): string {
+  const name = control.getAttribute('data-field-path') ?? control.getAttribute('name') ?? '未知字段'
+  const wrapper = control.closest('label')
+  const text = wrapper?.querySelector('span')?.textContent?.trim().replace(/\s*\*\s*$/, '') ?? ''
+  return text ? `${text}（${name}）` : name
+}
+
+/** 失败字段藏在折叠区时先展开，使错误信息可见（与 focusPath 同一策略） */
+function revealInvalid(target: HTMLElement): void {
+  target.closest('details')?.setAttribute('open', '')
+}
+
+/**
+ * 提交前检查未通过的原生约束。
+ *
+ * `novalidate` 抑制的是「浏览器在提交时自动校验并弹气泡」，`checkValidity()` 触发的
+ * `invalid` 事件仍然会派发（见 HTML 规范 form 提交算法的 interactivity 分支），
+ * 因此这里仍能拿到精确的失败字段。
+ */
+function checkNativeBlock(form: HTMLFormElement): boolean {
+  const invalid = new Set<FormControl>()
+  const onInvalid = (event: Event): void => {
+    // 捕获阶段挂在 form 上，因此 currentTarget 恒为 form、target 恒为失败控件
+    invalid.add(event.target as FormControl)
+    event.preventDefault() // 关掉浏览器自带的「第一个无效字段」气泡
+  }
+  form.addEventListener('invalid', onInvalid, true)
+  const valid = form.checkValidity()
+  form.removeEventListener('invalid', onInvalid, true)
+  if (valid) {
+    blockedMessage.value = ''
+    localValidation.value = undefined
+    return false
+  }
+  const issues: CharacterValidationResult['issues'] = []
+  let first: FormControl | undefined
+  for (const control of invalid) {
+    const path = control.getAttribute('data-field-path')
+    if (!path) continue
+    if (!first) first = control
+    const reasons: string[] = []
+    if (control.validity.valueMissing) reasons.push(NATIVE_REASON.valueMissing)
+    if (control.validity.rangeUnderflow || control.validity.rangeOverflow) {
+      const bound = control.validity.rangeUnderflow ? control.getAttribute('min') : control.getAttribute('max')
+      reasons.push(`${control.validity.rangeUnderflow ? '不能小于' : '不能大于'} ${bound ?? ''}`.trim())
+    }
+    for (const key of ['stepMismatch', 'typeMismatch', 'patternMismatch', 'tooLong', 'tooShort', 'badInput'] as const) {
+      if (control.validity[key]) reasons.push(NATIVE_REASON[key])
+    }
+    issues.push({ severity: 'error', code: 'NATIVE_CONSTRAINT', path, message: reasons.join('、') || '不符合输入要求' })
+  }
+  // 没有 data-field-path 的控件（理论上不存在）也要给出原因，否则会回到「静默不保存」
+  blockedMessage.value = first
+    ? `${fieldLabel(first)} 不符合输入要求，已阻止保存：请修正后重试。`
+    : '表单存在不符合输入要求的字段，已阻止保存：请检查后重试。'
+  if (first) revealInvalid(first)
+  localValidation.value = { valid: false, issues }
+  return true
+}
 
 function updateField(path: string, value: unknown): void {
   // Store.updateField deliberately refuses to create arbitrary object keys. The
@@ -120,6 +206,9 @@ function confirm(message: string): boolean {
 
 async function save(): Promise<void> {
   if (saveDisabled.value) return
+  const form = document.querySelector<HTMLFormElement>('.cy-character-editor-form')
+  // 原生约束未通过时不进入确认弹窗：先在表单内说明原因，绝不静默返回。
+  if (form && checkNativeBlock(form)) return
   const policyMessage = editor.mode === 'edit' && editor.statePolicy === 'reset_evolution'
     ? '将以当前 revision 为基线保存，并按后端返回的范围重置演化状态。确定继续吗？'
     : editor.mode === 'edit'
@@ -187,7 +276,7 @@ onMounted(() => {
     <div v-if="editor.mode === 'clone'" class="cy-editor-note" role="status">这是从现有角色复制出的新草稿，首次保存会创建新角色。</div>
     <div v-if="!editor.remoteAvailable" class="cy-editor-note offline-note" role="status">当前无法执行远端校验、预览或保存；继续编辑会保存在本地恢复草稿中。</div>
 
-    <form class="cy-character-editor-form" tabindex="-1" @submit.prevent="save">
+    <form class="cy-character-editor-form" tabindex="-1" novalidate @submit.prevent="save">
       <fieldset class="cy-basic-fields">
         <legend>基本信息</legend>
         <label>
@@ -212,7 +301,7 @@ onMounted(() => {
       <CyCharacterPresentationFields v-if="editor.draft" :draft="editor.draft" @update="updateField" />
 
       <CyCharacterValidation
-        :result="editor.validation"
+        :result="blockedMessage ? localValidation : editor.validation"
         :error="editor.validationError ? { ...editor.validationError, message: validationErrorMessage } : undefined"
         :status="editor.validationStatus"
         @validate="validate"
@@ -220,6 +309,7 @@ onMounted(() => {
       />
       <CyCharacterPreview />
 
+      <div v-if="blockedMessage" class="cy-editor-error native-block" role="alert">{{ blockedMessage }}</div>
       <div v-if="editor.saveStatus === 'conflict'" class="cy-editor-error conflict" role="alert">
         <strong>角色版本发生冲突</strong>
         <span>{{ conflictMessage }}{{ editor.conflict?.currentRevision ? ` 当前 revision：${editor.conflict.currentRevision}` : '' }}</span>
@@ -266,6 +356,7 @@ onMounted(() => {
 .cy-editor-note, .cy-editor-error, .cy-editor-success { padding: 10px 12px; border: 1px solid var(--cy-border); border-radius: 10px; background: var(--cy-surface-soft); color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
 .cy-editor-error { display: grid; gap: 6px; color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
 .cy-editor-error.conflict { color: var(--cy-warning); }
+.cy-editor-error.native-block { color: var(--cy-danger); font-weight: 600; }
 .cy-editor-error div { display: flex; gap: 7px; flex-wrap: wrap; }
 .cy-editor-success { color: var(--cy-success); }
 .cy-character-editor-form { display: grid; gap: 12px; min-width: 0; outline: none; }

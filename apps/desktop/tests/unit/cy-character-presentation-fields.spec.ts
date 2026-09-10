@@ -117,12 +117,37 @@ describe('CyCharacterPresentationFields 声音与呈现分区', () => {
     wrapper.unmount()
   })
 
-  // pinning existing behavior：清空数字框时 Number('') === 0 属于有限数，因此 emit 0 而不是回退 3600；
-  // 组件没有在本地强制 min=60。此处锁定当前行为，不视为期望语义（详见交付说明里的产品缺陷）。
-  it('（锁定现状）清空主动间隔 emit 0，而不是回退 3600', async () => {
+  // 2026-09-10 修复：原实现用 `Number.isFinite(Number(value))` 判定，而 `Number('') === 0`
+  // 属于有限数 → 清空输入框 emit 了 intervalSeconds=0，与输入框 min=60 冲突。原生 rangeUnderflow
+  // 会拦住整个表单提交，且该字段藏在折叠的「高级：主动对话」内，用户只看到「点保存没反应」。
+  // 现在清空/非数值/超界一律回退 3600（与输入框 min/max 同源常量）。
+  it('清空或非法主动间隔一律回退 3600，不再 emit 0 或 NaN', async () => {
     const wrapper = mountFields(draftFixture())
-    await wrapper.get('[data-field-path="/runtimeDefaults/proactive/intervalSeconds"]').setValue('')
-    expect(lastUpdate(wrapper)).toEqual(['runtimeDefaults.proactive.intervalSeconds', 0])
+    const interval = wrapper.get('[data-field-path="/runtimeDefaults/proactive/intervalSeconds"]')
+
+    await interval.setValue('')
+    expect(lastUpdate(wrapper)).toEqual(['runtimeDefaults.proactive.intervalSeconds', 3600])
+
+    // 超界值不夹取到边界（不静默改写用户输入），同样回退默认值
+    await interval.setValue('59')
+    expect(lastUpdate(wrapper)).toEqual(['runtimeDefaults.proactive.intervalSeconds', 3600])
+    await interval.setValue('86401')
+    expect(lastUpdate(wrapper)).toEqual(['runtimeDefaults.proactive.intervalSeconds', 3600])
+
+    // 合法值仍按原样 emit
+    await interval.setValue('60')
+    expect(lastUpdate(wrapper)).toEqual(['runtimeDefaults.proactive.intervalSeconds', 60])
+    await interval.setValue('86400')
+    expect(lastUpdate(wrapper)).toEqual(['runtimeDefaults.proactive.intervalSeconds', 86400])
+    wrapper.unmount()
+  })
+
+  // min/max 与脚本内的回退边界同源（模板绑定常量），防止「脚本回退 3600、输入框却仍是 min=60 的裸字面量」再次漂移
+  it('主动间隔输入框的 min/max 来自与回退逻辑同一组常量', () => {
+    const wrapper = mountFields(draftFixture())
+    const interval = wrapper.get('[data-field-path="/runtimeDefaults/proactive/intervalSeconds"]')
+    expect(interval.attributes('min')).toBe('60')
+    expect(interval.attributes('max')).toBe('86400')
     wrapper.unmount()
   })
 

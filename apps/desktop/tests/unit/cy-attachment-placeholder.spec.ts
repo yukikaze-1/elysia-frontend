@@ -1,7 +1,8 @@
 // @vitest-environment happy-dom
 // tests/unit/cy-attachment-placeholder.spec.ts
 // CyAttachmentPlaceholder：spec §4.7 状态占位文案表、expired/error 才给「刷新/重试」、
-// 无 attachmentId 时不得发起查询、重试结果原样 emit 给父组件（ok → 重挂载；失败 → 降级 error）。
+// 无 attachmentId 时不得发起查询、重试结果原样 emit 给父组件（ok → 重挂载；失败 → 降级 error）、
+// message 可覆盖默认状态文案（用于「附件可用但本机渲染失败」）。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { AttachmentCheckResult, AttachmentMediaStatus } from '@shared/contracts'
@@ -15,7 +16,7 @@ beforeEach(() => {
   setDesktopApi({ attachmentsCheck } as never)
 })
 
-function mountPlaceholder(props: { status?: AttachmentMediaStatus; attachmentId?: string }) {
+function mountPlaceholder(props: { status?: AttachmentMediaStatus; attachmentId?: string; message?: string }) {
   return mount(CyAttachmentPlaceholder, { props })
 }
 
@@ -41,6 +42,20 @@ describe('CyAttachmentPlaceholder 附件状态占位', () => {
     const empty = mountPlaceholder({})
     expect(empty.find('.cy-placeholder').exists()).toBe(false)
     empty.unmount()
+  })
+
+  // 2026-09-10：本机渲染失败（附件可用但浏览器解不开）必须与「附件状态」区分——
+  // 沿用「加载失败」会误导用户去重试一个其实完好的附件。
+  it('message 覆盖默认状态文案，重试入口仍按状态给出', () => {
+    const wrapper = mountPlaceholder({ status: 'error', attachmentId: 'att_1', message: '无法显示该附件' })
+    expect(wrapper.get('.cy-placeholder span').text()).toBe('无法显示该附件')
+    expect(wrapper.get('.cy-placeholder-action').text()).toBe('重试')
+    wrapper.unmount()
+
+    // 空串不覆盖（|| 而非 ??），避免把文案清空成空白占位
+    const blank = mountPlaceholder({ status: 'error', attachmentId: 'att_1', message: '' })
+    expect(blank.get('.cy-placeholder span').text()).toBe('加载失败')
+    blank.unmount()
   })
 
   it('只有 error/expired 提供重试入口，not_found/revoked 不可重试', () => {

@@ -2,7 +2,7 @@
 // tests/unit/cy-attachment-media.spec.ts
 // CyAttachmentMedia：附件渲染链按 kind + playable 分发（image 内联 / video·audio 图标卡展开 / file 图标卡 / link 卡片），
 // 非白名单 MIME 与未知 kind 降级为「暂不支持播放」文件卡；媒体元素 error → attachments:check 分类占位（元素与占位互斥），
-// 占位重试 ok → 换 nonce 重新挂载媒体元素。API 经 setDesktopApi mock。
+// 分类 ok 但元素仍损坏时按「本机渲染失败」给出可重试占位；占位重试 ok → 换 nonce 重新挂载媒体元素。API 经 setDesktopApi mock。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import type { AttachmentCheckResult } from '@shared/contracts'
@@ -124,22 +124,46 @@ describe('CyAttachmentMedia 附件分发', () => {
     wrapper.unmount()
   })
 
-  // pinning existing behavior：媒体元素 error 后若 attachmentsCheck 直接返回 ok，组件把 mediaStatus 置回 ok。
-  //
   // 2026-09-10 复核更正：本用例初版标题为「以同一 URL 重新挂载媒体」，**该表述不准确**——
   // 实测（临时探针：error 前后 DOM 节点同一、src 不变、attachmentsCheck 调用次数恰等于手动触发次数）
   // 证明 mediaStatus 由 loading 变 ok 时两者同处媒体分支，子组件**不重挂载**，因此不存在自循环。
-  // 真实缺陷是：元素已损坏却置状态为 ok → 占位永不出现 → 用户面对静默损坏的媒体元素，既无解释也无法重试。
-  // 本用例锁定的正是这个现状（占位不存在 + src 未变），它同时也是「不重挂载」的证据。
-  it('（锁定现状）媒体 error 但分类查询返回 ok 时不重挂载、不出现占位（元素保持损坏且无重试入口）', async () => {
+  // 真实缺陷是：元素已损坏却把状态置成 ok → 占位永不出现 → 用户面对静默损坏的媒体元素，
+  // 既无解释也无法重试（附件其实完好，只是本机解不开：截断图片 / 不支持的容器）。
+  // 2026-09-10 修复：ok 只表示「附件可用」，渲染失败由独立的 mediaRenderFailed 表达并渲染可重试占位。
+  it('分类查询返回 ok 但元素已损坏时给出可重试的失败占位，而不是保留坏元素', async () => {
     attachmentsCheck.mockResolvedValueOnce({ status: 'ok' })
     const wrapper = mountMedia({ kind: 'image', attachmentId: 'att_1', mediaType: 'image/png' })
     await wrapper.get('img.cy-attachment-image').trigger('error')
     await flushPromises()
 
     expect(attachmentsCheck).toHaveBeenCalledWith('att_1')
+    // 附件本身可用，因此不谎报「附件不存在/已过期」，而是表达本机无法渲染
+    expect(wrapper.get('.cy-placeholder').text()).toContain('无法显示该附件')
+    expect(wrapper.get('.cy-placeholder-action').text()).toBe('重试')
+    // 坏元素被卸载，不再残留
+    expect(wrapper.find('img').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('渲染失败占位的重试会真正重新请求媒体（换 nonce），成功后才让位给媒体元素', async () => {
+    attachmentsCheck.mockResolvedValueOnce({ status: 'ok' })
+    const wrapper = mountMedia({ kind: 'image', attachmentId: 'att_1', mediaType: 'image/png' })
+    await wrapper.get('img.cy-attachment-image').trigger('error')
+    await flushPromises()
+    expect(wrapper.get('.cy-placeholder').text()).toContain('无法显示该附件')
+
+    // 重查仍 ok → 重挂载：nonce 递增、状态回 loading、占位让位给媒体元素
+    attachmentsCheck.mockResolvedValueOnce({ status: 'ok' })
+    await wrapper.get('.cy-placeholder-action').trigger('click')
+    await flushPromises()
+    const remounted = wrapper.get('img.cy-attachment-image')
+    expect(remounted.attributes('src')).toBe(`${MEDIA_URL_BASE}/attachment/att_1?t=1`)
     expect(wrapper.find('.cy-placeholder').exists()).toBe(false)
-    expect(wrapper.get('img.cy-attachment-image').attributes('src')).toBe(`${MEDIA_URL_BASE}/attachment/att_1?t=0`)
+
+    // 重新请求再次失败 → 仍回到渲染失败占位（不退化为静默坏元素）
+    await remounted.trigger('error')
+    await flushPromises()
+    expect(wrapper.get('.cy-placeholder').text()).toContain('无法显示该附件')
     wrapper.unmount()
   })
 

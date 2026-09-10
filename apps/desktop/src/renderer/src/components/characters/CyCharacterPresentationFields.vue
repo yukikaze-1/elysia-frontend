@@ -20,9 +20,22 @@ function updateBoolean(event: Event): void {
   emit('update', 'runtimeDefaults.proactive.enabled', (event.target as HTMLInputElement).checked)
 }
 
+/** 主动间隔的契约下限/上限（与输入框 min/max 同源，避免两处各写一份） */
+const INTERVAL_FALLBACK = 3600
+const INTERVAL_MIN = 60
+const INTERVAL_MAX = 86400
+
 function updateInterval(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  emit('update', 'runtimeDefaults.proactive.intervalSeconds', Number.isFinite(value) ? value : 3600)
+  const raw = (event.target as HTMLInputElement).value.trim()
+  // 2026-09-10 修复：`Number('')` 是 0（有限数），因此原实现把「清空输入框」解释成
+  // intervalSeconds=0，与输入框 min=60 冲突（native rangeUnderflow 会拦住整个表单提交，
+  // 而该字段位于折叠的「高级：主动对话」内，用户只会看到「点保存没反应」）。
+  // 清空/非数值/超界回退默认值；不夹取到边界，避免把用户的中间输入静默改写。
+  const parsed = Number(raw)
+  const value = raw === '' || !Number.isFinite(parsed) || parsed < INTERVAL_MIN || parsed > INTERVAL_MAX
+    ? INTERVAL_FALLBACK
+    : parsed
+  emit('update', 'runtimeDefaults.proactive.intervalSeconds', value)
 }
 </script>
 
@@ -74,7 +87,7 @@ function updateInterval(event: Event): void {
       </label>
       <label>
         <span>主动间隔（秒）</span>
-        <input data-field-path="/runtimeDefaults/proactive/intervalSeconds" type="number" min="60" max="86400" :value="draft.runtimeDefaults.proactive.intervalSeconds" @input="updateInterval" />
+        <input data-field-path="/runtimeDefaults/proactive/intervalSeconds" type="number" :min="INTERVAL_MIN" :max="INTERVAL_MAX" :value="draft.runtimeDefaults.proactive.intervalSeconds" @input="updateInterval" />
       </label>
       <label>
         <span>主动触发词（逗号分隔）</span>

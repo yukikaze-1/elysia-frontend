@@ -284,6 +284,60 @@ describe('CyCharacterEditor 角色编辑器', () => {
     wrapper.unmount()
   })
 
+  // 2026-09-10 修复：表单原先把保存反馈完全交给浏览器原生约束校验。真机（Chromium 实测）中
+  // 无效字段位于折叠的 <details>（高级：主动对话）内时，Chrome 既不展开也不移动焦点，
+  // 原生气泡在 display:none 子树中无处渲染 → 用户看到「点保存没反应且零提示」。
+  // 修复 = 表单 novalidate + 提交前自查 checkValidity()，并把原因就地渲染出来。
+  it('表单声明 novalidate：原生约束不再在提交时静默拦截整个表单', () => {
+    const editor = useCharacterEditorStore()
+    editor.beginEdit(detailFixture())
+    const wrapper = mountEditor({ detail: detailFixture() })
+    expect(wrapper.get('.cy-character-editor-form').attributes('novalidate')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('原生约束未通过时就地给出原因、展开折叠区，且不进入确认弹窗与远端写入', async () => {
+    const editor = useCharacterEditorStore()
+    editor.beginEdit(detailFixture())
+    const wrapper = mountEditor({ detail: detailFixture() }, document.body)
+    await wrapper.get('input[name="displayName"]').setValue('约束拦截')
+
+    // happy-dom 不实现约束校验算法：显式模拟真实浏览器在 checkValidity() 时派发 invalid
+    // 事件（真实浏览器从失败控件派发并冒泡至 form，组件在 form 上以捕获阶段收集）
+    const interval = wrapper.get('[data-field-path="/runtimeDefaults/proactive/intervalSeconds"]').element as HTMLInputElement
+    const form = wrapper.get('.cy-character-editor-form').element as HTMLFormElement
+    const checkValidity = vi.spyOn(form, 'checkValidity').mockImplementation(() => {
+      interval.dispatchEvent(new Event('invalid', { bubbles: true, cancelable: true }))
+      return false
+    })
+    try {
+      const confirm = setConfirm(true)
+      await wrapper.get('.cy-character-editor-form').trigger('submit')
+      await flushPromises()
+
+      expect(checkValidity).toHaveBeenCalled()
+      // 不弹确认、不写远端——但必须有可见原因
+      expect(confirm).not.toHaveBeenCalled()
+      expect(updateCharacter).not.toHaveBeenCalled()
+      const block = wrapper.get('.cy-editor-error.native-block')
+      expect(block.attributes('role')).toBe('alert')
+      expect(block.text()).toContain('主动间隔（秒）')
+      expect(block.text()).toContain('/runtimeDefaults/proactive/intervalSeconds')
+      expect(block.text()).toContain('不符合输入要求')
+      // 失败字段所在折叠区被展开，避免「有提示但看不见」
+      expect(wrapper.get('details.cy-advanced-fields').attributes('open')).toBeDefined()
+      // 同一问题也进校验列表（issue 只带 path + 原因，字段名由上方 blockedMessage 给出），可点击定位
+      expect(wrapper.get('.cy-validation-summary').text()).toContain('草稿未通过校验，暂不能保存')
+      const issue = wrapper.get('.cy-issue-list button')
+      expect(issue.text()).toContain('不符合输入要求')
+      expect(issue.text()).toContain('/runtimeDefaults/proactive/intervalSeconds')
+      await wrapper.get('.cy-issue-list button').trigger('click')
+    } finally {
+      checkValidity.mockRestore()
+      wrapper.unmount()
+    }
+  })
+
   it('校验问题的深层路径会展开高级折叠区并聚焦对应输入', async () => {
     const editor = useCharacterEditorStore()
     editor.beginEdit(detailFixture())
