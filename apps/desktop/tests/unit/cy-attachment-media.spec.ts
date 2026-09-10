@@ -124,10 +124,14 @@ describe('CyAttachmentMedia 附件分发', () => {
     wrapper.unmount()
   })
 
-  // pinning existing behavior：媒体元素 error 后若 attachmentsCheck 直接返回 ok，组件把 mediaStatus 置回 ok，
-  // 但 nonce 不变，即用同一个 URL 立刻重新挂载媒体（与占位重试路径的 ?t=+1 不同）。
-  // 若该 URL 本身持续失败，会形成 error→check→ok→重挂载 的循环；此处只锁定现状，不视为期望语义。
-  it('（锁定现状）媒体 error 但分类查询返回 ok 时以同一 URL 重新挂载媒体', async () => {
+  // pinning existing behavior：媒体元素 error 后若 attachmentsCheck 直接返回 ok，组件把 mediaStatus 置回 ok。
+  //
+  // 2026-09-10 复核更正：本用例初版标题为「以同一 URL 重新挂载媒体」，**该表述不准确**——
+  // 实测（临时探针：error 前后 DOM 节点同一、src 不变、attachmentsCheck 调用次数恰等于手动触发次数）
+  // 证明 mediaStatus 由 loading 变 ok 时两者同处媒体分支，子组件**不重挂载**，因此不存在自循环。
+  // 真实缺陷是：元素已损坏却置状态为 ok → 占位永不出现 → 用户面对静默损坏的媒体元素，既无解释也无法重试。
+  // 本用例锁定的正是这个现状（占位不存在 + src 未变），它同时也是「不重挂载」的证据。
+  it('（锁定现状）媒体 error 但分类查询返回 ok 时不重挂载、不出现占位（元素保持损坏且无重试入口）', async () => {
     attachmentsCheck.mockResolvedValueOnce({ status: 'ok' })
     const wrapper = mountMedia({ kind: 'image', attachmentId: 'att_1', mediaType: 'image/png' })
     await wrapper.get('img.cy-attachment-image').trigger('error')
