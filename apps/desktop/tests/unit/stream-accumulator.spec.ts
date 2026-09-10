@@ -56,7 +56,71 @@ function completed(): BackendEvent {
   }
 }
 
+function generationStarted(generationId: string, messageId: string, responseId: string, conversationId: string): BackendEvent {
+  return {
+    eventId: `started-${generationId}`,
+    sequence: 1,
+    event: 'generation.started',
+    generationId,
+    messageId,
+    responseId,
+    conversationId
+  }
+}
+
+function generationDelta(generationId: string, segmentId: string, text: string): BackendEvent {
+  return {
+    eventId: `delta-${generationId}`,
+    sequence: 2,
+    event: 'generation.delta',
+    generationId,
+    segmentId,
+    segmentIndex: 0,
+    channel: 'public_reply',
+    kind: 'text',
+    deltaSequence: 0,
+    text
+  }
+}
+
+function generationCompleted(generationId: string, responseId: string): BackendEvent {
+  return {
+    eventId: `completed-${generationId}`,
+    sequence: 3,
+    event: 'generation.completed',
+    generationId,
+    responseId
+  }
+}
+
 describe('StreamAccumulator 流式归组', () => {
+  it('A/B generation 交错时各自按 generation 身份收口，terminal 缺 conversationId 不串会话', () => {
+    const accumulatorA = new StreamAccumulator()
+    const accumulatorB = new StreamAccumulator()
+
+    // The transport can interleave two independent streams.  The terminal
+    // events intentionally omit conversationId: started is the only event
+    // that establishes that identity, while each accumulator owns one
+    // generationId.
+    accumulatorA.apply(generationStarted('generation-a', 'message-a', 'response-a', 'conversation-a'))
+    accumulatorB.apply(generationStarted('generation-b', 'message-b', 'response-b', 'conversation-b'))
+    accumulatorA.apply(generationDelta('generation-a', 'segment-a', 'A'))
+    accumulatorB.apply(generationDelta('generation-b', 'segment-b', 'B'))
+    accumulatorB.apply(generationCompleted('generation-b', 'response-b'))
+    accumulatorA.apply(generationCompleted('generation-a', 'response-a'))
+
+    expect(accumulatorA.getState()).toMatchObject({
+      generationId: 'generation-a', messageId: 'message-a', responseId: 'response-a',
+      conversationId: 'conversation-a', status: 'completed'
+    })
+    expect(accumulatorA.toAssistantSegments().map((segment) => segment.text)).toEqual(['A'])
+    expect(accumulatorB.getState()).toMatchObject({
+      generationId: 'generation-b', messageId: 'message-b', responseId: 'response-b',
+      conversationId: 'conversation-b', status: 'completed'
+    })
+    expect(accumulatorB.toAssistantSegments().map((segment) => segment.text)).toEqual(['B'])
+  })
+
   it('按 responseId 归组多个分段,segmentIndex 全局排序', () => {
     const acc = new StreamAccumulator()
     acc.apply(started())

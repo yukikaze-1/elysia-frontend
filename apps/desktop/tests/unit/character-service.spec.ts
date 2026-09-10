@@ -160,6 +160,44 @@ describe('CharacterService 角色编排', () => {
     expect(port.getMe).toHaveBeenCalledTimes(1)
   })
 
+  it('同键 state GET 的旧世代在途请求不阻塞新世代读取，也不污染新缓存', async () => {
+    let epoch = 1
+    const { port, mock } = makePort()
+    type State = Awaited<ReturnType<MockCharacterBackend['getCharacterState']>>
+    const resolvers: Array<(value: State) => void> = []
+    port.getCharacterState = vi.fn(() => new Promise<State>((resolve) => { resolvers.push(resolve) }))
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, getConnectionEpoch: () => epoch })
+
+    const oldRead = service.getCharacterState('instance-elysia')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(port.getCharacterState).toHaveBeenCalledTimes(1)
+
+    epoch = 2
+    const freshRead = service.getCharacterState('instance-elysia')
+    await Promise.resolve()
+    await Promise.resolve()
+    // syncEpoch releases the old same-key registration before starting the
+    // new one; an old unresolved promise must never dedupe the new epoch.
+    expect(port.getCharacterState).toHaveBeenCalledTimes(2)
+
+    const source = await mock.getCharacterState('instance-elysia')
+    const freshState = { ...source, stateVersion: source.stateVersion + 1 }
+    resolvers[1]?.(freshState)
+    await expect(freshRead).resolves.toMatchObject({ stateVersion: freshState.stateVersion })
+
+    const oldState = { ...source, stateVersion: source.stateVersion }
+    resolvers[0]?.(oldState)
+    await expect(oldRead).rejects.toMatchObject({
+      code: CyreneErrorCode.NOT_CONNECTED,
+      details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.staleConnection }
+    })
+
+    const cached = await service.getCharacterState('instance-elysia')
+    expect(cached.stateVersion).toBe(freshState.stateVersion)
+    expect(port.getCharacterState).toHaveBeenCalledTimes(2)
+  })
+
   it('reset evolution 受能力/epoch/实例互斥保护，并只失效目标 state cache', async () => {
     let epoch = 1
     const { port, mock } = makePort()
@@ -200,6 +238,51 @@ describe('CharacterService 角色编排', () => {
     await expect(disabled.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: 2 }))
       .rejects.toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.profilesUnavailable } })
     expect(port.resetCharacterEvolution).toHaveBeenCalledTimes(2)
+  })
+
+  it('reset 旧世代迟到安全失败且不自动重放；新世代先读 state 再使用新的 expectedStateVersion', async () => {
+    let epoch = 1
+    const { port, mock } = makePort()
+    const service = new CharacterService({ backend: port, getFeatures: () => mock.features, getConnectionEpoch: () => epoch })
+    const initial = await service.getCharacterState('instance-elysia')
+
+    let resolveLate: ((value: Awaited<ReturnType<MockCharacterBackend['resetCharacterEvolution']>>) => void) | undefined
+    vi.mocked(port.resetCharacterEvolution).mockImplementationOnce(() => new Promise((resolve) => { resolveLate = resolve }))
+    const staleReset = service.resetCharacterEvolution({
+      characterInstanceId: 'instance-elysia',
+      expectedStateVersion: initial.stateVersion
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    epoch = 2
+    // Resolve the old backend operation only to model a late response.  The
+    // service must discard it and must not retry this side-effecting command.
+    const lateResult = await mock.resetCharacterEvolution({
+      characterInstanceId: 'instance-elysia',
+      expectedStateVersion: initial.stateVersion
+    })
+    resolveLate?.(lateResult)
+    await expect(staleReset).rejects.toMatchObject({
+      code: CyreneErrorCode.NOT_CONNECTED,
+      details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.staleConnection }
+    })
+    expect(port.resetCharacterEvolution).toHaveBeenCalledTimes(1)
+
+    // A new epoch must establish a fresh state version before issuing another
+    // reset.  This second call is explicit, never a framework replay.
+    const freshState = await service.getCharacterState('instance-elysia')
+    expect(freshState.stateVersion).toBe(lateResult.state.stateVersion)
+    const next = await service.resetCharacterEvolution({
+      characterInstanceId: 'instance-elysia',
+      expectedStateVersion: freshState.stateVersion
+    })
+    expect(port.resetCharacterEvolution).toHaveBeenCalledTimes(2)
+    expect(port.resetCharacterEvolution).toHaveBeenNthCalledWith(2, {
+      characterInstanceId: 'instance-elysia',
+      expectedStateVersion: freshState.stateVersion
+    })
+    expect(next.state.stateVersion).toBe(freshState.stateVersion + 1)
   })
 
   it('clearCache 使在途结果不再复用或回填缓存，但不伪装成连接变化错误', async () => {

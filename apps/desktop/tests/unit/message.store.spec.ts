@@ -46,6 +46,17 @@ function started(): GenerationStartedEvent { return { eventId: 'e', sequence: 1,
 function delta(seg: string, seq: number, text: string): GenerationDeltaEvent { return { eventId: 'e', sequence: 2, event: 'generation.delta', generationId: 'gen-1', segmentId: seg, segmentIndex: 0, channel: 'public_reply', kind: 'markdown', deltaSequence: seq, text } }
 function failed(code: string, message: string, retryable?: boolean): BackendEvent { return { eventId: 'e', sequence: 3, event: 'generation.failed', generationId: 'gen-1', error: { code, message, retryable } } }
 
+function completedWithoutConversationId(generationId = 'gen-1', responseId = generationId): BackendEvent {
+  return {
+    eventId: `completed-${generationId}`,
+    sequence: 3,
+    event: 'generation.completed',
+    generationId,
+    responseId,
+    usage: { input: 1, output: 2, total: 3, source: 'provider_reported' }
+  }
+}
+
 /** F2:归属守卫依赖 currentId——默认注入当前会话;显式改状态用 setCurrent */
 function setCurrent(id: string | undefined): void {
   useConversationStore().$patch({ currentId: id })
@@ -64,6 +75,46 @@ describe('messageStore 流式应用', () => {
     expect(store.byId['msg-1']?.status).toBe('completed')
     expect(store.byId['msg-1']?.usage?.total).toBe(3)
     expect(store.byId['msg-1']?.emotion).toBe('happy')
+  })
+
+  it('generation.completed 缺 conversationId 仍按 started 的 generation 归属完成，不回退 currentId', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(delta('seg-1', 0, '按 started 归属'))
+    store.applyEvent(completedWithoutConversationId())
+
+    expect(store.byId['msg-1']?.conversationId).toBe('conv-1')
+    expect(store.byId['msg-1']?.status).toBe('completed')
+    expect(store.byId['msg-1']?.assistantSegments?.[0]?.text).toBe('按 started 归属')
+    expect(store.generationByConversation['gen-1']).toBeUndefined()
+    expect(store.droppedEvents).toBe(0)
+  })
+
+  it('切换当前会话后 A 的无 conversationId terminal 不会写入 B', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent(delta('segment-a', 0, 'A 的部分内容'))
+
+    // The renderer intentionally has one active accumulator.  Starting B
+    // closes A locally; a late A terminal must be rejected by generationId
+    // ownership instead of being interpreted in the newly active session.
+    setCurrent('conv-2')
+    store.applyEvent({
+      ...started(),
+      generationId: 'gen-b',
+      messageId: 'msg-b',
+      responseId: 'gen-b',
+      conversationId: 'conv-2'
+    })
+    store.applyEvent(completedWithoutConversationId('gen-b'))
+    store.applyEvent(completedWithoutConversationId('gen-1'))
+
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.byId['msg-1']?.assistantSegments?.[0]?.text).toBe('A 的部分内容')
+    expect(store.byId['msg-b']?.conversationId).toBe('conv-2')
+    expect(store.byId['msg-b']?.status).toBe('completed')
+    expect(store.byId['msg-b']?.assistantSegments).toEqual([])
+    expect(store.droppedEvents).toBe(1)
   })
 
   it('generationId 守卫:跨代 delta 丢弃', () => {
