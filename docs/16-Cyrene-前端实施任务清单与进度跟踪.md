@@ -63,10 +63,10 @@
 | 文档结构 | `pnpm docs:check` | PASS |
 | 敏感信息扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（扫描 715 文件、按规则豁免 557 行、allowlist 放行 63 行） |
 | 单元测试 | `pnpm test` | PASS（193 files / 2524 passed + 7 expected-fail + 21 skipped） |
-| 集成测试 | `pnpm test:integration` | 本机 PASS（22 files；本机存在 Live2D 偶发，见评估记录 §8.2）；**CI 结果见评估记录 §7** |
+| 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） |
 | 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 |
 | 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 |
-| GitHub CI | `.github/workflows/ci.yml` | 见评估记录 §7（推送后回填） |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS**（`b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：5 个 job 全绿；自 2026-08-16 以来首次） |
 
 维护规则：
 
