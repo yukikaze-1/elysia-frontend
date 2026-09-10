@@ -4,16 +4,25 @@
 // 本地提交前可传 `--include-untracked`，把未忽略的新文件一并纳入 → 黑名单 → 行级 allowlist。
 //  - 排除：third_party/（vendor，见 core 注释）+ vendored live2d 两树 + 扫描器自身三文件（HIGH-1/R2 备注：
 //    自排除名单是恒定盲区——任何变更（增删文件/加通配）须过 review）；out//dist/ 未跟踪天然不扫；.playwright-mcp/ 未跟踪同不扫。
+//    另有**按规则**排除（core RULE_FILE_EXCLUSIONS）：文件仍扫其余规则，只不套用某条通用启发式。
 //  - allowlist 为行级锚定（path 精确 + anchor 正则 + 人核理由）；fail-loud——锚定不命中任何行即报错。
 //  - 任一违规或 fail-loud 错误 → exit 1；全绿 → exit 0 + 摘要。
+//
+// 2026-09-10 门禁漂移整改（背景：该门自 2026-08-29 起长期全红、事实失效，掩盖了同期 CI 里的真实回归）：
+//  ① `base64-long-string` 由「够长」收窄为「像秘密」（core isSecretLikeBase64，附实测检出保真度）；
+//  ② allowlist 由 249 条重算为 56 条——删掉的 192 条都是「文件里有 40+ 长串」这一失效理由的产物；
+//  ③ 新增按规则文件排除承接锁文件的 npm integrity 哈希。
+//  维护纪律不变：新增命中仍须走 fail-loud + 人工理由，禁止用通配锚定批量放行。
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   SECRET_BLACKLIST,
+  RULE_FILE_EXCLUSIONS,
   isExcludedPath,
   isSelfExcludedFile,
+  isRuleExcludedForPath,
   scanSecretsInText,
   allowlistEntryFor,
   allowlistEntryMatches
@@ -21,10 +30,16 @@ import {
 
 // ── 行级 allowlist：{ path: 仓库相对路径（精确）; anchor: RegExp（锚定段）; reason: 人工核对理由 } ──
 // 纪律：每条必须注明「已人工核对无真实秘密」的依据（来源与形态）；锚定段取命中行内最能定位该行
-// 的片段（防行号漂移 + 防别的正则变体静默换锚）。锚定段与 2026-08-22 首跑逐行核对记录一致
-// （task-7-report.md 附完整核对清单）。
+// 的片段（防行号漂移 + 防别的正则变体静默换锚）。
+//
+// 2026-09-10 重算（门禁漂移整改）：`base64-long-string` 收窄为「像秘密」（见 core isSecretLikeBase64）
+// 后，原 249 条中 192 条类别级条目已不再命中——它们当初存在的唯一理由是「这个文件里有 40+ 长串」，
+// 而被命中的其实是相对 import 路径、camelCase 标识符串与 hex 摘要。重算后保留 55 条（全部为具名假值/
+// 散文自引用，理由原文未改），新增 1 条；条目总数 249 → 56。
+// 历史核对记录：2026-08-22 首跑逐行核对（task-7-report.md 附完整清单）；本次重算不修改任何保留条目的
+// reason，仅删除已失效条目——删除属"命中面缩小"，不是放宽既有豁免。
 const ALLOWLIST = [
-  // ── src/main：注释散文（描述协议/RULES 行为，无秘密实例） ──
+  // ── 应用代码与测试夹具 ──
   {
     path: 'apps/desktop/src/main/diagnostics/redact.ts', anchor: /Bearer token 先被长串规则命中/,
     reason: 'RULES 顺序注释散文「（否则 Bearer token 先被…命中）」——已人工核对无真实秘密（仅描述性文字）'
@@ -37,8 +52,6 @@ const ALLOWLIST = [
     path: 'apps/desktop/src/main/transport/real-backend.ts', anchor: /Authorization Bearer \+ content-type/,
     reason: 'restFetch 注释散文（「Authorization Bearer + content-type」）——已人工核对无真实秘密'
   },
-
-  // ── tests/unit：纯测试夹具与断言（全部为示例假值，无真实凭据） ──
   {
     path: 'apps/desktop/tests/unit/audit.spec.ts', anchor: /with Bearer abc\.def-ghi_123XYZ/,
     reason: 'audit 夹具 summary 示例值 abc.def-ghi_123XYZ——已人工核对为假 token（非凭据，仅验证脱敏）'
@@ -131,8 +144,7 @@ const ALLOWLIST = [
     path: 'apps/desktop/tests/unit/redact.spec.ts', anchor: /≥40 Bearer token 由 Bearer 规则命中/,
     reason: 'it 标题散文（顺序回归描述）——已人工核对无真实秘密'
   },
-
-  // ── docs：设计/计划/决策记录散文与内嵌代码样例（无秘密实例） ──
+  // ── 文档（设计/决策/历史记录中的散文与内嵌样例） ──
   {
     path: 'docs/02-Cyrene-前后端通信协议与前端数据结构-v0.2.md', anchor: /GET \+ Bearer \+ `safeParse`/,
     reason: '阶段 6 批次 C 实现注记散文（GET + Bearer + safeParse 描述）——已人工核对无真实秘密'
@@ -140,11 +152,6 @@ const ALLOWLIST = [
   {
     path: 'docs/review/2026-08-29-doc16实施进度历史归档.md', anchor: /静态 Bearer \+ `AGENT_ACCESS_TOKEN`/,
     reason: 'B-02 条目散文（契约描述「静态 Bearer + AGENT_ACCESS_TOKEN」）——无赋值形态，无秘密实例'
-  },
-  {
-    path: 'docs/review/2026-08-27-阶段7批次C-验收.md', anchor: /10160fc553e601fa7c20d079c4f292c8f424be01/,
-    rules: ['base64-long-string'],
-    reason: '7C 验收记录 HEAD 提交 SHA（40 hex，公开 git 对象标识，确定性非秘密）——已人工核对无真实凭据'
   },
   {
     path: 'docs/review/2026-08-29-doc16实施进度历史归档.md', anchor: /激活 \+ Bearer \+ 错误映射/,
@@ -167,47 +174,47 @@ const ALLOWLIST = [
     reason: 'D6C-11 决策表散文（real 实现描述）——已人工核对无真实秘密'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /Bearer token → Bearer \[REDACTED\]/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /Bearer token → Bearer \[REDACTED\]/,
     reason: '内嵌 redact 单测首行（计划文档的代码样例）——假值/散文'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /auth: Bearer abc\.def-ghi_123XYZ/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /auth: Bearer abc\.def-ghi_123XYZ/,
     reason: '内嵌 redact 单测样例（与 redact.spec.ts:7 同一假值）——假 token'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /key=sk-abc123DEF456ghi789/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /key=sk-abc123DEF456ghi789/,
     reason: '内嵌 redact 单测样例——假串，非 SK-API 凭据'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /key=AKIAIOSFODNN7EXAMPLE/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /key=AKIAIOSFODNN7EXAMPLE/,
     reason: 'AWS 官方文档示例 key（公开样例）——假值非真实 Access Key'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /Bearer token 先被长串规则命中/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /Bearer token 先被长串规则命中/,
     reason: '内嵌 redact.ts 注释（与 redact.ts:3 同源散文）——无真实秘密'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /token: 'Bearer abc\.def-ghi_123XYZ'/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /token: 'Bearer abc\.def-ghi_123XYZ'/,
     reason: '内嵌 logger.spec 样例（与 logger.spec.ts:55 同源假值）——假 token'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-09-phase1-trusted-services.md', anchor: /with Bearer abc\.def-ghi_123XYZ/,
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /with Bearer abc\.def-ghi_123XYZ/,
     reason: '内嵌 audit.spec 样例（与 audit.spec.ts:29 同源假值）——假 token'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-11-phase2-real-backend.md', anchor: /\.toBe\('Bearer sk-test'\)/,
+    path: 'docs/archive/plans/2026-08-11-phase2-real-backend.md', anchor: /\.toBe\('Bearer sk-test'\)/,
     reason: '内嵌 real-backend.spec 样例（与 spec.ts:87 同源假值）——假 token'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-11-phase2-real-backend.md', anchor: /透传 limit\/cursor \+ Bearer \+ 映射/,
+    path: 'docs/archive/plans/2026-08-11-phase2-real-backend.md', anchor: /透传 limit\/cursor \+ Bearer \+ 映射/,
     reason: '内嵌 it 标题散文——已人工核对无真实秘密'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-11-phase2-real-backend.md', anchor: /\.toBe\('Bearer sk-token'\)/,
+    path: 'docs/archive/plans/2026-08-11-phase2-real-backend.md', anchor: /\.toBe\('Bearer sk-token'\)/,
     reason: '内嵌 real-backend.spec 样例——假 token'
   },
   {
-    path: 'docs/superpowers/plans/2026-08-11-phase2-real-backend.md', anchor: /激活 \+ Bearer \+ 错误映射/,
+    path: 'docs/archive/plans/2026-08-11-phase2-real-backend.md', anchor: /激活 \+ Bearer \+ 错误映射/,
     reason: '内嵌 git commit -m 文案（提交信息描述）——已人工核对无真实秘密'
   },
   {
@@ -226,1030 +233,40 @@ const ALLOWLIST = [
     path: 'docs/superpowers/specs/2026-08-22-phase7-batcha-security-convergence-design.md', anchor: /`AGENT_ACCESS_TOKEN=`\/`ACCOUNT_TOKEN=`/,
     reason: 'D7A-14 决策表行（黑名单规则自引用——含正则字面量文本，整行两规则命中由本条目放行）——无秘密实例'
   },
-// ── 规则 base64-long-string（LOW① 补齐：redact 第 4 条 40+ 长串）类别级 allowlist ──
-// R2-1（review R2）：全部类别条目标注 rules: ['base64-long-string']——类别锚只豁免第 8 条规则；
-// 通用长串锚 /[A-Za-z0-9+\/]{40,}/ 与规则同型（不比规则更严——「更严」仅 sha512-/schemaHash- 类锚成立，
-// 其锚形窄于裸规则）：若不限定规则域，覆盖文件内「同时含 40+ run」的新增 Bearer/JWT/sk- 行会被静默放行。
-// 2026-08-22 全树核对：180 文件 1539 行命中全部为可公开类别（sha512 包哈希 1 文件 / 
-// 夹具 schemaHash 14 文件 / 词表·路径长串 165 文件），无真实凭据。
-// 「逐文件命中行数 = reason 声明数」校验经 R2 审计 0 错配；新文件命中 base64-long-string 无条目 → 违规 fail。
+  // ── 应用代码与测试夹具 ──
   {
-    path: "docs/review/2026-08-29-README状态历史归档.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
+    path: 'apps/desktop/src/main/tools/env-bridge.ts', anchor: /[A-Za-z0-9+/]{40,}/,
+    reason: 'base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
   },
   {
-    path: "apps/desktop/scripts/check-backend-contract.mjs", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
+    path: 'apps/desktop/tests/unit/redact.spec.ts', anchor: /[A-Za-z0-9+/]{40,}/,
+    reason: 'base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
   },
+  // ── 文档（设计/决策/历史记录中的散文与内嵌样例） ──
   {
-    path: "apps/desktop/src/main/connection/connection-config.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
+    path: 'docs/review/2026-08-29-doc17环境记录历史归档.md', anchor: /对散文「Bearer \+ 词」天然高误报/,
+    reason: 'bearer-token 命中 1 行——黑名单规则自引用说明散文（「Bearer + 词」误报说明——规则本体引用，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）', rules: ['bearer-token']
   },
   {
-    path: "apps/desktop/src/main/diagnostics/export-payload.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
+    path: 'docs/review/2026-08-22-阶段7批次A-决策记录.md', anchor: /D7A-14 \| 敏感扫描黑名单 \|/,
+    reason: 'agent/account-token-assign 命中 1 行（2 规则）——决策表 D7A-14 行内嵌黑名单正则字面量（AGENT_ACCESS_TOKEN/ACCOUNT_TOKEN 规则自引用——属「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）', rules: ['agent-access-token-assign', 'account-token-assign']
   },
   {
-    path: "apps/desktop/src/main/diagnostics/sanitize.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
+    path: 'docs/review/2026-08-29-doc17环境记录历史归档.md', anchor: /黑名单 8 规则：Bearer token/,
+    reason: '黑名单规则列示行（规则名/赋值形态字面量自引用——「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）', rules: ['bearer-token', 'agent-access-token-assign', 'account-token-assign']
   },
   {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-cancelled.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /[A-Za-z0-9+/]{40,}/,
+    reason: 'base64-long-string 命中本文件 11 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
   },
   {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-failed.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
+    path: 'docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md', anchor: /[A-Za-z0-9+/]{40,}/,
+    reason: 'base64-long-string 命中本文件 22 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
   },
+  // ── 应用代码与测试夹具 ──
   {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-no-delta-inner-voice.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-no-delta-public-reply.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-reconnect-replay.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-replay-nonempty.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-replay-tool.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/chat-tts-public-completed-only.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/handshake.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/legacy-output-compat.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/rejected-ack-empty-messageid.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/rejected-ack-storage-unavailable.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/server-info-full.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/fixtures/wire-v2/state-typing.manifest.json", anchor: /"schemaHash":"[0-9a-f]{40,}"/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为wire-v2 夹具 schemaHash/backendCommit（公开测试数据完整性值，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/tools/env-bridge.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/tools/tool-service.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/transport/protocol-v2/rest-mapper.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/transport/real-backend.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/windows/README.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/main/windows/navigation.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/components/CyDiagnosticsPane.vue", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/components/CyLive2DPane.vue", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/components/CyLiveToolCards.vue", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/components/CySecurityPane.vue", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/components/CyToolApproval.vue", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/components/CyVoicePane.vue", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/THIRD_PARTY_NOTICES.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/adapter.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/controller.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/gl/fake.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/gl/types.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/gl/webgl.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/mouth-level.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/param-anim.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/perf.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/state-machine.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/state-source.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/live2d/tts-mouth-source.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/stores/live2d.store.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/stores/tool.store.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/renderer/src/stores/voice.store.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/src/shared/schemas/ipc-response.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/integration/ipc-security.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/attachment-media.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/attachment-state.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/attachments-contracts.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/audit.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/chat-service.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/cy-chat-input.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/cy-diagnostics-pane.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/cy-security-pane.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/cy-tool-approval.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/cy-voice-pane.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/desktop-api-chat.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/diagnostics-handlers.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/frame-mapper.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/grant-store.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/history-contracts.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/live2d-adapter2.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/live2d-pane.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/live2d-panel.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/live2d-registry.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/live2d.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/markdown-sanitize.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/param-hash.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/protocol-live2d.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/public-error.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/raw-schemas.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/redact.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/renderer-bootstrap.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/schemas.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/tool-audit.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/tool-public-events.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/tool.store.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/voice-capture.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/voice-contracts.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/voice-handlers.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "apps/desktop/tests/unit/wire-fixtures.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/02-Cyrene-前后端通信协议与前端数据结构-v0.2.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/04-Cyrene-Desktop工具与权限交互设计-v0.2.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/05-Cyrene-Live2D前端接入设计-v0.2.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/10-Cyrene-前端实施路线与任务拆分-v0.2.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/11-Cyrene-前端设置中心详细设计.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/13-Cyrene-前端文档交叉Review与修订记录-v0.1.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/14-Cyrene-后端配合改造任务清单-v0.1.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/15-Cyrene-后端改造执行上下文与Prompt-v0.1.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-29-doc16实施进度历史归档.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 9 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 24 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-09-阶段1A-loading-env-code-review.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-11-阶段0与阶段1首次联调前复核整改清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-11-阶段2真实联调前端整改清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-13-Windows-Electron-二次真实联调前端整改清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-13-Windows-Electron-首次真实联调前端问题清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-13-首次联调封口问题修复报告.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-14-Windows-Electron-第三次真实联调前端阻断.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-15-阶段3-联调前整改-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-15-阶段3真实联调前端复验问题清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 7 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-15-阶段3真实联调前端整改清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-15-阶段3真实联调第二轮前端复验问题清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-15-阶段3真实联调通过-验收记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-15-阶段4批次A-验收记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-16-阶段4真实联调前端整改清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-17-阶段4修复后真实联调验收.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-18-阶段5-Live2D前端联调前整改清单.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-18-阶段5批次B-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-18-阶段5批次C-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 14 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-20-阶段6批次A-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-20-阶段6批次B-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-20-阶段6批次C-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-21-阶段6-真实联调验收.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    // —— 阶段 7 批次 A 文档（Task 8b 提交 f1046e8——门禁收口时新增漂移，Task 8 收口人工核对）——
-    // 两条文件均为批次说明性散文/路径/标识符长串（OnlyLoadAppFromAsar/EmbeddedAsarIntegrityValidation、
-    // 长路径串等——列 102/34/38/51 逐行已人工核对无真实秘密），按 docs/review 类别级条目同款入口放行。
-    path: "docs/review/2026-08-22-阶段7批次A-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读标识符/路径长串（ASAR 完整性字段名串，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（Fuses/verify:artifact/开发者模式说明行，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    // —— 阶段 7 批次 A 文档（Task 8b 提交 67b263d 后续迭代，门禁收口再核对）——
-    // docs/17 两条为流程说明散文行（扫描器排除目录/规则自引用说明——Task 7 报告「黑名单正则自引用」同族）；
-    // 决策记录 D7A-14 行为黑名单正则字面量文本（规则自引用——同族放行，见 Task 7 首跑清单第 3 类）。
-    path: "docs/review/2026-08-29-doc17环境记录历史归档.md", anchor: /排除目录：`third_party\/`/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中 1 行——排除目录说明散文（vendor 排除理由行，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-29-doc17环境记录历史归档.md", anchor: /对散文「Bearer \+ 词」天然高误报/,
-    rules: ['bearer-token'],
-    reason: `bearer-token 命中 1 行——黑名单规则自引用说明散文（「Bearer + 词」误报说明——规则本体引用，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-22-阶段7批次A-决策记录.md", anchor: /D7A-14 \| 敏感扫描黑名单 \|/,
-    rules: ['agent-access-token-assign', 'account-token-assign'],
-    reason: `agent/account-token-assign 命中 1 行（2 规则）——决策表 D7A-14 行内嵌黑名单正则字面量（AGENT_ACCESS_TOKEN/ACCOUNT_TOKEN 规则自引用——属「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    // —— 阶段 7 批次 A 文档（Task 8b 并行迭代再核对，门禁收口）——
-    // docs/08:395 = Fuses 兼容帧说明行（长标识符/路径串——非高熵）；docs/17:295 = 黑名单 8 规则列示行
-    // （规则名与赋值形态字面量——规则自引用散文，属「已人工核对无真实秘密」说明性示例）。
-    path: "docs/08-Cyrene-前端测试与Demo验收方案-v0.2.md", anchor: /Fuses \| verify:artifact 静态阶段/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中 1 行——Fuses/verify:artifact 说明行（长标识符/路径串，非高熵秘密）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    path: "docs/review/2026-08-29-doc17环境记录历史归档.md", anchor: /黑名单 8 规则：Bearer token/,
-    rules: ['bearer-token', 'agent-access-token-assign', 'account-token-assign'],
-    reason: `黑名单规则列示行（规则名/赋值形态字面量自引用——「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/2026-08-12-phase01-recheck-batchA-final-report.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/2026-08-12-phase2-realconn-batchC-final-report.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-08-phase1-foundation.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-09-phase1-ipc-security-integration.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-09-phase1-loading-env.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-09-phase1-trusted-services.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 11 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-10-phase2-contract-raw-wire.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-11-phase2-real-backend.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-11-phase2-realconn-preparation.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 24 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-11-phase2-store-ui.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-12-phase01-recheck-batchA.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-12-phase01-recheck-batchB.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-12-phase01-recheck-batchD.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-12-phase2-realconn-batchB.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 16 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-12-phase2-realconn-batchC.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-13-realint-fix.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-13-realint2-fix.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 11 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-14-phase3-attachments-media.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 82 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-14-phase3-history-drafts.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 74 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-14-phase3-historyviewer-emoji-a11y.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 71 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-14-phase3-layout-responsive.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 41 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-15-phase3-integration-fixes.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 7 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-15-phase3-rerun2-layout.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-15-phase3-reverify-fixes.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 19 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-15-phase4a-model-services-settings.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-16-phase4-voice-cleanup-fixes.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 10 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-16-phase4b-voice-settings.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 14 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-17-phase5-live2d-batcha-foundation.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 30 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-18-phase5-live2d-batchb-expression.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 27 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-18-phase5-live2d-batchc-closure.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 27 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-20-phase6-tools-batcha-contract-domain.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 18 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 22 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-20-phase6-tools-batchc-scoped-grants-admin.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 25 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-22-phase7-batcha-security-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 17 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-08-phase1-foundation-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-09-phase1-trusted-services-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-10-phase2-contract-raw-wire-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-11-phase2-real-backend-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-11-phase2-realconn-preparation-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-12-phase01-recheck-batchA-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-12-phase01-recheck-batchD-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-12-phase2-realconn-batchB-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 4 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-12-phase2-realconn-batchC-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-13-realint-fix-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-13-realint2-fix-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-14-phase3-attachments-media-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-14-phase3-history-drafts-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-14-phase3-historyviewer-emoji-a11y-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 8 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-14-phase3-layout-responsive-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 2 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-15-phase3-integration-fixes-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 10 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-15-phase3-rerun2-layout-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 6 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-15-phase3-reverify-fixes-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 15 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-15-phase4a-model-services-settings-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 5 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-16-phase4-voice-cleanup-fixes-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 16 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-16-phase4b-voice-settings-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 8 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-17-phase5-live2d-batcha-foundation-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 8 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-18-phase5-live2d-batchb-expression-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-18-phase5-live2d-batchc-closure-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-20-phase6-tools-batcha-contract-domain-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 11 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-20-phase6-tools-batchb-main-exec-ui-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 9 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-20-phase6-tools-batchc-scoped-grants-admin-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 6 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-22-phase7-batcha-security-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 3 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）`
-  },
-  {
-    path: "pnpm-lock.yaml", anchor: /sha512-[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 557 行——已人工核对全部为npm 包完整性哈希（registry sha512 公开字段，确定性非秘密）（逐文件核对 2026-08-22）`
-  },
-  // ── 阶段 7 批次 B 收口（Task 7 门禁）：Task 1~6 新落文档/测试的 base64-long-string 误报 ──
-  // 全部为可读路径/标识符长串（模块导入串 + 文档 git add 串），非高熵秘密——逐行人工核对 2026-08-26。
-  {
-    path: "apps/desktop/tests/unit/cy-renderer-crash-banner.spec.ts", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对为组件导入可读路径串（src/renderer/src/components/CyRendererCrashBanner.vue，非高熵秘密）（逐文件核对 2026-08-26）`
-  },
-  {
-    path: "docs/superpowers/plans/2026-08-25-phase7-batchb-stability-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 13 行——已人工核对全部为可读路径/标识符长串（模块导入串 + git add 串 + getLastCrash/contracts/corrupt-isolation 等标识符斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-25-phase7-batchb-stability-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（renderer/src/main.ts + getLastCrash 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
-  },
-  {
-    path: "docs/06-Cyrene-前端状态管理与本地存储设计-v0.2.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（createCorruptIsolation(deps) + main/persistence/corrupt-isolation.ts + { isolate, dropInvalid, pruneCorrupt } 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
-  },
-  {
-    path: "docs/review/2026-08-25-阶段7批次B-决策记录.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（createCorruptIsolation 的 { isolate, dropInvalid, pruneCorrupt } + logger/audit/countDiagnostic/safeRoot/realpath 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-26）`
-  },
-  // ── 阶段 7 批次 C（Task 6 门禁）：spec/plan 新落文档的 base64-long-string 误报 ──
-  // 全部为可读路径/标识符长串（模块导入串 + git add 串 + 虚拟行/估算函数标识符），非高熵秘密——逐行人工核对 2026-08-27。
-  {
-    path: "docs/superpowers/plans/2026-08-26-phase7-batchc-perf-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 15 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/utils/virtual-window.ts 等模块导入串 + git add 串 + estimateHeight/buildPrefix/captureAnchor/restoreScrollTop 标识符的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-26-phase7-batchc-perf-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 1 行——已人工核对为可读路径/标识符长串（estimateHeight/buildPrefix/computeWindow/captureAnchor/restoreScrollTop 的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
-  },
-  // ── 阶段 7 批次 D（Task 6 门禁）：spec/plan 新落文档的 base64-long-string 误报 ──
-  // 全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores,components,live2d,utils}/... 模块路径串
-  // + git add 串 + FrameBudget.getStats/needsDeferredRender/attachment.store.remove 等标识符的阅读性序列），
-  // 非高熵秘密——逐行人工核对 2026-08-27。锚 `/ [A-Za-z0-9+/]{40,}/` 与规则同型（类别级，仅豁免第 8 条规则域，
-  // 见 R2-1 注记）。
-  {
-    path: "docs/superpowers/plans/2026-08-27-phase7-batchd-convergence.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 19 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores/attachment.store,components/CyMessageList,components/CyMessageBubble,components/CyDiagnosticsPane,utils/virtual-window,live2d/perf,live2d/controller,stores/live2d.store,shared/contracts/live2d} 模块路径串 + git add 串 + FrameBudget.getStats/needsDeferredRender/remove() 补清 标识符的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
-  },
-  {
-    path: "docs/superpowers/specs/2026-08-27-phase7-batchd-convergence-design.md", anchor: /[A-Za-z0-9+/]{40,}/,
-    rules: ['base64-long-string'],
-    reason: `base64-long-string 命中本文件 9 行——已人工核对全部为可读路径/标识符长串（apps/desktop/src/renderer/src/{stores/attachment.store,stores/voice.store,stores/message.store,stores/live2d.store,utils/virtual-window,components/CyMessageBubble,components/CyDiagnosticsPane,live2d/perf,live2d/controller} 模块路径串的阅读性序列，非高熵秘密）（逐文件核对 2026-08-27）`
-  },
-  {
-    path: 'apps/desktop/src/renderer/src/tokens.css', anchor: /C-14（#29）：补齐组件引用的未定义 cy-\* token/,
-    rules: ['base64-long-string'],
-    reason: 'C-14 注释散文（描述四组件 token 引用与映射，无高熵秘密）——已人工核对无真实凭据'
-  },
-  {
-    path: 'docs/review/2026-08-28-C星其余与D01取证台账.md', anchor: /tokens\.css:root` 未定义 `--cy-bg/,
-    rules: ['base64-long-string'],
-    reason: 'C-14 取证记录散文（列 5 个未定义 CSS token 名与修复说明，无高熵秘密）——已人工核对无真实凭据'
-  },
-  {
-    path: 'docs/review/2026-08-28-架构债务清单.md', anchor: /一个 `class RealBackend implements BackendAdapter` 同时承担/,
-    rules: ['base64-long-string'],
-    reason: 'D1 架构债务记录散文（描述 RealBackend 职责清单，无高熵秘密）——已人工核对无真实凭据'
-  },
-  {
-    path: 'docs/review/2026-08-28-架构债务清单.md', anchor: /`conversation\.store\.ts` 引 5 个外部 store/,
-    rules: ['base64-long-string'],
-    reason: 'D5 架构债务记录散文（store 耦合清单，无高熵秘密）——已人工核对无真实凭据'
-  },
-  {
-    path: 'docs/review/2026-08-28-架构债务清单.md', anchor: /顶层解析 \*\*18 个\*\* `parseMock\*Env` 桥/,
-    rules: ['base64-long-string'],
-    reason: 'D6 架构债务记录散文（组合根解析/装配清单，无高熵秘密）——已人工核对无真实凭据'
+    path: 'apps/desktop/tests/unit/real-backend-character.spec.ts', anchor: /=== 'Bearer token-1'/,
+    reason: 'real-backend-character 断言假值 token-1（角色 REST 会话方法 authorization 透传）——已人工核对为假 token'
   },
 ]
 let failed = false
@@ -1310,6 +327,7 @@ const violations = []
 let scannedCount = 0
 let excludedCount = 0
 let allowedCount = 0
+let skippedByRule = 0
 for (const rel of trackedFiles) {
   // 排除 = 目录级 vendor（third_party/ + vendored live2d 两树）+ 扫描器自身三文件（HIGH-1：黑名单字面量/
   // 触发器必然命中自身且非秘密——被检面是本仓源码/文档/配置，不含扫描器本体）
@@ -1323,7 +341,11 @@ for (const rel of trackedFiles) {
     continue
   }
   scannedCount++
-  const hits = scanSecretsInText(content, SECRET_BLACKLIST)
+  // 按规则排除（2026-09-10）：文件仍参与其余规则扫描，只是不套用某条通用启发式规则——
+  // pnpm-lock.yaml 的 integrity sha512 天然是「40+ 高熵 base64」，见 core RULE_FILE_EXCLUSIONS。
+  const allHits = scanSecretsInText(content, SECRET_BLACKLIST)
+  const hits = allHits.filter((h) => !isRuleExcludedForPath(h.name, rel))
+  skippedByRule += allHits.length - hits.length
   if (hits.length === 0) continue
   const entries = allowlistByPath.get(rel) ?? []
   for (const hit of hits) {
@@ -1360,5 +382,5 @@ if (failed) {
   console.error('verify:sensitive 失败')
   process.exit(1)
 }
-ok(`扫描 ${scannedCount} 文件（排除 ${excludedCount} 个：third_party/ + vendored live2d 两树 + 扫描器自身）、allowlist 放行 ${allowedCount} 行、黑名单 ${SECRET_BLACKLIST.length} 规则`)
+ok(`扫描 ${scannedCount} 文件（排除 ${excludedCount} 个：third_party/ + vendored live2d 两树 + 扫描器自身）、按规则豁免 ${skippedByRule} 行（${Object.entries(RULE_FILE_EXCLUSIONS).map(([r, ps]) => `${r}@${ps.join(',')}`).join('; ')}）、allowlist 放行 ${allowedCount} 行、黑名单 ${SECRET_BLACKLIST.length} 规则`)
 process.exit(0)

@@ -6,8 +6,10 @@ import {
   SECRET_BLACKLIST,
   EXCLUDED_DIR_PREFIXES,
   SELF_EXCLUDED_FILES,
+  RULE_FILE_EXCLUSIONS,
   isExcludedPath,
   isSelfExcludedFile,
+  isRuleExcludedForPath,
   scanSecretsInText,
   allowlistEntryFor,
   allowlistEntryMatches
@@ -35,7 +37,8 @@ describe('verify:sensitive 核心（黑名单规则集，D7A-14 + review LOW①�
       { name: 'account-token-assign', trigger: 'ACCOUNT_TOKEN = "cyrene-dev-secret"' },
       { name: 'private-key-header', trigger: '-----BEGIN RSA PRIVATE KEY-----' },
       // 40+ 位 [A-Za-z0-9+/]（裸长串，redact 第 4 条原文形态——无 Bearer/sk-/AKIA 前缀也不漏检）
-      { name: 'base64-long-string', trigger: 'x = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"' }
+      // 2026-09-10 收窄后须「像秘密」：同时含大写/小写/数字（见下方 isSecretLikeBase64 专项 describe）
+      { name: 'base64-long-string', trigger: 'x = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"' }
     ]
     for (const c of cases) {
       const hits = scanSecretsInText(c.trigger)
@@ -72,6 +75,66 @@ describe('verify:sensitive 核心（黑名单规则集，D7A-14 + review LOW①�
     const custom = [{ name: 'my-secret', re: /MY_SECRET\s*=\s*\S+/ }]
     expect(scanSecretsInText('MY_SECRET=1', custom).map((h) => h.name)).toContain('my-secret')
     expect(scanSecretsInText('MY_SECRET=1', [])).toEqual([])
+  })
+})
+
+// 2026-09-10 门禁漂移整改：原规则是裸 `[A-Za-z0-9+/]{40,}`，而 `/` 在字符集内 → 任何 40+ 相对 import 路径、
+// camelCase 标识符串、词表串、hex 摘要都命中，命中面全靠逐文件人工 allowlist 承接 → 两周内腐烂、门禁长期全红。
+// 收窄为「像秘密」后：可读长串不再命中，真实 base64 凭据仍命中（检出保真度见 core 注释的实测数据）。
+describe('verify:sensitive 核心（base64-long-string 收窄：像秘密 vs 够长，2026-09-10）', () => {
+  const nameOf = (line: string) => scanSecretsInText(line).map((h) => h.name)
+
+  it('可读长串不再命中：相对 import 路径 / 斜杠连接标识符串 / hex 摘要', () => {
+    const benign = [
+      "import CyLive2DPanel from '../../src/renderer/src/components/CyLive2DPanel'", // 斜杠路径 + 大小写 + 数字
+      'settingsLoad/settingsSave/listLive2dModels',                                  // 斜杠连接驼峰标识符串
+      'const schemaHash = "c075c38c34b51c0584fcbf3ff4cdfbbf0a2ca07935a6331f2a5ef54b222ea254"', // 64 hex（无大写）
+      'commit 10160fc553e601fa7c20d079c4f292c8f424be01',                             // 40 hex git SHA（无大写）
+      'capabilities/transcription/command/wake/service'                              // 词表路径（无数字）
+    ]
+    for (const line of benign) {
+      expect(nameOf(line), `${line} 应无命中`).not.toContain('base64-long-string')
+    }
+  })
+
+  it('真实 base64 凭据仍命中：无 `/` 的、含 `/` 但高熵的、带 `=` 填充的', () => {
+    const real = [
+      'const key = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3gH5jK7mP9rS1"',       // 45 字符、无 `/`（no-slash 子句放行）
+      'const key = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3gH5jK7/mP9rS1"',      // 46 字符、含 `/`、H=4.75（熵子句放行）
+      'token: "Zm9vYmFyQkFSNjQxMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcA=="'     // 52 字符、带 `==` 填充
+    ]
+    for (const line of real) {
+      expect(nameOf(line), `${line} 应命中（像秘密）`).toContain('base64-long-string')
+    }
+  })
+
+  it('熵阈值挡掉的是可读斜杠串、不是随机串：两条只差可读性时判定相反', () => {
+    // 两条都 ≥40 字符、都含 `/`、都同时有大写/小写/数字——唯一差别是熵（4.11 vs 4.75，阈值 4.5）
+    expect(nameOf('p = "apps/desktop/src/renderer/src/components/CyLive2DPanel2"')).not.toContain('base64-long-string')
+    expect(nameOf('p = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1dF3gH5jK7/mP9rS1"')).toContain('base64-long-string')
+  })
+
+  it('accept 谓词只作用于拿到的子串，同一行其余规则不被遮蔽', () => {
+    // 同一行：长串被 accept 挡掉，但 Bearer 规则照常命中（规则域互不遮蔽）
+    const line = 'Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789, note = "apps/desktop/src/main/connection"'
+    expect(nameOf(line)).toContain('bearer-token')
+  })
+})
+
+describe('verify:sensitive 核心（按规则文件排除，2026-09-10）', () => {
+  it('RULE_FILE_EXCLUSIONS 只豁免列出的规则名，其余规则照扫', () => {
+    expect(RULE_FILE_EXCLUSIONS['base64-long-string']).toContain('pnpm-lock.yaml')
+    expect(isRuleExcludedForPath('base64-long-string', 'pnpm-lock.yaml')).toBe(true)
+    // 同一文件的其他规则不豁免（锁文件里的 token-in-URL / 赋值形态仍须检出）
+    expect(isRuleExcludedForPath('bearer-token', 'pnpm-lock.yaml')).toBe(false)
+    expect(isRuleExcludedForPath('agent-access-token-assign', 'pnpm-lock.yaml')).toBe(false)
+    // 其他文件不受影响
+    expect(isRuleExcludedForPath('base64-long-string', 'apps/desktop/src/main/index.ts')).toBe(false)
+  })
+
+  it('扫描器自身三文件仍是整文件排除（与按规则排除的区别）', () => {
+    expect(isSelfExcludedFile('apps/desktop/scripts/verify-sensitive-core.mjs')).toBe(true)
+    expect(isExcludedPath('pnpm-lock.yaml')).toBe(false) // 锁文件没有被整文件排除
   })
 })
 
