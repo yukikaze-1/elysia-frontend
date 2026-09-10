@@ -21,6 +21,20 @@ const ROOT = join(__dirname, '../../..')        // apps/desktop（helpers → in
 const RENDERER_OUT = join(ROOT, 'out/renderer') // apps/desktop/out/renderer
 const PRELOAD_OUT = join(ROOT, 'out/preload/index.js')
 
+// 进程退出兜底：用例忘记 closeApp（或 beforeAll 启动后断言先失败）时，应用不应活过测试进程。
+// 中断（Ctrl-C / kill）时进程来不及走 'exit'，那是 setup/orphan-apps.setup.ts 下次运行回收的场景。
+const liveApps = new Set<ElectronApplication>()
+let exitHookInstalled = false
+
+function installExitHook(): void {
+  if (exitHookInstalled) return
+  exitHookInstalled = true
+  process.on('exit', () => {
+    for (const app of liveApps) { try { void app.close() } catch { /* 尽力 */ } }
+    liveApps.clear()
+  })
+}
+
 // electron 包位置按 require 解析链定位：pnpm hoisted 干净 install 下 electron 在根 node_modules，
 // apps/desktop/node_modules 整个不存在（本地该目录是历史残留），硬编码子目录路径在全新环境 ENOENT（doc 17 P-14）
 const require = createRequire(import.meta.url)
@@ -71,6 +85,8 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
 
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
+    installExitHook()
+    liveApps.add(app)
     return { app, page, userData }
   } catch (err) {
     try { await app.close() } catch { /* 启动失败时尽力关闭 */ }
@@ -80,6 +96,7 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
 }
 
 export async function closeApp(launched: LaunchedApp, opts: { keepUserData?: boolean } = {}): Promise<void> {
+  liveApps.delete(launched.app)
   try { await launched.app.close() } catch { /* 已退出 */ }
   // 重启持久化（Task 15）：keepUserData 时保留 userData 供下次 launchApp(opts.userData) 复用
   if (!opts.keepUserData) { try { rmSync(launched.userData, { recursive: true, force: true }) } catch { /* 清理尽力 */ } }
@@ -103,4 +120,4 @@ export async function serveRenderer(): Promise<{ url: string; close(): Promise<v
   return { url: `http://127.0.0.1:${port}/index.html`, close: () => new Promise((r) => server.close(() => r())) }
 }
 
-export { chromium, PRELOAD_OUT, RENDERER_OUT } // trust-boundary/ipc/protocol spec 复用
+export { chromium, PRELOAD_OUT, RENDERER_OUT, ROOT } // trust-boundary/ipc/protocol spec 复用；ROOT 供 orphan 回收判据使用
