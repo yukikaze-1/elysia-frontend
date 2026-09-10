@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-11
 **执行方式：** TDD，subagent 逐任务执行，每任务独立 commit。
-**依据：** [spec](specs/2026-08-11-phase2-real-backend-design.md)（已 code-review 干净，commit `1d148d4`）、[2A plan](2026-08-10-phase2-contract-raw-wire.md)（raw 层/FrameMapper/Accumulator 已落地）、[docs/18 §16 阶段 B](18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md)、后端契约 `beeba577`
+**依据：** [spec](../specs/2026-08-11-phase2-real-backend-design.md)（已 code-review 干净，commit `1d148d4`）、[2A plan](2026-08-10-phase2-contract-raw-wire.md)（raw 层/FrameMapper/Accumulator 已落地）、[docs/18 §16 阶段 B](../../18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md)、后端契约 `beeba577`
 
 ## Goal
 

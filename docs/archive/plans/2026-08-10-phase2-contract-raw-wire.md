@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-10
 **执行方式：** TDD，subagent 逐任务执行，每任务独立 commit。
-**依据：** [spec](specs/2026-08-10-phase2-contract-raw-wire-design.md)（已 code-review 干净，commit `ec50060`）、[docs/18 §3-10](18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md)、后端契约 `beeba577`（`/home/yomu/elysia-agent/frontend_contract/`）
+**依据：** [spec](../specs/2026-08-10-phase2-contract-raw-wire-design.md)（已 code-review 干净，commit `ec50060`）、[docs/18 §3-10](../../18-Cyrene-Electron-真实后端契约差异与前端修复清单-2026-08-09.md)、后端契约 `beeba577`（`/home/yomu/elysia-agent/frontend_contract/`）
 
 ## Goal
 

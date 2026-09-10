@@ -2,7 +2,7 @@
 
 **日期：** 2026-08-11
 **执行方式：** TDD，subagent 逐任务执行，每任务独立 commit。
-**依据：** [spec](specs/2026-08-11-phase2-store-ui-design.md)（已 code-review 干净，commit `19f2ba7`）、[2B plan](2026-08-11-phase2-real-backend.md)（RealBackend/BackendAdapter 已落地）、[2A](2026-08-10-phase2-contract-raw-wire.md)（StreamAccumulator/BackendEvent）
+**依据：** [spec](../specs/2026-08-11-phase2-store-ui-design.md)（已 code-review 干净，commit `19f2ba7`）、[2B plan](2026-08-11-phase2-real-backend.md)（RealBackend/BackendAdapter 已落地）、[2A](2026-08-10-phase2-contract-raw-wire.md)（StreamAccumulator/BackendEvent）
 
 ## Goal
 

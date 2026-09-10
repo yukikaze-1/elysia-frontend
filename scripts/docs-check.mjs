@@ -11,8 +11,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const DOCS = join(ROOT, 'docs')
 const REVIEW = join(DOCS, 'review')
 const SUPERPOWERS = join(DOCS, 'superpowers')
+const ARCHIVE = join(DOCS, 'archive')
 const REVIEW_INDEX = join(REVIEW, 'README.md')
 const SUPERPOWERS_INDEX = join(SUPERPOWERS, 'README.md')
+const ARCHIVE_INDEX = join(ARCHIVE, 'README.md')
 const writeIndexes = process.argv.includes('--write-indexes')
 
 const toPosix = (value) => value.replaceAll('\\', '/')
@@ -64,6 +66,7 @@ function superpowersIndexContent() {
   const plans = markdownFiles(join(SUPERPOWERS, 'plans'))
 
   const section = (title, files, prefix = '') => {
+    if (files.length === 0) return `## ${title}（0）\n\n本目录已无此类文档（均已移入 [归档索引](../archive/README.md)）。`
     const rows = files.map((name) => {
       const label = name.slice(0, -3)
       return `| ${dateFromName(name)} | [${label}](./${prefix}${name}) |`
@@ -79,8 +82,9 @@ ${rows.join('\n')}`
 
 > 本文件由 \`pnpm docs:index\` 根据目录内容生成；不要手工维护条目。
 > 这些文件是历史设计与实施证据，不是当前状态源。当前项目状态以 [doc 16](../16-Cyrene-前端实施任务清单与进度跟踪.md) 为准。
+> 已有 final report 接管结论的批次已移入 [归档索引](../archive/README.md)；两处合计即全部历史记录。
 
-共 ${reports.length + specs.length + plans.length} 份文档。
+共 ${reports.length + specs.length + plans.length} 份现行文档。
 
 ${section('Final reports', reports)}
 
@@ -90,13 +94,67 @@ ${section('Plans', plans, 'plans/')}
 `
 }
 
+function archiveIndexContent() {
+  const reports = markdownFiles(join(ARCHIVE, 'reports'))
+  const specs = markdownFiles(join(ARCHIVE, 'specs'))
+  const plans = markdownFiles(join(ARCHIVE, 'plans'))
+
+  const rows = (files, prefix) =>
+    files
+      .map((name) => {
+        const label = name.slice(0, -3)
+        return `| ${dateFromName(name)} | [${label}](./${prefix}${name}) |`
+      })
+      .join('\n')
+
+  return `# 历史归档索引（阶段 0～2 与首轮联调整改）
+
+> 本文件由 \`pnpm docs:index\` 根据目录内容生成；不要手工维护条目。
+> 归档条件：**该批次已有 final report 接管结论**，且其设计/计划已被后续阶段与现行代码完全吸收。
+> 归档不等于失效：这些文件仍是契约与决策的唯一原始记录，可被引用；只是不再作为当前实现的必读入口。
+> 阶段 3 及之后没有 final report，其 spec/plan 仍是主要技术记录，因此留在 [superpowers 索引](../superpowers/README.md)。
+> 当前项目状态以 [doc 16](../16-Cyrene-前端实施任务清单与进度跟踪.md) 为准。
+
+共 ${reports.length + specs.length + plans.length} 份归档文档。按内容归属分布如下（表格按日期倒序，阶段信息以标题为准）：
+
+| 归属 | 文档数 | 对应文件名前缀 |
+|---|---:|---|
+| 阶段 1 安全骨架（地基 + 块 A/B/C） | 8 | \`2026-08-08-phase1-foundation\`、\`2026-08-09-phase1-*\` |
+| 阶段 2 核心聊天闭环（块 A/B/C + realconn A/B/C） | 16 | \`2026-08-1{0,1,2}-phase2-*\` |
+| 阶段 0/1 整改（复核批次 A～D） | 12 | \`2026-08-12-phase01-recheck-*\` |
+| 首次/二次真实联调整改 | 6 | \`2026-08-13-realint*-fix\` |
+
+> 阶段 0 没有独立 spec/plan：其协议与工程基线由 \`phase1-foundation\` 一并建立，实质性阶段 0 整改见 \`phase01-recheck-batchD\`。
+
+## Final reports（${reports.length}）
+
+| 日期 | 文档 |
+|---|---|
+${rows(reports, 'reports/')}
+
+## Specs（${specs.length}）
+
+| 日期 | 文档 |
+|---|---|
+${rows(specs, 'specs/')}
+
+## Plans（${plans.length}）
+
+| 日期 | 文档 |
+|---|---|
+${rows(plans, 'plans/')}
+`
+}
+
 const expectedReviewIndex = reviewIndexContent()
 const expectedSuperpowersIndex = superpowersIndexContent()
+const expectedArchiveIndex = archiveIndexContent()
 
 if (writeIndexes) {
   writeFileSync(REVIEW_INDEX, expectedReviewIndex, 'utf8')
   writeFileSync(SUPERPOWERS_INDEX, expectedSuperpowersIndex, 'utf8')
-  console.log('Updated docs/review/README.md and docs/superpowers/README.md')
+  writeFileSync(ARCHIVE_INDEX, expectedArchiveIndex, 'utf8')
+  console.log('Updated docs/review/README.md, docs/superpowers/README.md and docs/archive/README.md')
 }
 
 const errors = []
@@ -114,6 +172,7 @@ function assertGeneratedIndex(path, expected) {
 
 assertGeneratedIndex(REVIEW_INDEX, expectedReviewIndex)
 assertGeneratedIndex(SUPERPOWERS_INDEX, expectedSuperpowersIndex)
+assertGeneratedIndex(ARCHIVE_INDEX, expectedArchiveIndex)
 
 const coreDocs = readdirSync(DOCS)
   .filter((name) => /^\d{2}-.*\.md$/.test(name))
@@ -257,7 +316,8 @@ const linkSurfaces = [
   join(ROOT, 'README.md'),
   join(ROOT, 'CLAUDE.md'),
   REVIEW_INDEX,
-  SUPERPOWERS_INDEX
+  SUPERPOWERS_INDEX,
+  ARCHIVE_INDEX
 ]
 
 for (const name of coreDocs) {
@@ -278,6 +338,15 @@ if (errors.length > 0) {
   process.exit(1)
 }
 
+const superpowersCount =
+  markdownFiles(SUPERPOWERS).length +
+  markdownFiles(join(SUPERPOWERS, 'specs')).length +
+  markdownFiles(join(SUPERPOWERS, 'plans')).length
+const archiveCount =
+  markdownFiles(join(ARCHIVE, 'reports')).length +
+  markdownFiles(join(ARCHIVE, 'specs')).length +
+  markdownFiles(join(ARCHIVE, 'plans')).length
+
 console.log(
-  `Documentation check passed: ${coreDocs.length} core docs, ${markdownFiles(REVIEW).length} review records, ${markdownFiles(SUPERPOWERS).length + markdownFiles(join(SUPERPOWERS, 'specs')).length + markdownFiles(join(SUPERPOWERS, 'plans')).length} superpowers records`
+  `Documentation check passed: ${coreDocs.length} core docs, ${markdownFiles(REVIEW).length} review records, ${superpowersCount} superpowers records, ${archiveCount} archived records`
 )
