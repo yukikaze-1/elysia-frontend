@@ -24,18 +24,30 @@
    `runner.ts`，必须先显式执行 `electron-vite build --mode test`，runner 会拒绝普通
    development/production 构建，避免测试 appData 覆盖静默失效。
 
-3. 指定的 appData 必须由操作者预先创建，是系统临时目录下的独立真实子目录，目录本身不得是符号链接（例如 Windows 的 `C:\\Temp\\cyrene-stage-h-ud`）。其中已经由操作者配置好后端凭据。token 不作为命令行参数、环境变量或 Playwright 参数传入；Electron Main 从 Secret Store 读取。不要传生产 appData，也不要让 runner 创建或清理这个目录。
+3. 指定的 appData 必须由操作者预先创建，是系统临时目录下的独立真实子目录，目录本身不得是符号链接（Windows 示例见下方 `$env:TEMP`/`Join-Path`）。其中必须已经通过桌面客户端/Secret Store 配置好与本次 backend URL 相同端点的凭据；仅创建一个空目录不足以完成连接。token 不作为命令行参数、环境变量或 Playwright 参数传入；Electron Main 从 Secret Store 读取。不要传生产 appData，也不要让 runner 创建或清理这个目录。
 4. backend URL 必须与隔离 appData 中保存的凭据绑定一致。若已有绑定指向另一地址，runner 会拒绝自动切换，避免清除凭据。
 
 ## 运行
 
-PowerShell 示例（路径请替换为当前机器的隔离目录；不要使用生产 appData）：
+PowerShell 示例分为“准备路径”和“运行”两步。路径由当前机器的 `$env:TEMP` 推导，不要使用生产 appData：
 
 ```powershell
-$env:STAGE_H_BACKEND_URL = 'http://127.0.0.1:8765'
-$env:STAGE_H_APP_DATA = 'C:\Temp\cyrene-stage-h-ud'
-$env:STAGE_H_OUTPUT_DIR = 'C:\Temp\cyrene-stage-h-evidence'
+# —— 准备路径 ——
+$stageHAppData = Join-Path $env:TEMP 'cyrene-stage-h-ud'
+$stageHEvidence = Join-Path $env:TEMP 'cyrene-stage-h-evidence'
 
+# appData 必须在运行 runner 前已经存在，并已通过桌面客户端配置
+# http://127.0.0.1:8765 对应凭据；仅 New-Item 创建空目录不能完成连接。
+if (-not (Test-Path -LiteralPath $stageHAppData -PathType Container)) {
+  throw "请先准备并配置隔离 appData：$stageHAppData"
+}
+New-Item -ItemType Directory -Force -Path $stageHEvidence | Out-Null
+
+$env:STAGE_H_BACKEND_URL = 'http://127.0.0.1:8765'
+$env:STAGE_H_APP_DATA = $stageHAppData
+$env:STAGE_H_OUTPUT_DIR = $stageHEvidence
+
+# —— 运行 ——
 pnpm --filter @cyrene/desktop integration:stage-h -- `
   --scenario preflight
 
@@ -51,8 +63,8 @@ pnpm --filter @cyrene/desktop integration:stage-h -- `
 pnpm --filter @cyrene/desktop integration:stage-h -- `
   --scenario preflight `
   --backend-url 'http://127.0.0.1:8765' `
-  --app-data 'C:\Temp\cyrene-stage-h-ud' `
-  --output-dir 'C:\Temp\cyrene-stage-h-evidence'
+  --app-data $stageHAppData `
+  --output-dir $stageHEvidence
 ```
 
 查看帮助和场景：
