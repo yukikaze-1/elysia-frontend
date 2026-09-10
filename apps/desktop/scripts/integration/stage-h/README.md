@@ -14,13 +14,17 @@
 ## 前置条件
 
 1. 操作者手动启动后端；runner 绝不启动、停止、重启或代理正式后端。
-2. 已准备 `apps/desktop/out/` 构建产物，例如：
+2. 使用正式入口时，`preintegration:stage-h` 会自动执行 `electron-vite build --mode test`，生成带有 test-mode appData 安全门的 `apps/desktop/out/` 构建产物：
 
    ```powershell
-   pnpm --filter @cyrene/desktop build
+   pnpm --filter @cyrene/desktop integration:stage-h -- --help
    ```
 
-3. 指定的 appData 是隔离目录，其中已经由操作者配置好后端凭据。token 不作为命令行参数、环境变量或 Playwright 参数传入；Electron Main 从 Secret Store 读取。
+   这一步即使只查看帮助也会重建 test 产物；不要用普通 `pnpm build` 代替。若直接调用
+   `runner.ts`，必须先显式执行 `electron-vite build --mode test`，runner 会拒绝普通
+   development/production 构建，避免测试 appData 覆盖静默失效。
+
+3. 指定的 appData 必须由操作者预先创建，是系统临时目录下的独立真实子目录，目录本身不得是符号链接（例如 Windows 的 `C:\\Temp\\cyrene-stage-h-ud`）。其中已经由操作者配置好后端凭据。token 不作为命令行参数、环境变量或 Playwright 参数传入；Electron Main 从 Secret Store 读取。不要传生产 appData，也不要让 runner 创建或清理这个目录。
 4. backend URL 必须与隔离 appData 中保存的凭据绑定一致。若已有绑定指向另一地址，runner 会拒绝自动切换，避免清除凭据。
 
 ## 运行
@@ -64,7 +68,8 @@ pnpm --filter @cyrene/desktop integration:stage-h -- --list-scenarios
 
 - URL、隔离 appData、证据输出目录、角色/会话/实例 ID、marker 都是参数或环境变量；仓库不写死现场 ID、用户路径或 token。
 - `output/playwright/` 被列为禁止输出目录，原有现场 JSON/截图不会被覆盖或纳入提交。
-- 证据对 token、Bearer、凭据字段、绝对路径和 opaque ID 做脱敏；ID 只保留不可逆短 hash。
+- `--backend-commit`/`STAGE_H_BACKEND_COMMIT` 表示期望值：握手或场景解析出的真实 build SHA 必须与它相等，否则检查失败；证据同时保留实际 SHA 和期望 SHA，runner 不会用期望值覆盖实际值。
+- marker 只接受短的 ASCII 不透明标识符（不是自然语言或凭据）；如果后端把 marker 回显到回复、错误或清理异常，证据边界仍会精确脱敏。证据对 token、Bearer、凭据字段、绝对路径和 opaque ID 做脱敏；ID 只保留不可逆短 hash。
 - 临时资源统一通过 `CleanupStack` LIFO 清理。未来代理、端口转发、子进程必须注册到同一栈，并在 `finally` 中关闭；本阶段 runner 只需清理 Electron。
 - 当前 runner 不提供 `--token`，也不读取 `STAGE_H_ACCESS_TOKEN`；历史脚本若需要调试 API 的 token，不应被迁移进正式 runner。
 

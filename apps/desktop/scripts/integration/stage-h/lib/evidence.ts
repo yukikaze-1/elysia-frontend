@@ -12,6 +12,7 @@ export interface StageHEvidenceInput {
     protocolVersion?: string
     serverVersion?: string
     buildSha?: string
+    expectedBuildSha?: string
   }
   checks: Record<string, boolean>
   details?: unknown
@@ -31,6 +32,7 @@ export interface StageHEvidence {
     protocolVersion?: string
     serverVersion?: string
     buildSha?: string
+    expectedBuildSha?: string
   }
   checks: Record<string, boolean>
   passed: boolean
@@ -42,6 +44,11 @@ export interface StageHEvidence {
 export function allChecksPass(checks: Record<string, boolean>): boolean {
   const values = Object.values(checks)
   return values.length > 0 && values.every(Boolean)
+}
+
+/** Return true only when an explicitly requested backend build is observed. */
+export function backendBuildShaMatches(actual: string | undefined, expected: string | undefined): boolean {
+  return expected === undefined || (actual !== undefined && actual === expected)
 }
 
 export function assertChecks(checks: Record<string, boolean>): void {
@@ -58,7 +65,11 @@ function parseDuration(startedAt: string, endedAt: string): number {
   return Math.max(0, end - start)
 }
 
-export function buildEvidence(input: StageHEvidenceInput, roots: readonly string[] = []): StageHEvidence {
+export function buildEvidence(
+  input: StageHEvidenceInput,
+  roots: readonly string[] = [],
+  values: readonly string[] = []
+): StageHEvidence {
   const checks = { ...input.checks }
   const passed = allChecksPass(checks) && input.error === undefined && (input.cleanupErrors?.length ?? 0) === 0
   const evidence: StageHEvidence = {
@@ -71,13 +82,13 @@ export function buildEvidence(input: StageHEvidenceInput, roots: readonly string
     backend: input.backend,
     checks,
     passed,
-    ...(input.details === undefined ? {} : { details: redactForEvidence(input.details, { roots }) }),
-    ...(input.error === undefined ? {} : { error: safeError(input.error, roots) }),
+    ...(input.details === undefined ? {} : { details: redactForEvidence(input.details, { roots, values }) }),
+    ...(input.error === undefined ? {} : { error: safeError(input.error, roots, values) }),
     ...(input.cleanupErrors === undefined || input.cleanupErrors.length === 0
       ? {}
-      : { cleanupErrors: input.cleanupErrors.map((error) => safeError(error, roots)) })
+      : { cleanupErrors: input.cleanupErrors.map((error) => safeError(error, roots, values)) })
   }
-  return redactForEvidence(evidence, { roots }) as StageHEvidence
+  return redactForEvidence(evidence, { roots, values }) as StageHEvidence
 }
 
 export async function writeEvidence(path: string, evidence: StageHEvidence): Promise<void> {

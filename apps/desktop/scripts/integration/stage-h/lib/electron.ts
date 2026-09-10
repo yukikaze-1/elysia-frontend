@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module'
-import { existsSync, realpathSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { _electron, type ElectronApplication, type Page } from 'playwright'
 import type { StageHConfig } from './config.ts'
 
@@ -9,6 +10,20 @@ export interface StageHElectronSession {
   page: Page
   actualAppData: string
   actualUserData: string
+}
+
+// tests/integration/helpers/desktop-api.d.ts intentionally exposes a narrow
+// Window.desktopApi shape for older suites.  Keep the runner's page boundary
+// explicit instead of depending on one global declaration being complete.
+interface StageHDesktopApi {
+  getEndpoint(): Promise<{ endpoint?: string }>
+  setEndpoint(url: string): Promise<{ endpoint: string }>
+  connect(): Promise<unknown>
+  getConnectionState(): Promise<Record<string, unknown>>
+  getRuntimeInfo(): Promise<unknown>
+  getMe(): Promise<unknown>
+  listCharacters(input?: unknown): Promise<unknown>
+  listConversations(input?: unknown): Promise<unknown>
 }
 
 const require = createRequire(import.meta.url)
@@ -36,6 +51,58 @@ function comparablePath(path: string): string {
   }
 }
 
+function isStrictChild(child: string, parent: string): boolean {
+  const rel = relative(resolve(parent), resolve(child))
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+}
+
+/**
+ * Validate the input before Electron starts.  Main's
+ * applyTestAppDataOverride() remains the authoritative runtime gate; this
+ * duplicate boundary only gives the CLI a deterministic, early failure and
+ * makes it impossible to accidentally launch with a production profile.
+ */
+export function assertSafeStageHAppData(appData: string, systemTempRoot: string = tmpdir()): void {
+  let stat: ReturnType<typeof lstatSync>
+  try {
+    stat = lstatSync(appData)
+  } catch {
+    throw new Error('app-data 必须是已预先创建的目录')
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error('app-data 必须是已预先创建的真实非符号链接目录')
+  }
+
+  let realAppData: string
+  let realTempRoot: string
+  try {
+    realAppData = realpathSync(appData)
+    realTempRoot = realpathSync(systemTempRoot)
+  } catch {
+    throw new Error('app-data 或系统临时目录不可解析')
+  }
+  if (!isStrictChild(realAppData, realTempRoot)) {
+    throw new Error('app-data 必须位于系统临时目录下的独立子目录内')
+  }
+}
+
+/** The test harness is only safe with an electron-vite `--mode test` build. */
+export function isTestModeBuild(mainSource: string): boolean {
+  return /\bapplyTestAppDataOverride\(\s*["']test["']\s*\)/u.test(mainSource)
+}
+
+function assertTestModeBuild(mainEntry: string): void {
+  let source: string
+  try {
+    source = readFileSync(mainEntry, 'utf8')
+  } catch {
+    throw new Error(`无法读取 Electron 构建产物：${mainEntry}`)
+  }
+  if (!isTestModeBuild(source)) {
+    throw new Error('Stage H runner 需要 electron-vite --mode test 构建产物；请使用正式 integration:stage-h 入口重新构建')
+  }
+}
+
 export function normalizeEndpointForComparison(raw: string): string {
   const url = new URL(raw)
   if (url.username || url.password || url.search || url.hash) throw new Error('Endpoint 含有不允许的凭据或 query')
@@ -46,7 +113,10 @@ export async function waitConnected(page: Page, timeoutMs: number): Promise<Reco
   const deadline = Date.now() + timeoutMs
   let last: Record<string, unknown> | undefined
   while (Date.now() < deadline) {
-    last = await page.evaluate(async () => window.desktopApi.getConnectionState()) as Record<string, unknown>
+    last = await page.evaluate(async () => {
+      const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
+      return api.getConnectionState()
+    }) as Record<string, unknown>
     if (last.status === 'connected') return last
     if (last.status === 'error') throw new Error(`后端连接失败：${String(last.lastError ?? 'unknown')}`)
     await page.waitForTimeout(100)
@@ -55,18 +125,30 @@ export async function waitConnected(page: Page, timeoutMs: number): Promise<Reco
 }
 
 async function ensureEndpointAndConnection(page: Page, config: StageHConfig): Promise<Record<string, unknown>> {
-  const endpoint = await page.evaluate(async () => window.desktopApi.getEndpoint()) as { endpoint?: string }
+  const endpoint = await page.evaluate(async () => {
+    const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
+    return api.getEndpoint()
+  }) as { endpoint?: string }
   const expected = normalizeEndpointForComparison(config.backendUrl)
   if (!endpoint.endpoint) {
     // Setting an endpoint without a token is harmless; connect still obtains
     // the credential exclusively from Electron's Secret Store.
-    await page.evaluate(async (url) => window.desktopApi.setEndpoint(url), config.backendUrl)
+    await page.evaluate(async (url) => {
+      const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
+      return api.setEndpoint(url)
+    }, config.backendUrl)
   } else if (normalizeEndpointForComparison(endpoint.endpoint) !== expected) {
     throw new Error('隔离 appData 中已有凭据绑定到另一后端地址；为避免清除凭据，runner 拒绝自动改地址')
   }
 
-  const current = await page.evaluate(async () => window.desktopApi.getConnectionState()) as Record<string, unknown>
-  if (current.status !== 'connected') await page.evaluate(async () => window.desktopApi.connect())
+  const current = await page.evaluate(async () => {
+    const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
+    return api.getConnectionState()
+  }) as Record<string, unknown>
+  if (current.status !== 'connected') await page.evaluate(async () => {
+    const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
+    return api.connect()
+  })
   return waitConnected(page, config.operationTimeoutMs)
 }
 
@@ -88,6 +170,8 @@ function launchEnv(config: StageHConfig): Record<string, string> {
 export async function launchStageHElectron(config: StageHConfig): Promise<StageHElectronSession> {
   const mainEntry = join(config.desktopRoot, 'out', 'main', 'index.js')
   if (!existsSync(mainEntry)) throw new Error(`缺少 Electron 构建产物：${mainEntry}`)
+  assertSafeStageHAppData(config.appData)
+  assertTestModeBuild(mainEntry)
 
   let app: ElectronApplication | undefined
   try {
@@ -124,12 +208,13 @@ export async function closeStageHElectron(session: StageHElectronSession | undef
 
 export async function readCommonSnapshot(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(async () => {
+    const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
     const [runtime, connection, me, characters, conversations] = await Promise.all([
-      window.desktopApi.getRuntimeInfo(),
-      window.desktopApi.getConnectionState(),
-      window.desktopApi.getMe(),
-      window.desktopApi.listCharacters({ status: 'active', limit: 100 }),
-      window.desktopApi.listConversations({ limit: 100 })
+      api.getRuntimeInfo(),
+      api.getConnectionState(),
+      api.getMe(),
+      api.listCharacters({ status: 'active', limit: 100 }),
+      api.listConversations({ limit: 100 })
     ])
     return { runtime, connection, me, characters, conversations }
   }) as Promise<Record<string, unknown>>

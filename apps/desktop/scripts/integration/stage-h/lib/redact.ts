@@ -14,8 +14,15 @@ export function hashOpaque(value: string): string {
  * This function intentionally does not try to be a complete secret scanner; the
  * runner never receives a token and the evidence boundary is defence in depth.
  */
-export function redactText(value: string, roots: readonly string[] = []): string {
+export function redactText(value: string, roots: readonly string[] = [], values: readonly string[] = []): string {
   let text = value
+  // Values such as the scenario marker may be echoed by a backend error or
+  // response.  Replace the exact values before the broader scanners run so
+  // they cannot cross the evidence boundary, even when a caller supplied a
+  // deliberately unusual but valid opaque marker.
+  for (const candidate of values) {
+    if (candidate) text = text.split(candidate).join('<redacted>')
+  }
   for (const root of roots) {
     if (root) text = text.split(root).join('<path>')
   }
@@ -39,6 +46,7 @@ function keyKind(key: string | undefined): 'secret' | 'path' | 'id' | 'plain' {
 
 export interface EvidenceRedactOptions {
   roots?: readonly string[]
+  values?: readonly string[]
 }
 
 /** Recursively make arbitrary scenario details safe for a committed/attached summary. */
@@ -51,7 +59,7 @@ export function redactForEvidence(value: unknown, options: EvidenceRedactOptions
     if (value === null || value === undefined) return value
     return '<opaque-id>'
   }
-  if (typeof value === 'string') return redactText(value, options.roots ?? [])
+  if (typeof value === 'string') return redactText(value, options.roots ?? [], options.values ?? [])
   if (typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) return value
   if (Array.isArray(value)) return value.map((item) => redactForEvidence(item, options))
   if (typeof value === 'object') {
@@ -72,8 +80,8 @@ export interface SafeError {
 }
 
 /** Keep only actionable error semantics, never request IDs, paths, or credentials. */
-export function safeError(cause: unknown, roots: readonly string[] = []): SafeError {
-  const raw = redactText(String(cause), roots)
+export function safeError(cause: unknown, roots: readonly string[] = [], values: readonly string[] = []): SafeError {
+  const raw = redactText(String(cause), roots, values)
   return {
     backendCode: raw.match(/\[backendCode=([^\]]+)\]/iu)?.[1] ?? null,
     retryable: /\[retryable=true\]/iu.test(raw),

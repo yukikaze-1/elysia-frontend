@@ -66,7 +66,9 @@ export const runPreflight: StageHScenario = async ({ config, page }) => {
       url: typeof connection.serverUrl === 'string' ? connection.serverUrl : undefined,
       protocolVersion: typeof connection.protocolVersion === 'string' ? connection.protocolVersion : undefined,
       serverVersion: typeof connection.serverVersion === 'string' ? connection.serverVersion : undefined,
-      buildSha: config.backendCommitHint ?? parseBuildSha(connection.serverVersion)
+      // This is observed metadata.  The CLI's --backend-commit is an
+      // expectation checked by the runner and must never replace it.
+      buildSha: parseBuildSha(connection.serverVersion)
     },
     details: {
       activeCharacterCount: activeItems.length,

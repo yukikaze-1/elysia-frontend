@@ -21,6 +21,7 @@
     "pretest": "node scripts/check-node-version.mjs",
     "test": "vitest run --config vitest.config.mts",
     "test:integration": "pnpm ensure:electron && electron-vite build --mode test && vitest run --config vitest.integration.config.mts",
+    "preintegration:stage-h": "node scripts/check-node-version.mjs && electron-vite build --mode test",
     "integration:stage-h": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/integration/stage-h/runner.ts",
     "test:stage-h-runner": "vitest run --config vitest.config.mts tests/unit/stage-h-runner.spec.ts",
     "ensure:electron": "node -e \"require('electron')\"",

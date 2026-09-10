@@ -20,7 +20,7 @@ export interface StageHConfig {
   characterInstanceId?: string
   marker: string
   frontendCommit: string
-  backendCommitHint?: string
+  expectedBackendCommit?: string
   launchTimeoutMs: number
   operationTimeoutMs: number
 }
@@ -43,7 +43,7 @@ export class StageHConfigError extends Error {
 
 const here = resolve(fileURLToPath(import.meta.url), '..')
 export const STAGE_H_DESKTOP_ROOT = resolve(here, '../../../..')
-export const STAGE_H_REPOSITORY_ROOT = resolve(here, '../../../../..')
+export const STAGE_H_REPOSITORY_ROOT = resolve(STAGE_H_DESKTOP_ROOT, '../..')
 
 const USAGE = `用法：
   pnpm --filter @cyrene/desktop integration:stage-h --
@@ -59,9 +59,9 @@ const USAGE = `用法：
   --character-id <id>               preview-validation 的角色 ID
   --conversation-id <id>            为后续场景预留的会话 ID
   --character-instance-id <id>      为后续场景预留的角色实例 ID
-  --marker <text>                   场景唯一标记，默认自动生成
+  --marker <opaque-id>              场景唯一标记（ASCII 不透明 ID），默认自动生成
   --frontend-commit <sha>           证据中的前端 commit，默认读取环境变量或 git
-  --backend-commit <sha>            证据中的后端 build SHA 提示
+  --backend-commit <sha>            期望握手解析出的后端 build SHA（不匹配即失败）
   --launch-timeout-ms <ms>          Electron 启动超时，默认 30000
   --operation-timeout-ms <ms>       场景操作超时，默认 180000
   --help                            显示帮助
@@ -150,6 +150,19 @@ function normalizeEvidenceFile(raw: string | undefined, scenario: StageHScenario
   return value
 }
 
+function normalizeMarker(raw: string | undefined): string {
+  const value = raw === undefined ? `stage-h-${randomUUID()}` : ensureSingleLine(raw, 'marker')
+  // marker 会进入真实请求/回复上下文，只接受不透明、单行、ASCII 标识符；
+  // 明确拒绝常见凭据前缀，避免把秘密伪装成测试标记带入证据。
+  if (value.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u.test(value)) {
+    throw new StageHConfigError('marker 只能是 1..128 位 ASCII 不透明标识符（字母/数字/._:-）')
+  }
+  if (/^(?:bearer|basic|sk-|rk-|sess-|eyJ|akia)/iu.test(value)) {
+    throw new StageHConfigError('marker 不得使用凭据或授权值的常见前缀')
+  }
+  return value
+}
+
 function parseOpaqueId(raw: string | undefined, label: string): string | undefined {
   if (raw === undefined) return undefined
   const value = ensureSingleLine(raw, label)
@@ -184,7 +197,7 @@ export function parseStageHArgs(
   let characterInstanceId: string | undefined
   let marker: string | undefined
   let frontendCommit: string | undefined
-  let backendCommitHint: string | undefined
+  let expectedBackendCommit: string | undefined
   let launchTimeoutMs = 30_000
   let operationTimeoutMs = 180_000
 
@@ -209,7 +222,7 @@ export function parseStageHArgs(
       case '--character-instance-id': characterInstanceId = parsed.value; break
       case '--marker': marker = parsed.value; break
       case '--frontend-commit': frontendCommit = parsed.value; break
-      case '--backend-commit': backendCommitHint = parsed.value; break
+      case '--backend-commit': expectedBackendCommit = parsed.value; break
       case '--launch-timeout-ms': launchTimeoutMs = parsePositiveInt(parsed.value, option, 5_000, 180_000); break
       case '--operation-timeout-ms': operationTimeoutMs = parsePositiveInt(parsed.value, option, 5_000, 900_000); break
       default: throw new StageHConfigError(`未知选项：${option}`)
@@ -228,8 +241,7 @@ export function parseStageHArgs(
   const desktopRoot = desktopRootRaw
     ? normalizeAbsolutePath(desktopRootRaw, 'desktop-root')
     : STAGE_H_DESKTOP_ROOT
-  const safeMarker = marker === undefined ? `stage-h-${randomUUID()}` : ensureSingleLine(marker, 'marker')
-  if (safeMarker.length > 256) throw new StageHConfigError('marker 长度不能超过 256')
+  const safeMarker = normalizeMarker(marker)
 
   return {
     kind: 'config',
@@ -245,9 +257,9 @@ export function parseStageHArgs(
       characterInstanceId: parseOpaqueId(characterInstanceId, 'character-instance-id'),
       marker: safeMarker,
       frontendCommit: ensureSingleLine(frontendCommit ?? env.STAGE_H_FRONTEND_COMMIT ?? 'unknown', 'frontend-commit'),
-      backendCommitHint: backendCommitHint === undefined && env.STAGE_H_BACKEND_COMMIT
+      expectedBackendCommit: expectedBackendCommit === undefined && env.STAGE_H_BACKEND_COMMIT
         ? ensureSingleLine(env.STAGE_H_BACKEND_COMMIT, 'backend-commit')
-        : backendCommitHint === undefined ? undefined : ensureSingleLine(backendCommitHint, 'backend-commit'),
+        : expectedBackendCommit === undefined ? undefined : ensureSingleLine(expectedBackendCommit, 'backend-commit'),
       launchTimeoutMs,
       operationTimeoutMs
     }

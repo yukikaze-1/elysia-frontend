@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import type { Page } from 'playwright'
-import { assertChecks, buildEvidence, CleanupStack, writeEvidence } from './lib/evidence.ts'
+import { assertChecks, backendBuildShaMatches, buildEvidence, CleanupStack, writeEvidence } from './lib/evidence.ts'
 import { closeStageHElectron, launchStageHElectron } from './lib/electron.ts'
 import { evidencePath, parseStageHArgs, STAGE_H_REPOSITORY_ROOT, StageHConfigError, usage } from './lib/config.ts'
 import { safeError } from './lib/redact.ts'
@@ -42,6 +42,17 @@ async function readBackendMetadata(page: Page): Promise<StageHEvidenceInput['bac
   }
 }
 
+function mergeBackendMetadata(
+  current: StageHEvidenceInput['backend'],
+  observed: Partial<StageHEvidenceInput['backend']> | undefined
+): StageHEvidenceInput['backend'] {
+  if (!observed) return current
+  // Undefined fields from a scenario must not erase metadata obtained during
+  // the handshake.  In particular, an expectation is never an observation.
+  const defined = Object.fromEntries(Object.entries(observed).filter(([, value]) => value !== undefined))
+  return { ...current, ...defined }
+}
+
 export async function runStageH(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   let parsed
   try {
@@ -63,17 +74,27 @@ export async function runStageH(argv: readonly string[] = process.argv.slice(2))
   let result
   let executionError: unknown
   let cleanupErrors: unknown[] = []
-  let backend: StageHEvidenceInput['backend'] = { buildSha: config.backendCommitHint }
+  let backend: StageHEvidenceInput['backend'] = config.expectedBackendCommit === undefined
+    ? {}
+    : { expectedBuildSha: config.expectedBackendCommit }
 
   try {
     session = await launchStageHElectron(config)
     cleanup.add('Electron application', () => closeStageHElectron(session))
-    backend = await readBackendMetadata(session.page)
-    if (config.backendCommitHint) backend.buildSha = config.backendCommitHint
+    backend = mergeBackendMetadata(backend, await readBackendMetadata(session.page))
     const scenario = scenarioRunners[config.scenario]
     if (!scenario) throw new Error(`场景 ${config.scenario} 没有 runner 实现`)
     result = await scenario({ config, page: session.page })
-    if (result.backend) backend = { ...backend, ...result.backend }
+    backend = mergeBackendMetadata(backend, result.backend)
+    if (config.expectedBackendCommit !== undefined) {
+      result = {
+        ...result,
+        checks: {
+          ...result.checks,
+          backendBuildShaMatches: backendBuildShaMatches(backend.buildSha, config.expectedBackendCommit)
+        }
+      }
+    }
     assertChecks(result.checks)
   } catch (cause) {
     executionError = cause
@@ -86,22 +107,28 @@ export async function runStageH(argv: readonly string[] = process.argv.slice(2))
   }
 
   const endedAt = new Date().toISOString()
+  const checks = {
+    ...(result?.checks ?? { runnerCompleted: false }),
+    ...(config.expectedBackendCommit === undefined || result !== undefined
+      ? {}
+      : { backendBuildShaMatches: backendBuildShaMatches(backend.buildSha, config.expectedBackendCommit) })
+  }
   const evidence = buildEvidence({
     scenario: config.scenario,
     startedAt,
     endedAt,
     frontendCommit: detectFrontendCommit(config.frontendCommit),
     backend,
-    checks: result?.checks ?? { runnerCompleted: false },
+    checks,
     details: result?.details,
     error: executionError,
     cleanupErrors
-  }, [config.appData, config.outputDir, config.desktopRoot])
+  }, [config.appData, config.outputDir, config.desktopRoot], [config.marker])
 
   try {
     await writeEvidence(evidencePath(config), evidence)
   } catch (cause) {
-    process.stderr.write(`Stage H 证据写入失败：${safeError(cause, [config.appData, config.outputDir, config.desktopRoot]).message}\n`)
+    process.stderr.write(`Stage H 证据写入失败：${safeError(cause, [config.appData, config.outputDir, config.desktopRoot], [config.marker]).message}\n`)
     return 1
   }
 
