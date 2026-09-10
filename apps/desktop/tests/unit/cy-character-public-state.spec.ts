@@ -180,6 +180,24 @@ describe('CyCharacterPublicState FE-F1b', () => {
     unsafe.wrapper.unmount()
   })
 
+  // 回归（2026-09-10 真机）：网络中断时卡片曾把浏览器的原生 `Failed to fetch` 直接显示给用户——
+  // 本组件是唯一绕过 utils/error-message 集中文案链的渲染点。现改为先过映射器再走本卡片脱敏。
+  it('回归：底层网络错误（浏览器原生文本）不得原样露出，须映射为可读文案', async () => {
+    for (const raw of ['Failed to fetch', 'NetworkError when attempting to fetch resource.', 'Load failed']) {
+      const { wrapper } = view({
+        binding: binding(),
+        status: 'error',
+        // 无 backendCode 的本地/未知错误：映射器无对应文案时会回退到 message，
+        // 故这里必须由本卡片的脱敏层接管（见 FORBIDDEN_ERROR_CONTENT）
+        error: { code: 'UNKNOWN', message: raw }
+      })
+      const text = wrapper.text()
+      expect(text).not.toContain(raw)
+      expect(text).toContain('暂时无法读取角色状态')
+      wrapper.unmount()
+    }
+  })
+
   it('retry 中按钮保持可见但 disabled，并显示进行中文案', async () => {
     let resolvePending!: () => void
     const pending = new Promise<void>((resolve) => { resolvePending = resolve })

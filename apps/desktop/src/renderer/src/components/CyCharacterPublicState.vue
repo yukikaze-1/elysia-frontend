@@ -2,6 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { CharacterBindingSnapshot, CharacterPublicState, ConnectionState } from '@shared/contracts'
 import type { PublicError } from '../utils/public-error'
+// 别名：本组件已有一个 errorMessage computed（模板绑定用），避免与集中映射器重名
+import { errorMessage as resolveErrorMessage } from '../utils/error-message'
 import { useConnectionStore } from '../stores/connection.store'
 import { useCharacterRuntimeStore, type CharacterRuntimeLoadState } from '../stores/character-runtime.store'
 import {
@@ -117,8 +119,16 @@ const displayName = computed(() => {
 const PUBLIC_TEXT_MAX_LENGTH = 160
 const ERROR_TEXT_MAX_LENGTH = 240
 const DISALLOWED_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/u
-/** Error messages may contain serialized/internal payload fragments. */
-const FORBIDDEN_ERROR_CONTENT = /[{}[\]]|(?:\b(?:L[234]|reflection|memory|relationship|internal[_\s-]*state|raw|json|prompt|stateVersion|characterInstanceId)\b|记忆|关系|反思|原始\s*JSON)/i
+/**
+ * Error messages may contain serialized/internal payload fragments.
+ *
+ * 2026-09-10：同时拦住**浏览器/网络层的原生错误文本**。实测真机网络中断时本卡片直接显示了
+ * `Failed to fetch`——那是 fetch 的原始技术细节，对用户毫无可操作性，当由兜底句接管。
+ * 集中映射器（utils/error-message）无法处理它：该文本没有对应错误码，而映射器必须保留
+ * 「无映射时回退后端已公开说明」这一档（后端说明是跨进程错误的唯一可见来源，不能丢）。
+ * 故这类「形态可判但无语义码」的文本在本组件的脱敏层收口。
+ */
+const FORBIDDEN_ERROR_CONTENT = /[{}[\]]|(?:\b(?:L[234]|reflection|memory|relationship|internal[_\s-]*state|raw|json|prompt|stateVersion|characterInstanceId)\b|记忆|关系|反思|原始\s*JSON|Failed to fetch|NetworkError|Load failed|TypeError|undefined is not)/i
 
 /**
  * The public projection is safe because it only receives already-selected
@@ -176,19 +186,35 @@ const statusMessage = computed(() => {
   }
 })
 
+/**
+ * 角色公开状态卡片里的错误文案。
+ *
+ * 2026-09-10 修复：此前直接放行 `error.message`，把**未经翻译的底层错误**显示给了用户
+ * （实测真机：网络中断时卡片里出现浏览器的原生 `Failed to fetch`）。本组件是唯一绕过集中
+ * 文案链的渲染点——`Utils/error-message` 早已是「错误码 → 用户可读文案」的单一来源。
+ *
+ * 现在两条链串联：
+ *   ① `errorMessage()`：按 code/backendCode 映射为可读文案；未收录的错误码回退到
+ *      Main 已公开的 message（跨进程错误的唯一可见来源，不能丢）；
+ *   ② 本组件原有的脱敏检查：长度上限 + 禁用内容（原始 JSON/内部状态/prompt/记忆等词）。
+ *      保留它是因为 ② 的诉求（公开卡片不得泄露内部状态）与 ① 的诉求（文案可读）不同，
+ *      ② 仍要能拦住**已经过 ① 的**文本。
+ *
+ * 效果：`Failed to fetch` 这类浏览器原生错误会被兜底句替换；后端已公开的业务说明照常显示。
+ */
 function safeErrorMessage(error: PublicError | undefined): string {
   const fallback = '暂时无法读取角色状态，请稍后重试。'
-  const rawMessage = typeof error?.message === 'string' ? error.message : ''
-  const candidate = rawMessage
+  // ① 集中映射（含 backendCode 优先、本地码、以及「回退到已公开 message」三档）
+  const resolved = resolveErrorMessage(error, fallback)
+  // ② 本卡片的二次脱敏：归一空白 + 长度上限 + 禁用内容
+  const candidate = resolved
     .replace(/\[[a-zA-Z][a-zA-Z0-9_]*=[^\]]+\]\s*/g, '')
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, ' ')
+    .replace(DISALLOWED_CONTROL_CHARS, ' ')
     .replace(/\s+/g, ' ')
-    .trim() ?? ''
-  // PublicError is already parsed at the store boundary. Keep a second small
-  // UI boundary so an unexpected backend message cannot reveal internal state,
-  // prompt, memory, relationship, or raw payload terms in this public card.
-  if (!candidate || candidate.length > ERROR_TEXT_MAX_LENGTH || FORBIDDEN_ERROR_CONTENT.test(candidate)) return fallback
-  return candidate
+    .trim()
+  return !candidate || candidate.length > ERROR_TEXT_MAX_LENGTH || FORBIDDEN_ERROR_CONTENT.test(candidate)
+    ? fallback
+    : candidate
 }
 
 const errorMessage = computed(() => safeErrorMessage(runtimeError.value))

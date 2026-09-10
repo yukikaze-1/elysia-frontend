@@ -76,5 +76,11 @@ export function errorMessage(error: PublicError | undefined, fallback: string): 
   const byCode = ERROR_TEXT[error.code]
   if (byCode) return byCode
   // ③ 来自 Main 的已公开原文：必须显示（跨进程错误没有本地映射，丢弃会变成空白）
+  //
+  // 注意：**不能**用 `backendCode` 是否存在来判断「来源」——实测后端经
+  // `getCharacterState` 抛出的错误不带 backendCode，而渲染层本地构造的错误反而带；
+  // 该字段的语义取决于构造点，不是可靠判据（曾据此收紧本档，导致后端可公开说明被吞成兜底句）。
+  // 「本地技术细节不得直显」这一诉求由调用点各自的脱敏层负责（如角色公开状态卡片的
+  // FORBIDDEN_ERROR_CONTENT）。
   return error.message || fallback
 }

@@ -246,4 +246,39 @@ describe('RealBackend 角色 REST 适配器', () => {
     await expect(oldRequest).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
     await backend.disconnect()
   })
+
+  // 回归（2026-09-10 真机）：网络层失败此前经裸 `throw e` 穿透——e 是 fetch 的原生 TypeError
+  // （Chromium 文案 `Failed to fetch`，无错误码），契约按 code 匹配落空，界面把该文本原样显示。
+  // 现由 restFailure 归一为 NOT_CONNECTED：有码、可映射、文案可操作。
+  it('回归：网络层失败归一为 NOT_CONNECTED，不得让 fetch 原生文本穿透', async () => {
+    const socket = new FakeWs()
+    const nativeError = new TypeError('Failed to fetch')
+    const fetchImpl = vi.fn(async () => { throw nativeError })
+    const backend = new RealBackend({ fetchImpl: fetchImpl as unknown as typeof fetch, wsFactory: () => socket })
+    const connecting = backend.connect({ serverUrl: 'https://backend.example', token: 'token-1' })
+    socket.handshake({ character_profiles: true, character_state_stream: true })
+    await connecting
+
+    const rejection = await backend.getCharacterState('instance-1').then(
+      () => { throw new Error('应当 reject') },
+      (e: unknown) => e as { code?: string; message?: string; name?: string }
+    )
+    expect(rejection.code).toBe(CyreneErrorCode.NOT_CONNECTED)
+    // 关键：原始原生文本不得出现在对外 message 中
+    expect(rejection.message ?? '').not.toContain('Failed to fetch')
+    expect(rejection.message ?? '').toContain('无法连接后端')
+
+    // 已有业务语义的错误必须原样保留（兜底不得覆盖 HTTP/超时/取消等）：
+    // restFailure 对 CyreneError 是恒等透传，故用 404 走一遍真实链路验证。
+    const httpSocket = new FakeWs()
+    const httpError = vi.fn(async () => jsonResponse({ code: 'SESSION_NOT_FOUND', message: '会话不存在' }, 404))
+    const backend2 = new RealBackend({ fetchImpl: httpError as unknown as typeof fetch, wsFactory: () => httpSocket })
+    const connecting2 = backend2.connect({ serverUrl: 'https://backend.example', token: 'token-1' })
+    httpSocket.handshake({ character_profiles: true, character_state_stream: true })
+    await connecting2
+    await expect(backend2.getCharacterState('instance-1')).rejects.toMatchObject({ code: CyreneErrorCode.NOT_FOUND })
+
+    await backend.disconnect()
+    await backend2.disconnect()
+  })
 })

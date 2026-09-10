@@ -365,6 +365,26 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   }
 
   /**
+   * REST 请求失败归一（2026-09-10）。
+   *
+   * 背景：四处 REST catch 的兜底分支此前是裸 `throw e`。当失败发生在网络层时，`e` 是
+   * `fetch` 抛出的**原生异常**（Chromium 的 `TypeError: Failed to fetch`，无错误码）。
+   * 它穿透到 renderer 后，契约按 `code` 匹配自然落空 → 界面把 `Failed to fetch` 原样显示给用户
+   * （真机实测：网络中断时角色公开状态卡片出现该文本）。
+   *
+   * 这里把「非 CyreneError」一律归一为 `NOT_CONNECTED`：语义正确（请求根本没到达后端）、
+   * 有错误码（契约可映射）、文案可操作。已是 `CyreneError` 的原样抛出——HTTP 错误、超时、
+   * 取消等业务语义不能被这条兜底覆盖。
+   *
+   * 不让 renderer 各渲染点自行过滤：UI 层过滤只能做到「不显示」，而这里能给出**可操作的原因**。
+   */
+  private restFailure(error: unknown): CyreneError {
+    return error instanceof CyreneError
+      ? error
+      : new CyreneError(CyreneErrorCode.NOT_CONNECTED, '无法连接后端：网络请求失败，请检查连接或后端是否在运行')
+  }
+
+  /**
    * Explicit connect is a hard source boundary even when endpoint, account,
    * character identity and server connectionId are all reused. Retire every
    * operation owned by the old source before installing the new token/scope;
@@ -1119,7 +1139,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `REST 请求超时(${this.restTimeoutMs}ms): ${path}`)
       }
-      throw e
+      throw this.restFailure(e)
     } finally {
       clearTimeout(timer)
       this.activeControllers.delete(controller)
@@ -1366,7 +1386,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `附件上传超时(${uploadTimeoutMs}ms)`)
       }
-      throw e
+      throw this.restFailure(e)
     } finally {
       clearTimeout(timer)
       this.activeControllers.delete(timeoutController)
@@ -1761,7 +1781,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，上传已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件上传超时(${uploadTimeoutMs}ms)`)
       }
-      throw e
+      throw this.restFailure(e)
     } finally {
       clearTimeout(timer)
       this.activeControllers.delete(controller)
@@ -1830,7 +1850,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
         if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，工具附件读取已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `工具附件读取超时(${timeoutMs}ms)`)
       }
-      throw e
+      throw this.restFailure(e)
     } finally {
       clearTimeout(timer)
       this.activeControllers.delete(controller)
