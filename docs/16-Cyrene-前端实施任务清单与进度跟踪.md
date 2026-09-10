@@ -12,9 +12,9 @@
 - 阶段 1～7 已完成开发与真实 Windows Electron 联调。
 - 阶段 1～7 修缮批次已完成并通过真实前后端复核。
 - 阶段 8 尚未进入，当前状态为 **暂缓**。
-- 独立新批次：**多角色 Stage H 已完成前后端实现、静态契约对齐和第二轮真实联调，当前处于少量整改后的最终复验阶段**。前端联调基线 `65c4e2b`，后端联调基线 `bbe3cb22`；主要产品路径已通过，尚由后端 pinned fixture/cleanup 缺陷及 A/B tail 验收口径阻止正式闭账。详见 [第二轮后续整改清单](review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-前端.md)。
+- 独立新批次：**多角色 Stage H 已完成前后端实现、契约对齐并通过最终真实 Windows Electron 联调，现已正式闭账**。最终功能基线为前端 `d02ce15`、后端 `7d2e2b31`（运行版本 `0.1.0+7d2e2b3`）；详见 [最终真实联调验收](review/2026-09-10-多角色Stage-H最终真实联调验收.md)。
 - 旧数据决策：开发阶段不做旧会话/角色/缓存迁移，联调前直接清理开发数据；协议降级与缺字段守卫仍保留。详见 [决策记录](review/2026-09-08-多角色旧数据不迁移决策记录.md)。
-- 第二轮使用隔离 Electron appData 完成；开发数据库内的联调数据不作为迁移对象。最终复验应重新建立可识别的干净 fixture 基线，不保留 pinned 测试数据。
+- 最终复验使用隔离 Electron appData 和正式 Stage H fixture；Definition 通过公开 API 推进，未手工修补数据库。后端停机后执行正式 cleanup，二次清理全零，冷启动目录、会话与实例均无 fixture 残留。
 - README、CLAUDE.md、doc 10 和 doc 12 不再复制本节的实时状态。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
@@ -31,7 +31,7 @@
 | 5 | Live2D | 已真实联调 | [阶段 5 验收](review/2026-08-19-阶段5-Live2D真实联调验收.md) |
 | 6 | 工具、权限与 Desktop P0 | 已真实联调 | [阶段 6 验收](review/2026-08-21-阶段6-真实联调验收.md) |
 | 7 | 安全、稳定性与性能收敛 | 已真实联调并收口 | [批次 D 验收](review/2026-08-28-阶段7批次D-真实联调验收.md) |
-| H | 多角色、UserIdentity、自定义角色与角色状态 | 第二轮真实联调完成，待 fixture 修复与最终复验 | [第二轮后续整改清单](review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-前端.md) |
+| H | 多角色、UserIdentity、自定义角色与角色状态 | 已完成并通过真实 Windows Electron 联调 | [最终真实联调验收](review/2026-09-10-多角色Stage-H最终真实联调验收.md) |
 | 8 | 打包、跨平台与 Demo 验收 | 暂缓，尚未进入 | [暂缓决策](review/2026-08-29-阶段8暂缓决策记录.md) |
 
 “已真实联调”表示对应范围已由真实后端和真实 Electron 运行证据验证；它不表示阶段 8 的安装包、签名、升级或跨平台发布验收已经完成。
@@ -41,12 +41,12 @@
 | 项 | 记录 |
 |---|---|
 | 验证日期 | 2026-09-10 |
-| 前端功能基线 | `65c4e2b` |
-| 后端功能基线 | `bbe3cb22` / `0.1.0+bbe3cb2` |
+| 前端功能基线 | `d02ce15` |
+| 后端功能基线 | `7d2e2b3188a79ffb97591b28af6d2fa84e4af135` / `0.1.0+7d2e2b3` |
 | 自动门禁 | 本轮只执行真实 Stage H 定向联调，未重跑前端全量单元测试；不得沿用 2026-09-08 的测试数字冒充本轮结果 |
-| 真机范围 | Windows Electron + REAL BackendAdapter；覆盖 reset/tail、身份持久化与 Prompt、校验/preview、pinned/follow、Mongo 恢复、归档回退和 A/B 隔离 |
-| 当前结论 | 产品主路径通过；官方 pinned fixture 会破坏 catalog 且 cleanup 遗留 revision，A/B tail 精确重叠口径待冻结 |
-| 待整改与复验证据 | [第二轮后续整改清单](review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-前端.md) |
+| 真机范围 | Windows Electron test build + REAL BackendAdapter；覆盖预检、校验/preview、pinned/follow、generation 归属、tail busy 强串行、A/B Prompt/Engine 隔离、正式 cleanup 与冷启动复查 |
+| 当前结论 | **PASS**；预检 12/12、preview-validation 12/12，pinned=revision 1、follow_latest=revision 2；B buffer/Prompt 无 A 标记；cleanup 二次全零且冷启动无残留 |
+| 验收证据 | [Stage H 最终真实联调验收](review/2026-09-10-多角色Stage-H最终真实联调验收.md) |
 
 以上数字是带日期和证据的历史验证结果，不会因为只修改文档而自动刷新。后续代码批次必须用新的日期、commit 和验收记录整体替换本表，不能在其他文档追加另一组“最新数字”。
 
@@ -63,10 +63,9 @@
 
 ## 5. 下一步
 
-1. 后端修复 Stage H 官方 pinned seed 的非法 `createdBy` 和 cleanup 遗留 revision 问题，并补真实公共序列化回归。
-2. 双方冻结 A/B tail 口径；推荐接受公共 API 在 tail lease 期间以 `AGENT_BUSY` 阻止切换的强串行语义。
-3. 前端按 [第二轮后续整改清单](review/2026-09-10-多角色Stage-H第二轮联调后续整改清单-前端.md) 固化脱敏、参数化的真实联调驱动；后端新 build 启动后无手工数据库修补复验 pinned/follow 与 A/B 隔离。
-4. 最终复验通过后再更新原 Stage H 清单并闭账；多角色工作不自动恢复阶段 8。
+1. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
+2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
+3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
 
 ## 6. 状态维护规则
 
