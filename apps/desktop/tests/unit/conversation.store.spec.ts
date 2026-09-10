@@ -461,6 +461,66 @@ describe('conversationStore', () => {
     expect(store.currentId).toBe('c2')
   })
 
+  it('AGENT_BUSY 激活失败保持当前会话；仅用户再次点击且成功后才载入目标会话', async () => {
+    const store = useConversationStore()
+    const messageStore = useMessageStore()
+    const messageA: Message = { messageId: 'message-a', conversationId: 'c1', role: 'assistant', content: 'A 的历史', status: 'completed', createdAt: 't-a' }
+    const messageB: Message = { messageId: 'message-b', conversationId: 'c2', role: 'assistant', content: 'B 的历史', status: 'completed', createdAt: 't-b' }
+    store.$patch({ currentId: 'c1', items: [convA, convB] })
+    messageStore.loadPage({ items: [messageA], hasMore: false })
+    mockApi.activate
+      .mockRejectedValueOnce(new Error('[UNKNOWN] [backendCode=AGENT_BUSY] [retryable=true] backend busy'))
+      .mockResolvedValueOnce({ conversationId: 'c2' })
+    mockApi.getMessages.mockResolvedValueOnce({ items: [messageB], hasMore: false })
+
+    await store.activate('c2')
+
+    // The rejected activation must not clear or replace the currently visible A session.
+    expect(mockApi.activate).toHaveBeenCalledTimes(1)
+    expect(mockApi.getMessages).not.toHaveBeenCalled()
+    expect(store.currentId).toBe('c1')
+    expect(messageStore.byId[messageA.messageId]?.content).toBe('A 的历史')
+    expect(messageStore.byId[messageB.messageId]).toBeUndefined()
+    expect(store.error).toMatchObject({
+      code: 'UNKNOWN',
+      backendCode: 'AGENT_BUSY',
+      retryable: true,
+      message: '当前回复或语音仍在收尾，请稍后再切换会话'
+    })
+    expect(store.busy).toBe(false)
+
+    // No background retry: only this explicit second call may reach the backend.
+    await Promise.resolve()
+    expect(mockApi.activate).toHaveBeenCalledTimes(1)
+
+    await store.activate('c2')
+
+    expect(mockApi.activate).toHaveBeenCalledTimes(2)
+    expect(mockApi.activate).toHaveBeenLastCalledWith('c2')
+    expect(mockApi.getMessages).toHaveBeenCalledTimes(1)
+    expect(mockApi.getMessages).toHaveBeenCalledWith({ conversationId: 'c2' })
+    expect(store.currentId).toBe('c2')
+    expect(messageStore.byId[messageA.messageId]).toBeUndefined()
+    expect(messageStore.byId[messageB.messageId]?.content).toBe('B 的历史')
+    expect(store.error).toBeUndefined()
+  })
+
+  it('CHARACTER_BUSY 激活失败不套用会话忙提示，保留角色错误文案', async () => {
+    const store = useConversationStore()
+    store.$patch({ currentId: 'c1', items: [convA, convB] })
+    mockApi.activate.mockRejectedValueOnce(new Error('[BACKEND_REJECTED] [backendCode=CHARACTER_BUSY] 角色正在处理中，请等待当前操作完成。'))
+
+    await store.activate('c2')
+
+    expect(store.currentId).toBe('c1')
+    expect(store.error).toMatchObject({
+      code: 'BACKEND_REJECTED',
+      backendCode: 'CHARACTER_BUSY',
+      message: '角色正在处理中，请等待当前操作完成。'
+    })
+    expect(store.error?.message).not.toContain('当前回复或语音')
+  })
+
   it('切换会话前取消当前 TTS 播放流', async () => {
     const store = useConversationStore()
     store.$patch({ currentId: 'c2', items: [convA, convB] })

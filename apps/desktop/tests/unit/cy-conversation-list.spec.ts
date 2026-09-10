@@ -204,6 +204,40 @@ describe('CyConversationList FE-E1 新建会话与会话角色快照', () => {
     wrapper.unmount()
   })
 
+  it('AGENT_BUSY 在会话列表显示明确提示，目标会话只能由用户再次点击重试', async () => {
+    prepare({ profiles: false })
+    const conversation = useConversationStore()
+    conversation.$patch({
+      ready: true,
+      currentId: 'session-a',
+      items: [
+        { id: 'session-a', title: '会话 A', updatedAt: '2026-08-31T00:00:00.000Z', preview: 'A' },
+        { id: 'session-b', title: '会话 B', updatedAt: '2026-08-31T00:00:01.000Z', preview: 'B' }
+      ]
+    })
+    const wrapper = mountList()
+    conversation.$patch({
+      error: {
+        code: 'UNKNOWN',
+        backendCode: 'AGENT_BUSY',
+        retryable: true,
+        message: '当前回复或语音仍在收尾，请稍后再切换会话'
+      }
+    })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[role="alert"]').text()).toContain('当前回复或语音仍在收尾，请稍后再切换会话')
+
+    mockApi.activate.mockResolvedValueOnce({ conversationId: 'session-b' })
+    await wrapper.findAll('button.cy-conversation-main')[1].trigger('click')
+    await flushPromises()
+
+    expect(mockApi.activate).toHaveBeenCalledTimes(1)
+    expect(mockApi.activate).toHaveBeenCalledWith('session-b')
+    expect(conversation.currentId).toBe('session-b')
+    expect(conversation.error).toBeUndefined()
+    wrapper.unmount()
+  })
+
   it('创建被拒或响应错绑后选角器不锁死：仍可关闭并重试', async () => {
     prepare()
     const valid = {

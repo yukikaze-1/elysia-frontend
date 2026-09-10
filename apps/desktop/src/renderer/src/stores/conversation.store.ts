@@ -19,6 +19,24 @@ function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/**
+ * 会话激活被后端串行化门禁拒绝时，给用户一个稳定且可操作的提示。
+ *
+ * REST 的 AGENT_BUSY 会以 CyreneError.details.backendCode 穿过 IPC，
+ * preload 再编码为 `[backendCode=AGENT_BUSY]`，所以这里只按解析后的
+ * code/backendCode 精确匹配；CHARACTER_BUSY 等角色域错误必须继续沿用
+ * 后端原文，避免把两类忙状态混成一个会话提示。
+ */
+const AGENT_BUSY_ACTIVATE_MESSAGE = '当前回复或语音仍在收尾，请稍后再切换会话'
+
+function parseActivationError(e: unknown): PublicError {
+  const parsed = parsePublicError(messageOf(e))
+  if (parsed.code === 'AGENT_BUSY' || parsed.backendCode === 'AGENT_BUSY') {
+    return { ...parsed, message: AGENT_BUSY_ACTIVATE_MESSAGE }
+  }
+  return parsed
+}
+
 function cloneValue<T>(value: T): T {
   const structured = (globalThis as { structuredClone?: <V>(input: V) => V }).structuredClone
   // Pinia/Vue refs can expose reactive Proxies which structuredClone rejects;
@@ -515,7 +533,7 @@ export const useConversationStore = defineStore('conversation', () => {
       }
     } catch (e) {
       if (myEpoch !== epoch || !conversationStateIsCurrent(capturedSignature, capturedGeneration)) return    // 被取代的请求失败不打扰
-      error.value = parsePublicError(messageOf(e))
+      error.value = parseActivationError(e)
     } finally {
       releaseOperation(owner)
     }
