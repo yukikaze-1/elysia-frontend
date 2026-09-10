@@ -165,14 +165,20 @@ describe('layoutStore', () => {
     const store = useLayoutStore()
     store.handleViewportChange(1200) // 全四区
     expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat live"')
+    // 2026-09-10 修复：隐藏区保留列与区域名，宽度置 0（见 gridTemplateFor 注释）。
+    // 此前期望的三区/两区形态（'"nav chat live"' 等）正是真机布局错位的成因——仍带
+    // `grid-area: conv` 的子元素找不到同名区域时会被自动放置到隐式列（实测位移 + 挤压相邻区）。
     store.handleViewportChange(1100) // 仅 Live2D（会话栏自动折叠）
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav chat live"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat live"')
+    expect(gridTemplateFor(store.effective).gridTemplateColumns).toBe('60px 0px minmax(0, 1fr) 340px')
     store.prefs.live2dVisible = false // 仅会话栏
     store.handleViewportChange(1200)
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat live"')
+    expect(gridTemplateFor(store.effective).gridTemplateColumns).toBe('60px 260px minmax(0, 1fr) 0px')
     store.prefs.conversationCollapsed = true // 均隐藏
     store.handleViewportChange(1200)
-    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav chat"')
+    expect(gridTemplateFor(store.effective).gridTemplateAreas).toBe('"nav conv chat live"')
+    expect(gridTemplateFor(store.effective).gridTemplateColumns).toBe('60px 0px minmax(0, 1fr) 0px')
     // store.effective 与同一输入纯函数推导一致
     expect(store.effective).toEqual(computeEffectiveLayout(1200, store.prefs, store.overrides, LAYOUT_CONSTANTS))
   })

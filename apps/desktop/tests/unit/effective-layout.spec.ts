@@ -204,25 +204,27 @@ describe('computeEffectiveLayout 宽度扫描不变式（W=320..1600 步进10 ×
 
 describe('gridTemplateFor（D10：grid-template-areas 按有效布局切换，spec §4.6）', () => {
   // UII-QQ 设置页批次：应用内标题栏移除——areas 仅主行（原生系统标题栏承担窗口标题）
+  // 2026-09-10 修复：隐藏区**保留**列与区域名，只把宽度置 0（理由见 gridTemplateFor 文档注释：
+  // 元素未被真正隐藏时，缺失的区域名会让它落进隐式列并位移——真机实测该缺陷）。
   it('会话栏 + Live2D 均显（W=1160 默认）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1160, prefs(), overrides(), C))
     expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr) 340px')
     expect(g.gridTemplateAreas).toBe('"nav conv chat live"')
   })
-  it('仅会话栏（W=1200、live2dVisible=false）', () => {
+  it('仅会话栏（W=1200、live2dVisible=false）→ live 列保留但为 0px', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1200, prefs({ live2dVisible: false }), overrides(), C))
-    expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr)')
-    expect(g.gridTemplateAreas).toBe('"nav conv chat"')
+    expect(g.gridTemplateColumns).toBe('60px 260px minmax(0, 1fr) 0px')
+    expect(g.gridTemplateAreas).toBe('"nav conv chat live"')
   })
-  it('仅 Live2D（W=1100 默认：会话栏被自动折叠）', () => {
+  it('仅 Live2D（W=1100 默认：会话栏被自动折叠）→ conv 列保留但为 0px', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1100, prefs(), overrides(), C))
-    expect(g.gridTemplateColumns).toBe('60px minmax(0, 1fr) 340px')
-    expect(g.gridTemplateAreas).toBe('"nav chat live"')
+    expect(g.gridTemplateColumns).toBe('60px 0px minmax(0, 1fr) 340px')
+    expect(g.gridTemplateAreas).toBe('"nav conv chat live"')
   })
-  it('均隐藏（W=320 防御档）', () => {
+  it('均隐藏（W=320 防御档）→ 两个隐藏列均为 0px，区域名仍齐备', () => {
     const g = gridTemplateFor(computeEffectiveLayout(320, prefs(), overrides(), C))
-    expect(g.gridTemplateColumns).toBe('60px minmax(0, 1fr)')
-    expect(g.gridTemplateAreas).toBe('"nav chat"')
+    expect(g.gridTemplateColumns).toBe('60px 0px minmax(0, 1fr) 0px')
+    expect(g.gridTemplateAreas).toBe('"nav conv chat live"')
   })
   it('live2dWidth=420 时列宽用有效栏宽（W=1240、宽度 420 全四区）', () => {
     const g = gridTemplateFor(computeEffectiveLayout(1240, prefs({ live2dWidth: 420 }), overrides(), C))
@@ -235,6 +237,25 @@ describe('gridTemplateFor（D10：grid-template-areas 按有效布局切换，sp
       const nCols = g.gridTemplateColumns.replace(/\([^)]*\)/g, '()').split(' ').length
       for (const row of g.gridTemplateAreas.match(/"([^"]*)"/g)!) {
         expect(row.replace(/"/g, '').trim().split(/\s+/).length).toBe(nCols)
+      }
+    }
+  })
+
+  // —— 回归：真机折叠会话栏导致「会话栏位移到最右 + 角色栏被压扁」（2026-09-10 修复）——
+  it('回归：任何宽度下四个区域名恒齐备（隐藏区不得从 areas 消失）', () => {
+    // 缺陷形态：隐藏区被从 areas 移除后，仍带 grid-area: X 的子元素找不到同名区域 →
+    // 浏览器自动放置到隐式列 → 实测 1200×760 折叠后会话栏跑到 x=979/w=221、Live2D 被压到 h=617。
+    // 不变式：areas 恒为四区，隐藏只体现为 0px 列宽。
+    for (const w of [320, 520, 736, 900, 1100, 1160, 1200, 1600]) {
+      for (const p of [prefs(), prefs({ conversationCollapsed: true }), prefs({ live2dVisible: false })]) {
+        const g = gridTemplateFor(computeEffectiveLayout(w, p, overrides(), C))
+        expect(g.gridTemplateAreas).toBe('"nav conv chat live"')
+        const cols = g.gridTemplateColumns.replace(/\([^)]*\)/g, '()').split(' ')
+        expect(cols.length).toBe(4)
+        // 可见 ⇒ 有宽度；隐藏 ⇒ 恰为 0px（不产生隐式列）
+        const e = computeEffectiveLayout(w, p, overrides(), C)
+        if (!e.conversationShown) expect(cols[1]).toBe('0px')
+        if (!e.live2dShown) expect(cols[3]).toBe('0px')
       }
     }
   })

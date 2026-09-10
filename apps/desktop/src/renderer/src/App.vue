@@ -68,7 +68,12 @@ watch(() => layout.notice, (n) => {
        7D：CyLive2DPanel 常驻挂载（不随 chat v-if 卸载）——settings 打开时 v-show 隐藏但保留 ready 态，
        rAF 由面板内 currentView gate 停止；诊断页 Live2D 性能读数因此可读到真实帧耗时/帧率。 -->
   <CyRendererCrashBanner />
-  <div ref="rootRef" class="cy-app" :style="gridStyle">
+  <div
+    ref="rootRef"
+    class="cy-app"
+    :class="{ 'is-conv-hidden': !layout.effective.conversationShown, 'is-live-hidden': !(layout.effective.live2dShown && app.currentView === 'chat') }"
+    :style="gridStyle"
+  >
     <CyNavRail />
     <template v-if="app.currentView === 'chat'">
       <CyConversationList v-show="layout.effective.conversationShown" />
@@ -94,6 +99,20 @@ watch(() => layout.notice, (n) => {
   height: 100%;
   overflow: hidden;
   background: var(--cy-window);
+}
+
+/* 隐藏区兜底（2026-09-10）：网格模板对隐藏区保留 0px 轨道（见 layout/effective-layout.ts
+   gridTemplateFor），但含 padding/border 的元素在 border-box 下宽度下限是「padding+border」，
+   仍会从 0px 轨道里溢出（实测会话栏漏出 21px、角色栏 25px）。
+
+   所以这里再显式隐藏一次，与 v-show 同源布尔量绑定——两层保险，任一生效都不会有残留占位。
+   角色栏必须常驻挂载（诊断页要读实时帧读数，见 electron-live2d.spec.ts:928），故不能改用 v-if。
+
+   状态绑在 .cy-app 自己身上（而非给子组件传 :class）：.cy-app 是本组件自己的元素，:class 必然
+   生效；再用 :deep() 穿透到子组件根（子组件根带的是它自己的 scope id，普通选择器命中不了）。 */
+.cy-app.is-conv-hidden :deep(> .cy-conversations),
+.cy-app.is-live-hidden :deep(> .cy-live) {
+  display: none !important;
 }
 
 .cy-main {

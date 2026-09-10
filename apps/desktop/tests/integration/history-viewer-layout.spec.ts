@@ -137,4 +137,72 @@ describe('历史查看器布局（FE-S3-RUN2-P1-01，阶段7批次C Task2 虚拟
       expect(await page.locator('.cy-more-btn').count()).toBe(0)
     } finally { await closeApp(launched) }
   })
+
+  // —— 主网格布局回归（2026-09-10）——
+  // 缺陷：折叠会话栏后 gridTemplateAreas 从四区缩为三区（旧实现「隐藏区不生成列」），
+  // 而 `.cy-conversations` 仍带 `grid-area: conv`；一旦它仍参与布局（隐藏时机/时序差异），
+  // 找不到同名区域的带名项会被自动放置到**隐式列** → 实测 1200×760 折叠后
+  // 会话栏跑到 x=979/w=221、Live2D 被压成 h=617、聊天区只剩 579px。
+  // 修复后不变式：areas 恒四区、隐藏区列宽为 0px（不产生隐式列）。本用例在真实 Electron 中钉住它。
+  it('主网格：折叠会话栏后各区仍各就其位、无横向溢出、无隐式列', async () => {
+    const launched = await launchWithSize(1200, 760)
+    try {
+      const page = launched.page
+      const readGrid = () => page.evaluate(() => {
+        const box = (sel: string) => {
+          const el = document.querySelector(sel) as HTMLElement | null
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }
+        }
+        const app = document.querySelector('.cy-app')
+        return {
+          areas: app ? getComputedStyle(app).gridTemplateAreas : null,
+          cols: app ? getComputedStyle(app).gridTemplateColumns : null,
+          conv: box('.cy-conversations'), chat: box('.cy-main'), live: box('.cy-live'),
+          overflowX: document.body.scrollWidth - document.body.clientWidth,
+          vh: window.innerHeight
+        }
+      })
+
+      // 展开态：四区齐备
+      const before = await readGrid()
+      expect(before.areas).toBe('"nav conv chat live"')
+      expect(before.conv!.x).toBe(60)
+      expect(before.chat!.x).toBe(320)
+      expect(before.live!.x).toBe(860)
+      expect(before.live!.h).toBe(before.vh) // Live2D 满高
+
+      // 折叠会话栏
+      await page.getByRole('button', { name: '折叠会话列表' }).click()
+      await expect.poll(async () => (await readGrid()).chat!.x, POLL).toBe(60) // 聊天区左移填满
+      const after = await readGrid()
+
+      // 不变式 1：区域名恒四区（隐藏区不从 areas 消失）
+      expect(after.areas).toBe('"nav conv chat live"')
+      // 不变式 2：隐藏列恰为 0px（不产生隐式列）→ 无第五列
+      expect(after.cols ?? '').not.toBe('')
+      const cols = after.cols as string
+      expect(cols.replace(/\([^)]*\)/g, '()').split(' ')).toHaveLength(4)
+      expect(cols.split(' ')[1]).toBe('0px')
+      // 不变式 3：会话栏不再占据任何可视位置（旧缺陷：x=979 / w=221）
+      expect(after.conv!.w).toBeLessThanOrEqual(1)
+      // 不变式 4：聊天区拿到释放的空间
+      expect(after.chat!.w).toBeGreaterThan(before.chat!.w)
+      // 不变式 5：Live2D 仍满高（旧缺陷：被压成 617）
+      expect(after.live!.y).toBe(0)
+      expect(after.live!.h).toBe(after.vh)
+      // 不变式 6：无横向溢出
+      expect(after.overflowX).toBe(0)
+
+      // 展开回去：完全复原
+      await page.getByRole('button', { name: '展开会话列表' }).click()
+      await expect.poll(async () => (await readGrid()).chat!.x, POLL).toBe(320)
+      const restored = await readGrid()
+      expect(restored.conv!.x).toBe(60)
+      expect(restored.conv!.w).toBe(260)
+      expect(restored.live!.h).toBe(restored.vh)
+      expect(restored.overflowX).toBe(0)
+    } finally { await closeApp(launched) }
+  })
 })

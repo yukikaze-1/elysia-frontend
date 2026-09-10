@@ -94,16 +94,36 @@ export interface GridTemplate {
   gridTemplateAreas: string
 }
 
-/** spec §4.6（决策 D10）：按有效布局生成 grid-template-*；隐藏区不生成对应列，
- *  组件用 v-show（display:none）配合，杜绝「隐藏列占位把聊天排进错误列」。 */
+/**
+ * spec §4.6（决策 D10）：按有效布局生成 grid-template-*。
+ *
+ * **列与区域名永久保留，隐藏时只把宽度置 0**（2026-09-10 修复）。
+ *
+ * 此前实现是「隐藏区不生成对应列，靠 v-show 的 display:none 配合」。该配合**本身是成立的**
+ * （`electron-live2d.spec.ts:327` 断言折叠后 `.cy-live` 不可见且为绿），但它把网格的正确性
+ * **完全押在「隐藏元素一定不参与布局」上**，而这个前提一旦在时序上被打破就会崩：
+ * 实测 1200×760 真机折叠会话栏时读到 `.cy-conversations` 计算 display 仍为 block
+ * （静态等待取到的时机不可靠），此时它带着 `grid-area: conv` 却找不到同名区域，
+ * 浏览器按「已命名项落到不存在的区域 → 自动放置」处理，把它丢进**隐式列**：
+ * 宽度由内容决定（实测 221px）、位置跑到最右列（x=979），自身高度撑满还把 Live2D 压成 617px
+ * —— 正是截图里「会话栏跑到右下角、角色栏错位」的现象。
+ * 手动补 `display:none` 后布局立即完全恢复（live 回到 y=0/h=760），确证该元素是肇因。
+ *
+ * 现策略下两种情形都正确，**不再依赖隐藏时机**：
+ * - 元素被隐藏 → 0px 列不占视觉空间，结果与旧行为一致；
+ * - 元素仍参与布局 → 它落在自己的 `0px` 轨道内（`.cy-app.is-conv-hidden` / `is-live-hidden`
+ *   另有 `display:none` 兜底），**不会**产生隐式列、不会位移、不会挤压其他区。
+ *
+ * 教训：网格模板的正确性不应依赖 `display:none` 的生效时机——区域名齐备才是自洽的。
+ */
 export function gridTemplateFor(effective: EffectiveLayout): GridTemplate {
-  const conv = effective.conversationShown ? `${effective.conversationWidth}px` : null
-  const live = effective.live2dShown ? `${effective.live2dWidth}px` : null
-  const cols = [`${effective.navWidth}px`, ...(conv ? [conv] : []), 'minmax(0, 1fr)', ...(live ? [live] : [])]
+  const conv = effective.conversationShown ? `${effective.conversationWidth}px` : '0px'
+  const live = effective.live2dShown ? `${effective.live2dWidth}px` : '0px'
+  // 四个区域名恒定存在：任何带 grid-area 的子元素都必然有合法落位
+  const cols = [`${effective.navWidth}px`, conv, 'minmax(0, 1fr)', live]
   // UII-QQ 设置页批次：应用内标题栏移除——网格仅剩主行（原生系统标题栏承担窗口标题）
-  const rowMain = ['nav', ...(conv ? ['conv'] : []), 'chat', ...(live ? ['live'] : [])].join(' ')
   return {
     gridTemplateColumns: cols.join(' '),
-    gridTemplateAreas: `"${rowMain}"`
+    gridTemplateAreas: '"nav conv chat live"'
   }
 }
