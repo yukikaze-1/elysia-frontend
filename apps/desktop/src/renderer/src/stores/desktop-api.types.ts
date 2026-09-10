@@ -194,3 +194,32 @@ export interface DesktopApiLike {
   // —— 阶段 7 批次 B（Task 1，H1 修正）：Renderer 崩溃 marker（banner 组件 api.getLastCrash() 消费——DesktopApiLike 手写窄接口必须含它）——
   getLastCrash(): Promise<RendererCrashEvent | null>
 }
+
+// —— 编译期镜像校验（2026-09-10 门禁整改）——
+//
+// 本接口是 preload 暴露面的**手写镜像**，历史上与实现之间没有任何编译器关联。实测代价：
+// `e9d2897` 给 preload 加了 `resetCharacterEvolution` 后，本文件与 `ipc-security.spec.ts` 的键表
+// 都没跟上——后者是「暴露面不得未经 review 增长」的唯一哨兵，因此长期全红、保护意义归零，
+// 直到 2026-09-10 才被发现（见 docs/review/2026-09-10-前端门禁体系评估与整改记录.md §4.1）。
+//
+// 现把镜像钉在 `window.desktopApi` 的声明上；而该声明（src/preload/index.d.ts）已改为直接引用
+// 实现派生类型 `typeof desktopApi`。于是形成编译期链条：
+//     实现 desktop-api.ts  →  Window['desktopApi']  →  本镜像
+// 增删方法或改签名会在**任一处**直接报错。
+//
+// 方向说明（实测校准，不是想当然）：本镜像**有意**把「角色/档案面」18 个方法声明为可选
+// （`getMe?`、`listCharacters?` … `deleteCharacterDraft?`），因为该 IPC 面按「是否装配角色服务」
+// 在运行时判定——`character-catalog.store.ts` 的 `missingApiError()` 就依赖它
+// （`'[CHARACTER_PROFILES_UNAVAILABLE] 角色目录 API 尚未装配'`）。因此断言不能直接比较可选性，
+// 而是**先剥掉可选修饰**，再要求与实现同名成员的签名兼容：
+//   - 镜像凭空多出实现没有的方法 → `Pick<…, keyof DesktopApiLike>` 里没有该键 → 报错；
+//   - 某个方法的参数/返回类型写错 → 签名不兼容 → 报错；
+//   - 有意保留的可选性不触发报错（那是运行时能力探测的合法表达）。
+type AssertAssignable<A extends B, B> = A extends B ? true : never
+type StripOptional<T> = { [K in keyof T]-?: NonNullable<T[K]> }
+
+/** 若本类型报错，说明 DesktopApiLike 的方法集或签名与 preload 暴露面不一致——改镜像前先对照实现 */
+export type DesktopApiLikeInSync = AssertAssignable<
+  StripOptional<DesktopApiLike>,
+  Pick<Window['desktopApi'], keyof DesktopApiLike>
+>
