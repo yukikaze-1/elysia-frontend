@@ -1,0 +1,82 @@
+import { createHash } from 'node:crypto'
+
+const SENSITIVE_KEY = /(?:token|secret|password|passwd|authorization|cookie|credential|api[-_]?key)/iu
+const PATH_KEY = /(?:^|[-_])(path|appdata|userdata|outputdir|screenshot|cwd|directory)(?:$|[-_])/iu
+const ID_KEY = /(?:^|[-_])(?:id|uuid|identifier|marker)(?:$|[-_])/iu
+
+/** Stable, non-reversible label for an opaque ID in evidence. */
+export function hashOpaque(value: string): string {
+  return `id:${createHash('sha256').update(value).digest('hex').slice(0, 12)}`
+}
+
+/**
+ * Redact values that may accidentally occur in Playwright/Electron error text.
+ * This function intentionally does not try to be a complete secret scanner; the
+ * runner never receives a token and the evidence boundary is defence in depth.
+ */
+export function redactText(value: string, roots: readonly string[] = []): string {
+  let text = value
+  for (const root of roots) {
+    if (root) text = text.split(root).join('<path>')
+  }
+  return text
+    .replace(/Bearer\s+[^\s,;\]}\)]+/giu, 'Bearer [REDACTED]')
+    .replace(/(?:sk|sess|rk)-[A-Za-z0-9._-]{8,}/gu, '[REDACTED]')
+    .replace(/AKIA[0-9A-Z]{16}/gu, '[REDACTED]')
+    .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, '[REDACTED]')
+    .replace(/\[requestId=[^\]]+\]/giu, '[requestId=<redacted>]')
+    // Windows absolute paths and common Unix home/tmp paths; do not match URLs.
+    .replace(/(?<![A-Za-z0-9+.-])(?:[A-Za-z]:[\\/]|\\\\|\/(?:home|Users|tmp|var|private|mnt)\/)[^\s"'<>()[\]{};,]*/gu, '<path>')
+}
+
+function keyKind(key: string | undefined): 'secret' | 'path' | 'id' | 'plain' {
+  if (!key) return 'plain'
+  if (SENSITIVE_KEY.test(key)) return 'secret'
+  if (PATH_KEY.test(key)) return 'path'
+  if (ID_KEY.test(key) || /(?:character|conversation|generation|instance|session|request|call)id/iu.test(key)) return 'id'
+  return 'plain'
+}
+
+export interface EvidenceRedactOptions {
+  roots?: readonly string[]
+}
+
+/** Recursively make arbitrary scenario details safe for a committed/attached summary. */
+export function redactForEvidence(value: unknown, options: EvidenceRedactOptions = {}, key?: string): unknown {
+  const kind = keyKind(key)
+  if (kind === 'secret') return '[REDACTED]'
+  if (kind === 'path') return '<path>'
+  if (kind === 'id') {
+    if (typeof value === 'string') return hashOpaque(value)
+    if (value === null || value === undefined) return value
+    return '<opaque-id>'
+  }
+  if (typeof value === 'string') return redactText(value, options.roots ?? [])
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null || value === undefined) return value
+  if (Array.isArray(value)) return value.map((item) => redactForEvidence(item, options))
+  if (typeof value === 'object') {
+    const output: Record<string, unknown> = {}
+    for (const [childKey, childValue] of Object.entries(value)) {
+      output[childKey] = redactForEvidence(childValue, options, childKey)
+    }
+    return output
+  }
+  return String(value)
+}
+
+export interface SafeError {
+  code?: string
+  backendCode?: string | null
+  retryable?: boolean
+  message: string
+}
+
+/** Keep only actionable error semantics, never request IDs, paths, or credentials. */
+export function safeError(cause: unknown, roots: readonly string[] = []): SafeError {
+  const raw = redactText(String(cause), roots)
+  return {
+    backendCode: raw.match(/\[backendCode=([^\]]+)\]/iu)?.[1] ?? null,
+    retryable: /\[retryable=true\]/iu.test(raw),
+    message: raw.replace(/^Error:\s*(?:page\.evaluate:\s*Error:\s*)?/u, '').slice(0, 1000)
+  }
+}

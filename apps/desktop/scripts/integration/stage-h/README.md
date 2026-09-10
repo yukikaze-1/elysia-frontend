@@ -1,0 +1,85 @@
+# Stage H 真实联调 runner
+
+这里存放可复跑的真实后端 Electron 联调基础设施。它与 `output/playwright/` 的现场证据分离：现场脚本、JSON、截图不应复制回本目录，也不应被 runner 覆盖。
+
+## 当前范围
+
+当前阶段只接入无后端 fixture 的两个自动化场景：
+
+- `preflight`：启动真实 Electron，核对隔离 appData、连接状态、协议/能力、身份、角色目录和会话列表。
+- `preview-validation`：选取参数指定或首个 active custom character，验证 draft 校验、preview 无副作用，以及非法保存被拒绝。
+
+为后续阶段预留了 `pinned-follow`、`archive-default`、`tail-isolation` 场景名。它们在后端正式 fixture seed/cleanup 修复前会明确失败，不会假装通过，也不会由前端 runner 修改数据库。
+
+## 前置条件
+
+1. 操作者手动启动后端；runner 绝不启动、停止、重启或代理正式后端。
+2. 已准备 `apps/desktop/out/` 构建产物，例如：
+
+   ```powershell
+   pnpm --filter @cyrene/desktop build
+   ```
+
+3. 指定的 appData 是隔离目录，其中已经由操作者配置好后端凭据。token 不作为命令行参数、环境变量或 Playwright 参数传入；Electron Main 从 Secret Store 读取。
+4. backend URL 必须与隔离 appData 中保存的凭据绑定一致。若已有绑定指向另一地址，runner 会拒绝自动切换，避免清除凭据。
+
+## 运行
+
+PowerShell 示例（路径请替换为当前机器的隔离目录；不要使用生产 appData）：
+
+```powershell
+$env:STAGE_H_BACKEND_URL = 'http://127.0.0.1:8765'
+$env:STAGE_H_APP_DATA = 'C:\Temp\cyrene-stage-h-ud'
+$env:STAGE_H_OUTPUT_DIR = 'C:\Temp\cyrene-stage-h-evidence'
+
+pnpm --filter @cyrene/desktop integration:stage-h -- `
+  --scenario preflight
+
+pnpm --filter @cyrene/desktop integration:stage-h -- `
+  --scenario preview-validation `
+  --character-id '<active-custom-character-id>' `
+  --evidence-file preview.json
+```
+
+也可以全部使用参数：
+
+```powershell
+pnpm --filter @cyrene/desktop integration:stage-h -- `
+  --scenario preflight `
+  --backend-url 'http://127.0.0.1:8765' `
+  --app-data 'C:\Temp\cyrene-stage-h-ud' `
+  --output-dir 'C:\Temp\cyrene-stage-h-evidence'
+```
+
+查看帮助和场景：
+
+```powershell
+pnpm --filter @cyrene/desktop integration:stage-h -- --help
+pnpm --filter @cyrene/desktop integration:stage-h -- --list-scenarios
+```
+
+失败、断言未通过、Electron 关闭失败或证据写入失败均返回非零退出码。每次成功或失败（只要输出目录可写）都会写一份 `stage-h-evidence-v1` 脱敏摘要，包含场景、开始/结束时间、前端 commit、后端协议/版本/build SHA、检查项和 `passed`。
+
+## 参数与安全边界
+
+- URL、隔离 appData、证据输出目录、角色/会话/实例 ID、marker 都是参数或环境变量；仓库不写死现场 ID、用户路径或 token。
+- `output/playwright/` 被列为禁止输出目录，原有现场 JSON/截图不会被覆盖或纳入提交。
+- 证据对 token、Bearer、凭据字段、绝对路径和 opaque ID 做脱敏；ID 只保留不可逆短 hash。
+- 临时资源统一通过 `CleanupStack` LIFO 清理。未来代理、端口转发、子进程必须注册到同一栈，并在 `finally` 中关闭；本阶段 runner 只需清理 Electron。
+- 当前 runner 不提供 `--token`，也不读取 `STAGE_H_ACCESS_TOKEN`；历史脚本若需要调试 API 的 token，不应被迁移进正式 runner。
+
+## 与其他验收工作的边界
+
+| 类型 | 入口/责任 | 当前状态 |
+|---|---|---|
+| 自动化回归 | 本目录 runner；后端已启动、appData 和凭据由操作者准备 | `preflight`、`preview-validation` |
+| 后端 fixture | 后端仓库正式 seed/cleanup；前端 runner 后续消费公共 API | `pinned-follow`、`archive-default`、`tail-isolation` 预留 |
+| 人工 UI 场景 | 操作者按联调清单检查设置页、连接提示、角色编辑和重连体验 | 不由本 runner 代替 |
+
+轻量基础设施测试：
+
+```powershell
+pnpm --filter @cyrene/desktop test:stage-h-runner
+```
+
+该测试只覆盖参数校验、输出目录保护、脱敏、generationId 关联、失败判定和资源清理，不连接真实后端，也不修改数据库。

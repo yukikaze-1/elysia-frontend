@@ -21,6 +21,8 @@
     "pretest": "node scripts/check-node-version.mjs",
     "test": "vitest run --config vitest.config.mts",
     "test:integration": "pnpm ensure:electron && electron-vite build --mode test && vitest run --config vitest.integration.config.mts",
+    "integration:stage-h": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/integration/stage-h/runner.ts",
+    "test:stage-h-runner": "vitest run --config vitest.config.mts tests/unit/stage-h-runner.spec.ts",
     "ensure:electron": "node -e \"require('electron')\"",
     "test:e2e": "echo 'E2E(Playwright) 留待阶段 3 配置——本命令未实现，非零退出防假绿' && exit 1",
     "make": "echo 'Forge 打包留待阶段 8 配置——本命令未实现，非零退出防假绿' && exit 1",

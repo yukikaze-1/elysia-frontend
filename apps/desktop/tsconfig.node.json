@@ -16,6 +16,7 @@
     "composite": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "types": ["electron-vite/node", "vite/client"],
     "paths": {
       "@shared/*": ["./src/shared/*"]
