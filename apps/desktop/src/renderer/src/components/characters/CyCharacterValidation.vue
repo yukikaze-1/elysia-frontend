@@ -47,22 +47,22 @@ function severityLabel(severity: 'error' | 'warning'): string {
 </template>
 
 <style scoped>
-.cy-validation { display: grid; gap: 9px; padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-h3 { margin: 0; color: var(--cy-text); font-size: 13px; }
-p { margin: 4px 0 0; color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
-button { padding: 5px 9px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-pane); color: var(--cy-text); font-size: 11px; }
+.cy-validation { display: grid; gap: var(--cy-space-4-5); padding: var(--cy-space-6-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface); }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-5); }
+h3 { margin: 0; color: var(--cy-text); font-size: var(--cy-font-lg); }
+p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
+button { padding: var(--cy-space-2-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-sm); }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:disabled { opacity: .5; }
-.cy-validation-empty, .cy-validation-error, .cy-validation-summary { padding: 8px 9px; border-radius: 8px; color: var(--cy-muted); font-size: 11px; }
+.cy-validation-empty, .cy-validation-error, .cy-validation-summary { padding: var(--cy-space-4) var(--cy-space-4-5); border-radius: var(--cy-radius-4); color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-validation-error { color: var(--cy-danger); border: 1px dashed var(--cy-danger); }
 .cy-validation-summary { color: var(--cy-success); background: var(--cy-surface-soft); }
 .cy-validation-summary.invalid { color: var(--cy-danger); }
 .cy-validation-summary span { float: right; color: var(--cy-muted); }
-.cy-issue-list { display: grid; gap: 5px; margin: 0; padding: 0; list-style: none; }
-.cy-issue-list li button { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; width: 100%; gap: 7px; text-align: left; }
+.cy-issue-list { display: grid; gap: var(--cy-space-2-5); margin: 0; padding: 0; list-style: none; }
+.cy-issue-list li button { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; width: 100%; gap: var(--cy-space-3-5); text-align: left; }
 .cy-issue-list li.error button { color: var(--cy-danger); border-color: color-mix(in srgb, var(--cy-danger) 45%, var(--cy-border)); }
 .cy-issue-list li.warning button { color: var(--cy-warning); }
-code { color: var(--cy-muted); font-size: 10px; overflow-wrap: anywhere; }
+code { color: var(--cy-muted); font-size: var(--cy-font-xs); overflow-wrap: anywhere; }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

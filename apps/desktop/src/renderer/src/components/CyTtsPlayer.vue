@@ -4,14 +4,26 @@
 // url 清空（audio.session.cancelled / playback 结束）→ 暂停 + 卸载 src。play() 被自动播放策略拒绝 → catch 静默（onerror/ended 兜底）。
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { useVoiceStore } from '../stores/voice.store'
+import { useLive2dStore } from '../stores/live2d.store'
 
 const voiceStore = useVoiceStore()
+const live2dStore = useLive2dStore()
 const audioRef = ref<HTMLAudioElement>()
 
-// C1（批次 C）：把 <audio> 宿主引用暴露给 voiceStore.ttsAudioEl（live2dStore 口部数据源 attach 目标）；
-// 卸载清空（元素消失 → 口部数据源 detach 归零）
-onMounted(() => { voiceStore.ttsAudioEl = audioRef.value ?? null })
-onUnmounted(() => { voiceStore.ttsAudioEl = null })
+// C1（批次 C）：把 <audio> 宿主告知两边（多套 UI 基础，2026-09-10 方向反转）：
+//   · voiceStore 只留诊断句柄（非响应式，不参与口部接线）；
+//   · 口部数据源的 attach 目标由**本组件直接告知 live2dStore**——此前 live2dStore 自己去读
+//     voiceStore.ttsAudioEl，即功能层伸手取 UI 的 DOM 宿主。现由 UI 主动上报（同 setSurfaceVisible 方向）。
+// 卸载一并清空（元素消失 → 口部数据源 detach 归零）。
+onMounted(() => {
+  const el = audioRef.value ?? null
+  voiceStore.setTtsAudioEl(el)
+  live2dStore.setTtsAudioElement(el)
+})
+onUnmounted(() => {
+  voiceStore.setTtsAudioEl(null)
+  live2dStore.setTtsAudioElement(null)
+})
 
 watch(
   () => voiceStore.tts.url,

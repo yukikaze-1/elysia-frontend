@@ -189,7 +189,7 @@ export const useIdentityStore = defineStore('character-identity', () => {
             code: 'BACKEND_REJECTED',
             backendCode: USER_PROFILE_REVISION_CONFLICT,
             currentRevision: profile.value.revision,
-            message: '档案已被更新，较旧的保存结果已丢弃'
+            message: 'LOCAL:IDENTITY_SAVE_STALE'
           }
           saveStatus.value = 'conflict'
           if (!pending) status.value = profile.value ? 'ready' : 'idle'

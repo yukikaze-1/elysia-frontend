@@ -54,11 +54,11 @@ function onKeydown(e: KeyboardEvent): void {
   margin: 0;
   padding: 0;
   border: 1px solid var(--cy-border);
-  border-radius: 999px;
+  border-radius: var(--cy-radius-pill);
   background: var(--cy-surface-hover);
   cursor: pointer;
   outline: 0;
-  transition: background 0.18s ease, border-color 0.18s ease;
+  transition: background var(--cy-motion-base) ease, border-color var(--cy-motion-base) ease;
 }
 
 /* 滑块（白色圆点，左/右位移）——对勾 ::before 需 z-index 压过滑块（::after 后绘制会覆盖） */
@@ -69,11 +69,11 @@ function onKeydown(e: KeyboardEvent): void {
   left: 2px;
   width: 16px;
   height: 16px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: var(--cy-surface);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
   transform: translateY(-50%);
-  transition: transform 0.18s ease;
+  transition: transform var(--cy-motion-base) ease;
 }
 
 /* 开启：蓝色轨道；滑块移到右侧；滑块内显示小型蓝色对勾（纯 CSS 字符，非图片） */
@@ -94,7 +94,7 @@ function onKeydown(e: KeyboardEvent): void {
   z-index: 1;   /* 压过 ::after 滑块（后绘制者胜，必须显式提层） */
   transform: translateY(-50%);
   color: var(--cy-accent-strong);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   font-weight: 700;
   line-height: 1;
   pointer-events: none;

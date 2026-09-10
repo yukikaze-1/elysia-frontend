@@ -37,6 +37,6 @@ async function retry(): Promise<void> {
 </template>
 
 <style scoped>
-.cy-placeholder { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border-radius: 10px; color: var(--cy-muted); background: var(--cy-surface-soft); border: 1px dashed var(--cy-border); font-size: 12px; }
-.cy-placeholder-action { padding: 2px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }
+.cy-placeholder { display: inline-flex; align-items: center; gap: var(--cy-space-4); padding: var(--cy-space-3-5) var(--cy-space-5-5); border-radius: var(--cy-radius-5); color: var(--cy-muted); background: var(--cy-surface-soft); border: 1px dashed var(--cy-border); font-size: var(--cy-font-md); }
+.cy-placeholder-action { padding: var(--cy-space-1) var(--cy-space-4); border-radius: var(--cy-radius-pill); color: var(--cy-accent-text); background: var(--cy-accent); font-size: var(--cy-font-sm); }
 </style>

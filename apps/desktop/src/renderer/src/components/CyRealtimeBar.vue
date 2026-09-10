@@ -7,10 +7,13 @@
 import { computed } from 'vue'
 import { useVoiceStore } from '../stores/voice.store'
 import { useSettingsStore } from '../stores/settings.store'
+import { errorMessage } from '../utils/error-message'
 
 const voiceStore = useVoiceStore()
 const settings = useSettingsStore()
 const showCaptions = computed(() => settings.voice.showCaptions)
+// 多套 UI 基础：错误文案统一走映射器（store 只产 code）
+const errorText = computed(() => errorMessage(voiceStore.error, '实时语音会话失败，请重试。'))
 
 function onStop(): void { void voiceStore.stopRealtime() }
 </script>
@@ -18,7 +21,7 @@ function onStop(): void { void voiceStore.stopRealtime() }
 <template>
   <div class="cy-realtime-bar" role="status" aria-label="实时语音会话">
     <span v-if="voiceStore.error" class="cy-rt-status cy-rt-status-error" role="alert">
-      <span>{{ voiceStore.error.message }}</span>
+      <span>{{ errorText }}</span>
     </span>
     <template v-else>
       <span class="cy-rt-status">
@@ -36,19 +39,19 @@ function onStop(): void { void voiceStore.stopRealtime() }
 .cy-realtime-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: var(--cy-space-5);
+  padding: var(--cy-space-6) var(--cy-space-7);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 14px;
+  border-radius: var(--cy-radius-7);
 }
 
 .cy-rt-status {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--cy-space-3-5);
   color: var(--cy-accent);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   white-space: nowrap;
 }
 
@@ -59,7 +62,7 @@ function onStop(): void { void voiceStore.stopRealtime() }
 .cy-rt-pulse {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: var(--cy-accent);
   animation: cy-rt-blink 1.2s ease-in-out infinite;
 }
@@ -76,24 +79,24 @@ function onStop(): void { void voiceStore.stopRealtime() }
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--cy-text);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
 }
 
 .cy-rt-turn {
   flex: 0 0 auto;
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   white-space: nowrap;
 }
 
 .cy-rt-stop {
   flex: 0 0 auto;
-  padding: 5px 13px;
+  padding: var(--cy-space-2-5) var(--cy-space-6-5);
   border: 1px solid var(--cy-border);
-  border-radius: 8px;
+  border-radius: var(--cy-radius-4);
   background: var(--cy-surface-soft);
   color: var(--cy-danger);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-rt-stop:hover {

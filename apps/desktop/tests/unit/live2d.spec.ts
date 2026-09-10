@@ -23,21 +23,10 @@ import { useLayoutStore } from '../../src/renderer/src/stores/layout.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Live2DDirectiveEvent, Live2DModelSummary, RuntimeInfo } from '@shared/contracts'
 
-// —— Core 全局桩（node 无 live2dcubismcore.min.js）——
-// 经 live2d.store → adapter → @framework/model/cubismmoc → cubismmodel.ts 的模块作用域枚举初始化
-// （CubismColorBlend = Live2DCubismCore.ColorBlendType_*）在 import 时访问全局；vi.hoisted 先于一切 import
-// 执行，桩入 ControlBlendType 常量即可通过模块加载（其余 Framework 模块对 Core 的访问均在方法内/类型位）。
-// 只提供本 spec 需要的枚举常量（声明序数值；真实装配/渲染走 renderer 全局 Core，归 Task 5/真机）。
-vi.hoisted(() => {
-  const names = [
-    'Normal', 'AddGlow', 'Add', 'Darken', 'Multiply', 'ColorBurn', 'LinearBurn', 'Lighten', 'Screen',
-    'ColorDodge', 'Overlay', 'SoftLight', 'HardLight', 'LinearLight', 'Hue', 'Color',
-    'AddCompatible', 'MultiplyCompatible'
-  ] as const
-  const ColorBlendType: Record<string, number> = {}
-  names.forEach((n, i) => { ColorBlendType[`ColorBlendType_${n}`] = i })
-  ;(globalThis as Record<string, unknown>).Live2DCubismCore = { ColorBlendType }
-})
+// —— Core 全局桩 ——
+// 已提升为全局 setup（tests/unit/setup/live2dcubismcore.ts，见 vitest.config.mts），
+// 不再在各 spec 内 vi.hoisted。原因见该文件：任何「组件 → live2d.store」import 链都会
+// 触发 Core 访问，桩必须全局先于 import 生效。
 
 // —— fixtures ——
 const MODEL_HARU: Live2DModelSummary = {
@@ -155,6 +144,10 @@ function freshStore() {
   useLayoutStore().viewportWidth = 2000
   const store = useLive2dStore()
   const settings = useSettingsStore()
+  // 多套 UI 基础（2026-09-10）：渲染面可见性改由 UI 告知（store.setSurfaceVisible），
+  // store 不再读 layout store。真实链路里 CyLive2DPanel 在 setup 期 watch(sync) 上报，
+  // 先于 onMounted 的 init；测试等价地在 init 前上报，时序与生产一致。
+  store.setSurfaceVisible(true)
   return { store, settings }
 }
 
@@ -614,7 +607,7 @@ describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFact
   beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('tick 采样：attach（tts.playing ∧ ttsAudioEl）→ controller.setMouthLevel 收到源采样值；detach 归 0', async () => {
+  it('tick 采样：attach（tts.playing ∧ 已告知宿主元素）→ controller.setMouthLevel 收到源采样值；detach 归 0', async () => {
     const ctrl = installEffectiveController({})
     const fakeEl = {} as HTMLAudioElement
     const seq = [0.2, 0.4, 0.6, 0.8]
@@ -629,7 +622,8 @@ describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFact
     await store.init(fakeCanvas)
     const voice = useVoiceStore()
     voice.tts.playing = true
-    voice.ttsAudioEl = fakeEl
+    // 多套 UI 基础：宿主元素改由 UI 经 setTtsAudioElement 告知（此前读 voice.ttsAudioEl）
+    store.setTtsAudioElement(fakeEl)
     await nextTick() // watch 触发 attach
     store.tick()
     expect(ctrl.setMouthLevel).toHaveBeenLastCalledWith(0.2)
@@ -672,22 +666,22 @@ describe('live2dStore 批次 C（C2）：setVisibility 接线（D5C-05，消除 
   beforeEach(() => { setLive2dControllerFactory(undefined); setMouthSourceFactory(undefined); vi.clearAllMocks() })
   afterEach(() => { vi.useRealTimers() })
 
-  it('init 把「布局可见 ∧ enabled」→ controller.setVisibility(true)；布局隐藏 → false（tick 不驱动 adapter）；恢复 → true', async () => {
+  it('init 把「渲染面可见 ∧ enabled」→ controller.setVisibility(true)；隐藏 → false（tick 不驱动 adapter）；恢复 → true', async () => {
     const { adapter, ctrl } = installFakes({ models: [MODEL_HARU] })
-    const { store } = freshStore() // viewportWidth=2000 → live2dShown=true
+    const { store } = freshStore() // setSurfaceVisible(true) 已由 helper 上报
     const visSpy = vi.spyOn(ctrl, 'setVisibility')
     await store.init(fakeCanvas)
-    expect(visSpy).toHaveBeenLastCalledWith(true) // init immediate：布局可见 ∧ enabled
-    // 布局隐藏（toggleLive2d → prefs.live2dVisible=false → live2dShown=false）→ setVisibility(false)
-    useLayoutStore().toggleLive2d()
+    expect(visSpy).toHaveBeenLastCalledWith(true) // init immediate：可见 ∧ enabled
+    // UI 上报隐藏（真实链路：布局折叠/窄窗/离开 chat 视图 → CyLive2DPanel 的 surfaceVisible 变 false）
+    store.setSurfaceVisible(false)
     await nextTick()
     expect(visSpy).toHaveBeenLastCalledWith(false)
     // controller 级门：隐藏态 tick 不驱动 adapter（不渲染空白帧）
     adapter.update.mockClear()
     store.tick()
     expect(adapter.update).not.toHaveBeenCalled()
-    // 布局恢复 → setVisibility(true) → tick 恢复驱动
-    useLayoutStore().toggleLive2d()
+    // UI 上报恢复 → setVisibility(true) → tick 恢复驱动
+    store.setSurfaceVisible(true)
     await nextTick()
     expect(visSpy).toHaveBeenLastCalledWith(true)
     store.tick()
@@ -708,14 +702,14 @@ describe('live2dStore 批次 C（C2）：setVisibility 接线（D5C-05，消除 
     expect(visSpy).toHaveBeenLastCalledWith(true)
   })
 
-  it('dispose 退订可见性接线（布局变化不再推送 setVisibility）', async () => {
+  it('dispose 退订可见性接线（此后再上报可见性不再推送 setVisibility）', async () => {
     const { ctrl } = installFakes({ models: [MODEL_HARU] })
     const { store } = freshStore()
     const visSpy = vi.spyOn(ctrl, 'setVisibility')
     await store.init(fakeCanvas)
     store.dispose()
     visSpy.mockClear()
-    useLayoutStore().toggleLive2d()
+    store.setSurfaceVisible(false)
     await nextTick()
     expect(visSpy).not.toHaveBeenCalled() // 已退订
   })

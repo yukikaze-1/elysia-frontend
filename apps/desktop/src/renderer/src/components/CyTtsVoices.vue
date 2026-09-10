@@ -5,11 +5,14 @@
 // 调用触发试听，`.url`/`.error` 读取结果（响应式 getter）；试听为独立操作，不打断当前生成。
 // 播放只跟随本次按钮操作显式触发，不使用 autoplay：preview URL 会跨 tab 保留，若在重新挂载时 autoplay，
 // TTS → STT → TTS 会把上一段试听再次播放。
-import { nextTick, ref } from 'vue'
+import { nextTick, ref, computed } from 'vue'
 import { useModelServiceStore } from '../stores/model-service.store'
+import { errorMessage } from '../utils/error-message'
 
 const modelStore = useModelServiceStore()
 const previewAudio = ref<HTMLAudioElement>()
+// 多套 UI 基础：错误文案统一走映射器（store 只产 code）
+const voicesErrorText = computed(() => errorMessage(modelStore.voicesError, '获取声音列表失败，请稍后重试。'))
 
 async function onPreview(voiceId: string): Promise<void> {
   await modelStore.preview({ voiceId })
@@ -27,7 +30,7 @@ function onSetVoice(voiceId: string): void { void modelStore.setVoice(voiceId) }
   <section class="cy-tts-voices" aria-label="TTS 声音">
     <h3 class="cy-tts-title">TTS 声音</h3>
 
-    <div v-if="modelStore.voicesError" class="cy-ms-error" role="alert">{{ modelStore.voicesError.message }}</div>
+    <div v-if="modelStore.voicesError" class="cy-ms-error" role="alert">{{ voicesErrorText }}</div>
 
     <div v-if="!modelStore.voices || modelStore.voices.length === 0" class="cy-ms-state">暂无可用声音</div>
     <ul v-else class="cy-tts-list">
@@ -63,19 +66,19 @@ function onSetVoice(voiceId: string): void { void modelStore.setVoice(voiceId) }
 </template>
 
 <style scoped>
-.cy-tts-voices { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--cy-border); }
-.cy-tts-title { margin: 0; font-size: 13px; color: var(--cy-muted); font-weight: 600; }
-.cy-ms-error { display: flex; align-items: center; gap: 8px; padding: 8px 11px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
-.cy-ms-state { padding: 18px 0; color: var(--cy-muted); text-align: center; font-size: 13px; }
-.cy-tts-list { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 0; list-style: none; }
-.cy-tts-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 9px 12px; background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 11px; }
+.cy-tts-voices { display: flex; flex-direction: column; gap: var(--cy-space-5); margin-top: var(--cy-space-7); padding-top: var(--cy-space-6); border-top: 1px solid var(--cy-border); }
+.cy-tts-title { margin: 0; font-size: var(--cy-font-lg); color: var(--cy-muted); font-weight: 600; }
+.cy-ms-error { display: flex; align-items: center; gap: var(--cy-space-4); padding: var(--cy-space-4) var(--cy-space-5-5); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
+.cy-ms-state { padding: var(--cy-space-9) 0; color: var(--cy-muted); text-align: center; font-size: var(--cy-font-lg); }
+.cy-tts-list { display: flex; flex-direction: column; gap: var(--cy-space-3-5); margin: 0; padding: 0; list-style: none; }
+.cy-tts-item { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-5); flex-wrap: wrap; padding: var(--cy-space-4-5) var(--cy-space-6); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 11px; }
 .cy-tts-item.current { border-color: var(--cy-accent-strong); }
-.cy-tts-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
-.cy-tts-id { color: var(--cy-muted); font-size: 11px; }
-.cy-tts-lang { color: var(--cy-muted); font-size: 11px; }
-.cy-tts-current { padding: 1px 8px; border-radius: 999px; background: var(--cy-accent); color: var(--cy-accent-text); font-size: 11px; }
-.cy-tts-actions { display: flex; gap: 7px; }
-.cy-profile-btn { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-text); font-size: 12px; }
+.cy-tts-meta { display: flex; align-items: center; gap: var(--cy-space-4); flex-wrap: wrap; font-size: var(--cy-font-lg); }
+.cy-tts-id { color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-tts-lang { color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-tts-current { padding: var(--cy-space-0-5) var(--cy-space-4); border-radius: var(--cy-radius-pill); background: var(--cy-accent); color: var(--cy-accent-text); font-size: var(--cy-font-sm); }
+.cy-tts-actions { display: flex; gap: var(--cy-space-3-5); }
+.cy-profile-btn { display: inline-flex; align-items: center; gap: var(--cy-space-2-5); padding: var(--cy-space-2-5) var(--cy-space-5-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); }
 .cy-profile-btn:disabled { opacity: 0.55; cursor: default; }
 .cy-profile-btn:hover:not(:disabled) { background: var(--cy-surface-hover); }
 .cy-tts-audio { width: 100%; }

@@ -93,19 +93,19 @@ function updateExample(index: number, field: 'user' | 'assistant', value: string
 </template>
 
 <style scoped>
-.cy-examples-editor { min-width: 0; padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
-legend { padding: 0 5px; color: var(--cy-text); font-size: 13px; font-weight: 650; }
-.cy-help { margin: 0 0 10px; color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
-.cy-empty-example { padding: 9px; border: 1px dashed var(--cy-border); border-radius: 8px; color: var(--cy-muted); font-size: 12px; }
-.cy-example-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.cy-example-item { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--cy-border); border-radius: 10px; background: var(--cy-surface-soft); }
-.cy-example-item header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.cy-example-item header strong { color: var(--cy-text); font-size: 12px; }
-.cy-example-actions { display: flex; gap: 5px; }
-label { display: grid; gap: 4px; color: var(--cy-muted); font-size: 11px; }
-textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 7px 9px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-pane); color: var(--cy-text); font: inherit; line-height: 1.5; }
-.cy-examples-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; color: var(--cy-muted); font-size: 11px; }
-button { padding: 5px 9px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-pane); color: var(--cy-text); font-size: 11px; }
+.cy-examples-editor { min-width: 0; padding: var(--cy-space-6-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface); }
+legend { padding: 0 var(--cy-space-2-5); color: var(--cy-text); font-size: var(--cy-font-lg); font-weight: 650; }
+.cy-help { margin: 0 0 var(--cy-space-5); color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
+.cy-empty-example { padding: var(--cy-space-4-5); border: 1px dashed var(--cy-border); border-radius: var(--cy-radius-4); color: var(--cy-muted); font-size: var(--cy-font-md); }
+.cy-example-list { display: grid; gap: var(--cy-space-5); margin: 0; padding: 0; list-style: none; }
+.cy-example-item { display: grid; gap: var(--cy-space-4); padding: var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-5); background: var(--cy-surface-soft); }
+.cy-example-item header { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-4); }
+.cy-example-item header strong { color: var(--cy-text); font-size: var(--cy-font-md); }
+.cy-example-actions { display: flex; gap: var(--cy-space-2-5); }
+label { display: grid; gap: var(--cy-space-2); color: var(--cy-muted); font-size: var(--cy-font-sm); }
+textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: var(--cy-space-3-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font: inherit; line-height: 1.5; }
+.cy-examples-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-4); margin-top: var(--cy-space-5); color: var(--cy-muted); font-size: var(--cy-font-sm); }
+button { padding: var(--cy-space-2-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-sm); }
 button.danger { color: var(--cy-danger); }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:disabled { opacity: 0.45; cursor: default; }

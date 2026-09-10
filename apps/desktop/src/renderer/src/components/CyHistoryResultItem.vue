@@ -35,14 +35,14 @@ const timeText = computed(() => {
 </template>
 
 <style scoped>
-.cy-history-item { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; padding: 9px 11px; background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 12px; }
-.cy-hit-main { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.cy-history-item { display: grid; grid-template-columns: 1fr auto; gap: var(--cy-space-3) var(--cy-space-5); align-items: center; padding: var(--cy-space-4-5) var(--cy-space-5-5); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-hit-main { display: flex; align-items: center; gap: var(--cy-space-4); font-size: var(--cy-font-md); }
 .cy-hit-time { color: var(--cy-muted); }
 .cy-hit-sender { color: var(--cy-text); font-weight: 500; }
-.cy-hit-chip { padding: 1px 7px; border-radius: 999px; background: var(--cy-surface-soft); color: var(--cy-muted); border: 1px solid var(--cy-border); font-size: 11px; }
+.cy-hit-chip { padding: var(--cy-space-0-5) var(--cy-space-3-5); border-radius: var(--cy-radius-pill); background: var(--cy-surface-soft); color: var(--cy-muted); border: 1px solid var(--cy-border); font-size: var(--cy-font-sm); }
 .cy-hit-chip.kind-sticker { color: var(--cy-accent-text); background: var(--cy-accent); }
-.cy-hit-snippet { grid-column: 1 / -1; margin: 0; color: var(--cy-text); font-size: 13px; }
-.cy-hit-thumb { grid-column: 1 / -1; width: 56px; height: 56px; object-fit: contain; border-radius: 8px; background: var(--cy-surface-soft); }
-.cy-jump-btn { padding: 5px 12px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-text); font-size: 12px; }
+.cy-hit-snippet { grid-column: 1 / -1; margin: 0; color: var(--cy-text); font-size: var(--cy-font-lg); }
+.cy-hit-thumb { grid-column: 1 / -1; width: 56px; height: 56px; object-fit: contain; border-radius: var(--cy-radius-4); background: var(--cy-surface-soft); }
+.cy-jump-btn { padding: var(--cy-space-2-5) var(--cy-space-6); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); }
 .cy-jump-btn:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

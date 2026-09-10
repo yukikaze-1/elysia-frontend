@@ -27,4 +27,4 @@ watch(
     <CyToolApproval :open="approvalOpen" @close="closeApproval" />
   </div>
 </template>
-<style scoped>.cy-live-tools { padding: 0 12px; }</style>
+<style scoped>.cy-live-tools { padding: 0 var(--cy-space-6); }</style>

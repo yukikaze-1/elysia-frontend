@@ -111,7 +111,7 @@ watch(() => layout.notice, (n) => {
   display: grid;
   place-items: center;
   color: var(--cy-muted);
-  font-size: 14px;
+  font-size: var(--cy-font-base);
 }
 
 /* 轻量 toast：非 Live2D 覆盖物，仅瞬时提示，不遮挡交互区 */
@@ -122,12 +122,12 @@ watch(() => layout.notice, (n) => {
   transform: translateX(-50%);
   z-index: 40;
   max-width: 70vw;
-  padding: 9px 14px;
+  padding: var(--cy-space-4-5) var(--cy-space-7);
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-6);
+  font-size: var(--cy-font-md);
   box-shadow: var(--cy-shadow);
 }
 </style>

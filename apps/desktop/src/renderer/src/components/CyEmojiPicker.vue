@@ -48,12 +48,12 @@ const orderedEmoji = computed(() => [...recent.value, ...COMMON_EMOJI.filter((e)
 </template>
 
 <style scoped>
-.cy-emoji-picker { display: flex; flex-direction: column; width: 288px; max-height: 300px; padding: 10px; background: var(--cy-pane); border: 1px solid var(--cy-border); border-radius: 12px; box-shadow: 0 8px 24px rgb(0 0 0 / 0.2); }
-.cy-emoji-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
-.cy-emoji-tabs button { padding: 4px 10px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; }
+.cy-emoji-picker { display: flex; flex-direction: column; width: 288px; max-height: 300px; padding: var(--cy-space-5); background: var(--cy-pane); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); box-shadow: 0 8px 24px rgb(0 0 0 / 0.2); }
+.cy-emoji-tabs { display: flex; gap: var(--cy-space-3); margin-bottom: var(--cy-space-4); }
+.cy-emoji-tabs button { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-emoji-tabs button.active { background: var(--cy-accent); color: var(--cy-accent-text); }
-.cy-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; overflow-y: auto; }
-.cy-emoji-cell { padding: 4px; border: 0; border-radius: 6px; background: transparent; font-size: 20px; line-height: 1.4; }
+.cy-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: var(--cy-space-2); overflow-y: auto; }
+.cy-emoji-cell { padding: var(--cy-space-2); border: 0; border-radius: var(--cy-radius-3); background: transparent; font-size: 20px; line-height: 1.4; }
 .cy-emoji-cell:hover { background: var(--cy-surface-hover); }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 1px; }
 </style>

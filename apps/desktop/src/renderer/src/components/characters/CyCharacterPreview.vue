@@ -40,18 +40,18 @@ async function preview(): Promise<void> {
 </template>
 
 <style scoped>
-.cy-preview { display: grid; gap: 9px; padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-h3 { margin: 0; color: var(--cy-text); font-size: 13px; }
-p, small { margin: 4px 0 0; color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
-label { display: grid; gap: 5px; color: var(--cy-muted); font-size: 11px; }
-textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-pane); color: var(--cy-text); font: inherit; }
-button { justify-self: start; padding: 6px 11px; border: 1px solid var(--cy-accent-strong); border-radius: 8px; background: var(--cy-pane); color: var(--cy-accent-strong); font-size: 12px; }
+.cy-preview { display: grid; gap: var(--cy-space-4-5); padding: var(--cy-space-6-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface); }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-5); }
+h3 { margin: 0; color: var(--cy-text); font-size: var(--cy-font-lg); }
+p, small { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
+label { display: grid; gap: var(--cy-space-2-5); color: var(--cy-muted); font-size: var(--cy-font-sm); }
+textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: var(--cy-space-4) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-pane); color: var(--cy-text); font: inherit; }
+button { justify-self: start; padding: var(--cy-space-3) var(--cy-space-5-5); border: 1px solid var(--cy-accent-strong); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-accent-strong); font-size: var(--cy-font-md); }
 button:disabled { opacity: .5; cursor: default; }
-.cy-preview-chip { padding: 2px 7px; border: 1px solid var(--cy-border); border-radius: 999px; color: var(--cy-muted); font-size: 10px; }
-.cy-preview-result { padding: 10px; border-radius: 9px; background: var(--cy-surface-soft); color: var(--cy-text); }
-.cy-preview-result small { display: block; margin-top: 8px; }
-.cy-preview-error { color: var(--cy-danger); font-size: 11px; }
-.cy-preview-empty { color: var(--cy-muted); font-size: 11px; }
+.cy-preview-chip { padding: var(--cy-space-1) var(--cy-space-3-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-preview-result { padding: var(--cy-space-5); border-radius: var(--cy-radius-4-5); background: var(--cy-surface-soft); color: var(--cy-text); }
+.cy-preview-result small { display: block; margin-top: var(--cy-space-4); }
+.cy-preview-error { color: var(--cy-danger); font-size: var(--cy-font-sm); }
+.cy-preview-empty { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 textarea:focus-visible, button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

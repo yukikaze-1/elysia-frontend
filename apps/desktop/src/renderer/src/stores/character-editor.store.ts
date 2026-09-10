@@ -97,7 +97,7 @@ function draftFromDetail(detail: CharacterDetail): CharacterDraft {
 }
 
 function errorFromValidation(result: CharacterValidationResult): PublicError {
-  return { code: 'BACKEND_REJECTED', backendCode: 'CHARACTER_VALIDATION', message: '角色校验未通过', issues: cloneValue(result.issues) }
+  return { code: 'BACKEND_REJECTED', backendCode: 'CHARACTER_VALIDATION', message: 'LOCAL:CHARACTER_VALIDATION', issues: cloneValue(result.issues) }
 }
 
 function isRevisionConflict(error: PublicError): boolean {
@@ -462,7 +462,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
     if (!parsed.success) {
       if (isPersistSnapshotCurrent(snapshot, sequence)) {
         persistenceStatus.value = 'error'
-        persistenceError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: '角色草稿格式无效' }
+        persistenceError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: 'LOCAL:draft_invalid' }
       }
       return false
     }
@@ -571,7 +571,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
     }
     try {
       const result = await Promise.resolve().then(() => lister())
-      if (!Array.isArray(result)) throw new Error('[SCHEMA_VALIDATION_FAILED] 草稿列表格式无效')
+      if (!Array.isArray(result)) throw new Error('[SCHEMA_VALIDATION_FAILED] LOCAL:draft_list_invalid')
       const valid = result.flatMap((item) => {
         const parsed = CharacterDraftSummarySchema.safeParse(item)
         return parsed.success ? [cloneValue(parsed.data)] : []
@@ -599,7 +599,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
     if (!CharacterDraftKeySchema.safeParse(key).success) {
       if (request === recoverySequence) {
         recoveryStatus.value = 'error'
-        recoveryError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: '角色草稿 key 无效' }
+        recoveryError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: 'LOCAL:draft_key_invalid' }
       }
       return false
     }
@@ -620,7 +620,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
       if (!parsed.success) {
         if (request === recoverySequence) {
           recoveryStatus.value = 'error'
-          recoveryError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: '角色草稿格式无效' }
+          recoveryError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: 'LOCAL:draft_invalid' }
         }
         return false
       }
@@ -651,7 +651,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
   async function deleteDraft(key: string): Promise<boolean> {
     if (!CharacterDraftKeySchema.safeParse(key).success) {
       persistenceStatus.value = 'error'
-      persistenceError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: '角色草稿 key 无效' }
+      persistenceError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: 'LOCAL:draft_key_invalid' }
       return false
     }
     const deleter = api?.deleteCharacterDraft

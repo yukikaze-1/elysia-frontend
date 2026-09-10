@@ -56,6 +56,13 @@ const active = computed(
   () => app.currentView === 'chat' && layout.effective.live2dShown && settings.live2d.enabled && store.status === 'ready'
 )
 
+// 可见性告知（多套 UI 基础，2026-09-10）：功能层不再自己去读 layout store——
+// 「面板是否可见」是本组件的布局知识，由本组件组合条件后显式告知 store，store 只据此决定是否暂停绘制。
+// 上门的 `active` 仍覆盖 rAF 启停；这里额外上报「布局可见」（不含 ready 前置），
+// 使 controller 侧可见性在 loading/fallback 等静态态下与折叠状态保持一致。
+const surfaceVisible = computed(() => app.currentView === 'chat' && layout.effective.live2dShown)
+watch(surfaceVisible, (visible) => { store.setSurfaceVisible(visible) }, { immediate: true })
+
 const statusText = computed(() => {
   if (!settings.live2d.enabled) return 'Live2D 已关闭'
   switch (store.status) {
@@ -439,11 +446,11 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px;
+  padding: var(--cy-space-6);
 }
 
 .cy-live-title {
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   font-weight: 500;
 }
 
@@ -453,7 +460,7 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   border: 1px solid var(--cy-border);
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   background: var(--cy-surface);
   color: var(--cy-muted);
 }
@@ -466,7 +473,7 @@ onBeforeUnmount(() => {
 .cy-live-head-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--cy-space-3);
 }
 
 /* UII-Live2D 修缮：重置视图（紧凑次要按钮，与折叠按钮同规格） */
@@ -476,7 +483,7 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   border: 1px solid var(--cy-border);
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   background: var(--cy-surface);
   color: var(--cy-muted);
 }
@@ -515,15 +522,15 @@ onBeforeUnmount(() => {
   flex: 1;
   grid-template-rows: 1fr auto; /* 画布区 + 底部模型下拉 */
   min-height: 0;
-  padding: 8px;
-  gap: 8px;
+  padding: var(--cy-space-4);
+  gap: var(--cy-space-4);
 }
 
 .cy-live-glow {
   position: absolute;
   width: 150px;
   height: 150px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: radial-gradient(circle, var(--cy-glow), transparent 70%);
   opacity: 0.45;
   filter: blur(12px);
@@ -557,7 +564,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   color: var(--cy-muted);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   pointer-events: none;
 }
 
@@ -565,14 +572,14 @@ onBeforeUnmount(() => {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--cy-space-4);
   min-height: 30px;
-  padding: 4px 8px;
+  padding: var(--cy-space-2) var(--cy-space-4);
   border: 1px solid var(--cy-border);
-  border-radius: 10px;
+  border-radius: var(--cy-radius-5);
   background: var(--cy-surface);
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-live-model-select select {
@@ -582,7 +589,7 @@ onBeforeUnmount(() => {
   outline: none;
   background: transparent;
   color: var(--cy-text);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-live-model-select.is-disabled select {
@@ -592,38 +599,38 @@ onBeforeUnmount(() => {
 .cy-live-model-label {
   flex: none;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-live-status {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 0 12px 14px;
+  gap: var(--cy-space-3);
+  margin: 0 var(--cy-space-6) var(--cy-space-7);
   min-width: 0;
-  padding: 10px;
+  padding: var(--cy-space-5);
   text-align: center;
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-6);
+  font-size: var(--cy-font-md);
 }
 
 .cy-live-status-main {
   min-width: 0;
   max-width: 100%;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   word-break: break-word;
 }
 
 .cy-live-badge {
   align-self: center;
-  padding: 2px 10px;
-  border-radius: 999px;
+  padding: var(--cy-space-1) var(--cy-space-5);
+  border-radius: var(--cy-radius-pill);
   background: rgba(0, 0, 0, 0.16);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   font-weight: 600;
 }
 

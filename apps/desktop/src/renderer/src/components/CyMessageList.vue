@@ -412,23 +412,23 @@ onMounted(() => {
 <style scoped>
 /* UII-QQ：扁平中性底（去渐变）+ scrollbar-gutter stable（滚动条出现/消失不横跳）；
    行居中为 940px 阅读轨道——行仍是 :scope 直接子元素（perf-gate/虚拟列表契约不变） */
-.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 16px; overflow-y: auto; overflow-x: hidden; overflow-anchor: none; scrollbar-gutter: stable; background: var(--cy-pane); }
-.cy-vlist-row { display: flex; flex-direction: column; gap: 9px; width: min(100%, 940px); margin-inline: auto; padding: 2px 0; }
-.cy-vlist-row.cy-turn-start { padding-top: 18px; }
+.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 var(--cy-space-8); overflow-y: auto; overflow-x: hidden; overflow-anchor: none; scrollbar-gutter: stable; background: var(--cy-pane); }
+.cy-vlist-row { display: flex; flex-direction: column; gap: var(--cy-space-4-5); width: min(100%, 940px); margin-inline: auto; padding: var(--cy-space-1) 0; }
+.cy-vlist-row.cy-turn-start { padding-top: var(--cy-space-9); }
 /* P3：全局首条消息 6px 顶距——不能用 :first-child（列表首位恒为 .cy-vlist-pad，永不匹配），用显式类 */
-.cy-vlist-row.cy-first-row { padding-top: 6px; }
+.cy-vlist-row.cy-first-row { padding-top: var(--cy-space-3); }
 /* UII-QQ 时间戳批次：居中日期分隔——低权重浅胶囊小字，不与正文争焦点；
    日首行顶部留白由分隔负责（该行 cy-turn-start 已禁用），不影响消息左右对齐结构 */
-.cy-day-separator { display: flex; justify-content: center; padding: 14px 0 2px; }
-.cy-day-separator-text { padding: 2px 10px; color: var(--cy-muted); background: var(--cy-surface-soft); border-radius: 999px; font-size: 11px; opacity: 0.85; font-variant-numeric: tabular-nums; user-select: none; }
+.cy-day-separator { display: flex; justify-content: center; padding: var(--cy-space-7) 0 var(--cy-space-1); }
+.cy-day-separator-text { padding: var(--cy-space-1) var(--cy-space-5); color: var(--cy-muted); background: var(--cy-surface-soft); border-radius: var(--cy-radius-pill); font-size: var(--cy-font-sm); opacity: 0.85; font-variant-numeric: tabular-nums; user-select: none; }
 .cy-vlist-pad { flex-shrink: 0; }   /* 7C 真机修复：flex 列内垫片必须禁收缩，否则 paddingTop/Bottom 被压成 0，长会话滚不到底部新消息 */
-.cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: 12px; }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
-.cy-located-chip { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; color: var(--cy-accent-text); background: var(--cy-accent); font-size: 11px; }
+.cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: var(--cy-radius-6); }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
+.cy-located-chip { display: inline-block; align-self: flex-start; padding: var(--cy-space-0-5) var(--cy-space-4); border-radius: var(--cy-radius-pill); color: var(--cy-accent-text); background: var(--cy-accent); font-size: var(--cy-font-sm); }
 .cy-sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.cy-empty { display: grid; flex: 1; place-items: center; color: var(--cy-muted); font-size: 13px; }
-.cy-back-bottom { position: sticky; bottom: 12px; align-self: center; z-index: 2; padding: 6px 13px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
+.cy-empty { display: grid; flex: 1; place-items: center; color: var(--cy-muted); font-size: var(--cy-font-lg); }
+.cy-back-bottom { position: sticky; bottom: 12px; align-self: center; z-index: 2; padding: var(--cy-space-3) var(--cy-space-6-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
 .cy-back-bottom:hover { color: var(--cy-accent); background: var(--cy-surface-hover); }
-.cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: stretch; width: min(100%, 940px); margin-inline: auto; padding: 9px 13px 9px 41px; margin-top: 6px; color: var(--cy-muted); font-size: 12px; }
-.cy-typing-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cy-accent-strong); animation: cy-pulse 1s ease-in-out infinite; }
+.cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: stretch; width: min(100%, 940px); margin-inline: auto; padding: var(--cy-space-4-5) var(--cy-space-6-5) var(--cy-space-4-5) 41px; margin-top: var(--cy-space-3); color: var(--cy-muted); font-size: var(--cy-font-md); }
+.cy-typing-dot { width: 7px; height: 7px; border-radius: var(--cy-radius-circle); background: var(--cy-accent-strong); animation: cy-pulse 1s ease-in-out infinite; }
 @keyframes cy-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 </style>

@@ -12,9 +12,13 @@ import { useConversationStore } from '../stores/conversation.store'
 import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import { buildPrefix, captureAnchor, computeWindow, restoreScrollTop, OVERSCAN_PX } from '../utils/virtual-window'
 import CyHistoryResultItem from './CyHistoryResultItem.vue'
+import { errorMessage } from '../utils/error-message'
 
 const store = useHistoryViewerStore()
 const conversationStore = useConversationStore()
+
+// 多套 UI 基础：错误文案统一走映射器（store 只产 code）
+const errorText = computed(() => errorMessage(store.error, '搜索失败，请稍后重试。'))
 
 const resultsEl = ref<HTMLElement>()
 const keywordInput = ref<HTMLInputElement>()
@@ -238,7 +242,7 @@ const announceText = computed(() => {
   // UII-QQ 设置页批次：区分「聊天记录」与「图片/视频」两种视图的空态/播报文案
   const noun = store.category === 'image_video' ? '相关图片/视频资源' : '相关聊天记录'
   if (store.loading) return '正在搜索聊天记录'
-  if (store.error) return `搜索失败:${store.error.message}`
+  if (store.error) return `搜索失败:${errorText.value}`
   if (store.hasSearched && store.items.length === 0) return `没有找到${noun}`
   if (store.hasSearched) return `找到 ${store.items.length} 条${noun}`
   return ''
@@ -276,7 +280,7 @@ const announceText = computed(() => {
         <div class="cy-live" role="status" aria-live="polite">{{ announceText }}</div>
 
         <div v-if="store.error" class="cy-history-error" role="alert">
-          <span>搜索失败:{{ store.error.message }}</span>
+          <span>搜索失败:{{ errorText }}</span>
           <button class="cy-retry-btn" @click="store.submitQuery()">重试</button>
         </div>
 
@@ -320,35 +324,35 @@ const announceText = computed(() => {
   width: min(760px, calc(100% - 48px));
   max-height: calc(100% - 48px);
   min-height: 0;           /* 允许收缩：面板不再被内容撑破 max-height（spec §4.1） */
-  padding: 14px;
+  padding: var(--cy-space-7);
   background: var(--cy-pane);
   border: 1px solid var(--cy-border);
   border-radius: 16px;
   box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
 }
-.cy-history-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.cy-history-title { display: flex; align-items: baseline; gap: 8px; }
-.cy-close-btn { padding: 4px 10px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-muted); }
-.cy-history-filters { display: flex; flex-wrap: wrap; gap: 8px; }
-.cy-filter-select, .cy-filter-input, .cy-filter-date { padding: 7px 9px; border: 1px solid var(--cy-border); border-radius: 10px; background: var(--cy-surface); color: var(--cy-text); font-size: 13px; }
+.cy-history-header { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-6); margin-bottom: var(--cy-space-5); }
+.cy-history-title { display: flex; align-items: baseline; gap: var(--cy-space-4); }
+.cy-close-btn { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); }
+.cy-history-filters { display: flex; flex-wrap: wrap; gap: var(--cy-space-4); }
+.cy-filter-select, .cy-filter-input, .cy-filter-date { padding: var(--cy-space-3-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-5); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-lg); }
 .cy-filter-input { flex: 1; min-width: 160px; }
-.cy-search-btn { padding: 7px 14px; border: 0; border-radius: 10px; background: var(--cy-accent); color: var(--cy-accent-text); }
+.cy-search-btn { padding: var(--cy-space-3-5) var(--cy-space-7); border: 0; border-radius: var(--cy-radius-5); background: var(--cy-accent); color: var(--cy-accent-text); }
 .cy-search-btn:disabled { opacity: 0.5; }
-.cy-history-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
-.cy-cat-tab { padding: 5px 10px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; }
+.cy-history-tabs { display: flex; flex-wrap: wrap; gap: var(--cy-space-3); margin: var(--cy-space-5) 0; }
+.cy-cat-tab { padding: var(--cy-space-2-5) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-cat-tab.active { background: var(--cy-accent); color: var(--cy-accent-text); border-color: var(--cy-accent); }
-.cy-live { min-height: 18px; color: var(--cy-muted); font-size: 12px; }
-.cy-history-error { display: flex; align-items: center; gap: 8px; padding: 8px 11px; margin-bottom: 8px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
-.cy-retry-btn { margin-left: auto; padding: 3px 9px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-surface); }
-.cy-history-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: 13px; }
+.cy-live { min-height: 18px; color: var(--cy-muted); font-size: var(--cy-font-md); }
+.cy-history-error { display: flex; align-items: center; gap: var(--cy-space-4); padding: var(--cy-space-4) var(--cy-space-5-5); margin-bottom: var(--cy-space-4); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
+.cy-retry-btn { margin-left: auto; padding: var(--cy-space-1-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-surface); }
+.cy-history-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: var(--cy-font-lg); }
 /* 虚拟化：grid → flex column，去 gap（gap 不入实测行高）/ header margin → padding（margin 不入 ResizeObserver border-box 高度），
    否则 prefix 前缀和与真实布局不符、锚点恢复失效（<=1px 断言失败）。 */
 .cy-history-results { flex: 1 1 0; display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; overflow-y: auto; overflow-anchor: none; min-height: 120px; }
-.cy-history-day { display: block; padding: 4px 0 3px; margin: 0; color: var(--cy-muted); font-size: 12px; font-weight: 500; }
-.cy-vlist-row { display: block; padding: 0 0 6px; }   /* F-1：grid gap:6px 改为 padding-bottom（计入 ResizeObserver border-box，恢复同组 item 间距） */
+.cy-history-day { display: block; padding: var(--cy-space-2) 0 var(--cy-space-1-5); margin: 0; color: var(--cy-muted); font-size: var(--cy-font-md); font-weight: 500; }
+.cy-vlist-row { display: block; padding: 0 0 var(--cy-space-3); }   /* F-1：grid gap:6px 改为 padding-bottom（计入 ResizeObserver border-box，恢复同组 item 间距） */
 .cy-vlist-pad { flex-shrink: 0; }
-.cy-history-footer { margin-top: 10px; text-align: center; }
+.cy-history-footer { margin-top: var(--cy-space-5); text-align: center; }
 .cy-history-header, .cy-history-filters, .cy-history-tabs, .cy-live, .cy-history-error, .cy-history-state, .cy-history-footer { flex-shrink: 0; }
-.cy-more-btn { padding: 6px 16px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; }
+.cy-more-btn { padding: var(--cy-space-3) var(--cy-space-8); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

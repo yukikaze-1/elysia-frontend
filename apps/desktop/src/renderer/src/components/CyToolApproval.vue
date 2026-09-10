@@ -140,21 +140,21 @@ async function deny() {
 </template>
 
 <style scoped>
-.cy-approval-overlay { position: fixed; inset: 0; z-index: 80; background: var(--cy-overlay, rgba(0,0,0,.45)); display: flex; align-items: center; justify-content: center; }
-.cy-approval-box { background: var(--cy-bg); border-radius: 10px; padding: 16px 18px; max-width: 520px; width: min(92vw, 520px); max-height: 84vh; overflow: auto; }
-.cy-approval-questions { margin: 10px 0; }
-.cy-approval-questions dt { font-weight: 600; margin-top: 6px; }
-.cy-approval-questions dd { margin: 2px 0 0; color: var(--cy-text-secondary); overflow-wrap: anywhere; }
-.cy-approval-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
-.cy-btn { padding: 6px 16px; border: 1px solid var(--cy-border); border-radius: 6px; background: var(--cy-bg); cursor: pointer; }
-.cy-btn-approve { border-color: var(--cy-accent, #1a66ff); color: var(--cy-accent, #1a66ff); }
-.cy-btn-grant { border-color: var(--cy-accent-weak, rgba(0,120,255,.45)); color: var(--cy-accent, #1a66ff); }
+.cy-approval-overlay { position: fixed; inset: 0; z-index: 80; background: var(--cy-overlay); display: flex; align-items: center; justify-content: center; }
+.cy-approval-box { background: var(--cy-bg); border-radius: var(--cy-radius-5); padding: var(--cy-space-8) var(--cy-space-9); max-width: 520px; width: min(92vw, 520px); max-height: 84vh; overflow: auto; }
+.cy-approval-questions { margin: var(--cy-space-5) 0; }
+.cy-approval-questions dt { font-weight: 600; margin-top: var(--cy-space-3); }
+.cy-approval-questions dd { margin: var(--cy-space-1) 0 0; color: var(--cy-text-secondary); overflow-wrap: anywhere; }
+.cy-approval-actions { display: flex; justify-content: flex-end; gap: var(--cy-space-5); margin-top: var(--cy-space-6); }
+.cy-btn { padding: var(--cy-space-3) var(--cy-space-8); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; }
+.cy-btn-approve { border-color: var(--cy-accent); color: var(--cy-accent); }
+.cy-btn-grant { border-color: var(--cy-accent-weak); color: var(--cy-accent); }
 .cy-btn:disabled { opacity: .5; cursor: not-allowed; }
-.cy-approval-grant-box { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--cy-border); }
-.cy-approval-grant-label { color: var(--cy-text-muted); font-size: 12px; }
-.cy-approval-grant-error { flex-basis: 100%; margin: 2px 0 0; color: var(--cy-danger, #d33); font-size: 12px; }
-.cy-diff-note { color: var(--cy-text-muted); margin: 6px 0; }
-.cy-diff-body { background: var(--cy-bg-sub); padding: 6px; border-radius: 6px; max-height: 240px; overflow: auto; margin: 0; font-size: 12px; white-space: pre-wrap; }
-.cy-diff-added { color: var(--cy-diff-add, #18794e); }
-.cy-diff-removed { color: var(--cy-diff-del, #cd2b3a); }
+.cy-approval-grant-box { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cy-space-4); margin-top: var(--cy-space-6); padding-top: var(--cy-space-5); border-top: 1px solid var(--cy-border); }
+.cy-approval-grant-label { color: var(--cy-text-muted); font-size: var(--cy-font-md); }
+.cy-approval-grant-error { flex-basis: 100%; margin: var(--cy-space-1) 0 0; color: var(--cy-danger); font-size: var(--cy-font-md); }
+.cy-diff-note { color: var(--cy-text-muted); margin: var(--cy-space-3) 0; }
+.cy-diff-body { background: var(--cy-bg-sub); padding: var(--cy-space-3); border-radius: var(--cy-radius-3); max-height: 240px; overflow: auto; margin: 0; font-size: var(--cy-font-md); white-space: pre-wrap; }
+.cy-diff-added { color: var(--cy-diff-add); }
+.cy-diff-removed { color: var(--cy-diff-del); }
 </style>

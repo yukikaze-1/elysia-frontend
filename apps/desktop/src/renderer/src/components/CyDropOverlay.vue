@@ -18,8 +18,8 @@ const emit = defineEmits<{ leave: [] }>()
 <style scoped>
 .cy-drop-overlay { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; background: var(--cy-overlay); pointer-events: auto; }
 .cy-drop-box { padding: 26px 40px; border: 2px dashed var(--cy-accent); border-radius: 16px; background: var(--cy-surface); text-align: center; }
-.cy-drop-title { margin: 0 0 6px; color: var(--cy-text); font-size: 15px; font-weight: 600; }
-.cy-drop-sub { margin: 0; color: var(--cy-muted); font-size: 12px; }
+.cy-drop-title { margin: 0 0 var(--cy-space-3); color: var(--cy-text); font-size: var(--cy-font-xl); font-weight: 600; }
+.cy-drop-sub { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-fade-enter-active, .cy-fade-leave-active { transition: opacity 0.12s ease; }
 .cy-fade-enter-from, .cy-fade-leave-to { opacity: 0; }
 </style>

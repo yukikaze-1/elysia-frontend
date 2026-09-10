@@ -105,8 +105,8 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  padding: 14px 7px;
+  gap: var(--cy-space-5);
+  padding: var(--cy-space-7) var(--cy-space-3-5);
   background: var(--cy-nav);
   border-right: 1px solid var(--cy-border);
 }
@@ -117,11 +117,11 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
   place-items: center;
   width: 40px;
   min-height: 40px;
-  border-radius: 12px;
+  border-radius: var(--cy-radius-6);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid transparent;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--cy-motion-fast) ease, color var(--cy-motion-fast) ease;
 }
 
 .cy-nav-button:hover,

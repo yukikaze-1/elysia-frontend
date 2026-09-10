@@ -110,30 +110,30 @@ watch(() => [props.characterId, props.currentRevision, props.enabled], () => {
 </template>
 
 <style scoped>
-.cy-revisions { display: grid; gap: 9px; padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-h3 { margin: 0; color: var(--cy-text); font-size: 13px; }
-p { margin: 4px 0 0; color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
-.cy-revision-toolbar { display: flex; align-items: flex-end; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
-.cy-revision-toolbar label { display: grid; gap: 3px; color: var(--cy-muted); font-size: 10px; }
-.cy-revision-toolbar select { max-width: 160px; padding: 5px 7px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-pane); color: var(--cy-text); font-size: 10px; }
-button { padding: 5px 9px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-pane); color: var(--cy-text); font-size: 11px; }
+.cy-revisions { display: grid; gap: var(--cy-space-4-5); padding: var(--cy-space-6-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface); }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-5); }
+h3 { margin: 0; color: var(--cy-text); font-size: var(--cy-font-lg); }
+p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
+.cy-revision-toolbar { display: flex; align-items: flex-end; gap: var(--cy-space-3-5); flex-wrap: wrap; justify-content: flex-end; }
+.cy-revision-toolbar label { display: grid; gap: var(--cy-space-1-5); color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-revision-toolbar select { max-width: 160px; padding: var(--cy-space-2-5) var(--cy-space-3-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-xs); }
+button { padding: var(--cy-space-2-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-sm); }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:disabled { opacity: .5; cursor: default; }
-.cy-revision-state { color: var(--cy-muted); font-size: 11px; }
+.cy-revision-state { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-revision-state.error { color: var(--cy-danger); }
-.cy-revision-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-.cy-revision-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px; border: 1px solid var(--cy-border); border-radius: 9px; }
+.cy-revision-list { display: grid; gap: var(--cy-space-3-5); margin: 0; padding: 0; list-style: none; }
+.cy-revision-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-5); padding: var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); }
 .cy-revision-list li.current { border-color: color-mix(in srgb, var(--cy-accent-strong) 55%, var(--cy-border)); background: var(--cy-surface-soft); }
-.cy-revision-list li > div { display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 4px 7px; min-width: 0; }
-.cy-revision-list strong { color: var(--cy-text); font-size: 12px; }
-.cy-revision-list small { grid-column: 1 / -1; color: var(--cy-muted); font-size: 10px; }
-.cy-revision-list code { grid-column: 1 / -1; overflow: hidden; color: var(--cy-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.current-chip { padding: 1px 6px; border-radius: 999px; background: var(--cy-accent); color: var(--cy-accent-strong); font-size: 10px; }
-.cy-load-more-wrap { display: grid; justify-items: center; gap: 5px; }
+.cy-revision-list li > div { display: grid; grid-template-columns: auto auto; align-items: baseline; gap: var(--cy-space-2) var(--cy-space-3-5); min-width: 0; }
+.cy-revision-list strong { color: var(--cy-text); font-size: var(--cy-font-md); }
+.cy-revision-list small { grid-column: 1 / -1; color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-revision-list code { grid-column: 1 / -1; overflow: hidden; color: var(--cy-muted); font-size: var(--cy-font-xs); text-overflow: ellipsis; white-space: nowrap; }
+.current-chip { padding: var(--cy-space-0-5) var(--cy-space-3); border-radius: var(--cy-radius-pill); background: var(--cy-accent); color: var(--cy-accent-strong); font-size: var(--cy-font-xs); }
+.cy-load-more-wrap { display: grid; justify-items: center; gap: var(--cy-space-2-5); }
 .cy-load-more { justify-self: center; }
-.cy-load-more-error { color: var(--cy-danger); font-size: 10px; }
-.cy-load-more-error button { margin-left: 4px; color: var(--cy-danger); }
+.cy-load-more-error { color: var(--cy-danger); font-size: var(--cy-font-xs); }
+.cy-load-more-error button { margin-left: var(--cy-space-2); color: var(--cy-danger); }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 @media (max-width: 720px) { header { flex-direction: column; } .cy-revision-toolbar { width: 100%; justify-content: flex-start; } .cy-revision-list li { align-items: flex-start; flex-direction: column; } }
 </style>

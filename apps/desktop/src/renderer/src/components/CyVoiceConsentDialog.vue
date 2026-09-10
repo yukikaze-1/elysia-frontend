@@ -43,40 +43,40 @@ function onConfirm(): void { void voiceStore.confirmConsent() }
 .cy-consent-box {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--cy-space-6);
   width: min(360px, 84vw);
-  padding: 18px 20px;
-  border-radius: 14px;
+  padding: var(--cy-space-9) 20px;
+  border-radius: var(--cy-radius-7);
   background: var(--cy-pane);
   border: 1px solid var(--cy-border);
   box-shadow: var(--cy-shadow);
 }
 
 .cy-consent-box strong {
-  font-size: 15px;
+  font-size: var(--cy-font-xl);
 }
 
 .cy-consent-box p {
   margin: 0;
   color: var(--cy-muted);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   line-height: 1.5;
 }
 
 .cy-consent-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
+  gap: var(--cy-space-4);
+  margin-top: var(--cy-space-2);
 }
 
 .cy-consent-btn {
-  padding: 6px 16px;
+  padding: var(--cy-space-3) var(--cy-space-8);
   border: 1px solid var(--cy-border);
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   background: var(--cy-surface);
   color: var(--cy-text);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
 }
 
 .cy-consent-btn:hover {

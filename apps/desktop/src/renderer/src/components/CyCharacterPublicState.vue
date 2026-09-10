@@ -297,21 +297,21 @@ defineExpose({ refreshRelativeTime, retry })
   width: calc(100% - 24px);
   max-width: calc(100% - 24px);
   min-width: 0;
-  margin: 0 12px 8px;
-  padding: 10px;
+  margin: 0 var(--cy-space-6) var(--cy-space-4);
+  padding: var(--cy-space-5);
   overflow: hidden;
   color: var(--cy-text);
   background: color-mix(in srgb, var(--cy-surface) 78%, var(--cy-accent) 22%);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-6);
+  font-size: var(--cy-font-md);
 }
 
 .cy-public-state-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--cy-space-4);
   min-width: 0;
 }
 
@@ -328,12 +328,12 @@ defineExpose({ refreshRelativeTime, retry })
 
 .cy-public-state-kicker {
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-public-state-name {
   max-width: 180px;
-  margin-top: 2px;
+  margin-top: var(--cy-space-1);
   overflow: hidden;
   color: var(--cy-text);
   font-weight: 600;
@@ -343,11 +343,11 @@ defineExpose({ refreshRelativeTime, retry })
 
 .cy-public-state-badge {
   flex: none;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: var(--cy-space-1) var(--cy-space-3-5);
+  border-radius: var(--cy-radius-pill);
   color: var(--cy-muted);
   background: var(--cy-surface);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   line-height: 1.3;
 }
 
@@ -362,19 +362,19 @@ defineExpose({ refreshRelativeTime, retry })
 }
 
 .cy-public-state-badge.is-stale {
-  color: var(--cy-warning-text, var(--cy-muted));
+  color: var(--cy-warning-text);
   background: color-mix(in srgb, var(--cy-surface) 74%, #d6a34a 26%);
 }
 
 .cy-public-state-badge.is-error {
-  color: var(--cy-danger-text, #fff);
+  color: var(--cy-danger-text);
   background: var(--cy-danger);
 }
 
 .cy-public-state-facts {
   display: grid;
-  gap: 7px;
-  margin: 10px 0 0;
+  gap: var(--cy-space-3-5);
+  margin: var(--cy-space-5) 0 0;
   min-width: 0;
 }
 
@@ -382,13 +382,13 @@ defineExpose({ refreshRelativeTime, retry })
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr);
   align-items: baseline;
-  gap: 8px;
+  gap: var(--cy-space-4);
   min-width: 0;
 }
 
 .cy-public-state-fact dt {
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-public-state-fact dd {
@@ -404,7 +404,7 @@ defineExpose({ refreshRelativeTime, retry })
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--cy-space-3-5);
   min-width: 0;
 }
 
@@ -420,7 +420,7 @@ defineExpose({ refreshRelativeTime, retry })
   width: 28px;
   height: 4px;
   overflow: hidden;
-  border-radius: 999px;
+  border-radius: var(--cy-radius-pill);
   background: linear-gradient(90deg, var(--cy-accent-strong), var(--cy-accent));
   opacity: 0.8;
 }
@@ -437,7 +437,7 @@ defineExpose({ refreshRelativeTime, retry })
 .cy-public-state-message {
   min-width: 0;
   max-width: 100%;
-  margin-top: 9px;
+  margin-top: var(--cy-space-4-5);
   overflow-wrap: anywhere;
   color: var(--cy-muted);
   line-height: 1.45;
@@ -445,29 +445,29 @@ defineExpose({ refreshRelativeTime, retry })
 }
 
 .cy-public-state-message.is-error {
-  color: var(--cy-danger-text, var(--cy-danger));
+  color: var(--cy-danger-text);
 }
 
 .cy-public-state-note {
   min-width: 0;
   max-width: 100%;
-  margin-top: 5px;
+  margin-top: var(--cy-space-2-5);
   overflow-wrap: anywhere;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   word-break: break-word;
 }
 
 .cy-public-state-retry {
   width: 100%;
   min-height: 28px;
-  margin-top: 9px;
-  padding: 4px 9px;
+  margin-top: var(--cy-space-4-5);
+  padding: var(--cy-space-2) var(--cy-space-4-5);
   border: 1px solid var(--cy-border);
-  border-radius: 8px;
+  border-radius: var(--cy-radius-4);
   background: var(--cy-surface);
   color: var(--cy-accent-text);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-public-state-retry:hover {

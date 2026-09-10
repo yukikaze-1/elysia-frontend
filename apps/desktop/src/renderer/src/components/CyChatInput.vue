@@ -20,6 +20,7 @@ import CyVoicePending from './CyVoicePending.vue'
 import CyRealtimeBar from './CyRealtimeBar.vue'
 import CyDictationHint from './CyDictationHint.vue'
 import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
+import { errorMessage } from '../utils/error-message'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
@@ -32,6 +33,10 @@ const historyStore = useHistoryViewerStore()   // UII-QQ IA：聊天记录/资�
 const fileInput = ref<HTMLInputElement>()
 const dragActive = ref(false)
 let dragDepth = 0
+
+// 多套 UI 基础：错误文案统一走映射器（store 只产 code）
+const sendErrorText = computed(() => errorMessage(messageStore.lastError, '发送失败，请重试。'))
+const micErrorText = computed(() => errorMessage(voiceStore.micError, '麦克风不可用。'))
 
 // —— P4-B 语音三入口（spec §5.12）：语音活跃（mode!=='idle'）→ 文本发送/附件禁用 ——
 const voiceActive = computed(() => voiceStore.mode !== 'idle')
@@ -274,10 +279,10 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       <span>{{ bannerText }}</span>
     </div>
 
-    <!-- 发送/回复错误提示(P2-4):messageStore.lastError 结构化(PublicError),展示 .message -->
+    <!-- 发送/回复错误提示(P2-4):messageStore.lastError 结构化(PublicError);文案经 error-message 映射 -->
     <div v-if="messageStore.lastError" class="cy-banner cy-error-banner" role="alert">
       <span class="cy-banner-dot" />
-      <span>发送失败:{{ messageStore.lastError.message }}</span>
+      <span>{{ sendErrorText }}</span>
     </div>
 
     <!-- 草稿超限横幅(G2 §4.4.1 D4):100KB 字节上限,超出部分拒绝写入;提供清空按钮 -->
@@ -304,7 +309,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
          此处 mode==='idle' 且 micError 有值时展示（下次 start* 开头清陈旧错误，banner 随之消失，无需定时器） -->
     <div v-if="voiceStore.micError && voiceStore.mode === 'idle'" class="cy-banner cy-mic-error-banner" role="alert">
       <span class="cy-banner-dot" />
-      <span>{{ voiceStore.micError.message }}</span>
+      <span>{{ micErrorText }}</span>
     </div>
 
     <!-- voiceStore 瞬时提示（录音 300s/600s 上限、D-P20 转写回退全局 STT） -->
@@ -455,7 +460,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
      原 bug：规则写在本组件却依赖兄弟子树（.cy-chat-header）作容器祖先，永不匹配。
      inline-size containment 只锁宽度计算（footer 宽由父 flex 决定），不影响高度布局 */
   container-type: inline-size;
-  padding: 10px 16px 12px;
+  padding: var(--cy-space-5) var(--cy-space-8) var(--cy-space-6);
   background: var(--cy-pane);
   border-top: 1px solid var(--cy-border);
 }
@@ -464,10 +469,10 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-composer-shell {
   display: flex;
   flex-direction: column;
-  padding: 6px 10px 8px;
+  padding: var(--cy-space-3) var(--cy-space-5) var(--cy-space-4);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 14px;
+  border-radius: var(--cy-radius-7);
 }
 
 .cy-composer-shell:focus-within {
@@ -479,7 +484,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   position: relative;   /* emoji pop 锚点 */
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--cy-space-2);
 }
 
 .cy-composer-toolbar-spacer {
@@ -495,7 +500,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   width: 32px;
   height: 32px;
   padding: 0;
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid transparent;
@@ -518,7 +523,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   min-height: 40px;
   max-height: 160px;
   resize: none;
-  padding: 4px 4px 6px;
+  padding: var(--cy-space-2) var(--cy-space-2) var(--cy-space-3);
   color: var(--cy-text);
   background: transparent;
   border: 0;
@@ -536,7 +541,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-composer-footer {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--cy-space-3);
   min-height: 34px;
 }
 
@@ -546,7 +551,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 
 .cy-composer-hint {
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   white-space: nowrap;
 }
 
@@ -562,21 +567,21 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 11px;
-  margin-bottom: 8px;
+  gap: var(--cy-space-4);
+  padding: var(--cy-space-3-5) var(--cy-space-5-5);
+  margin-bottom: var(--cy-space-4);
   color: var(--cy-danger);
   background: var(--cy-surface-soft);
   border: 1px solid var(--cy-border);
-  border-radius: 10px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-5);
+  font-size: var(--cy-font-md);
 }
 
 .cy-banner-dot {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: var(--cy-danger);
 }
 
@@ -588,7 +593,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   border: 0;
   background: transparent;
   color: var(--cy-accent-strong);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   cursor: pointer;
   margin-left: auto;
 }
@@ -600,7 +605,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
 }
 
 .cy-voice-btn {
@@ -622,7 +627,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-voice-btn.active {
   width: auto;
   min-width: 32px;
-  padding: 0 9px;
+  padding: 0 var(--cy-space-4-5);
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border-color: var(--cy-accent);
@@ -637,13 +642,13 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-rec-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: var(--cy-danger);
   animation: cy-rec-blink 1.1s ease-in-out infinite;
 }
 
 .cy-rec-timer {
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -662,7 +667,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid transparent;
@@ -692,14 +697,14 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-send-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--cy-space-2-5);
   width: auto;
   min-width: 64px;
   height: 32px;
-  padding: 0 12px;
+  padding: 0 var(--cy-space-6);
   color: var(--cy-accent-text);
   background: var(--cy-accent-strong);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   font-weight: 500;
 }
 
@@ -716,13 +721,13 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-realtime-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: 999px;
+  gap: var(--cy-space-2-5);
+  padding: var(--cy-space-2-5) var(--cy-space-5);
+  border-radius: var(--cy-radius-pill);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid var(--cy-border);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-realtime-chip:hover:not(:disabled) {
@@ -741,7 +746,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid transparent;
@@ -756,10 +761,10 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-record-btn {
   display: grid;
   place-items: center;
-  gap: 4px;
+  gap: var(--cy-space-2);
   width: 32px;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--cy-radius-4-5);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid transparent;
@@ -775,7 +780,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 .cy-record-btn.recording {
   width: auto;
   min-width: 32px;
-  padding: 0 9px;
+  padding: 0 var(--cy-space-4-5);
   color: var(--cy-danger);
   background: var(--cy-surface-soft);
   border-color: var(--cy-danger);
@@ -790,33 +795,33 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   bottom: 100%;
   left: 0;
   z-index: 30;
-  margin-bottom: 6px;
+  margin-bottom: var(--cy-space-3);
 }
 
 .cy-sticker-queue {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 7px;
+  gap: var(--cy-space-3);
+  margin-top: var(--cy-space-3-5);
 }
 
 .cy-sticker-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 9px;
-  border-radius: 999px;
+  gap: var(--cy-space-3);
+  padding: var(--cy-space-1-5) var(--cy-space-4-5);
+  border-radius: var(--cy-radius-pill);
   background: var(--cy-surface-soft);
   border: 1px solid var(--cy-border);
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-sticker-chip button {
   border: 0;
   background: transparent;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   cursor: pointer;
 }
 </style>

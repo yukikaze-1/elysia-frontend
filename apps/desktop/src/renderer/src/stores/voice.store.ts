@@ -13,7 +13,7 @@ import { ref } from 'vue'
 import type { BackendEvent } from '@shared/contracts'
 import { api } from './desktop-api'
 import { useConnectionStore } from './connection.store'
-import { useConversationStore } from './conversation.store'
+import { getActiveCharacterBinding, getCurrentConversationId } from './session'
 import { useSettingsStore } from './settings.store'
 import { useMessageStore } from './message.store'
 import { PcmCapture, type PcmCaptureLike } from '../voice/voice-capture'
@@ -48,9 +48,16 @@ export const useVoiceStore = defineStore('voice', () => {
   const realtime = ref<{ sessionId?: string; caption: string; turnCount: number; unacked: number; lastAckedSeq: number }>({ caption: '', turnCount: 0, unacked: 0, lastAckedSeq: 0 })
   const dictation = ref<{ caption: string; finalText?: string }>({ caption: '' })
   const tts = ref<{ playingStreamId?: number; url?: string; playing: boolean; durationMs?: number }>({ playing: false })
-  /** C1（批次 C）：TTS <audio> 宿主元素引用（CyTtsPlayer onMounted 赋值 / onUnmounted 清空）；live2dStore
-   *  watch 它 + tts.playing → attach/detach 口部数据源（MediaElementSource→Analyser）。非组件消费，仅跨 store 接线。 */
-  const ttsAudioEl = ref<HTMLAudioElement | null>(null)
+  /** C1（批次 C）：TTS <audio> 宿主元素引用（CyTtsPlayer onMounted 赋值 / onUnmounted 清空）。
+   *
+   *  多套 UI 基础（2026-09-10）：改为**非响应式**持有。此前是 `ref<HTMLAudioElement|null>`，因为
+   *  live2dStore 要 watch 它来 attach 口部数据源——那既让功能层伸手取 UI 的 DOM 宿主，又对 DOM 节点
+   *  建了 Vue 响应式代理（深代理 DOM 既是性能负担也无意义）。
+   *  现口部接线改由 UI 直接告知 live2dStore（CyTtsPlayer 调 setTtsAudioElement），本字段退化为
+   *  「本机是否已挂载 TTS 宿主」的诊断句柄，故用普通变量承载。 */
+  let ttsAudioEl: HTMLAudioElement | null = null
+  function setTtsAudioEl(el: HTMLAudioElement | null): void { ttsAudioEl = el }
+  function getTtsAudioEl(): HTMLAudioElement | null { return ttsAudioEl }
   /** C1 集成诊断（2026-08-19）：`audio.session.ready` 是否**曾到达** renderer（在 autoReadReply 门**前**置位，
    *  clearTtsState 不清）。供集成失败转储区分「ready 未到达 / 门控忽略 / 播放后回落」——cancelled 后 tts.url
    *  已清空，单看现值无法确认 ready 是否发生过。 */
@@ -137,10 +144,9 @@ export const useVoiceStore = defineStore('voice', () => {
   }): boolean {
     if (useConnectionStore().state.features?.characterProfiles !== true) return true
 
-    const conversations = useConversationStore()
-    const binding = conversations.currentCharacter
+    const binding = getActiveCharacterBinding()
     return binding !== undefined
-      && e.conversationId === conversations.currentId
+      && e.conversationId === getCurrentConversationId()
       && e.characterId === binding.characterId
       && e.characterInstanceId === binding.characterInstanceId
       && e.characterRevision === binding.characterRevision
@@ -417,7 +423,7 @@ export const useVoiceStore = defineStore('voice', () => {
     error.value = undefined
     notice.value = null
     if (!requireConsent(() => startRealtime())) return
-    const current = useConversationStore().currentId
+    const current = getCurrentConversationId()
     const sessionId = `vs_${crypto.randomUUID()}`
     // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 sessionId；拒绝 → error 置位 + 回 idle
     try {
@@ -569,13 +575,14 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   return {
-    mode, caption, record, realtime, dictation, tts, ttsAudioEl, ttsReadySeen, micError, error, captureReady,
+    mode, caption, record, realtime, dictation, tts, ttsReadySeen, micError, error, captureReady,
     consentPending, confirmDispatching, pendingAction, notice,
     init, handleEvent, guardStart, requireConsent, confirmConsent, dismissConsent,
     startRecord, stopRecord, replayRecord, discardRecord, commitRecord,
     startRealtime, stopRealtime, cancelRealtime,
     startDictation, stopDictation, cancelDictation, clearDictationFinal,
     onTtsPlaybackEnded, onTtsPlaybackError, stopTtsPlayback,
+    setTtsAudioEl, getTtsAudioEl,   // 多套 UI 基础：宿主元素非响应式，经存取器维护
     setNotice, clearNotice, clearTransientErrors,
     reset
   }

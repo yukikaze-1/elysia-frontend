@@ -61,12 +61,12 @@ async function onConfirm(): Promise<void> {
 .cy-voice-pending {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 11px;
-  margin-bottom: 8px;
+  gap: var(--cy-space-5);
+  padding: var(--cy-space-4) var(--cy-space-5-5);
+  margin-bottom: var(--cy-space-4);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
+  border-radius: var(--cy-radius-6);
 }
 
 .cy-vp-caption {
@@ -74,8 +74,8 @@ async function onConfirm(): Promise<void> {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
+  gap: var(--cy-space-1);
+  font-size: var(--cy-font-lg);
   color: var(--cy-text);
 }
 
@@ -101,16 +101,16 @@ async function onConfirm(): Promise<void> {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--cy-space-3);
 }
 
 .cy-vp-btn {
-  padding: 5px 11px;
+  padding: var(--cy-space-2-5) var(--cy-space-5-5);
   border: 1px solid var(--cy-border);
-  border-radius: 8px;
+  border-radius: var(--cy-radius-4);
   background: var(--cy-surface-soft);
   color: var(--cy-text);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-vp-btn:disabled {

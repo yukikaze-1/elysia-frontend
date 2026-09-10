@@ -7,10 +7,14 @@ import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useAppStore } from '../stores/app.store'
 import CyConversationCharacterPicker from './CyConversationCharacterPicker.vue'
+import { errorMessage } from '../utils/error-message'
 
 const conversationStore = useConversationStore()
 const connectionStore = useConnectionStore()
 const appStore = useAppStore()
+
+// 多套 UI 基础：store 只产 code，文案由映射器决定（此前后端/本地文案混在 store 里）
+const errorText = computed(() => errorMessage(conversationStore.error, '会话操作失败，请稍后重试。'))
 
 const items = computed(() => conversationStore.items)
 const currentId = computed(() => conversationStore.currentId)
@@ -138,7 +142,7 @@ function activateConv(id: string): void {
     </div>
 
     <!-- 会话操作错误短横幅(批次B T9):conversationStore.error 结构化展示 -->
-    <div v-if="conversationStore.error" class="cy-conversation-error" role="alert">{{ conversationStore.error.message }}</div>
+    <div v-if="conversationStore.error" class="cy-conversation-error" role="alert">{{ errorText }}</div>
 
     <div class="cy-search">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -209,7 +213,7 @@ function activateConv(id: string): void {
 .cy-conversations {
   grid-area: conv;
   min-width: 0;
-  padding: 14px 10px;
+  padding: var(--cy-space-7) var(--cy-space-5);
   background: var(--cy-pane);
   border-right: 1px solid var(--cy-border);
   overflow-y: auto;
@@ -219,12 +223,12 @@ function activateConv(id: string): void {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: var(--cy-space-5);
 }
 
 .cy-pane-heading h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--cy-font-base);
   font-weight: 500;
 }
 
@@ -234,7 +238,7 @@ function activateConv(id: string): void {
   width: 30px;
   height: 30px;
   border: 1px solid var(--cy-border);
-  border-radius: 10px;
+  border-radius: var(--cy-radius-5);
   background: var(--cy-surface);
   color: var(--cy-muted);
 }
@@ -251,26 +255,26 @@ function activateConv(id: string): void {
 }
 
 .cy-conversation-error {
-  padding: 6px 9px;
-  margin-bottom: 8px;
+  padding: var(--cy-space-3) var(--cy-space-4-5);
+  margin-bottom: var(--cy-space-4);
   color: var(--cy-danger);
   background: var(--cy-surface-soft);
   border: 1px dashed var(--cy-border);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-4);
+  font-size: var(--cy-font-md);
   overflow-wrap: anywhere;
 }
 
 .cy-search {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 9px;
-  margin-bottom: 10px;
+  gap: var(--cy-space-3-5);
+  padding: var(--cy-space-3-5) var(--cy-space-4-5);
+  margin-bottom: var(--cy-space-5);
   color: var(--cy-muted);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 10px;
+  border-radius: var(--cy-radius-5);
 }
 
 .cy-search input {
@@ -285,7 +289,7 @@ function activateConv(id: string): void {
 
 .cy-conversation-list {
   display: grid;
-  gap: 6px;
+  gap: var(--cy-space-3);
 }
 
 .cy-conversation {
@@ -293,7 +297,7 @@ function activateConv(id: string): void {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-radius: 12px;
+  border-radius: var(--cy-radius-6);
 }
 
 .cy-conversation:hover {
@@ -313,9 +317,9 @@ function activateConv(id: string): void {
 .cy-conversation-main {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
-  gap: 9px;
+  gap: var(--cy-space-4-5);
   width: 100%;
-  padding: 9px;
+  padding: var(--cy-space-4-5);
   text-align: left;
   background: transparent;
   border: 0;
@@ -326,16 +330,16 @@ function activateConv(id: string): void {
   place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 12px;
+  border-radius: var(--cy-radius-6);
   color: var(--cy-accent-text);
   background: var(--cy-accent);
-  font-size: 14px;
+  font-size: var(--cy-font-base);
 }
 
 .cy-conversation-copy {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--cy-space-1);
   min-width: 0;
 }
 
@@ -343,7 +347,7 @@ function activateConv(id: string): void {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--cy-space-4);
 }
 
 .cy-conversation-title,
@@ -356,34 +360,34 @@ function activateConv(id: string): void {
 
 .cy-conversation-title {
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
 }
 
 /* UII-QQ：紧凑时间（今天 HH:mm / 昨天 / M/D / YYYY/M/D） */
 .cy-conversation-time {
   flex: 0 0 auto;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-conversation-preview {
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-conversation-character {
   display: block;
   overflow: hidden;
   color: var(--cy-muted);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .cy-conversation-actions {
   display: none;
-  gap: 2px;
-  padding-right: 6px;
+  gap: var(--cy-space-1);
+  padding-right: var(--cy-space-3);
 }
 
 /* hover / 键盘聚焦（focus-within）都可达（红线 §7） */
@@ -397,7 +401,7 @@ function activateConv(id: string): void {
   place-items: center;
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: var(--cy-radius-3-5);
   color: var(--cy-muted);
 }
 
@@ -409,19 +413,19 @@ function activateConv(id: string): void {
 .cy-rename-input {
   width: 100%;
   min-width: 0;
-  padding: 4px 6px;
+  padding: var(--cy-space-2) var(--cy-space-3);
   color: var(--cy-text);
   background: var(--cy-surface);
   border: 1px solid var(--cy-accent-strong);
-  border-radius: 7px;
+  border-radius: var(--cy-radius-3-5);
   outline: 0;
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
 }
 
 .cy-conversation-empty {
-  margin: 14px 0 0;
+  margin: var(--cy-space-7) 0 0;
   text-align: center;
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 </style>

@@ -14,6 +14,7 @@ import { useVoiceStore } from './voice.store'
 import { useIdentityStore } from './identity.store'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 import { cloneValue } from '@shared/domain'
+import { setActiveCharacterBinding, setConversationsSnapshot, setCurrentConversationId } from './session'
 
 /** F8:messageOf 仅在 message.store 内定义(非导出),conversation.store 自定模块内 helper */
 function messageOf(e: unknown): string {
@@ -164,6 +165,18 @@ export const useConversationStore = defineStore('conversation', () => {
   const offlineView = ref(false) // 离线视图：activateLocal/setOfflineCache 置位，恢复后 false
   const blockReason = ref<string>()      // D-P5：语音会话活跃时切换/新建被拒的 UI 提示（同附件 canSend.blockReason 短横幅语义）
   const currentCharacter = computed(() => items.value.find((item) => item.id === currentId.value)?.character)
+  // 会话身份单例同步（解循环依赖，2026-09-10）：本 store 是 currentId 的唯一写方，
+  // 通过 watch(sync) 单点镜像到 stores/session.ts，供 message/settings/voice 等读取。
+  // 用 watch 而非在 7 处赋值点插调用：赋值点分散（activate/create/remove/离线水合/onConnected），
+  // 逐处插调用迟早漏改；watch 保证「只要有写入就同步」，是新写入路径的天然兜底。
+  // immediate 保证 store 创建时（含测试 setActivePinia 后）镜像已就位。
+  watch(currentId, (id) => { setCurrentConversationId(id) }, { immediate: true, flush: 'sync' })
+  // 当前会话的角色绑定一并镜像：voice.store 的事件归属校验需要它，而 voice 不得 import 本 store
+  // （否则 conversation ↔ voice 成环）。同 watch 单点镜像，避免新增派生路径漏同步。
+  watch(currentCharacter, (binding) => { setActiveCharacterBinding(binding) }, { immediate: true, flush: 'sync' })
+  // 会话列表镜像：message.store 需按 conversationId 反查角色绑定，镜像后无需 import 本 store。
+  // items 的全部写入点均为整数组重新赋值（无原地 push/splice），故浅 watch 足以覆盖。
+  watch(items, (list) => { setConversationsSnapshot(list) }, { immediate: true, flush: 'sync' })
   // Minor-3：语音 mode 回 idle 时归口清除切换守卫横幅——停止/删除录音、实时会话结束、转写取消后
   // 「请先结束当前语音会话」不得残留（activate/create 开头的 idle 清除只覆盖「放行路径」）。
   watch(
@@ -486,7 +499,8 @@ export const useConversationStore = defineStore('conversation', () => {
     }
     blockReason.value = undefined
     if (offlineView.value && useConnectionStore().state.status === 'disconnected') {
-      error.value = { code: 'OFFLINE_VIEW', message: '离线视图下请使用本地缓存会话' }
+      // 多套 UI 基础：message 只放诊断标识，用户文案由 utils/error-message 按 code 映射
+      error.value = { code: 'OFFLINE_VIEW', message: 'LOCAL:OFFLINE_VIEW' }
       return
     }
     offlineView.value = false
@@ -606,11 +620,11 @@ export const useConversationStore = defineStore('conversation', () => {
     const profilesEnabled = currentProfilesEnabled()
     const requestedCharacterId = typeof characterId === 'string' && characterId.trim() ? characterId : undefined
     if (profilesEnabled && !requestedCharacterId) {
-      error.value = { code: 'CHARACTER_REQUIRED', message: '请先选择一个角色再新建会话' }
+      error.value = { code: 'CHARACTER_REQUIRED', message: 'LOCAL:CHARACTER_REQUIRED' }
       return Promise.resolve(undefined)
     }
     if (profilesEnabled && useIdentityStore().profile?.initialized !== true) {
-      error.value = { code: 'IDENTITY_REQUIRED', message: '请先完成“我的档案”初始化，再新建角色会话' }
+      error.value = { code: 'IDENTITY_REQUIRED', message: 'LOCAL:IDENTITY_REQUIRED' }
       return Promise.resolve(undefined)
     }
 
@@ -756,7 +770,7 @@ export const useConversationStore = defineStore('conversation', () => {
     if (useConnectionStore().state.status !== 'disconnected') return
     const cache = useCacheStore()
     if (!cache.conversations.some((c) => c.id === id)) {
-      error.value = { code: 'OFFLINE_NOT_CACHED', message: '该会话离线不可读' }
+      error.value = { code: 'OFFLINE_NOT_CACHED', message: 'LOCAL:OFFLINE_NOT_CACHED' }
       return
     }
     currentId.value = id

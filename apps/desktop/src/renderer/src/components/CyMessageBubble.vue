@@ -206,7 +206,7 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 .cy-message-row {
   display: flex;
   align-items: flex-start;
-  gap: 9px;
+  gap: var(--cy-space-4-5);
 }
 
 .cy-user-row {
@@ -220,8 +220,8 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   place-items: center;
   width: 32px;
   height: 32px;
-  border-radius: 10px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-5);
+  font-size: var(--cy-font-md);
   user-select: none;
 }
 
@@ -239,7 +239,7 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--cy-space-3);
   min-width: 0;
   max-width: min(72%, 620px);
 }
@@ -251,11 +251,11 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 .cy-msg-name {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--cy-space-3);
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   line-height: 1.2;
-  padding-left: 2px;
+  padding-left: var(--cy-space-1);
   user-select: none;
 }
 
@@ -264,7 +264,7 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 .cy-msg-time {
   flex: none;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   opacity: 0.8;
   font-variant-numeric: tabular-nums;
 }
@@ -281,16 +281,16 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 .cy-bubble {
   margin: 0;
   max-width: 100%;
-  padding: 9px 12px;
+  padding: var(--cy-space-4-5) var(--cy-space-6);
   background: var(--cy-surface);
-  border-radius: 4px 14px 14px 14px;
+  border-radius: 4px var(--cy-radius-7) var(--cy-radius-7) var(--cy-radius-7);
   box-shadow: var(--cy-shadow-soft);
 }
 
 .cy-user-bubble {
   color: var(--cy-text);
   background: var(--cy-user);
-  border-radius: 14px 4px 14px 14px;
+  border-radius: var(--cy-radius-7) 4px var(--cy-radius-7) var(--cy-radius-7);
   box-shadow: none;
 }
 
@@ -309,54 +309,54 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 
 .cy-user-error-badge {
   display: inline-block;
-  padding: 1px 7px;
-  border-radius: 999px;
+  padding: var(--cy-space-0-5) var(--cy-space-3-5);
+  border-radius: var(--cy-radius-pill);
   color: var(--cy-accent-text);
   background: var(--cy-danger);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   line-height: 1.6;
 }
 
 /* 内心独白：轻量次级区，弱于正式回复；标题仅「内心独白」 */
 .cy-inner-voice {
   align-self: stretch;
-  padding: 7px 10px;
+  padding: var(--cy-space-3-5) var(--cy-space-5);
   color: var(--cy-muted);
   background: var(--cy-surface-soft);
-  border-radius: 10px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-5);
+  font-size: var(--cy-font-md);
 }
 
 .cy-inner-voice summary {
   cursor: pointer;
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   user-select: none;
 }
 
 .cy-inner-voice-text {
-  margin-top: 7px;
-  font-size: 12px;
+  margin-top: var(--cy-space-3-5);
+  font-size: var(--cy-font-md);
   color: var(--cy-muted);
 }
 
 .cy-media-placeholder {
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 /* UII-QQ IA：心情旁白——独立于技术元数据，小字斜体、柔和但可读，自然换行不挤出消息列 */
 .cy-msg-emotion {
   max-width: 100%;
   color: var(--cy-muted);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
   font-style: italic;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
 
 .cy-msg-emotion-heart {
-  margin-right: 5px;
+  margin-right: var(--cy-space-2-5);
   color: var(--cy-accent-strong);
   font-style: normal;
 }
@@ -365,26 +365,26 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 .cy-msg-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding-left: 2px;
+  gap: var(--cy-space-4);
+  padding-left: var(--cy-space-1);
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   opacity: 0.85;
 }
 
 .cy-msg-meta span + span::before {
   content: '·';
-  margin-right: 8px;
+  margin-right: var(--cy-space-4);
 }
 
 .cy-status-note {
   color: var(--cy-danger);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-user-attachments {
   display: grid;
-  gap: 6px;
+  gap: var(--cy-space-3);
   max-width: 100%;
 }
 
@@ -396,6 +396,6 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 }
 
 .cy-sticker-plain {
-  margin-right: 2px;
+  margin-right: var(--cy-space-1);
 }
 </style>

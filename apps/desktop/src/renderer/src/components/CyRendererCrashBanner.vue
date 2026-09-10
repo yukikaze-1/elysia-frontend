@@ -13,5 +13,5 @@ onMounted(async () => {
 })
 </script>
 <style scoped>
-.cy-crash-banner { position: sticky; top: 0; z-index: 50; background: #3a2a18; color: #f0c674; padding: 6px 12px; font-size: 13px; }
+.cy-crash-banner { position: sticky; top: 0; z-index: 50; background: #3a2a18; color: #f0c674; padding: var(--cy-space-3) var(--cy-space-6); font-size: var(--cy-font-lg); }
 </style>

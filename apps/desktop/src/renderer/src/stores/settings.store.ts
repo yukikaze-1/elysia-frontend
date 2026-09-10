@@ -13,7 +13,7 @@ import { ref } from 'vue'
 import type { DictationSettings, Live2DSettings, SettingsPatch, VoiceSettings } from '@shared/contracts'
 import { DEFAULT_LIVE2D, DEFAULT_SETTINGS } from '@shared/schemas'
 import { api } from './desktop-api'
-import { useConversationStore } from './conversation.store'
+import { getCurrentConversationId } from './session'
 import { useDraftStore } from './draft.store'
 
 export const SETTINGS_SAVE_DEBOUNCE_MS = 500
@@ -116,7 +116,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
   /** D-P4：转写 final 插入草稿——当前会话草稿末尾追加或替换选区；无活动会话 no-op */
   function applyDictationInsert(text: string, selection?: DictationSelection): void {
-    const currentId = useConversationStore().currentId
+    // 会话身份从单例读取（解环，2026-09-10）：此前读 useConversationStore().currentId，
+    // 使 settings → conversation → message → voice → settings 成环。会话身份是零依赖单例，
+    // 本模块不再需要 import conversation.store。
+    const currentId = getCurrentConversationId()
     if (!currentId) return
     const draft = useDraftStore().drafts[currentId] ?? ''
     const next = insertDictationText(draft, text, dictation.value.insertMode, selection)

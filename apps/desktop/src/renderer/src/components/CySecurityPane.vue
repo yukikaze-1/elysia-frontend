@@ -131,25 +131,25 @@ function fmtTs(ts: string): string {
 
 <style scoped>
 /* 布局纪律同 CyLive2DPane（cy-l2d-pane/group/sub 卡片式；内部滚动归父级 .cy-settings-body） */
-.cy-l2d-pane { display: flex; flex-direction: column; gap: 16px; }
-.cy-l2d-title { margin: 0; font-size: 15px; font-weight: 600; }
-.cy-l2d-group { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 12px; }
-.cy-l2d-sub { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--cy-muted); }
-.cy-security-empty { margin: 0; color: var(--cy-muted); font-size: 12px; line-height: 1.7; }
-.cy-security-grants, .cy-security-history { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.cy-security-grant { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; padding: 8px 10px; background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: 8px; }
+.cy-l2d-pane { display: flex; flex-direction: column; gap: var(--cy-space-8); }
+.cy-l2d-title { margin: 0; font-size: var(--cy-font-xl); font-weight: 600; }
+.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-l2d-sub { margin: 0 0 var(--cy-space-1); font-size: var(--cy-font-lg); font-weight: 600; color: var(--cy-muted); }
+.cy-security-empty { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.7; }
+.cy-security-grants, .cy-security-history { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--cy-space-4); }
+.cy-security-grant { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cy-space-4); font-size: var(--cy-font-md); padding: var(--cy-space-4) var(--cy-space-5); background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); }
 .cy-security-grant.is-revoked { opacity: .55; }
 .cy-security-grant-name { font-weight: 600; }
 .cy-security-grant-dir { color: var(--cy-text-secondary); overflow-wrap: anywhere; }
-.cy-security-grant-backend { color: var(--cy-muted); font-size: 11px; }
-.cy-security-grant-exp { margin-left: auto; color: var(--cy-muted); font-size: 11px; }
-.cy-security-grant-revoked { color: var(--cy-danger, #d33); font-size: 11px; }
-.cy-security-btn { padding: 3px 10px; border: 1px solid var(--cy-border); border-radius: 6px; background: var(--cy-bg); cursor: pointer; font-size: 12px; }
-.cy-security-filters { display: flex; gap: 8px; }
-.cy-security-filter, .cy-security-search { padding: 4px 8px; border: 1px solid var(--cy-border); border-radius: 6px; background: var(--cy-bg); font-size: 12px; color: var(--cy-text); }
+.cy-security-grant-backend { color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-security-grant-exp { margin-left: auto; color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-security-grant-revoked { color: var(--cy-danger); font-size: var(--cy-font-sm); }
+.cy-security-btn { padding: var(--cy-space-1-5) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; font-size: var(--cy-font-md); }
+.cy-security-filters { display: flex; gap: var(--cy-space-4); }
+.cy-security-filter, .cy-security-search { padding: var(--cy-space-2) var(--cy-space-4); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); font-size: var(--cy-font-md); color: var(--cy-text); }
 .cy-security-search { flex: 1; min-width: 0; }
-.cy-security-history-item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; padding: 8px 10px; background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: 8px; }
-.cy-security-history-ts { color: var(--cy-muted); font-size: 11px; }
+.cy-security-history-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cy-space-4); font-size: var(--cy-font-md); padding: var(--cy-space-4) var(--cy-space-5); background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); }
+.cy-security-history-ts { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-security-history-name { font-weight: 600; }
 .cy-security-history-status { color: var(--cy-text-secondary); }
 .cy-security-history-summary { color: var(--cy-muted); overflow-wrap: anywhere; }

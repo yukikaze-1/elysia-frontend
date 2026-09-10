@@ -7,8 +7,12 @@ import { useModelServiceStore } from '../stores/model-service.store'
 import CyProfileCard from './CyProfileCard.vue'
 import CyProfileWizard from './CyProfileWizard.vue'
 import CyTtsVoices from './CyTtsVoices.vue'
+import { errorMessage } from '../utils/error-message'
 
 const modelStore = useModelServiceStore()
+
+// 多套 UI 基础：错误文案统一走映射器（store 只产 code）
+const errorText = computed(() => errorMessage(modelStore.error, '模型服务操作失败，请稍后重试。'))
 
 const tab = ref<ModelServiceType>('llm')
 const TABS: Array<{ key: ModelServiceType; label: string }> = [
@@ -80,7 +84,7 @@ const emptyStateText = computed(() => `暂无 ${TABS.find((t) => t.key === tab.v
     </div>
 
     <div v-if="modelStore.error" class="cy-ms-error" role="alert">
-      <span>{{ modelStore.error.message }}</span>
+      <span>{{ errorText }}</span>
       <button class="cy-ms-error-close" aria-label="关闭错误提示" @click="modelStore.error = undefined">✕</button>
     </div>
 
@@ -113,16 +117,16 @@ const emptyStateText = computed(() => `暂无 ${TABS.find((t) => t.key === tab.v
 </template>
 
 <style scoped>
-.cy-model-services { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-.cy-ms-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.cy-ms-tabs { display: flex; gap: 6px; }
-.cy-ms-tab { padding: 5px 14px; border: 1px solid var(--cy-border); border-radius: 999px; background: var(--cy-surface); color: var(--cy-muted); font-size: 12px; }
+.cy-model-services { display: flex; flex-direction: column; gap: var(--cy-space-6); min-height: 0; }
+.cy-ms-top { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-5); flex-wrap: wrap; }
+.cy-ms-tabs { display: flex; gap: var(--cy-space-3); }
+.cy-ms-tab { padding: var(--cy-space-2-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-ms-tab.active { background: var(--cy-accent); color: var(--cy-accent-text); border-color: var(--cy-accent); }
-.cy-ms-add { padding: 6px 14px; border: 0; border-radius: 9px; background: var(--cy-accent); color: var(--cy-accent-text); font-size: 12px; }
-.cy-ms-error { display: flex; align-items: center; gap: 8px; padding: 8px 11px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
-.cy-ms-error-close { margin-left: auto; padding: 2px 8px; border: 1px solid var(--cy-border); border-radius: 7px; background: var(--cy-surface); color: var(--cy-muted); }
-.cy-ms-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: 13px; }
-.cy-ms-group { display: flex; flex-direction: column; gap: 8px; }
-.cy-ms-group-title { margin: 6px 0 0; font-size: 13px; color: var(--cy-muted); font-weight: 600; }
+.cy-ms-add { padding: var(--cy-space-3) var(--cy-space-7); border: 0; border-radius: var(--cy-radius-4-5); background: var(--cy-accent); color: var(--cy-accent-text); font-size: var(--cy-font-md); }
+.cy-ms-error { display: flex; align-items: center; gap: var(--cy-space-4); padding: var(--cy-space-4) var(--cy-space-5-5); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
+.cy-ms-error-close { margin-left: auto; padding: var(--cy-space-1) var(--cy-space-4); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-surface); color: var(--cy-muted); }
+.cy-ms-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: var(--cy-font-lg); }
+.cy-ms-group { display: flex; flex-direction: column; gap: var(--cy-space-4); }
+.cy-ms-group-title { margin: var(--cy-space-3) 0 0; font-size: var(--cy-font-lg); color: var(--cy-muted); font-weight: 600; }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

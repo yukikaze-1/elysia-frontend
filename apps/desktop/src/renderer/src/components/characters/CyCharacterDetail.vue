@@ -176,42 +176,42 @@ async function setDefault(): Promise<void> {
 </template>
 
 <style scoped>
-.cy-character-detail { display: flex; flex-direction: column; gap: 13px; min-width: 0; }
+.cy-character-detail { display: flex; flex-direction: column; gap: var(--cy-space-6-5); min-width: 0; }
 .cy-back { align-self: flex-start; border: 0; background: transparent; color: var(--cy-accent-strong); }
-.cy-detail-state, .cy-detail-notice { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface-soft); color: var(--cy-muted); font-size: 12px; }
+.cy-detail-state, .cy-detail-notice { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cy-space-3); padding: var(--cy-space-6) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface-soft); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-detail-state.error, .cy-detail-notice.error { color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
 .cy-detail-notice.success { color: var(--cy-success); }
-.cy-detail-header { display: flex; align-items: flex-start; gap: 13px; min-width: 0; }
+.cy-detail-header { display: flex; align-items: flex-start; gap: var(--cy-space-6-5); min-width: 0; }
 .cy-detail-avatar { display: grid; flex: 0 0 54px; width: 54px; height: 54px; place-items: center; border: 1px solid var(--cy-border); border-radius: 16px; background: var(--cy-accent); color: var(--cy-accent-text); font-size: 18px; font-weight: 650; }
 .cy-detail-title { flex: 1 1 auto; min-width: 0; }
-.cy-detail-title > div { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.cy-detail-title > div { display: flex; align-items: center; gap: var(--cy-space-3-5); flex-wrap: wrap; }
 .cy-detail-title h2 { margin: 0; color: var(--cy-text); font-size: 18px; }
-.cy-detail-title span { padding: 1px 7px; border: 1px solid var(--cy-border); border-radius: 999px; color: var(--cy-muted); font-size: 10px; }
-.cy-detail-title p { margin: 7px 0 0; color: var(--cy-muted); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
-.cy-detail-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.cy-detail-title span { padding: var(--cy-space-0-5) var(--cy-space-3-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-detail-title p { margin: var(--cy-space-3-5) 0 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.55; overflow-wrap: anywhere; }
+.cy-detail-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--cy-space-3); flex-wrap: wrap; justify-content: flex-end; }
 .cy-detail-actions .danger { color: var(--cy-danger); }
 .cy-default-action { flex: 0 0 auto; }
-.cy-detail-section, .cy-prompt-details { padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
-.cy-detail-section h3, .cy-prompt-grid h3 { margin: 0 0 9px; color: var(--cy-text); font-size: 13px; }
-dl { display: grid; gap: 8px; margin: 0; }
-dl > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; }
-dt { color: var(--cy-muted); font-size: 11px; }
-dd { margin: 0; color: var(--cy-text); font-size: 12px; overflow-wrap: anywhere; }
+.cy-detail-section, .cy-prompt-details { padding: var(--cy-space-6-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface); }
+.cy-detail-section h3, .cy-prompt-grid h3 { margin: 0 0 var(--cy-space-4-5); color: var(--cy-text); font-size: var(--cy-font-lg); }
+dl { display: grid; gap: var(--cy-space-4); margin: 0; }
+dl > div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: var(--cy-space-5); }
+dt { color: var(--cy-muted); font-size: var(--cy-font-sm); }
+dd { margin: 0; color: var(--cy-text); font-size: var(--cy-font-md); overflow-wrap: anywhere; }
 .preserve, .cy-prompt-grid p { white-space: pre-wrap; }
-.cy-readonly-note { margin: 10px 0 0; color: var(--cy-muted); font-size: 11px; }
-.cy-prompt-details summary { cursor: pointer; color: var(--cy-text); font-size: 13px; font-weight: 600; }
-.cy-prompt-grid { display: grid; gap: 12px; margin-top: 13px; }
-.cy-prompt-grid section { padding-top: 10px; border-top: 1px solid var(--cy-border); }
-.cy-prompt-grid p { margin: 0; color: var(--cy-text); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
-.cy-prompt-grid ol { display: grid; gap: 10px; margin: 0; padding-left: 20px; }
-.cy-prompt-grid li p + p { margin-top: 4px; }
-button { padding: 6px 11px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-pane); color: var(--cy-text); font-size: 12px; }
+.cy-readonly-note { margin: var(--cy-space-5) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-prompt-details summary { cursor: pointer; color: var(--cy-text); font-size: var(--cy-font-lg); font-weight: 600; }
+.cy-prompt-grid { display: grid; gap: var(--cy-space-6); margin-top: var(--cy-space-6-5); }
+.cy-prompt-grid section { padding-top: var(--cy-space-5); border-top: 1px solid var(--cy-border); }
+.cy-prompt-grid p { margin: 0; color: var(--cy-text); font-size: var(--cy-font-md); line-height: 1.65; overflow-wrap: anywhere; }
+.cy-prompt-grid ol { display: grid; gap: var(--cy-space-5); margin: 0; padding-left: 20px; }
+.cy-prompt-grid li p + p { margin-top: var(--cy-space-2); }
+button { padding: var(--cy-space-3) var(--cy-space-5-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-md); }
 button:disabled { opacity: 0.5; cursor: default; }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 @media (max-width: 720px) {
   .cy-detail-header { flex-wrap: wrap; }
   .cy-detail-actions { width: 100%; justify-content: flex-start; }
-  dl > div { grid-template-columns: 1fr; gap: 3px; }
+  dl > div { grid-template-columns: 1fr; gap: var(--cy-space-1-5); }
 }
 </style>

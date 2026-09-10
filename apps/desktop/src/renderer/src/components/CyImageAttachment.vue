@@ -15,5 +15,5 @@ function src(): string | undefined {
 </template>
 
 <style scoped>
-.cy-attachment-image { display: block; max-width: 100%; max-height: 320px; border-radius: 10px; object-fit: contain; border: 1px solid var(--cy-border); background: var(--cy-surface-soft); }
+.cy-attachment-image { display: block; max-width: 100%; max-height: 320px; border-radius: var(--cy-radius-5); object-fit: contain; border: 1px solid var(--cy-border); background: var(--cy-surface-soft); }
 </style>

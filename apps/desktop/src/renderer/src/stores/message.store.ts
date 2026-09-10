@@ -20,13 +20,13 @@ import type {
 } from '@shared/contracts'
 import { StreamAccumulator } from '@shared/domain'
 import { api } from './desktop-api'
-import { useConversationStore } from './conversation.store'
+import { currentConversationIdRef, findConversation } from './session'
 import { useConnectionStore } from './connection.store'
 import { useDraftStore } from './draft.store'
 import { useCacheStore } from './cache.store'
 import { cmpMsg } from '../utils/message-order'
 import { parsePublicError, type PublicError } from '../utils/public-error'
-import { clearMarkdownCache } from '../utils/markdown'   // 阶段 7 批次 C（Task 3）：会话切换清空 markdown 渲染缓存（M-2 单一挂载点）
+import { emitSessionBoundary } from '../utils/session-boundary'
 import { cloneValue } from '@shared/domain'
 
 function nowIso(): string {
@@ -98,6 +98,11 @@ export const useMessageStore = defineStore('message', () => {
   const byId = ref<Record<string, Message>>({})
   const order = ref<string[]>([])
   const sending = ref(false)
+  // 会话身份改从单例读取（解 conversation↔message 循环依赖，2026-09-10）：
+  // 此前本 store 只为一个 currentId 就读 conversation store，而后者又 import 本 store，构成环
+  // （靠 Pinia 惰性求值掩盖初始化顺序脆弱性）。现会话身份下沉到 stores/session.ts（零依赖单例），
+  // 仍取 ref 本体以保持既有响应性语义。
+  const sessionConversationId = currentConversationIdRef()
   const activeGenerationId = ref<string>()
   const accumulator = ref<StreamAccumulator>()
   const lastError = ref<PublicError>()
@@ -172,7 +177,7 @@ export const useMessageStore = defineStore('message', () => {
 
   function currentConnectionSession(): GenerationSessionIdentity {
     return {
-      conversationId: useConversationStore().currentId ?? '',
+      conversationId: sessionConversationId.value ?? '',
       connectionEpoch: connectionEpoch.value,
       connectionSignature
     }
@@ -181,7 +186,7 @@ export const useMessageStore = defineStore('message', () => {
   function generationSessionMatches(session: GenerationSessionIdentity): boolean {
     return session.connectionEpoch === connectionEpoch.value
       && session.connectionSignature === connectionSignature
-      && session.conversationId === (useConversationStore().currentId ?? '')
+      && session.conversationId === (sessionConversationId.value ?? '')
   }
 
   function sendRequestIsCurrent(owner: symbol, session: GenerationSessionIdentity): boolean {
@@ -249,8 +254,7 @@ export const useMessageStore = defineStore('message', () => {
   }
 
   function bindingFor(conversationId: string): CharacterBindingSnapshot | undefined {
-    const conversation = useConversationStore().items.find((item) => item.id === conversationId)
-    return conversation?.character
+    return findConversation(conversationId)?.character
   }
 
   function snapshotFromBinding(binding: CharacterBindingSnapshot): CharacterGenerationRef {
@@ -367,7 +371,7 @@ export const useMessageStore = defineStore('message', () => {
     lastError.value = {
       code: 'MESSAGE_PROTOCOL_MISMATCH',
       backendCode: 'MESSAGE_PROTOCOL_MISMATCH',
-      message: '消息所属会话或角色身份校验失败，请重试',
+      message: 'LOCAL:MESSAGE_PROTOCOL_MISMATCH',
       retryable: true
     }
   }
@@ -478,13 +482,13 @@ export const useMessageStore = defineStore('message', () => {
     lastError.value = {
       code: 'CHARACTER_GENERATION_PROTOCOL_MISMATCH',
       backendCode: 'CHARACTER_GENERATION_PROTOCOL_MISMATCH',
-      message: '回复身份校验失败，已停止本次生成',
+      message: 'LOCAL:CHARACTER_GENERATION_PROTOCOL_MISMATCH',
       retryable: false
     }
     clearGeneration(generationId)
   }
 
-  function resetConversation(_conversationId: string): void {
+  function resetConversation(conversationId: string): void {
     byId.value = {}
     order.value = []
     activeGenerationId.value = undefined
@@ -504,7 +508,11 @@ export const useMessageStore = defineStore('message', () => {
     highlightSegmentId.value = undefined
     nextCursor.value = undefined
     loadingEarlier.value = false
-    clearMarkdownCache()   // 阶段 7 批次 C（Task 3）：会话切换清空 markdown 缓存（M-2 单一挂载点，防敏感内容跨会话驻留）
+    // 会话边界广播（多套 UI 基础，2026-09-10）：功能层只播报「切换了会话」这一领域事实。
+    // 此前此处直接调用 utils/markdown 的 clearMarkdownCache()，使 store 反向依赖渲染层
+    // （必须知道 UI 用哪个 renderer、有无缓存）。现由渲染层自行订阅（utils/markdown 模块加载时订阅），
+    // 新增渲染缓存/第二套 UI 只需自己订阅，不必改本文件。安全语义不变：会话切换必清空渲染缓存。
+    emitSessionBoundary({ previousConversationId: conversationId, nextConversationId: undefined })
   }
 
   function applyEvent(event: BackendEvent): void {
@@ -515,7 +523,7 @@ export const useMessageStore = defineStore('message', () => {
     switch (event.event) {
       case 'generation.started': {
         // 归属守卫(design §4.2.1):started 校验 conversationId,防 A 的 started 迟到到 B 时覆盖 B 的 accumulator
-        if (event.conversationId !== useConversationStore().currentId) { guardDropEvent('generation.started', event.conversationId, event.generationId); break }
+        if (event.conversationId !== sessionConversationId.value) { guardDropEvent('generation.started', event.conversationId, event.generationId); break }
         const characterIdentity = profilesEnabled() ? generationIdentityForStarted(event) : undefined
         if (profilesEnabled() && !characterIdentity) {
           // Feature-enabled mode is fail-closed: an assistant generation with
@@ -566,7 +574,7 @@ export const useMessageStore = defineStore('message', () => {
       case 'generation.segment.completed': {
         // 归属守卫(design §4.2.1):中间事件无 conversationId,经 generationByConversation 表判归属
         const conv = generationByConversation.value[event.generationId]
-        if (conv === undefined || conv !== useConversationStore().currentId) { guardDropEvent(event.event, conv, event.generationId); break }
+        if (conv === undefined || conv !== sessionConversationId.value) { guardDropEvent(event.event, conv, event.generationId); break }
         const session = generationSessionById.value[event.generationId]
         if (!session || !generationSessionMatches(session)) { guardDropEvent(`${event.event}.session`, conv, event.generationId); break }
         const acc = accumulator.value
@@ -579,7 +587,7 @@ export const useMessageStore = defineStore('message', () => {
       }
       case 'generation.completed': {
         const conv = generationByConversation.value[event.generationId]
-        if (conv === undefined || conv !== useConversationStore().currentId) { guardDropEvent(event.event, conv, event.generationId); break }
+        if (conv === undefined || conv !== sessionConversationId.value) { guardDropEvent(event.event, conv, event.generationId); break }
         const session = generationSessionById.value[event.generationId]
         if (!session || !generationSessionMatches(session)) { guardDropEvent('generation.completed.session', conv, event.generationId); break }
         const acc = accumulator.value
@@ -600,7 +608,7 @@ export const useMessageStore = defineStore('message', () => {
           // fence as the terminal event so a reconnect/backend switch cannot
           // rehydrate this generation into the new fact domain after purge.
           void useCacheStore().pushMessages(
-            useConversationStore().currentId ?? finalMsg.conversationId,
+            sessionConversationId.value ?? finalMsg.conversationId,
             [finalMsg],
             nowIso(),
             { guard: () => generationSessionMatches(session) }
@@ -611,7 +619,7 @@ export const useMessageStore = defineStore('message', () => {
       }
       case 'generation.failed': {
         const conv = generationByConversation.value[event.generationId]
-        if (conv === undefined || conv !== useConversationStore().currentId) { guardDropEvent(event.event, conv, event.generationId); break }
+        if (conv === undefined || conv !== sessionConversationId.value) { guardDropEvent(event.event, conv, event.generationId); break }
         const session = generationSessionById.value[event.generationId]
         if (!session || !generationSessionMatches(session)) { guardDropEvent('generation.failed.session', conv, event.generationId); break }
         const acc = accumulator.value
@@ -632,7 +640,7 @@ export const useMessageStore = defineStore('message', () => {
       case 'voice_session.turn': {
         // P4-B（spec §5.11）：实时语音轮次自动提交——后端预分配 messageId（非乐观）；
         // 归属取 event.conversationId ?? currentId；匹配当前会话插入 user 消息（后续 generation.* 正常装配），不匹配丢弃
-        const currentId = useConversationStore().currentId
+        const currentId = sessionConversationId.value
         const conv = event.conversationId ?? currentId
         if (!conv || conv !== currentId) { guardDropEvent('voice_session.turn', conv); break }
         upsertMessage({
@@ -652,7 +660,7 @@ export const useMessageStore = defineStore('message', () => {
   async function send(text: string, stickerId?: string): Promise<boolean>
   async function send(text: string, opts?: { attachments?: MessageAttachment[]; stickerId?: string }): Promise<boolean>
   async function send(text: string, arg?: string | { attachments?: MessageAttachment[]; stickerId?: string }): Promise<boolean> {
-    const conversationId = useConversationStore().currentId
+    const conversationId = sessionConversationId.value
     if (!conversationId) return false
     syncConnectionSessionFromStore()
     const capturedSession: GenerationSessionIdentity = {
@@ -718,7 +726,7 @@ export const useMessageStore = defineStore('message', () => {
   /** P4-B（spec §5.11）：录音确认发送——镜像 send()：乐观 user 消息 + api.voiceCommit + migrateKey + acknowledged + push cache；
    *  失败 → failed + lastError → false（调用方据此保留待发送条/草稿语义）。 */
   async function sendVoiceCommit(recordingId: string, text: string): Promise<boolean> {
-    const conversationId = useConversationStore().currentId
+    const conversationId = sessionConversationId.value
     if (!conversationId) return false
     syncConnectionSessionFromStore()
     const capturedSession: GenerationSessionIdentity = {
@@ -785,7 +793,7 @@ export const useMessageStore = defineStore('message', () => {
     // The cancel IPC can race a new generation or a connection fence.  Only
     // the generation that owned this request may be interrupted/cleared; an
     // old cancel response must never mark a newer accumulator as interrupted.
-    if (generationByConversation.value[gid] !== useConversationStore().currentId
+    if (generationByConversation.value[gid] !== sessionConversationId.value
       || !capturedSession
       || !generationSessionMatches(capturedSession)
       || activeGenerationId.value !== gid) return
@@ -801,7 +809,7 @@ export const useMessageStore = defineStore('message', () => {
   function loadReplay(conversationId: string, messages: Message[]): void {
     const validated = validateMessageConversationIds(messages, conversationId, 'replay')
     if (!validated) return
-    const cur = useConversationStore().currentId
+    const cur = sessionConversationId.value
     if (cur === conversationId) {
       const accepted = acceptArchivedMessages(validated, 'replay')
       if (!accepted) {
@@ -844,7 +852,7 @@ export const useMessageStore = defineStore('message', () => {
     const pageSession = currentConnectionSession()
     const pageGuard = () => generationSessionMatches(pageSession) && (!guard || guard())
     if (!pageGuard()) return false
-    const conversationId = useConversationStore().currentId
+    const conversationId = sessionConversationId.value
     // P1-4：非当前会话消息跳过（调用方 await 后 currentId 守卫双保险）——迟到 REST 页/异流响应不得污染其他会话列表。
     // 仅在 currentId 已设时过滤（未激活前 currentId 为空，历史页属 pending 语义，不在此路径出现）
     const rawItems = [...page.items].sort(cmpMsg) // 后端 before 页已归一化升序，再排一次免疫非时间序页（P0-1）
@@ -893,7 +901,7 @@ export const useMessageStore = defineStore('message', () => {
 
   /** 向上加载更早消息（CyMessageList 顶部哨兵触发）：防重入、失败保留游标可重试 */
   async function loadOlder(): Promise<void> {
-    const conversationId = useConversationStore().currentId
+    const conversationId = sessionConversationId.value
     if (!conversationId || loadingOlder.value || !hasMoreBefore.value || !beforeCursor.value) return
     syncConnectionSessionFromStore()
     const capturedSession: GenerationSessionIdentity = {
@@ -961,7 +969,7 @@ export const useMessageStore = defineStore('message', () => {
    *  P1-2：首页游标经 setPageMeta 初始化 hasMoreBefore/beforeCursor——跳转后顶部哨兵在 nextCursor 存在时走 loadEarlier 补载更早历史。
    *  P1-4：两个 await 与 loadPage 之间加 currentId 守卫（对齐 activate 非 anchor 路径的 epoch 语义）——中途切会话不得污染新列表。 */
   async function loadContextWindow(messageId: string, before = 5, after = 5): Promise<boolean> {
-    const conversationId = useConversationStore().currentId
+    const conversationId = sessionConversationId.value
     if (!conversationId) return false
     // Context jumps have two independent awaits just like the paginated
     // loaders below.  Capture the message transport session before the first
@@ -1011,7 +1019,7 @@ export const useMessageStore = defineStore('message', () => {
    *  P1-2：跳转后（loadContextWindow 置 nextCursor）顶部哨兵走本路径；同时同步 hasMoreBefore/beforeCursor，
    *  保证哨兵两路径状态一致——nextCursor 耗尽后不落到用陈旧 beforeCursor 重复拉页的 loadOlder。 */
   async function loadEarlier(): Promise<void> {
-    const conversationId = useConversationStore().currentId
+    const conversationId = sessionConversationId.value
     if (!conversationId || !nextCursor.value || loadingEarlier.value) return
     syncConnectionSessionFromStore()
     const capturedSession: GenerationSessionIdentity = {
@@ -1052,7 +1060,7 @@ export const useMessageStore = defineStore('message', () => {
     if (s.status !== 'reconnecting' && s.status !== 'error' && s.status !== 'disconnected') return
     // Task 4（H-3）：断线自动持久化当前会话草稿——flush(cid) 立即落盘草稿/滚动锚点，防断线丢草稿。
     // currentId 保留（断线不切会话），flush 必传 conversationId；无活动会话则跳过。
-    const cid = useConversationStore().currentId
+    const cid = sessionConversationId.value
     if (cid) void useDraftStore().flush(cid)
     // I5:清理 byId 中 status='pending' 且 key 以 local- 开头的用户消息(未确认;后端若已处理会经 replay 带回正式版本)
     // F11:插在 activeGenerationId 早退之前,无 active generation 时清理也执行

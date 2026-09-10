@@ -9,6 +9,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import type { ModelProfile, ModelServiceType } from '@shared/contracts'
 import { useModelServiceStore } from '../stores/model-service.store'
+import { errorMessage } from '../utils/error-message'
 
 const props = defineProps<{
   profile?: ModelProfile       // 有值=编辑/复制；无值=新建
@@ -18,6 +19,8 @@ const props = defineProps<{
 const emit = defineEmits<{ close: [] }>()
 
 const modelStore = useModelServiceStore()
+// 多套 UI 基础：错误文案统一走映射器（store 只产 code）
+const errorText = computed(() => errorMessage(modelStore.error, '保存模型配置失败，请稍后重试。'))
 
 /** 草稿槽 key：'new'（新建）/ profile.model（编辑与复制——复制改名仍驻原 key，关闭时统一清理） */
 const draftKey = computed(() => (props.profile ? props.profile.model : 'new'))
@@ -158,7 +161,7 @@ function onKeydown(e: KeyboardEvent): void {
           <button class="cy-close-btn" aria-label="关闭向导" @click="closeWizard">✕</button>
         </header>
 
-        <div v-if="modelStore.error" class="cy-ms-error" role="alert">{{ modelStore.error.message }}</div>
+        <div v-if="modelStore.error" class="cy-ms-error" role="alert">{{ errorText }}</div>
 
         <form class="cy-wizard-form" @submit.prevent="onTestAndSave()">
           <div class="cy-wizard-body">
@@ -231,7 +234,7 @@ function onKeydown(e: KeyboardEvent): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: var(--cy-space-8);
   background: var(--cy-overlay);
 }
 .cy-wizard {
@@ -243,26 +246,26 @@ function onKeydown(e: KeyboardEvent): void {
   overflow: hidden;
   background: var(--cy-pane);
   border: 1px solid var(--cy-border);
-  border-radius: 14px;
+  border-radius: var(--cy-radius-7);
   box-shadow: var(--cy-shadow);
 }
-.cy-wizard-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: 14px 16px 10px; border-bottom: 1px solid var(--cy-border); }
-.cy-wizard-header strong { font-size: 15px; }
-.cy-close-btn { padding: 4px 10px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-muted); }
-.cy-ms-error { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; margin: 10px 16px 0; padding: 8px 11px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
+.cy-wizard-header { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; padding: var(--cy-space-7) var(--cy-space-8) var(--cy-space-5); border-bottom: 1px solid var(--cy-border); }
+.cy-wizard-header strong { font-size: var(--cy-font-xl); }
+.cy-close-btn { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); }
+.cy-ms-error { display: flex; flex: 0 0 auto; align-items: center; gap: var(--cy-space-4); margin: var(--cy-space-5) var(--cy-space-8) 0; padding: var(--cy-space-4) var(--cy-space-5-5); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
 .cy-wizard-form { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; overflow: hidden; }
-.cy-wizard-body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; gap: 10px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 12px 16px; }
+.cy-wizard-body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; gap: var(--cy-space-5); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: var(--cy-space-6) var(--cy-space-8); }
 /* UII-QQ 设置页批次：表单分区（Provider 连接 / 模型信息 / 能力声明） */
-.cy-wizard-group { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: 10px; }
-.cy-wizard-group-title { color: var(--cy-muted); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
-.cy-wizard-note { margin: 0; font-size: 11px; color: var(--cy-muted); }
-.cy-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--cy-muted); }
-.cy-field input, .cy-field select { padding: 7px 9px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-surface); color: var(--cy-text); font-size: 13px; }
+.cy-wizard-group { display: flex; flex-direction: column; gap: var(--cy-space-5); padding: var(--cy-space-5) var(--cy-space-6); background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-5); }
+.cy-wizard-group-title { color: var(--cy-muted); font-size: var(--cy-font-sm); font-weight: 600; letter-spacing: 0.02em; }
+.cy-wizard-note { margin: 0; font-size: var(--cy-font-sm); color: var(--cy-muted); }
+.cy-field { display: flex; flex-direction: column; gap: var(--cy-space-2); font-size: var(--cy-font-md); color: var(--cy-muted); }
+.cy-field input, .cy-field select { padding: var(--cy-space-3-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-lg); }
 .cy-field select:disabled { opacity: 0.6; }
 .cy-req { color: var(--cy-danger); font-style: normal; }
-.cy-wizard-crednote { margin: 0; font-size: 11px; color: var(--cy-muted); }
-.cy-wizard-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: 8px; flex-wrap: wrap; padding: 10px 16px 14px; border-top: 1px solid var(--cy-border); background: var(--cy-pane); }
-.cy-profile-btn { display: inline-flex; align-items: center; gap: 5px; padding: 6px 13px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-text); font-size: 12px; }
+.cy-wizard-crednote { margin: 0; font-size: var(--cy-font-sm); color: var(--cy-muted); }
+.cy-wizard-actions { display: flex; flex: 0 0 auto; justify-content: flex-end; gap: var(--cy-space-4); flex-wrap: wrap; padding: var(--cy-space-5) var(--cy-space-8) var(--cy-space-7); border-top: 1px solid var(--cy-border); background: var(--cy-pane); }
+.cy-profile-btn { display: inline-flex; align-items: center; gap: var(--cy-space-2-5); padding: var(--cy-space-3) var(--cy-space-6-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); }
 .cy-profile-btn:disabled { opacity: 0.55; cursor: default; }
 .cy-profile-btn:hover:not(:disabled) { background: var(--cy-surface-hover); }
 .cy-profile-primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }

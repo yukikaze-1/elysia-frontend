@@ -166,7 +166,7 @@ onBeforeUnmount(() => { triggerElement = null })
   width: min(920px, 92vw);
   height: min(640px, 84vh);
   min-height: 0;           /* 允许收缩：面板不被内容撑破高度（FE-S3-RUN2-P1-01 同款纪律） */
-  border-radius: 14px;
+  border-radius: var(--cy-radius-7);
   overflow: hidden;
   background: var(--cy-pane);
   border: 1px solid var(--cy-border);
@@ -177,21 +177,21 @@ onBeforeUnmount(() => { triggerElement = null })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
+  gap: var(--cy-space-6);
+  padding: var(--cy-space-6) var(--cy-space-8);
   border-bottom: 1px solid var(--cy-border);
 }
-.cy-settings-title { display: flex; align-items: baseline; gap: 8px; }
-.cy-settings-title strong { font-size: 15px; }
-.cy-close-btn { padding: 4px 10px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-muted); }
+.cy-settings-title { display: flex; align-items: baseline; gap: var(--cy-space-4); }
+.cy-settings-title strong { font-size: var(--cy-font-xl); }
+.cy-close-btn { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); }
 .cy-settings-layout { flex: 1 1 0; display: flex; min-height: 0; }
 .cy-settings-nav {
   flex: 0 0 200px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 8px;
+  gap: var(--cy-space-2);
+  padding: var(--cy-space-5) var(--cy-space-4);
   border-right: 1px solid var(--cy-border);
   background: var(--cy-surface-soft);
 }
@@ -199,22 +199,22 @@ onBeforeUnmount(() => { triggerElement = null })
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 6px;
-  padding: 9px 11px;
-  border-radius: 9px;
+  gap: var(--cy-space-3);
+  padding: var(--cy-space-4-5) var(--cy-space-5-5);
+  border-radius: var(--cy-radius-4-5);
   color: var(--cy-muted);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   text-align: left;
 }
 .cy-settings-nav-item:hover { background: var(--cy-surface-hover); }
 .cy-settings-nav-item.active { color: var(--cy-accent-text); background: var(--cy-accent); }
-.cy-nav-mark { padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: 999px; color: var(--cy-warning); font-size: 9px; }
+.cy-nav-mark { padding: var(--cy-space-0-5) var(--cy-space-3); border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-warning); font-size: 9px; }
 .cy-settings-nav-item.active .cy-nav-mark { color: currentColor; border-color: currentColor; }
 .cy-settings-body {
   flex: 1 1 0;
   min-width: 0;
   overflow-y: auto;   /* 内容区内部滚动，面板不溢出窗口 */
-  padding: 16px 18px;
+  padding: var(--cy-space-8) var(--cy-space-9);
   /* 问题 7（字型级重渲染）：hover 重绘时字形在合成层边界/亚像素相位间重光栅化产生 ~1px 上移。
      内容包装层提升为稳定合成层，消除 hover 重绘引起的相位翻转（transform/opacity only，§10 合规；缓解非根除）。 */
   transform: translateZ(0);
@@ -222,12 +222,12 @@ onBeforeUnmount(() => { triggerElement = null })
 .cy-settings-placeholder {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 40px 12px;
+  gap: var(--cy-space-3);
+  padding: 40px var(--cy-space-6);
   color: var(--cy-text);
   text-align: center;
 }
-.cy-muted { color: var(--cy-muted); font-size: 12px; }
+.cy-muted { color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-settings-toast {
   position: absolute;
   left: 50%;
@@ -235,18 +235,18 @@ onBeforeUnmount(() => { triggerElement = null })
   transform: translateX(-50%);
   z-index: 20;
   max-width: 70vw;
-  padding: 8px 14px;
+  padding: var(--cy-space-4) var(--cy-space-7);
   color: var(--cy-accent-text);
   background: var(--cy-accent);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-6);
+  font-size: var(--cy-font-md);
   box-shadow: var(--cy-shadow);
 }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 @media (max-width: 680px) {
   .cy-settings { width: min(96vw, 920px); height: min(92vh, 640px); }
   .cy-settings-nav { flex-basis: 150px; }
-  .cy-settings-body { padding: 13px; }
+  .cy-settings-body { padding: var(--cy-space-6-5); }
 }
 </style>

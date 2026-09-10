@@ -231,50 +231,50 @@ const statusText = computed(() => {
 </template>
 
 <style scoped>
-.cy-l2d-pane { display: flex; flex-direction: column; gap: 16px; }
+.cy-l2d-pane { display: flex; flex-direction: column; gap: var(--cy-space-8); }
 
-.cy-l2d-title { margin: 0; font-size: 15px; font-weight: 600; }
+.cy-l2d-title { margin: 0; font-size: var(--cy-font-xl); font-weight: 600; }
 
-.cy-l2d-group { display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: 12px; }
-.cy-l2d-sub { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--cy-muted); }
+.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-l2d-sub { margin: 0 0 var(--cy-space-1); font-size: var(--cy-font-lg); font-weight: 600; color: var(--cy-muted); }
 
-.cy-l2d-row { display: flex; align-items: center; gap: 9px; cursor: pointer; }
-.cy-l2d-label { display: flex; flex-direction: column; gap: 1px; color: var(--cy-text); font-size: 13px; }
-.cy-l2d-label small { color: var(--cy-muted); font-size: 11px; }
+.cy-l2d-row { display: flex; align-items: center; gap: var(--cy-space-4-5); cursor: pointer; }
+.cy-l2d-label { display: flex; flex-direction: column; gap: var(--cy-space-0-5); color: var(--cy-text); font-size: var(--cy-font-lg); }
+.cy-l2d-label small { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 
-.cy-l2d-field { display: flex; flex-direction: column; gap: 5px; }
-.cy-l2d-field-label { color: var(--cy-muted); font-size: 12px; }
-.cy-l2d-field-control { display: flex; align-items: center; gap: 10px; }
+.cy-l2d-field { display: flex; flex-direction: column; gap: var(--cy-space-2-5); }
+.cy-l2d-field-label { color: var(--cy-muted); font-size: var(--cy-font-md); }
+.cy-l2d-field-control { display: flex; align-items: center; gap: var(--cy-space-5); }
 .cy-l2d-field-control input[type='range'] { flex: 1; min-width: 0; accent-color: var(--cy-accent); }
-.cy-l2d-field-value { flex: 0 0 44px; text-align: right; color: var(--cy-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.cy-l2d-field select { width: 100%; padding: 6px 9px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface-soft); color: var(--cy-text); font-size: 13px; }
-.cy-l2d-hint { margin: 0; color: var(--cy-muted); font-size: 11px; }
+.cy-l2d-field-value { flex: 0 0 44px; text-align: right; color: var(--cy-muted); font-size: var(--cy-font-md); font-variant-numeric: tabular-nums; }
+.cy-l2d-field select { width: 100%; padding: var(--cy-space-3) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface-soft); color: var(--cy-text); font-size: var(--cy-font-lg); }
+.cy-l2d-hint { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-sm); }
 
-.cy-l2d-models { display: flex; flex-direction: column; gap: 8px; }
+.cy-l2d-models { display: flex; flex-direction: column; gap: var(--cy-space-4); }
 .cy-l2d-model {
-  display: flex; align-items: center; gap: 10px; padding: 7px 10px;
-  border: 1px solid var(--cy-border); border-radius: 10px; background: var(--cy-surface-soft);
-  color: var(--cy-text); font-size: 13px; text-align: left;
+  display: flex; align-items: center; gap: var(--cy-space-5); padding: var(--cy-space-3-5) var(--cy-space-5);
+  border: 1px solid var(--cy-border); border-radius: var(--cy-radius-5); background: var(--cy-surface-soft);
+  color: var(--cy-text); font-size: var(--cy-font-lg); text-align: left;
 }
 .cy-l2d-model:hover:not(:disabled) { background: var(--cy-surface-hover); }
 .cy-l2d-model.active { border-color: var(--cy-accent); background: var(--cy-accent); color: var(--cy-accent-text); }
 .cy-l2d-model:disabled { opacity: 0.55; cursor: not-allowed; }
-.cy-l2d-model-preview { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex: none; background: var(--cy-surface); }
-.cy-l2d-model-nothumb { display: grid; place-items: center; color: var(--cy-muted); font-size: 10px; }
-.cy-l2d-model-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cy-l2d-model-preview { width: 40px; height: 40px; border-radius: var(--cy-radius-4); object-fit: cover; flex: none; background: var(--cy-surface); }
+.cy-l2d-model-nothumb { display: grid; place-items: center; color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-l2d-model-meta { display: flex; flex-direction: column; gap: var(--cy-space-1); min-width: 0; }
 .cy-l2d-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cy-l2d-model-version { color: var(--cy-muted); font-size: 11px; }
+.cy-l2d-model-version { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-l2d-model.active .cy-l2d-model-version { color: inherit; opacity: 0.8; }
 .cy-l2d-model-check { margin-left: auto; flex: none; font-weight: 700; }
 
-.cy-l2d-state { padding: 10px 0; color: var(--cy-muted); text-align: center; font-size: 12px; }
-.cy-l2d-error { padding: 8px 11px; color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: 10px; font-size: 12px; }
+.cy-l2d-state { padding: var(--cy-space-5) 0; color: var(--cy-muted); text-align: center; font-size: var(--cy-font-md); }
+.cy-l2d-error { padding: var(--cy-space-4) var(--cy-space-5-5); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
 
-.cy-l2d-foot { flex-direction: row; align-items: center; gap: 12px; }
-.cy-l2d-btn { padding: 6px 14px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface-soft); color: var(--cy-text); font-size: 12px; }
+.cy-l2d-foot { flex-direction: row; align-items: center; gap: var(--cy-space-6); }
+.cy-l2d-btn { padding: var(--cy-space-3) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface-soft); color: var(--cy-text); font-size: var(--cy-font-md); }
 .cy-l2d-btn:hover:not(:disabled) { background: var(--cy-surface-hover); }
 .cy-l2d-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.cy-l2d-foot-note { color: var(--cy-muted); font-size: 11px; }
+.cy-l2d-foot-note { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

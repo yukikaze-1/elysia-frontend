@@ -50,13 +50,13 @@ function focusExample(index: number, field: 'user' | 'assistant'): void {
 </template>
 
 <style scoped>
-.cy-prompt-fields { display: grid; gap: 11px; min-width: 0; padding: 13px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface); }
-legend { padding: 0 5px; color: var(--cy-text); font-size: 13px; font-weight: 650; }
-.cy-help { margin: 0; color: var(--cy-muted); font-size: 11px; line-height: 1.5; }
-label { display: grid; gap: 5px; min-width: 0; color: var(--cy-muted); font-size: 11px; }
+.cy-prompt-fields { display: grid; gap: var(--cy-space-5-5); min-width: 0; padding: var(--cy-space-6-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface); }
+legend { padding: 0 var(--cy-space-2-5); color: var(--cy-text); font-size: var(--cy-font-lg); font-weight: 650; }
+.cy-help { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
+label { display: grid; gap: var(--cy-space-2-5); min-width: 0; color: var(--cy-muted); font-size: var(--cy-font-sm); }
 em { color: var(--cy-danger); font-style: normal; }
-textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: 8px 10px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-pane); color: var(--cy-text); font: inherit; line-height: 1.5; }
-.cy-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+textarea { width: 100%; box-sizing: border-box; resize: vertical; padding: var(--cy-space-4) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-pane); color: var(--cy-text); font: inherit; line-height: 1.5; }
+.cy-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--cy-space-5); }
 textarea:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 @media (max-width: 720px) { .cy-field-row { grid-template-columns: 1fr; } }
 </style>

@@ -218,28 +218,28 @@ function retryCandidateCatalog(): void {
 </template>
 
 <style scoped>
-.cy-identity-pane { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.cy-pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.cy-identity-pane { display: flex; flex-direction: column; gap: var(--cy-space-7); min-width: 0; }
+.cy-pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-8); }
 .cy-pane-heading h2 { margin: 0; color: var(--cy-text); font-size: 17px; }
-.cy-pane-heading p, .cy-onboarding p, .cy-form-actions p { margin: 4px 0 0; color: var(--cy-muted); font-size: 12px; line-height: 1.55; }
-.cy-status-chip { flex: 0 0 auto; padding: 3px 9px; border: 1px solid color-mix(in srgb, var(--cy-success) 45%, transparent); border-radius: 999px; color: var(--cy-success); font-size: 11px; }
+.cy-pane-heading p, .cy-onboarding p, .cy-form-actions p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.55; }
+.cy-status-chip { flex: 0 0 auto; padding: var(--cy-space-1-5) var(--cy-space-4-5); border: 1px solid color-mix(in srgb, var(--cy-success) 45%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-success); font-size: var(--cy-font-sm); }
 .cy-status-chip.warning { color: var(--cy-warning); border-color: color-mix(in srgb, var(--cy-warning) 45%, transparent); }
-.cy-state-card, .cy-onboarding, .cy-save-message { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 12px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface-soft); color: var(--cy-muted); font-size: 12px; }
+.cy-state-card, .cy-onboarding, .cy-save-message { display: flex; flex-direction: column; align-items: flex-start; gap: var(--cy-space-3); padding: var(--cy-space-6) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface-soft); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-state-card.error, .cy-save-message.error, .cy-save-message.conflict { color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
 .cy-save-message.success { color: var(--cy-success); }
 .cy-onboarding { color: var(--cy-text); background: var(--cy-accent); }
-.cy-identity-form { display: flex; flex-direction: column; gap: 13px; padding: 14px; border: 1px solid var(--cy-border); border-radius: 13px; background: var(--cy-surface); }
-.cy-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.cy-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: var(--cy-muted); font-size: 12px; }
+.cy-identity-form { display: flex; flex-direction: column; gap: var(--cy-space-6-5); padding: var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: 13px; background: var(--cy-surface); }
+.cy-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--cy-space-6); }
+.cy-field { display: flex; flex-direction: column; gap: var(--cy-space-2-5); min-width: 0; color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-field em { color: var(--cy-danger); font-style: normal; }
-.cy-field input, .cy-field select { width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-pane); color: var(--cy-text); font: inherit; font-size: 13px; }
-.cy-field small { color: var(--cy-danger); font-size: 11px; }
-.cy-form-actions { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding-top: 2px; }
-.cy-form-actions > div { display: flex; gap: 8px; flex: 0 0 auto; }
-button { padding: 6px 12px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-pane); color: var(--cy-text); font-size: 12px; }
+.cy-field input, .cy-field select { width: 100%; min-width: 0; box-sizing: border-box; padding: var(--cy-space-4) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-pane); color: var(--cy-text); font: inherit; font-size: var(--cy-font-lg); }
+.cy-field small { color: var(--cy-danger); font-size: var(--cy-font-sm); }
+.cy-form-actions { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--cy-space-6); padding-top: var(--cy-space-1); }
+.cy-form-actions > div { display: flex; gap: var(--cy-space-4); flex: 0 0 auto; }
+button { padding: var(--cy-space-3) var(--cy-space-6); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-md); }
 button.primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
-.cy-load-more-candidates { align-self: flex-start; margin-top: 3px; }
-.cy-candidate-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.cy-load-more-candidates { align-self: flex-start; margin-top: var(--cy-space-1-5); }
+.cy-candidate-error { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-4); }
 button:disabled { opacity: 0.5; cursor: default; }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }

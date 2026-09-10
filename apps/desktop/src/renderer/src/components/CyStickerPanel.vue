@@ -67,10 +67,10 @@ function onGridKeydown(e: KeyboardEvent, s: StickerItem): void {
 
 <style scoped>
 .cy-sticker-panel { display: flex; flex-direction: column; min-height: 120px; }
-.cy-sticker-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 0; color: var(--cy-muted); font-size: 13px; }
-.cy-sticker-retry { padding: 4px 12px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); color: var(--cy-muted); }
-.cy-sticker-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; overflow-y: auto; }
-.cy-sticker-cell { padding: 4px; border: 0; border-radius: 8px; background: var(--cy-surface); }
+.cy-sticker-state { display: flex; flex-direction: column; align-items: center; gap: var(--cy-space-4); padding: 22px 0; color: var(--cy-muted); font-size: var(--cy-font-lg); }
+.cy-sticker-retry { padding: var(--cy-space-2) var(--cy-space-6); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); }
+.cy-sticker-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--cy-space-3); overflow-y: auto; }
+.cy-sticker-cell { padding: var(--cy-space-2); border: 0; border-radius: var(--cy-radius-4); background: var(--cy-surface); }
 .cy-sticker-cell img { width: 56px; height: 56px; object-fit: contain; }
 .cy-sticker-cell:hover { background: var(--cy-surface-hover); }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 1px; }

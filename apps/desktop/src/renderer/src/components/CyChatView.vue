@@ -81,9 +81,9 @@ function openCharacterDetails(): void {
 .cy-chat-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--cy-space-6);
   min-height: 50px;
-  padding: 8px 14px;
+  padding: var(--cy-space-4) var(--cy-space-7);
   border-bottom: 1px solid var(--cy-border);
   background: var(--cy-surface);
   min-width: 0;
@@ -95,7 +95,7 @@ function openCharacterDetails(): void {
 
 .cy-chat-heading h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--cy-font-xl);
   font-weight: 600;
   min-width: 0;
   white-space: nowrap;
@@ -106,16 +106,16 @@ function openCharacterDetails(): void {
 .cy-chat-character {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--cy-space-3-5);
   min-width: 0;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-chat-character-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--cy-space-2-5);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -126,19 +126,19 @@ function openCharacterDetails(): void {
   flex: 0 0 auto;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: var(--cy-accent);
   border: 1px solid var(--cy-border);
 }
 
 .cy-chat-character-detail {
   flex: 0 0 auto;
-  padding: 2px 6px;
+  padding: var(--cy-space-1) var(--cy-space-3);
   border: 1px solid var(--cy-border);
-  border-radius: 6px;
+  border-radius: var(--cy-radius-3);
   background: var(--cy-surface-soft);
   color: var(--cy-accent-strong);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
 }
 
 .cy-chat-character-detail:hover {
@@ -174,7 +174,7 @@ function openCharacterDetails(): void {
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
   border-right: 0;
-  border-radius: 8px 0 0 8px;
+  border-radius: var(--cy-radius-4) 0 0 var(--cy-radius-4);
   box-shadow: -2px 0 6px rgb(0 0 0 / 0.06);
 }
 

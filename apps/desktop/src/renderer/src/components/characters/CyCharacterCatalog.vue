@@ -169,34 +169,34 @@ async function removeDraft(key: string): Promise<void> {
 </template>
 
 <style scoped>
-.cy-character-catalog { display: flex; flex-direction: column; gap: 13px; min-width: 0; }
-.cy-catalog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.cy-character-catalog { display: flex; flex-direction: column; gap: var(--cy-space-6-5); min-width: 0; }
+.cy-catalog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-7); }
 .cy-catalog-heading h2 { margin: 0; color: var(--cy-text); font-size: 17px; }
-.cy-catalog-heading p { margin: 4px 0 0; color: var(--cy-muted); font-size: 12px; line-height: 1.55; }
-.cy-catalog-heading-actions { display: flex; align-items: center; gap: 8px; }
-.cy-catalog-heading-actions > span { flex: 0 0 auto; color: var(--cy-muted); font-size: 11px; }
-.cy-catalog-filters { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; gap: 8px; }
-.cy-catalog-filters input, .cy-catalog-filters select { width: 100%; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--cy-border); border-radius: 9px; background: var(--cy-surface); color: var(--cy-text); font-size: 12px; }
-.cy-character-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.cy-catalog-state, .cy-catalog-notice { display: flex; align-items: flex-start; gap: 7px; padding: 12px 14px; border: 1px solid var(--cy-border); border-radius: 12px; background: var(--cy-surface-soft); color: var(--cy-muted); font-size: 12px; }
+.cy-catalog-heading p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.55; }
+.cy-catalog-heading-actions { display: flex; align-items: center; gap: var(--cy-space-4); }
+.cy-catalog-heading-actions > span { flex: 0 0 auto; color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-catalog-filters { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto auto; gap: var(--cy-space-4); }
+.cy-catalog-filters input, .cy-catalog-filters select { width: 100%; box-sizing: border-box; padding: var(--cy-space-3-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); }
+.cy-character-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--cy-space-5); }
+.cy-catalog-state, .cy-catalog-notice { display: flex; align-items: flex-start; gap: var(--cy-space-3-5); padding: var(--cy-space-6) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface-soft); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-catalog-state { flex-direction: column; }
 .cy-catalog-state.error { color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
 .cy-catalog-notice { align-items: center; justify-content: space-between; color: var(--cy-warning); }
 .cy-load-more { align-self: center; }
-.cy-recovery { display: grid; gap: 9px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--cy-accent-strong) 35%, var(--cy-border)); border-radius: 12px; background: var(--cy-surface-soft); }
-.cy-recovery header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.cy-recovery h3 { margin: 0; color: var(--cy-text); font-size: 13px; }
-.cy-recovery p { margin: 4px 0 0; color: var(--cy-muted); font-size: 11px; }
-.cy-recovery header > span { color: var(--cy-muted); font-size: 10px; }
-.cy-recovery ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.cy-recovery li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-surface); }
-.cy-recovery li > div:first-child { display: grid; min-width: 0; gap: 2px; }
-.cy-recovery strong { color: var(--cy-text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cy-recovery small { color: var(--cy-muted); font-size: 10px; }
-.cy-recovery li > div:last-child { display: flex; flex: 0 0 auto; gap: 5px; }
+.cy-recovery { display: grid; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); border: 1px solid color-mix(in srgb, var(--cy-accent-strong) 35%, var(--cy-border)); border-radius: var(--cy-radius-6); background: var(--cy-surface-soft); }
+.cy-recovery header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-5); }
+.cy-recovery h3 { margin: 0; color: var(--cy-text); font-size: var(--cy-font-lg); }
+.cy-recovery p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); }
+.cy-recovery header > span { color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-recovery ul { display: grid; gap: var(--cy-space-3); margin: 0; padding: 0; list-style: none; }
+.cy-recovery li { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-5); padding: var(--cy-space-3-5) var(--cy-space-4); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); }
+.cy-recovery li > div:first-child { display: grid; min-width: 0; gap: var(--cy-space-1); }
+.cy-recovery strong { color: var(--cy-text); font-size: var(--cy-font-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cy-recovery small { color: var(--cy-muted); font-size: var(--cy-font-xs); }
+.cy-recovery li > div:last-child { display: flex; flex: 0 0 auto; gap: var(--cy-space-2-5); }
 .cy-recovery .danger { color: var(--cy-danger); }
-.cy-recovery-error { padding: 9px 11px; border: 1px dashed var(--cy-danger); border-radius: 9px; color: var(--cy-danger); font-size: 11px; }
-button { padding: 6px 11px; border: 1px solid var(--cy-border); border-radius: 8px; background: var(--cy-pane); color: var(--cy-text); font-size: 12px; }
+.cy-recovery-error { padding: var(--cy-space-4-5) var(--cy-space-5-5); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-4-5); color: var(--cy-danger); font-size: var(--cy-font-sm); }
+button { padding: var(--cy-space-3) var(--cy-space-5-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-md); }
 .primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:disabled { opacity: 0.5; cursor: default; }

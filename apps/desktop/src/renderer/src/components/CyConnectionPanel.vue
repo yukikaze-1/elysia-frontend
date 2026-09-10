@@ -13,6 +13,12 @@ import { useConnectionStore } from '../stores/connection.store'
 import type { CredentialStatus } from '@shared/contracts'
 import { api } from '../stores/desktop-api'
 import { parsePublicError } from '../utils/public-error'
+import { errorMessage } from '../utils/error-message'
+
+/** 多套 UI 基础：跨 IPC 错误一律经映射器（不再直接取公开原文），使本地/后端错误同一条文案链 */
+function toErrorText(e: unknown, fallback: string): string {
+  return e instanceof Error ? errorMessage(parsePublicError(e.message), fallback) : String(e)
+}
 
 const connection = useConnectionStore()
 const mode = ref<'real' | 'mock'>('real')
@@ -108,7 +114,7 @@ async function applyEndpoint(): Promise<void> {
     tokenStatus.value = await api.getCredentialStatus()
     return
   } catch (e: unknown) {
-    endpointErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
+    endpointErr.value = toErrorText(e, '保存后端地址失败，请检查地址格式。')
   }
 }
 
@@ -119,7 +125,7 @@ async function applyToken(): Promise<void> {
   try {
     tokenStatus.value = await api.setBackendToken(t)
   } catch (e: unknown) {
-    tokenErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
+    tokenErr.value = toErrorText(e, '保存 Token 失败，请重试。')
   } finally {
     tokenInput.value = ''   // 提交后立即清空明文(spec 3.2.2)
   }
@@ -136,7 +142,7 @@ async function toggleConnect(): Promise<void> {
     if (connected.value) await connection.disconnect()
     else await connection.connect()
   } catch (e: unknown) {
-    connectErr.value = e instanceof Error ? parsePublicError(e.message).message : String(e)
+    connectErr.value = toErrorText(e, '连接失败，请检查地址与 Token。')
   } finally {
     busy.value = false
   }
@@ -172,7 +178,7 @@ async function saveAndConnect(): Promise<void> {
 }
 
 /** 编辑态错误：本地校验错误优先，其次 store 归档的连接错误（connect 失败不 rethrow） */
-const editError = computed(() => connectErr.value ?? connection.error?.message ?? null)
+const editError = computed(() => connectErr.value ?? (connection.error ? errorMessage(connection.error, '连接失败，请重试。') : null))
 </script>
 
 <template>
@@ -214,7 +220,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
           <button v-else class="cy-btn cy-btn-primary" :disabled="busy" @click="toggleConnect">连接</button>
         </div>
         <div v-if="connection.error" class="cy-conn-error">
-          {{ connection.error.message }}
+          {{ errorMessage(connection.error, '连接失败，请重试。') }}
           <span class="cy-conn-error-hint">可展开「连接设置」检查地址与 Token。</span>
         </div>
       </div>
@@ -296,7 +302,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--cy-radius-6);
   color: var(--cy-muted);
   background: transparent;
   border: 0;
@@ -318,7 +324,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
   bottom: 7px;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: var(--cy-muted);
   box-shadow: 0 0 0 2px var(--cy-nav);
 }
@@ -345,21 +351,21 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
   z-index: 45;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--cy-space-5);
   width: 320px;
-  padding: 12px;
+  padding: var(--cy-space-6);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
+  border-radius: var(--cy-radius-6);
   box-shadow: var(--cy-shadow);
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 /* —— 摘要态 —— */
 .cy-conn-status-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--cy-space-4);
 }
 
 .cy-conn-status-row .cy-conn-dot {
@@ -369,20 +375,20 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 
 .cy-conn-status-row .cy-status-text {
   color: var(--cy-text);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   font-weight: 600;
 }
 
 .cy-conn-facts {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--cy-space-2-5);
   margin: 0;
 }
 
 .cy-conn-fact {
   display: flex;
-  gap: 8px;
+  gap: var(--cy-space-4);
   min-width: 0;
 }
 
@@ -400,7 +406,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 .cy-conn-summary-actions,
 .cy-conn-edit-actions {
   display: flex;
-  gap: 7px;
+  gap: var(--cy-space-3-5);
 }
 
 .cy-conn-edit-actions {
@@ -410,9 +416,9 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 
 .cy-btn {
   flex: 1 1 auto;
-  padding: 7px 10px;
-  border-radius: 9px;
-  font-size: 12px;
+  padding: var(--cy-space-3-5) var(--cy-space-5);
+  border-radius: var(--cy-radius-4-5);
+  font-size: var(--cy-font-md);
   white-space: nowrap;
   background: var(--cy-surface-soft);
   color: var(--cy-text);
@@ -460,37 +466,37 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 .cy-conn-edit {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--cy-space-5);
 }
 
 .cy-conn-edit-title {
   color: var(--cy-text);
-  font-size: 13px;
+  font-size: var(--cy-font-lg);
   font-weight: 600;
 }
 
 .cy-pop-field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: var(--cy-space-2-5);
   min-width: 0;
 }
 
 .cy-pop-label {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--cy-space-3);
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-token-chip {
-  padding: 1px 7px;
-  border-radius: 999px;
+  padding: var(--cy-space-0-5) var(--cy-space-3-5);
+  border-radius: var(--cy-radius-pill);
   color: var(--cy-muted);
   background: var(--cy-surface-soft);
   border: 1px solid var(--cy-border);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
 }
 
 .cy-token-chip.ok {
@@ -501,7 +507,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 .cy-token-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--cy-space-3);
   min-width: 0;
 }
 
@@ -511,7 +517,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
   flex: 0 0 auto;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--cy-radius-4);
   color: var(--cy-muted);
   background: transparent;
   border: 1px solid var(--cy-border);
@@ -529,14 +535,14 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 
 .cy-token-hint {
   color: var(--cy-muted);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
 }
 
 .cy-token-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--cy-space-4);
 }
 
 .cy-token-clear {
@@ -544,7 +550,7 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
   border: 0;
   background: transparent;
   color: var(--cy-danger);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   cursor: pointer;
 }
 
@@ -560,13 +566,13 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 .cy-input {
   width: 100%;
   min-width: 0;
-  padding: 6px 8px;
+  padding: var(--cy-space-3) var(--cy-space-4);
   color: var(--cy-text);
   background: var(--cy-pane);
   border: 1px solid var(--cy-border);
-  border-radius: 8px;
+  border-radius: var(--cy-radius-4);
   outline: 0;
-  font-size: 12px;
+  font-size: var(--cy-font-md);
 }
 
 .cy-input:focus {
@@ -575,25 +581,25 @@ const editError = computed(() => connectErr.value ?? connection.error?.message ?
 
 .cy-server-info {
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-err {
   color: var(--cy-danger);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 /* trust-boundary.spec 断言类名：连接错误经 onChatError → connectionStore.setError → 本元素渲染 */
 .cy-conn-error {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 7px 9px;
+  gap: var(--cy-space-1);
+  padding: var(--cy-space-3-5) var(--cy-space-4-5);
   color: var(--cy-danger);
   background: var(--cy-surface-soft);
   border: 1px dashed var(--cy-danger);
-  border-radius: 8px;
-  font-size: 11px;
+  border-radius: var(--cy-radius-4);
+  font-size: var(--cy-font-sm);
   overflow-wrap: anywhere;
 }
 

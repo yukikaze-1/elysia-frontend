@@ -218,12 +218,12 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-tool-card {
   width: min(560px, 100%);
   min-width: 0;
-  margin: 4px 0;
-  padding: 5px 8px 7px;
+  margin: var(--cy-space-2) 0;
+  padding: var(--cy-space-2-5) var(--cy-space-4) var(--cy-space-3-5);
   background: var(--cy-surface-soft);
   border: 1px solid var(--cy-border);
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-6);
+  font-size: var(--cy-font-md);
 }
 
 /* 标题区（折叠切换）：图标 + 友好名 + 运行位置 + 状态·耗时 + 箭头；窄窗下名称优先（ellipsis），次要信息可换行 */
@@ -231,11 +231,11 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 7px;
+  gap: var(--cy-space-3-5);
   width: 100%;
   min-width: 0;
-  padding: 3px 5px;
-  border-radius: 8px;
+  padding: var(--cy-space-1-5) var(--cy-space-2-5);
+  border-radius: var(--cy-radius-4);
   text-align: left;
 }
 
@@ -260,9 +260,9 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 
 .cy-tool-runtime {
   flex: none;
-  padding: 1px 6px;
+  padding: var(--cy-space-0-5) var(--cy-space-3);
   border-radius: 4px;
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
 }
 
 .cy-tool-runtime.is-backend {
@@ -283,9 +283,9 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: var(--cy-space-2);
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   white-space: nowrap;
 }
 
@@ -298,7 +298,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
   flex: none;
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: var(--cy-radius-circle);
   background: currentColor;
 }
 
@@ -313,7 +313,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-tool-chevron {
   flex: none;
   color: var(--cy-muted);
-  transition: transform 0.15s ease;
+  transition: transform var(--cy-motion-fast) ease;
 }
 
 .cy-tool-chevron.is-open {
@@ -321,9 +321,9 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 }
 
 .cy-tool-path {
-  margin: 4px 2px 0;
+  margin: var(--cy-space-2) var(--cy-space-1) 0;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   overflow-wrap: anywhere;
 }
 
@@ -331,9 +331,9 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-tool-brief {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--cy-space-3);
   min-width: 0;
-  margin: 3px 2px 0;
+  margin: var(--cy-space-1-5) var(--cy-space-1) 0;
 }
 
 .cy-tool-brief-text {
@@ -341,7 +341,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
   min-width: 0;
   overflow: hidden;
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -349,36 +349,36 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-tool-brief-tag {
   flex: none;
   color: var(--cy-warning);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
 }
 
 .cy-tool-details {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  margin-top: 5px;
+  gap: var(--cy-space-3-5);
+  margin-top: var(--cy-space-2-5);
 }
 
 .cy-tool-section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--cy-space-4);
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 /* 详情正文：换行 + 任意长单词断行；限高 200px 区域内滚动（不无限拉长聊天页）；详情文本允许选择复制 */
 .cy-tool-pre {
   max-height: 200px;
-  margin: 2px 0 0;
-  padding: 6px 8px;
+  margin: var(--cy-space-1) 0 0;
+  padding: var(--cy-space-3) var(--cy-space-4);
   overflow-y: auto;
   color: var(--cy-text);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 8px;
-  font-size: 11px;
+  border-radius: var(--cy-radius-4);
+  font-size: var(--cy-font-sm);
   line-height: 1.55;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -391,13 +391,13 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 
 .cy-tool-copy {
   flex: none;
-  padding: 1px 8px;
+  padding: var(--cy-space-0-5) var(--cy-space-4);
   color: var(--cy-muted);
   cursor: pointer;
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
-  border-radius: 999px;
-  font-size: 10px;
+  border-radius: var(--cy-radius-pill);
+  font-size: var(--cy-font-xs);
 }
 
 .cy-tool-copy:hover {
@@ -406,20 +406,20 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 }
 
 .cy-tool-truncated {
-  margin: 2px 0 0;
+  margin: var(--cy-space-1) 0 0;
   color: var(--cy-muted);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   opacity: 0.8;
 }
 
 /* 错误区收敛：浅红底 + 左侧红强调线（不再用醒目红色虚线嵌套框）；技术错误码弱化置底 */
 .cy-tool-error {
-  padding: 6px 8px 6px 10px;
+  padding: var(--cy-space-3) var(--cy-space-4) var(--cy-space-3) var(--cy-space-5);
   color: var(--cy-danger);
   background: color-mix(in srgb, var(--cy-danger) 9%, transparent);
   border-left: 3px solid var(--cy-danger);
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--cy-radius-3);
+  font-size: var(--cy-font-sm);
 }
 
 .cy-tool-error-msg {
@@ -429,34 +429,34 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 }
 
 .cy-tool-error-code {
-  margin: 3px 0 0;
+  margin: var(--cy-space-1-5) 0 0;
   color: inherit;
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   opacity: 0.7;
   overflow-wrap: anywhere;
 }
 
 .cy-tool-attachments {
-  margin: 0 2px;
+  margin: 0 var(--cy-space-1);
   color: var(--cy-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
   overflow-wrap: anywhere;
 }
 
 /* 工具标识：原始 toolName 弱化小字（runtime 判定/诊断依据） */
 .cy-tool-ident {
-  margin: 0 2px;
+  margin: 0 var(--cy-space-1);
   color: var(--cy-muted);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   opacity: 0.75;
   overflow-wrap: anywhere;
   user-select: text;
 }
 
 .cy-tool-time {
-  margin: 0 2px;
+  margin: 0 var(--cy-space-1);
   color: var(--cy-muted);
-  font-size: 10px;
+  font-size: var(--cy-font-xs);
   opacity: 0.8;
   overflow-wrap: anywhere;
 }
@@ -464,17 +464,17 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-tool-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 6px;
+  gap: var(--cy-space-4);
+  margin-top: var(--cy-space-3);
 }
 
 .cy-btn {
-  padding: 3px 10px;
+  padding: var(--cy-space-1-5) var(--cy-space-5);
   cursor: pointer;
   background: var(--cy-bg);
   border: 1px solid var(--cy-border);
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: var(--cy-radius-3);
+  font-size: var(--cy-font-md);
 }
 
 .cy-btn-approve {
@@ -484,7 +484,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 
 .cy-tool-capture {
   max-height: 45vh;
-  margin-top: 6px;
+  margin-top: var(--cy-space-3);
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -492,15 +492,15 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-capture-sources {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--cy-space-4);
 }
 
 .cy-capture-source {
-  padding: 4px;
+  padding: var(--cy-space-2);
   cursor: pointer;
   background: var(--cy-bg);
   border: 1px solid var(--cy-border);
-  border-radius: 6px;
+  border-radius: var(--cy-radius-3);
 }
 
 .cy-capture-source img {
@@ -513,37 +513,37 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 .cy-capture-preview {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--cy-space-3);
 }
 
 .cy-capture-preview img {
   align-self: flex-start;
   max-width: 100%;
   max-height: 30vh;
-  border-radius: 6px;
+  border-radius: var(--cy-radius-3);
   object-fit: contain;
 }
 
 .cy-tool-diff-readonly {
-  margin-top: 6px;
+  margin-top: var(--cy-space-3);
 }
 
 .cy-tool-diff-note {
   color: var(--cy-text-muted);
-  font-size: 11px;
+  font-size: var(--cy-font-sm);
 }
 
 .cy-diff-body {
   max-height: 160px;
-  margin: 2px 0 0;
-  padding: 4px;
+  margin: var(--cy-space-1) 0 0;
+  padding: var(--cy-space-2);
   overflow: auto;
   background: var(--cy-bg);
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--cy-radius-3);
+  font-size: var(--cy-font-sm);
   white-space: pre-wrap;
 }
 
-.cy-diff-added { color: var(--cy-diff-add, #18794e); }
-.cy-diff-removed { color: var(--cy-diff-del, #cd2b3a); }
+.cy-diff-added { color: var(--cy-diff-add); }
+.cy-diff-removed { color: var(--cy-diff-del); }
 </style>

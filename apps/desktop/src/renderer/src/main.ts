@@ -104,7 +104,7 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
         playingStreamId: t.playingStreamId ?? null,
         readySeen: v.ttsReadySeen,
         autoReadReply: useSettingsStore().voice.autoReadReply,
-        ttsAudioElPresent: v.ttsAudioEl !== null
+        ttsAudioElPresent: v.getTtsAudioEl() !== null
       }
     },
     getMouthInfo: () => {

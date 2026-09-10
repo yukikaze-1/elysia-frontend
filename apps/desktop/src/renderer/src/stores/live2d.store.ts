@@ -8,7 +8,7 @@
 // dispose()：controller.unload（全量释放含 adapter.destroy，无残留）→ 状态复位（面板 onBeforeUnmount 调用）。
 // 可测性：buildController 默认建真实 adapter（webglEngine）；单测经 setLive2dControllerFactory 注入 fake
 // controller（fake adapter + fake list），与 live2d-adapter.spec 同款 fake GL 纪律（node 无 WebGL）。
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { Live2DAdapter } from '../live2d/adapter'
 import { webglEngine } from '../live2d/gl/webgl'
@@ -21,7 +21,6 @@ import { useSettingsStore } from './settings.store'
 import { useConnectionStore } from './connection.store'
 import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
-import { useLayoutStore } from './layout.store'
 import { useToolStore } from './tool.store'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
 import type { DirectiveState, Live2DDirectiveEvent, Live2dFrameStats, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
@@ -76,7 +75,15 @@ export const useLive2dStore = defineStore('live2d', () => {
   let unsubDevice: (() => void) | null = null
   let unsubState: (() => void) | null = null
   let stateSourceHandle: Live2dStateSource | null = null
-  // C2（D5C-05）：可见性接线 watch（「布局可见 ∧ enabled」→ controller.setVisibility），init 时装、dispose 退订
+  // 渲染面可见性（多套 UI 基础，2026-09-10）：由 UI 层显式告知，而非本 store 去读 layout store。
+  // 「面板是否可见」是 UI 布局决策；功能层只消费结果。此前 setupVisibilityWatch 直接
+  // `useLayoutStore().effective.live2dShown`，使功能层反向依赖 UI 层——换一套布局/命名的 UI 就会断。
+  // 现方向反转：UI（CyLive2DPanel）观察自己的可见条件后调用 setSurfaceVisible 告知。
+  const surfaceVisible = ref(false)
+  // TTS 播放宿主元素（UI 经 setTtsAudioElement 告知）。用 shallowRef：只关心元素身份更换，
+  // 不需要 Vue 深度代理一个 DOM 节点（对 DOM 建响应式代理既是性能负担也无意义）。
+  const ttsAudioElement = shallowRef<HTMLAudioElement | null>(null)
+  // C2（D5C-05）：可见性接线 watch（「可见 ∧ enabled」→ controller.setVisibility），init 时装、dispose 退订
   let unsubVisibility: (() => void) | null = null
   // C2（D5C-04）：GPU 重建一次——rebuildGuard 防重入（「每次 lost 事件一次」，finally 复位非永久）；
   // lastLookTarget 记录最近视线目标（重建后重放，unload 会清 controller 侧目标）
@@ -162,14 +169,17 @@ export const useLive2dStore = defineStore('live2d', () => {
     )
   }
 
-  /** C1 口部接线：watch voiceStore（tts.playing ∧ ttsAudioEl）→ attach/detach 口部数据源。
+  /** C1 口部接线：依据「TTS 正在播放 ∧ 已登记音频元素」→ attach/detach 口部数据源。
    *  playing∧有元素 → attach（tick 采样）；否则 detach + 归零（controller.setMouthLevel(0) 清电口，
-   *  口部关闭不残留上一帧开合——doc 05 §10 静音/暂停/取消 → 归零）。 */
+   *  口部关闭不残留上一帧开合——doc 05 §10 静音/暂停/取消 → 归零）。
+   *
+   *  多套 UI 基础（2026-09-10）：音频元素此前由本 store 去读 `voiceStore.ttsAudioEl`（即功能层伸手
+   *  取 UI 的 DOM 宿主）。现改为 UI（CyTtsPlayer）经 `setTtsAudioElement` 告知——与 setSurfaceVisible
+   *  同向：UI 知道自己的元素，功能层只消费。本 store 不再触碰 voice store 的 DOM 字段。 */
   function setupMouthWatch(): void {
     if (unsubMouthWatch) return
-    const voice = useVoiceStore()
     unsubMouthWatch = watch(
-      [() => voice.tts.playing, () => voice.ttsAudioEl],
+      [() => useVoiceStore().tts.playing, ttsAudioElement],
       ([playing, el]) => {
         if (playing && el && mouthSource) {
           mouthSource.attach(el)
@@ -186,6 +196,15 @@ export const useLive2dStore = defineStore('live2d', () => {
       },
       { immediate: true }
     )
+  }
+
+  /**
+   * UI 告知 TTS 播放宿主元素（`<audio>`）的挂载/卸载。
+   * 传入 `null` 表示宿主已卸载。本 store 只把它当作播报目标句柄，不读取任何 DOM 属性。
+   */
+  function setTtsAudioElement(el: HTMLAudioElement | null): void {
+    if (ttsAudioElement.value === el) return
+    ttsAudioElement.value = el
   }
 
   function ensureController(): Live2DController {
@@ -260,17 +279,28 @@ export const useLive2dStore = defineStore('live2d', () => {
     }
   }
 
-  /** C2（D5C-05）：可见性接线——「布局可见（live2dShown）∧ enabled」→ controller.setVisibility(v)。
-   *  controller.tick 首行消费（!visible 提前 return），消除 Task5 M4 死面；Panel rAF 启停保持既有（双层门控无害）。 */
+  /** C2（D5C-05）：可见性接线——「渲染面可见 ∧ enabled」→ controller.setVisibility(v)。
+   *  controller.tick 首行消费（!visible 提前 return），消除 Task5 M4 死面；Panel rAF 启停保持既有（双层门控无害）。
+   *  可见性来源为本 store 的 surfaceVisible（由 UI 经 setSurfaceVisible 写入），不再读 layout store。 */
   function setupVisibilityWatch(): void {
     if (unsubVisibility) return
     unsubVisibility = watch(
-      [() => useLayoutStore().effective.live2dShown, () => live2dSettings.value.enabled],
+      [surfaceVisible, () => live2dSettings.value.enabled],
       ([shown, enabled]) => {
         controller?.setVisibility(shown && enabled)
       },
       { immediate: true }
     )
+  }
+
+  /**
+   * UI 告知「渲染面当前可见」。
+   * 调用方（如 CyLive2DPanel）自行组合其可见条件（视图/布局折叠/窄窗等 UI 决策），
+   * 本 store 不感知这些条件，只据此决定是否暂停绘制。
+   */
+  function setSurfaceVisible(visible: boolean): void {
+    if (surfaceVisible.value === visible) return
+    surfaceVisible.value = visible
   }
 
   /** 镜像控制器当前状态/modelId（每次 controller 调用的 await 后同步一次，事件只覆盖异步 device_lost） */
@@ -511,6 +541,8 @@ export const useLive2dStore = defineStore('live2d', () => {
   return {
     models, status, modelId, error, live2dSettings, characterState, mouthLevel, mouthSourceKind, mouthMoved, mouthSettled,
     init, switchModel, restoreDefaults, dispose, tick, handleDirective, getStats,   // 7D getStats
-    setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion
+    setAutoMotions, setLipSync, setPerformanceMode, setViewTransform, setLookTarget, playTapMotion,
+    setSurfaceVisible,   // 多套 UI 基础：可见性由 UI 告知（功能层不再读 layout store）
+    setTtsAudioElement   // 多套 UI 基础：TTS 宿主元素由 UI 告知（功能层不再读 voice store 的 DOM 字段）
   }
 })
