@@ -2,14 +2,14 @@
 // apps/desktop/scripts/check-backend-contract.mjs
 // 跨仓库契约检查:后端 contract.schema.json + 契约生成 JSONL ↔ 前端 RawFrameSchema。
 // 语义(任务简报 T7 / spec §4.2.3 / 接口核验 F2):
-//  - 后端目录缺失 → exit 0(CI/他人机器跳过,不硬依赖);
+//  - 后端目录缺失 → exit 2（NOT VERIFIED，不是通过——见下方说明；2026-09-10 由 exit 0 改为 exit 2）;
 //  - 后端 frame type 提取优先 contract.schema.json 判别联合;退化用 ws_message.py `Literal["…"]`(pydantic 写法);
 //  - 解析 type < 3 → exit 1(防静默 false pass);
 //  - 比对限定当前 WS v2 帧子集(WS_V2_FRAME_TYPES 白名单 35 型);前端缺 → exit 1 + 列出;
 //  - 字段级：后端生成的 ws-v2-*.jsonl 逐条 parseRawFrame，解析结果必须与输入深度相等（防 zod 静默 strip）;
 //  - 从后端 JSON Schema 的字段定义构造 error/rejected ACK 关键可选字段探针。
 //  - 未纳帧(capabilities/transcription/command/wake/service_mode_result)走 warn 白名单,不报错。
-// 本脚本不进入 CI 主流程;手动或 `check:contract` 运行。
+// 本脚本不进入 CI 主流程(CI 无后端仓库,会得到 exit 2 = 未核对);手动或 `check:contract` 运行。
 
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { isDeepStrictEqual } from 'node:util'
@@ -45,7 +45,23 @@ const WS_V2_FRAME_TYPES = [
 const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
 // 未纳帧(capabilities/transcription/command/wake/service_mode_result):前端有意滞后,只 warn 不报错(F2 白名单)
 
-if (!existsSync(BACKEND_DIR)) { console.log('[check-contract] 后端仓库未挂载,跳过'); process.exit(0) }
+/**
+ * 后端仓库未挂载（CI / 他人机器 / Windows 开发机未配 CYRENE_FRONTEND_CONTRACT_DIR）：
+ * **exit 2 = NOT VERIFIED，不是 PASS**（2026-09-10 整改）。
+ *
+ * 原实现 `process.exit(0)` 让「没检查」与「检查通过」在门禁语义上完全等价——实测在 Windows 开发机上
+ * 默认路径 `/home/yomu/elysia-agent/frontend_contract` 不存在，于是 `pnpm -F @cyrene/desktop check:contract`
+ * 打印一行「跳过」后以 0 退出，而 doc 12 / 阶段决策记录把 check:contract 的 WS/REST 计数当作门禁证据。
+ * 这正是「绿灯掩盖未验证」的同一类缺陷（与 verify:sensitive 长期全红同源）。
+ *
+ * 退出码约定：0 = 已核对且一致；1 = 已核对且不一致；2 = 未核对（后端未挂载）。
+ * 判定「未核对」时需要显式处理（或在有后端的环境运行），不得默认视为通过。
+ */
+if (!existsSync(BACKEND_DIR)) {
+  console.error(`[check-contract] 后端仓库未挂载 → NOT VERIFIED（exit 2，不是通过）：${BACKEND_DIR}`)
+  console.error('[check-contract] 指定后端契约目录：CYRENE_FRONTEND_CONTRACT_DIR=<dir> 或 `pnpm -F @cyrene/desktop check:contract -- <dir>`')
+  process.exit(2)
+}
 
 /**
  * 从 contract.schema.json 判别联合取 type 字面量。
