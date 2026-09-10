@@ -311,8 +311,15 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   async function init(c: HTMLCanvasElement): Promise<void> {
-    // 始终取模型清单（选单 options + 可用性判断）；list 失败 fail-open：空列表 + 静态头像回退，不阻塞启动
-    models.value = await api.listLive2dModels().catch(() => [])
+    // 始终取模型清单（选单 options + 可用性判断）；list 失败 fail-open：空列表 + 静态头像回退，不阻塞启动。
+    //
+    // 2026-09-10：**不再静默吞掉失败**。此前是 `.catch(() => [])`，清单拉取失败与
+    // 「确实一个模型都没装」在界面上完全同形（都是空下拉 + 加载失败），排查只能靠复现环境。
+    // 现记录原因，使失败态面板能区分这两者（fail-open 语义不变：仍不阻塞启动）。
+    models.value = await api.listLive2dModels().catch((e: unknown) => {
+      error.value = `模型清单读取失败：${e instanceof Error ? e.message : String(e)}`
+      return []
+    })
     const l2d = useSettingsStore().live2d
     if (!l2d.enabled) {
       // 关闭态：不创建渲染循环、不 load（面板显示「Live2D 已关闭」）；status 保持 unloaded

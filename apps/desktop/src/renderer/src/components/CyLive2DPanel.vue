@@ -75,6 +75,23 @@ const statusText = computed(() => {
   }
 })
 
+/**
+ * 失败态在画面上的**可诊断**文案（2026-09-10）。
+ *
+ * 此前 overlay 是硬编码「模型加载失败」，把已捕获在 `store.error` 里的真实原因丢掉了——
+ * 用户只能看到四个字，无法区分「一个模型都没发现」「模型存在但加载失败」「GPU 不可用」，
+ * 排查时只能靠复现环境。现改为「标题 + 原因 + 模型清单探测结果」三段，
+ * 使界面自身就能报出足够定位的线索。
+ */
+const failureDetail = computed(() => {
+  const reason = store.error?.trim()
+  const available = store.models.filter((m) => m.available).length
+  const inventory = store.models.length === 0
+    ? '未发现任何已安装模型（检查 userData 的 models 目录：需 manifest.json + integrity.json）'
+    : `已发现 ${store.models.length} 个模型，其中可用 ${available} 个`
+  return { reason: reason || '（未记录具体原因）', inventory }
+})
+
 function modelName(id: string | null): string {
   return store.models.find((m) => m.id === id)?.displayName ?? id ?? ''
 }
@@ -402,7 +419,11 @@ onBeforeUnmount(() => {
       <!-- 覆盖态：禁用/加载/失败/回退时静态展示，不遮挡下拉 -->
       <div v-if="!settings.live2d.enabled" class="cy-live-overlay" role="status">Live2D 已关闭</div>
       <div v-else-if="store.status === 'loading'" class="cy-live-overlay" role="status">正在加载模型…</div>
-      <div v-else-if="store.status === 'failed'" class="cy-live-overlay" role="status">模型加载失败</div>
+      <div v-else-if="store.status === 'failed'" class="cy-live-overlay is-diagnostic" role="status">
+        <p class="cy-live-overlay-title">模型加载失败</p>
+        <p class="cy-live-overlay-reason">原因：{{ failureDetail.reason }}</p>
+        <p class="cy-live-overlay-inventory">{{ failureDetail.inventory }}</p>
+      </div>
       <div v-else-if="store.status === 'fallback'" class="cy-live-overlay" role="status">静态头像回退</div>
       <label class="cy-live-model-select" :class="{ 'is-disabled': !settings.live2d.enabled }">
         <span class="cy-live-model-label">模型</span>
@@ -566,6 +587,36 @@ onBeforeUnmount(() => {
   color: var(--cy-muted);
   font-size: var(--cy-font-lg);
   pointer-events: none;
+}
+
+/* 失败态诊断块（2026-09-10）：三段式文案需纵向排布并限制宽度，避免长原因撑破窄栏 */
+.cy-live-overlay.is-diagnostic {
+  align-content: center;
+  gap: var(--cy-space-3);
+  padding: var(--cy-space-6);
+  text-align: center;
+}
+
+.cy-live-overlay-title {
+  margin: 0;
+  color: var(--cy-danger);
+  font-size: var(--cy-font-lg);
+}
+
+.cy-live-overlay-reason,
+.cy-live-overlay-inventory {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--cy-font-md);
+  line-height: 1.5;
+}
+
+.cy-live-overlay-reason {
+  color: var(--cy-text);
+}
+
+.cy-live-overlay-inventory {
+  color: var(--cy-muted);
 }
 
 .cy-live-model-select {

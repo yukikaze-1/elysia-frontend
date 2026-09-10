@@ -43,7 +43,7 @@ const MODELS: Live2DModelSummary[] = [
 ]
 
 /** 全方法 fake controller：status 恒 ready/modelId=haru；记录每方法调用 */
-function makeFakeController() {
+function makeFakeController(status: Live2DControllerStatus = 'ready') {
   const calls = {
     setAutoMotions: vi.fn(), setLipSync: vi.fn(), setPerformanceMode: vi.fn(),
     setViewTransform: vi.fn(), setLookTarget: vi.fn(), playTapMotion: vi.fn(),
@@ -53,8 +53,8 @@ function makeFakeController() {
     tick: vi.fn(), unload: vi.fn()
   }
   const ctrl = {
-    get status(): Live2DControllerStatus { return 'ready' },
-    get modelId(): string | null { return 'haru' },
+    get status(): Live2DControllerStatus { return status },
+    get modelId(): string | null { return status === 'ready' ? 'haru' : null },
     on: vi.fn(() => () => {}),
     ...calls
   } as unknown as Live2DController
@@ -92,6 +92,48 @@ async function mountPanel(): Promise<ReturnType<typeof mount>> {
 function canvasRect(): Partial<DOMRect> {
   return { left: 0, top: 0, width: 340, height: 680, right: 340, bottom: 680, x: 0, y: 0, toJSON: () => ({}) }
 }
+
+// 2026-09-10：失败态此前只显示硬编码「模型加载失败」，把已捕获的 store.error 与「模型清单是否为空」
+// 这两个最关键的线索都丢掉了（真机排查时无法区分「一个模型都没装」与「模型存在但加载失败」）。
+describe('CyLive2DPanel：失败态诊断（模型清单 + 原因）', () => {
+  it('模型清单为空 → 提示未发现已安装模型，并给出目录要求', async () => {
+    fake = makeFakeController('failed')
+    setLive2dControllerFactory(() => fake.ctrl)
+    mockApi.listLive2dModels.mockResolvedValue([])
+    const wrapper = await mountPanel()
+    const overlay = wrapper.get('.cy-live-overlay.is-diagnostic')
+    expect(overlay.text()).toContain('模型加载失败')
+    expect(overlay.text()).toContain('未发现任何已安装模型')
+    expect(overlay.text()).toContain('manifest.json')
+    wrapper.unmount()
+  })
+
+  it('清单拉取失败 → 原因不被静默吞掉，且与「确实没装」可区分', async () => {
+    fake = makeFakeController('failed')
+    setLive2dControllerFactory(() => fake.ctrl)
+    mockApi.listLive2dModels.mockRejectedValue(new Error('IPC 通道不可用'))
+    const wrapper = await mountPanel()
+    const overlay = wrapper.get('.cy-live-overlay.is-diagnostic')
+    // 关键：错误原因必须出现在界面上（此前 .catch(() => []) 会把它丢掉）
+    expect(overlay.text()).toContain('模型清单读取失败')
+    expect(overlay.text()).toContain('IPC 通道不可用')
+    wrapper.unmount()
+  })
+
+  it('清单有模型但均不可用 → 报出数量与可用数，便于区分完整性失败', async () => {
+    fake = makeFakeController('failed')
+    setLive2dControllerFactory(() => fake.ctrl)
+    mockApi.listLive2dModels.mockResolvedValue([
+      { ...MODELS[0]!, available: false },
+      { ...MODELS[1]!, available: false }
+    ])
+    const wrapper = await mountPanel()
+    const overlay = wrapper.get('.cy-live-overlay.is-diagnostic')
+    expect(overlay.text()).toContain('已发现 2 个模型')
+    expect(overlay.text()).toContain('可用 0 个')
+    wrapper.unmount()
+  })
+})
 
 describe('CyLive2DPanel：状态徽标（CharacterState 文案映射）', () => {
   it('ready + 各 CharacterState → 对应中文文案；badge 仅 ready 展示', async () => {
