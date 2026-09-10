@@ -15,6 +15,21 @@ import type { Page } from 'playwright'
 import { closeApp, launchApp, type LaunchedApp } from './helpers/app'
 
 const POLL = { timeout: 5000, interval: 200 } // 对齐套件先例（trust-boundary/history-viewer-layout）
+/**
+ * 「开启语音采集」类等待的放宽预算。
+ *
+ * `voiceStore.startRealtime/startRecord/startDictation` 在置 mode 之前要 **await 一整条真实系统资源链**：
+ *   voiceStartRealtime IPC（WS 控制帧）→ getUserMedia(16k mono, EC/NS/AGC) → new AudioContext({sampleRate:16000})
+ *   → worklet.addModule(workletUrl)
+ * 其中 getUserMedia 与 AudioContext 都要真实麦克风/音频设备，冷启动 + 高负载 CI runner 上可能远超 5s。
+ * 这段静默期没有任何 UI 反馈，用默认 POLL 会把「慢」误判为「失败」。
+ *
+ * 实测依据（2026-09-10）：CI run 34508996184 首跑用例 4 在此处超时（`.cy-realtime-bar` 计数恒 0），
+ * 同 commit 重跑即绿，同代码的 98efd5d 全绿；本地连跑 6 轮全过、单轮约 310ms（本地无冷启动+资源竞争，
+ * 无法复现）——故为环境时序偶发而非代码回归。
+ * 放宽先例：electron-tools.spec.ts 的 SLOW_POLL（15000）、electron-live2d.spec.ts:471 的 {...POLL, timeout:15000}。
+ */
+const CAPTURE_POLL = { timeout: 15000, interval: 200 }
 const FAKE_MEDIA = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream']
 
 /** 预置 settings.json：consent 已接受（跳过 D-P16 弹窗——consent 专测用例不传）+ 默认语音设置 */
@@ -139,7 +154,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await expect.poll(() => page.locator('.cy-rec-timer').textContent(), POLL).toBe('00:01')
       await page.getByRole('button', { name: '停止录音', exact: true }).click()
       // 待发送条出现 + 字幕（mock 缺省转写文案）
-      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), CAPTURE_POLL).toBe(1)
       await expect.poll(() => page.locator('.cy-vp-text').textContent(), POLL).toContain('这是一段测试录音的转写文本')
       // 有音频缓冲 → 试听可用（证明 fake media 采集真的产出了样本）
       expect(await pendingBtn(page, '试听').isDisabled()).toBe(false)
@@ -208,7 +223,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       const dictBtn = page.getByRole('button', { name: '输入法转写（按住说话）', exact: true })
       await dictBtn.hover()
       await page.mouse.down() // 真实 CDP 输入：pointerdown → startDictation
-      await expect.poll(() => page.locator('.cy-dictation-hint').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-dictation-hint').count(), CAPTURE_POLL).toBe(1)
       await expect.poll(() => page.locator('.cy-dh-tip').textContent(), POLL).toContain('松开提交')
       await page.mouse.up()   // pointerup → stopDictation → dictation.final
       await expect.poll(() => page.evaluate(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="消息输入框"]')?.value ?? ''), POLL).toBe('这是听写文本')
@@ -230,7 +245,13 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await expect.poll(() => rtCheckbox.isChecked(), POLL).toBe(true)
       await closeSettings(page)
       await page.getByRole('button', { name: '实时会话', exact: true }).click()
-      await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(1)
+      // CAPTURE_POLL（不是 POLL）：此处要等 getUserMedia + AudioContext + worklet 整条真实资源链，
+      // 详见文件头 CAPTURE_POLL 注释（CI 首跑曾在此处超时）。失效时输出现场 DOM 以便区分
+      // 「快速失败（有错误横幅/麦克风错误）」与「单纯慢」——而非只报一个计数不符。
+      await expect.poll(
+        () => page.locator('.cy-realtime-bar').count(),
+        { ...CAPTURE_POLL, message: '实时条未出现：检查是否出现错误横幅（快速失败）还是仅采集链偏慢' },
+      ).toBe(1)
       await expect.poll(() => page.locator('.cy-rt-status').textContent(), POLL).toContain('聆听中')
       // 停止 → 实时条消失 → 输入区（textarea）恢复
       await page.getByRole('button', { name: '停止', exact: true }).click()
@@ -365,7 +386,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       const page = launched.page
       await connectAndActivateFirst(page)
       await page.getByRole('button', { name: '实时会话', exact: true }).click()
-      await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-realtime-bar').count(), CAPTURE_POLL).toBe(1)
       // UII-QQ：断开钮在连接入口 popover 内——先点徽标展开
       await page.getByRole('button', { name: /REAL|MOCK/ }).click()
       await page.getByRole('button', { name: '断开', exact: true }).click()
@@ -476,13 +497,13 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await expect.poll(() => page.locator('.cy-mic-error-banner').count(), POLL).toBe(0)
       // 4) stop → 删除（discardRecord：待发送条消失 + mode 回 idle）——realtime/dictation 的 guardStart 要求 idle，必须先 discard
       await page.getByRole('button', { name: '停止录音', exact: true }).click()
-      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), CAPTURE_POLL).toBe(1)
       await pendingBtn(page, '删除').click()
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
       await expectIdleRecordEntry(page)
       // 5) 实时 start+stop（同连接，无需重连）
       await page.getByRole('button', { name: '实时会话', exact: true }).click()
-      await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-realtime-bar').count(), CAPTURE_POLL).toBe(1)
       await expect.poll(() => page.locator('.cy-rt-status').textContent(), POLL).toContain('聆听中')
       await page.getByRole('button', { name: '停止', exact: true }).click()
       await expect.poll(() => page.locator('.cy-realtime-bar').count(), POLL).toBe(0)
@@ -490,7 +511,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       const dictBtn = page.getByRole('button', { name: '输入法转写（按住说话）', exact: true })
       await dictBtn.hover()
       await page.mouse.down()
-      await expect.poll(() => page.locator('.cy-dictation-hint').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-dictation-hint').count(), CAPTURE_POLL).toBe(1)
       await page.mouse.up()
       await expect.poll(() => page.locator('.cy-dictation-hint').count(), POLL).toBe(0)
       // 全程连接保持（未重连）
@@ -517,7 +538,7 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await clickRecordEntry(page)
       await expect.poll(() => page.getByRole('button', { name: '停止录音', exact: true }).count(), POLL).toBe(1)
       await page.getByRole('button', { name: '停止录音', exact: true }).click()
-      await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(1)
+      await expect.poll(() => page.locator('.cy-voice-pending').count(), CAPTURE_POLL).toBe(1)
       await pendingBtn(page, '删除').click()
       await expect.poll(() => page.locator('.cy-voice-pending').count(), POLL).toBe(0)
     } finally { await closeApp(launched) }
