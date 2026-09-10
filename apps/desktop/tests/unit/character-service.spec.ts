@@ -51,11 +51,11 @@ describe('CharacterService 角色编排', () => {
     const { port } = makePort()
     const service = new CharacterService({ backend: port, getFeatures: () => undefined })
     await expect(service.getMe()).rejects.toMatchObject({ code: CyreneErrorCode.NOT_IMPLEMENTED })
-    try {
-      await service.listCharacters()
-    } catch (error) {
-      expect(error).toMatchObject({ details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.profilesUnavailable } })
-    }
+    // 用 rejects 而非 try/catch：原写法的断言在 catch 内，listCharacters 一旦「不再拒绝」就没有任何断言执行，
+    // 测试反而变绿（审查 2026-09-10 实测）。
+    await expect(service.listCharacters()).rejects.toMatchObject({
+      details: { backendCode: CHARACTER_SERVICE_BACKEND_CODES.profilesUnavailable }
+    })
     expect(port.getMe).not.toHaveBeenCalled()
     expect(port.listCharacters).not.toHaveBeenCalled()
   })

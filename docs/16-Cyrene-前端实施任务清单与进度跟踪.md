@@ -57,19 +57,21 @@
 
 上表记录的是**功能验收**口径；本小节记录**门禁健康**。二者分开的理由见 [门禁体系评估](review/2026-09-10-前端门禁体系评估与整改记录.md) §2.3：上表可以写「PASS」而自动门禁同时全红，此前正是这个缺口让 CI 连续 25 天无人查看。
 
-| 门禁 | 命令 | 2026-09-10 整改批次（`4971053`） | 2026-09-10 缺陷修复批次（`cf217eb`） |
-|---|---|---|---|
-| 类型检查 | `pnpm typecheck` | PASS | PASS |
-| Lint | `pnpm lint` | PASS | PASS |
-| 文档结构 | `pnpm docs:check` | PASS | PASS（19 core / 67 review / 40 superpowers / 42 archived） |
-| 敏感信息扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（扫描 715 文件、按规则豁免 557 行、allowlist 放行 63 行） | PASS（扫描 735 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） |
-| 单元测试 | `pnpm test` | PASS（207 files / 2596 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped） |
-| 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） | PASS（22 files / 136 passed + 2 skipped，连续三轮全绿；孤儿根因已消除，见下） |
-| 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 |
-| 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | **PASS**（`b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：5 个 job 全绿；自 2026-08-16 以来首次） | **PASS**（`79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：5 个 job 全绿——typecheck+lint、unit、integration(xvfb)、packaged artifact smoke、windows build-level） |
+| 门禁 | 命令 | 2026-09-10 整改批次（`4971053`） | 2026-09-10 缺陷修复批次（`cf217eb`） | 2026-09-10 测试陈旧性审查批次（本地，未推送） |
+|---|---|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS | PASS | PASS |
+| Lint | `pnpm lint` | PASS | PASS | PASS |
+| 文档结构 | `pnpm docs:check` | PASS | PASS（19 core / 67 review / 40 superpowers / 42 archived） | PASS（19 core / 68 review / 40 superpowers / 42 archived） |
+| 敏感信息扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（扫描 715 文件、按规则豁免 557 行、allowlist 放行 63 行） | PASS（扫描 735 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） | PASS（未触碰扫描面；仅测试文件与文档变更） |
+| 单元测试 | `pnpm test` | PASS（207 files / 2596 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped；本轮仅换断言写法，用例数不变） |
+| 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） | PASS（22 files / 136 passed + 2 skipped，连续三轮全绿；孤儿根因已消除，见下） | PASS（22 files / 136 passed + 2 skipped；`electron-live2d` 27/27、`perf-gate` 实测 `found=500`） |
+| 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 |
+| 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS**（`b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：5 个 job 全绿；自 2026-08-16 以来首次） | **PASS**（`79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：5 个 job 全绿） | **待推送后确认**：本批次仍为本地提交，推送前不得记为通过 |
 
-本批次（`f462edd`／`2c1f34c`／`cf217eb`）另外消除了一条**集成偶发的真实根因**：套件被中断时 `launchApp` 拉起的测试应用不会退出，带着 `cy-int-ud-` 临时 userData 跨运行驻留并争抢 CPU/GPU。现已由 `globalSetup` 在套件启动时按进程树回收（真机端到端 20 → 0 进程），因此上面「集成测试」一行的偶发注记不再适用于本批次。证据见[修复决策记录](review/2026-09-10-三项产品缺陷与集成孤儿进程修复-决策记录.md)。
+缺陷修复批次（`f462edd`／`2c1f34c`／`cf217eb`）另外消除了一条**集成偶发的真实根因**：套件被中断时 `launchApp` 拉起的测试应用不会退出，带着 `cy-int-ud-` 临时 userData 跨运行驻留并争抢 CPU/GPU。现已由 `globalSetup` 在套件启动时按进程树回收（真机端到端 20 → 0 进程），因此上面「集成测试」一行的偶发注记不再适用。证据见[修复决策记录](review/2026-09-10-三项产品缺陷与集成孤儿进程修复-决策记录.md)。
+
+测试陈旧性审查（本批次）另外核实：`markdown-sanitize.spec.ts` 的 7 个 `it.fails` canary **仍然必要**——升级 happy-dom 至最新（20.14.3）后输出逐字节不变，根因为 happy-dom 在 `Node.prototype` 上自带硬编码返回 `''` 的 `nodeName` getter，而 DOMPurify 的 `lookupGetter` 遇首个自有描述符即返回，永久锁定该空值。**每次升级 happy-dom 必须复跑该文件**（升级会让 canary 反向失效）。详见[测试陈旧性审查](review/2026-09-10-前端测试陈旧性审查.md)。
 
 维护规则：
 

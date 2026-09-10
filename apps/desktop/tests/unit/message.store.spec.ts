@@ -904,7 +904,10 @@ describe('P4-B 语音扩展：voice_session.turn + sendVoiceCommit（spec §5.11
     expect(store.byId['msg-voice-1']?.role).toBe('user')
     expect(store.byId['msg-voice-1']?.status).toBe('acknowledged')
     expect(store.byId['msg-voice-1']?.content).toBe('语音内容')
-    expect(store.order).not.toContain(expect.stringMatching(/^local-/))
+    // 2026-09-10 审查修复：原写法 `not.toContain(expect.stringMatching(/^local-/))` 是**恒真**的——
+    // vitest 的 toContain 走 chai 数组 include（identity 比较），非对称匹配器永不命中，取反后无条件通过
+    // （探针实测：同一数组上取反通过、正形式失败）。改为显式谓词，才能真正对 order 仍含 local-* 键失败。
+    expect(store.order.some((key) => key.startsWith('local-'))).toBe(false)
   })
 
   it('FE-E2 connected A→B 同会话：旧 voice ACK 迟到不得迁移，且不得解锁新的 text send', async () => {

@@ -38,8 +38,14 @@ const isDevToolsOpened = (): Promise<boolean> =>
 /** harness 导出文件路径（CYRENE_TEST_HARNESS=1 → dirs.temp 固定名，spec D7A-10） */
 const exportFile = (): string => join(userData, 'Cyrene', 'temp', 'cyrene-diagnose-test.json')
 
-/** 黑名单核心（D7A-14 七条=verify:sensitive 前七条；类别级 base64-long-string 排除——
- *  导出含 sha256/logHash 结构哈希必然类别命中且与秘密无关——brief 明列「黑名单核心或简单正则」口径） */
+/** 黑名单核心（D7A-14 七条=verify:sensitive 前七条；类别级 base64-long-string 排除——brief 明列
+ *  「黑名单核心或简单正则」口径）。
+ *
+ *  2026-09-10 审查更正：原注记称「导出含 sha256/logHash 结构哈希必然类别命中」，该理由在
+ *  `verify-sensitive-core.mjs` 于 2026-09-10 收窄 base64-long-string 规则（`isSecretLikeBase64` 要求
+ *  同时含大写+小写+数字）之后**已不成立**——导出里的 sha256 是小写十六进制（本文件下文断言 /^[0-9a-f]{64}$/），
+ *  不再匹配该规则。排除保留为**冗余保险**（规则将来再放宽时仍不误报），而非必要项。
+ *  注：这里只取 `r.re`，丢掉了规则的 `accept` 谓词，因此这七条不完全等同于扫描器实际执行的规则。 */
 const EXPORT_SECRET_RULES = SECRET_BLACKLIST.map((r) => r.re).slice(0, 7)
 
 describe('诊断设置 IPC（spec §6.2/§9）', () => {

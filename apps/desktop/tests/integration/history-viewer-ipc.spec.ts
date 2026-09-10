@@ -9,10 +9,13 @@ describe('历史查看器/表情 IPC 往返（G4）', () => {
     try {
       const page = await launched.page.evaluate(async () => {
         const r = await window.desktopApi.queryChatHistory({ scope: { type: 'conversation', conversationId: 'conv-1001' }, timeZone: 'UTC', category: 'all', limit: 50 })
-        return { hasMore: r.hasMore, first: r.items[0] }
+        return { hasMore: r.hasMore, items: r.items.map((item) => item.conversationId) }
       })
       expect(typeof page.hasMore).toBe('boolean')
-      expect(page.first?.conversationId ?? 'conv-1001').toBe('conv-1001')
+      // 2026-09-10 审查修复：原写法 `items[0]?.conversationId ?? 'conv-1001'` 在**返回 0 条**时会用默认值补上
+      // 期望字面量而通过——正是「过滤当前会话」最该失败的场景。改为显式断言非空 + 逐条会话 id 一致。
+      expect(page.items.length).toBeGreaterThan(0)
+      expect(new Set(page.items)).toEqual(new Set(['conv-1001']))
     } finally { await closeApp(launched) }
   })
   it('listStickers 经 IPC 返回内置 st_ 清单（P0-2：StickerManifest{stickers}）', async () => {

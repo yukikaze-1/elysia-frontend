@@ -115,6 +115,24 @@ async function waitLive2dSettled(page: Page): Promise<string> {
   return statusText(page)
 }
 
+/**
+ * 等重建真正落终态。
+ *
+ * 2026-09-10 审查修复：GPU 丢失后**不能**直接用 `toMatch(/就绪|回退|失败/)` 等重建——`rebuildAfterLost()`
+ * 在 await reset 之前就把 `status='fallback'` 同步镜像（live2d.store.ts:234），其文案「静态头像回退（GPU 不可用）」
+ * 本身即匹配该正则，于是 poll 会在**第一次求值就通过**，12s 预算形同虚设，重建逻辑即使完全不工作也绿。
+ * 这里改为「等到真正终态或超时」：`正在加载模型…`==reset 进行中（**不**匹配终态）→ 返回 null 继续重试。
+ * 若 12s 内一直停在中间态，poll 会以 null 失败并打印该文案。
+ */
+async function waitLive2dTerminal(page: Page, timeout = 12000): Promise<string | null> {
+  let last = ''
+  await expect.poll(async () => {
+    last = await statusText(page)
+    return /就绪|回退|失败/.test(last) ? last : null
+  }, { ...POLL, timeout }).not.toBeNull()
+  return last
+}
+
 /** 连接 mock → 激活首个会话 → 输入框可用（「聊天可用」判据，对齐 electron-voice 先例） */
 async function connectAndActivateFirst(page: Page): Promise<void> {
   // UII-QQ：连接钮收进连接入口 popover——先点徽标（REAL/MOCK）展开，再点连接（能力不删，入口变更）
@@ -281,8 +299,9 @@ describe('阶段5批次A Live2D Electron 集成（A7）', () => {
         const ext = gl?.getExtension('WEBGL_lose_context')
         ext?.loseContext()
       })
-      // 重建：等待落终态（就绪=重建成功 / 回退=重建失败，SwiftShader 下均合法；不再固定回退）
-      await expect.poll(() => statusText(page), { ...POLL, timeout: 12000 }).toMatch(/就绪|回退|失败/)
+      // 重建：等真正落终态（就绪=重建成功 / 回退=重建失败，SwiftShader 下均合法）。注意 fallback 在 reset
+      // 之前就被同步镜像，故不能用「状态文本合法」当等重建完成的判据（见 waitLive2dTerminal 注释）。
+      await waitLive2dTerminal(page)
       await connectAndActivateFirst(page) // 重建/回退不阻塞聊天
     } finally { await closeApp(launched) }
   })
@@ -795,10 +814,9 @@ describe('阶段5批次C Live2D Electron 集成（C2：性能降级 + GPU 重建
         const ext = gl?.getExtension('WEBGL_lose_context')
         ext?.loseContext()
       })
-      // 重建一次：等待就绪（重建成功）或回退（SwiftShader 下失败合法）；「一次」由单测 guard 覆盖，集成以
-      // 「不崩 + 状态机合法」为准（brief Step 7）
-      await expect.poll(() => statusText(page), { ...POLL, timeout: 12000 }).toMatch(/就绪|回退|失败/)
-      const s = await statusText(page)
+      // 重建一次：等真正落终态（就绪=重建成功 / 回退=重建失败，SwiftShader 下均合法）；「一次」由单测 guard 覆盖，
+      // 集成以「不崩 + 状态机合法」为准（brief Step 7）。终态文案在此确定读取，供下面的像素分支使用。
+      const s = await waitLive2dTerminal(page) ?? (await statusText(page))
       if (s.includes('就绪')) {
         // 重建成功 → 渲染恢复（非透明像素重新出现）
         await expect.poll(() => countNonTransparentPx(page), { ...POLL, timeout: 8000 }).toBeGreaterThan(0)

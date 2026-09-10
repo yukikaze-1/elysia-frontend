@@ -55,7 +55,7 @@ describe('IPC 安全', () => {
     // PushChannels.error 必须存在于推送集合,且不出现在任何命令式 invoke 通道枚举里。
     expect(PushChannels.error).toBe('chat:error')
     expect(Object.values(IpcChannels)).not.toContain('chat:error')
-    // 订阅面含 onChatError(纯 push 订阅方法;22 键白名单已含该键)
+    // 订阅面含 onChatError(纯 push 订阅方法;EXPECTED_SURFACE 已含该键——不写具体键数,避免每次加键都腐烂)
     const hasSub = await page.evaluate(() => typeof window.desktopApi.onChatError === 'function')
     expect(hasSub).toBe(true)
   })
@@ -72,7 +72,7 @@ describe('IPC 安全', () => {
     // 绝不入 Main→Renderer 推送集合(PushChannels),也无 ipcRenderer.on 订阅语义。
     expect(Object.values(PushChannels)).not.toContain('diagnostics:last-crash')
     expect(Object.values(IpcChannels)).toContain('diagnostics:last-crash')
-    // preload 暴露 getLastCrash(invoke 一次性读后清空;74 键白名单已含该键)
+    // preload 暴露 getLastCrash(invoke 一次性读后清空;EXPECTED_SURFACE 已含该键——不写具体键数)
     const hasHandler = await page.evaluate(() => typeof window.desktopApi.getLastCrash === 'function')
     expect(hasHandler).toBe(true)
   })

@@ -117,6 +117,10 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       }
       // 全量 500 后：moreBtn=0（无更多页）。虚拟化后 .cy-history-item 恒 ≤60（实测 5）
       expect(await page.locator('.cy-more-btn').count()).toBe(0)
+      // 2026-09-10 审查修复：原实现只断言 moreBtn 消失 + dom ≤60，从不核对最终条数，却把 "found=500" 写死在日志里。
+      // 若种子/分页退化为「只有一页 50 条」，该用例仍然全绿（50 条也是 ≤60），而它存在的意义正是「真实加载 500 项」。
+      const found = await readFound()
+      expect(found).toBe(500)
       const r = await sample(page, '.cy-history-item')
       // DOM 硬失败：虚拟化后 ≤ 可视行×常数（1184×721 + overscan 400 下 ≤60，随 overscan 独立）——500 项不随 500 线性
       expect(r.dom).toBeGreaterThan(0)   // 非空
@@ -124,7 +128,7 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
       // 堆告警（非硬失败；仅聚合字节尺寸）——超基线×1.5 仅 warn
       const HEAP_WARN_B = 41_000_000
       if (r.heap > HEAP_WARN_B * 1.5) console.warn(`[perf-gate] history500 heap=${r.heap} 超告警阈值（仅告警，非失败）`)
-      console.log(`[perf-gate] history500 found=500 dom=${r.dom} heap=${r.heap}`)
+      console.log(`[perf-gate] history500 found=${found} dom=${r.dom} heap=${r.heap}`)
     } finally { await closeApp(launched) }
   })
 

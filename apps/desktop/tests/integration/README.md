@@ -33,7 +33,9 @@ pnpm test:integration
 
 ## 涉及文件
 
-- `helpers/app.ts`：`launchApp`/`closeApp`/`serveRenderer`（临时 userData、harness 标记、静态渲染源，供信任边界测试）
+- `helpers/app.ts`：`launchApp`/`closeApp`/`serveRenderer`（临时 userData、harness 标记、静态渲染源，供信任边界测试）+ 进程退出兜底（用例忘记 `closeApp` 时应用不活过测试进程）
 - `helpers/app.spec.ts`：启动助手自检
-- `helpers/desktop-api.d.ts`：集成测试用 `Window.desktopApi` 类型（非冲突基名，绕开 tsc 同名遮蔽）
+- `helpers/orphan-apps.ts`：遗留测试应用（孤儿 Electron 进程）识别与回收判据；由 `global-setup.ts` 在套件启动时调用一次
+- `global-setup.ts`：vitest `globalSetup`——回收上次中断运行留下的测试应用（避免跨运行争抢 CPU/GPU 造成偶发超时）
+- `Window.desktopApi` 类型：唯一一份声明在 `src/preload/window.d.ts`（渲染侧与集成侧共用；此前集成测试内的独立副本已删除）
 - `protocol-handler.spec.ts` / `ipc-security.spec.ts` / `navigation.spec.ts` / `trust-boundary.spec.ts`：四组套件
