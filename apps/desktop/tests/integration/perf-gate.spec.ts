@@ -202,20 +202,41 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         return r !== null && r.segs > 0
       }, POLL).toBe(true)
       // 第一段刚出现时行高仍小：立刻把该行滚到视口下方 ~120px（< 400px overscan，保持渲染）
-      await page.evaluate(() => {
-        const cont = document.querySelector<HTMLElement>('.cy-messages')
-        if (!cont) throw new Error('no .cy-messages')
-        const cRect = cont.getBoundingClientRect()
-        const row = [...cont.querySelectorAll<HTMLElement>(':scope > .cy-vlist-row')]
-          .find((r) => r.querySelector('.cy-assistant-row.is-streaming') !== null)
-        if (!row) throw new Error('streaming row not rendered')
-        const top = row.getBoundingClientRect().top - cRect.top
-        const delta = Math.max(0, cont.clientHeight - top + 120)
-        cont.scrollTop = Math.max(0, cont.scrollTop - delta)
-        cont.dispatchEvent(new Event('scroll'))
-      })
-      await page.waitForTimeout(150)   // 滚动后让 visible prop 更新 + CyMarkdown 80ms 节流稳定（H-03 起为节流：尾沿必达）
-      const streamingOff = await sampleStreaming()
+      /**
+       * 把 streaming 行滚到视口下方（本用例的**前提**）。
+       *
+       * 为什么要抽成可重试的函数（2026-09-11）：本用例真正要证的是「**视口外的行仍全量渲染真实内容**」
+       * （`nonEmpty > 0` / `empty === 0`，见下方断言）。而 `top >= clientH` 只是"该行确实在视口外"
+       * 这一**前提**的校验。原先它只在滚动后采样一次，隐含假设"位置一旦建立就不再变"——
+       * 这在虚拟列表里不成立：估高→实测高的修正会改变上方前缀和，锚点恢复随之把内容整体位移
+       * （CI 实测该行从 654 移到 337，恰好落进视口）。CI 上表现为**双峰**：34649998935 首跑与重跑
+       * 结论相反，且**同一个文档-only 提交**（0136a59）也红过同一族测试——属环境/时序敏感，
+       * 不是"用户被拽回底部"那种语义回归（那由 H-02 的 message-list-follow-bottom ④ 单独把守）。
+       * 故：把前提做成**可重试**（重新滚出去再采样），而**判别性断言一字未动**。
+       */
+      const scrollStreamingOutOfView = async (): Promise<void> => {
+        await page.evaluate(() => {
+          const cont = document.querySelector<HTMLElement>('.cy-messages')
+          if (!cont) throw new Error('no .cy-messages')
+          const cRect = cont.getBoundingClientRect()
+          const row = [...cont.querySelectorAll<HTMLElement>(':scope > .cy-vlist-row')]
+            .find((r) => r.querySelector('.cy-assistant-row.is-streaming') !== null)
+          if (!row) throw new Error('streaming row not rendered')
+          const top = row.getBoundingClientRect().top - cRect.top
+          const delta = Math.max(0, cont.clientHeight - top + 120)
+          cont.scrollTop = Math.max(0, cont.scrollTop - delta)
+          cont.dispatchEvent(new Event('scroll'))
+        })
+        await page.waitForTimeout(150)   // 让 visible prop 更新 + CyMarkdown 80ms 节流稳定（H-03 起为节流：尾沿必达）
+      }
+      await scrollStreamingOutOfView()
+      let streamingOff = await sampleStreaming()
+      // 前提重试（最多 4 次）：估高修正可能把行移回视口内，重新滚出去即可；
+      // 若始终滚不出去，则是真问题（下方断言会以"仍在视口内"明确报出）。
+      for (let attempt = 0; attempt < 4 && streamingOff !== null && streamingOff.top < streamingOff.clientH; attempt++) {
+        await scrollStreamingOutOfView()
+        streamingOff = await sampleStreaming()
+      }
       expect(streamingOff).not.toBeNull()
       expect(streamingOff!.top).toBeGreaterThanOrEqual(streamingOff!.clientH)   // 完全在视口下方（overscan 内）
       expect(streamingOff!.segs).toBeGreaterThan(0)
@@ -232,6 +253,27 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         return row != null && !row.classList.contains('is-streaming')
       }, mid), POLL).toBe(true)
       await page.waitForTimeout(150)
+      // completed 采样的**前提**同样可能被这一段时间里的估高修正破坏，故同样先确保"在视口外"。
+      // 注意此处行已不再是 is-streaming，故用 messageId 定位（不能用上面的 streaming 选择器）。
+      const ensureRowOffView = async (id: string): Promise<void> => {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const off = await page.evaluate((mid) => {
+            const cont = document.querySelector<HTMLElement>('.cy-messages')
+            if (!cont) throw new Error('no .cy-messages')
+            const row = cont.querySelector<HTMLElement>(`[data-message-id="${mid}"]`)
+            if (!row) throw new Error('row not rendered')
+            const cRect = cont.getBoundingClientRect()
+            const top = row.getBoundingClientRect().top - cRect.top
+            if (top >= cont.clientHeight) return true
+            cont.scrollTop = Math.max(0, cont.scrollTop - Math.max(0, cont.clientHeight - top + 120))
+            cont.dispatchEvent(new Event('scroll'))
+            return false
+          }, id)
+          if (off) return
+          await page.waitForTimeout(150)
+        }
+      }
+      await ensureRowOffView(mid)
       const completedOff = await page.evaluate((id) => {
         const cont = document.querySelector<HTMLElement>('.cy-messages')
         if (!cont) throw new Error('no .cy-messages')
