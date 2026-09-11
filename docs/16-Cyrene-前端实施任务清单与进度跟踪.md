@@ -91,6 +91,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 - `becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑 `integration tests` 挂 `electron-voice.spec.ts` 用例 4（`CyRealtimeBar` 未在 POLL 内出现），`gh run rerun --failed` 后**全绿**。
 - `0ac3830` / [run 34525605979](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34525605979)：Live2D 失败态可诊断化批次，5 个 job 全绿。
 - `da64667` / [run 34562266876](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34562266876)：Live2D dev 供给修复批次，5 个 job 全绿且**首跑即绿**（本批新增集成用例 `5b` 与 `ipc-security` 白名单同步均在本地先验证过）。
+- `90aee67` / [run 34568017964](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34568017964)：全量评审报告落库批次（仅文档，无代码改动），5 个 job 全绿且**首跑即绿**。其中 `typecheck + lint` job 内部含 `docs:check` 与敏感扫描两步，恰为本批改动的全部面，故这两个门禁由 CI 独立复核，而非仅凭本地自证。
 
 **`electron-voice.spec.ts` 用例 4 偶发已定位并修复（2026-09-10 追加）**：根因为「采集成功后模式出现」类等待沿用 5s `POLL`，而 `startRecord`/`startRealtime`/`startDictation` 在置 mode 前要 await `getUserMedia → AudioContext → worklet.addModule` 整条真实设备链，高负载 runner 上可超 5s，且该静默期无任何 UI 反馈。现新增 `CAPTURE_POLL`（15s）用于全部此类等待（共 6 处，非只补挂掉那一处）。**未加 `--retry`**——真实挂起仍会失败，只是更晚。定位过程与已排除假设见[多套 UI 基础与模块耦合整改](review/2026-09-10-多套UI基础与模块耦合整改-决策记录.md) §7.2。
 
@@ -112,7 +113,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **同批新增的两条断言均做过变异验证**（避免只看绿灯）：把 `gateLive2dFile` 的 `verifyIntegrity` 与 `listInstalledModels` 顺序对调 → 新 spec 2 条失败，而**既有 `protocol-live2d.spec.ts` 19/19 仍全绿**（即 fail-closed 时序此前完全没有被测试钉住）；把 `needsIpcResourceSupply()` 改为恒 `true` → 新 spec 4 条失败。
 
-**全量评审报告落库批次（2026-09-11，仅文档变更，无代码改动）**：`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，227s），用于复核报告 §11 R-09（见 §1）。`pnpm typecheck` / `pnpm lint` / 单元测试本轮**未重跑**——本批不含代码改动，不得把 2026-09-10 的数字读作本批结果。
+**全量评审报告落库批次（2026-09-11，仅文档变更，无代码改动）**：`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，227s），用于复核报告 §11 R-09（见 §1）。`pnpm typecheck` / `pnpm lint` / 单元测试本轮**未重跑**——本批不含代码改动，不得把 2026-09-10 的数字读作本批结果。GitHub CI 结果见下方 CI 历史的 `90aee67` 行。
 
 维护规则：
 
