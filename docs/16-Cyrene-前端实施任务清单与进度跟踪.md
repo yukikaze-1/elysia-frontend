@@ -155,9 +155,12 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **本批一次偶发（如实记录，不当作通过）**：H-01 的全量集成跑中 `electron-voice` 的 `9b. 断线清理（实时）` 红过一次；单跑该 spec **16/16 全绿**（含 9b 1041ms），且附件黑名单不触及语音链路，判定为偶发。此类中断与 CI 上出现过的是同一族。
 
-**本批两次偶发（如实记录，均非产品缺陷，均已取证并重跑转绿）**：
-- 本地：H-01 的全量集成跑中 `electron-voice` `9b. 断线清理（实时）` 红过一次；单跑该 spec **16/16 全绿**（含 9b 1041ms）。
-- CI：本批推送后 `integration tests` 红过一次（[run 34612277649](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34612277649)），失败点是 `markdown-xss.spec.ts` 的 `locator.click` 等 REAL/MOCK 按钮**超时 30s** 加 `Execution context was destroyed`——属 UI 就绪超时而非安全断言失败；本地单跑该 spec **2/2 通过**（664ms/845ms），`gh run rerun --failed` 后全绿。失败日志已在重跑前取回本地副本（GitHub 不保留被覆盖的 attempt 日志）。两次都与本批改动无逻辑关联（附件黑名单不触及 markdown/语音链路），判定为 runner 负载类偶发。
+**本批三次 CI 红——两次偶发、一次是我的测试缺陷（必须区分，不可一并归为偶发）**：
+- 偶发①（本地）：H-01 全量集成跑中 `electron-voice` `9b. 断线清理（实时）` 红过一次；单跑该 spec **16/16 全绿**（含 9b 1041ms）。
+- 偶发②（CI）：[run 34612277649](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34612277649) 的 `integration tests` 红，失败点是 `markdown-xss.spec.ts` 的 `locator.click` 等 REAL/MOCK 按钮**超时 30s** + `Execution context was destroyed`——UI 就绪超时而非安全断言失败；本地单跑 **2/2 通过**（664ms/845ms），`gh run rerun --failed` 后全绿。
+- **非偶发③（CI，我的缺陷）**：[run 34614104584](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34614104584) 在**文档提交**上红，失败点是上一批我自己新增的 `message-list-follow-bottom.spec.ts` ①。根因不是产品回归：该断言要求「刚发的消息**完整落在视口内**」，而助手回复很长时会**合法地**把用户消息顶出视口——正常滚动，非缺陷。本地窗口大（1184×721）故一直绿，CI 小视口把它逼了出来。已改为承重的产品语义断言（`bottomGap ≤ 40` =「贴底跟随」+「消息确实进了列表」），并重新变异验证判别力未削弱（去掉贴底重锚仍红于 551px）。修复后 [run 34615829866](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34615829866) **5 job 首跑即绿**，反证该红确非偶发。
+
+三次失败的日志均在重跑前取回本地副本（GitHub 不保留被覆盖的 attempt 日志）。教训：**本地门禁全绿不等于 CI 全绿**——视口尺寸/负载差异会暴露本地掩盖的测试健壮性问题；把 CI 红一律当偶发会漏掉真缺陷。
 
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
