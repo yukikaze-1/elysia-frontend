@@ -147,8 +147,8 @@ async function deny() {
 .cy-approval-questions dd { margin: var(--cy-space-1) 0 0; color: var(--cy-text-secondary); overflow-wrap: anywhere; }
 .cy-approval-actions { display: flex; justify-content: flex-end; gap: var(--cy-space-5); margin-top: var(--cy-space-6); }
 .cy-btn { padding: var(--cy-space-3) var(--cy-space-8); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; }
-.cy-btn-approve { border-color: var(--cy-accent); color: var(--cy-accent); }
-.cy-btn-grant { border-color: var(--cy-accent-weak); color: var(--cy-accent); }
+.cy-btn-approve { border-color: var(--cy-accent); color: var(--cy-accent-text); }
+.cy-btn-grant { border-color: var(--cy-accent-weak); color: var(--cy-accent-text); }
 .cy-btn:disabled { opacity: .5; cursor: not-allowed; }
 .cy-approval-grant-box { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cy-space-4); margin-top: var(--cy-space-6); padding-top: var(--cy-space-5); border-top: 1px solid var(--cy-border); }
 .cy-approval-grant-label { color: var(--cy-text-muted); font-size: var(--cy-font-md); }

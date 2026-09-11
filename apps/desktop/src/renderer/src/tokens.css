@@ -137,11 +137,26 @@
   --cy-motion-base: 180ms;  /* 状态切换：开关滑动、描边渐变（3 处） */
 }
 
+/* 主题切换（多套 UI 基础 2026-09-11）：背景图不能用 light-dark()——它只接受颜色值，必须显式分派。
+   两条路径都要在，缺一不可：
+   ① 无显式主题时跟随系统。必须在 CSS 里完成：CSP 禁内联脚本，来不及在首帧绘制前用 JS 打属性；
+      若只留属性选择器，暗色系统上首帧会闪一次亮色背景。
+   ② 应用内主题（根节点 data-theme）显式覆盖。它同时设置 color-scheme，使全部 light-dark() token
+      与背景图一起翻——否则会出现「token 翻了、背景图没翻」的错配。
+   当前仓库只有 ① 生效（尚无代码写 data-theme）；② 是主题设置落地时的覆盖路径，
+   由 tests/unit/background-assets.spec.ts 钉住，届时只需在根节点写 dataset.theme。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --cy-chat-background: url('./assets/backgrounds/cyrene-bg-chat-dark.webp');
     --cy-settings-background: url('./assets/backgrounds/cyrene-bg-settings-dark.webp');
   }
+}
+
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --cy-chat-background: url('./assets/backgrounds/cyrene-bg-chat-dark.webp');
+  --cy-settings-background: url('./assets/backgrounds/cyrene-bg-settings-dark.webp');
 }
 
 /* 键盘可达性（红线 §7）：统一 focus-visible 轮廓——hover/active 之外的可达性兜底 */

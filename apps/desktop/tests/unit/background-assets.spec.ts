@@ -36,14 +36,53 @@ describe('Cyrene 背景素材契约', () => {
     expect(tokens.slice(darkTheme)).toContain("--cy-settings-background: url('./assets/backgrounds/cyrene-bg-settings-dark.webp')")
   })
 
+  it('背景图随根节点 data-theme 覆盖，且与 color-scheme 同步（应用内主题的预留覆盖路径）', () => {
+    const tokens = readFileSync(join(RENDERER, 'src/tokens.css'), 'utf8')
+    const ruleBody = (selector: string): string => {
+      const at = tokens.indexOf(selector)
+      expect(at, `应存在规则 ${selector}`).toBeGreaterThan(-1)
+      const open = tokens.indexOf('{', at)
+      const close = tokens.indexOf('}', open)
+      return tokens.slice(open + 1, close)
+    }
+    // @media 是嵌套块，不能按首个 '}' 截断，按花括号配对取整块
+    const blockAt = (start: number): string => {
+      let depth = 0
+      for (let i = start; i < tokens.length; i++) {
+        if (tokens[i] === '{') depth++
+        else if (tokens[i] === '}') { depth--; if (depth === 0) return tokens.slice(start, i + 1) }
+      }
+      throw new Error('tokens.css 花括号不配对')
+    }
+    const mediaAt = tokens.indexOf('@media (prefers-color-scheme: dark)')
+    expect(mediaAt).toBeGreaterThan(-1)
+    // 系统跟随路径必须让显式 light 覆盖胜出：否则用户选亮色时会被系统暗色盖回去
+    expect(blockAt(mediaAt)).toContain(":root:not([data-theme='light'])")
+    // 显式暗色：color-scheme 与背景图必须一起翻，否则出现「token 翻了、背景图没翻」的错配
+    const dark = ruleBody(":root[data-theme='dark']")
+    expect(dark).toContain('color-scheme: dark')
+    expect(dark).toContain("--cy-chat-background: url('./assets/backgrounds/cyrene-bg-chat-dark.webp')")
+    expect(dark).toContain("--cy-settings-background: url('./assets/backgrounds/cyrene-bg-settings-dark.webp')")
+    // 显式亮色：只需固定 color-scheme（背景图沿用 :root 的亮色默认值）
+    expect(ruleBody(":root[data-theme='light']")).toContain('color-scheme: light')
+  })
+
+  it('装饰图已换为轻量 webp，且不得回退为原始大 PNG', () => {
+    const deco = join(ASSET_DIR, 'cyrene-deco-voice-wave.webp')
+    expect(existsSync(deco), '装饰图 webp 应存在').toBe(true)
+    expect(statSync(deco).size, '装饰图应保持轻量（渲染宽度 ≤280px，按 2× 出图）').toBeLessThanOrEqual(160 * 1024)
+    // 历史：PNG 原尺寸 1024×768 达 496 KB，是当时包内最大的单项资产
+    expect(existsSync(join(ASSET_DIR, 'cyrene-deco-voice-wave.png')), '不应回退为未压缩 PNG').toBe(false)
+  })
+
   it('聊天、设置和语音页都引用 Vite 打包资源，而不是绝对 public URL', () => {
     const app = readFileSync(join(RENDERER, 'src/App.vue'), 'utf8')
     const settings = readFileSync(join(RENDERER, 'src/components/CySettingsView.vue'), 'utf8')
     const voice = readFileSync(join(RENDERER, 'src/components/CyVoicePane.vue'), 'utf8')
     expect(app).toContain('var(--cy-chat-background)')
     expect(settings).toContain('var(--cy-settings-background)')
-    expect(voice).toContain("from '../assets/backgrounds/cyrene-deco-voice-wave.png'")
-    expect(voice).not.toContain("'/assets/backgrounds/cyrene-deco-voice-wave.png'")
+    expect(voice).toContain("from '../assets/backgrounds/cyrene-deco-voice-wave.webp'")
+    expect(voice).not.toContain("'/assets/backgrounds/cyrene-deco-voice-wave.webp'")
     expect(voice).toContain(':src="VOICE_DECORATION_URL"')
     expect(voice).toContain('aria-hidden="true"')
     expect(voice).toContain('pointer-events: none')

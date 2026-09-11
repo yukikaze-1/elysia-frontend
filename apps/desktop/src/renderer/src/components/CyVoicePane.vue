@@ -11,7 +11,7 @@ import { useSettingsStore } from '../stores/settings.store'
 import { useModelServiceStore } from '../stores/model-service.store'
 import { useVoiceStore } from '../stores/voice.store'
 import CySwitch from './CySwitch.vue'
-import voiceDecorationUrl from '../assets/backgrounds/cyrene-deco-voice-wave.png'
+import voiceDecorationUrl from '../assets/backgrounds/cyrene-deco-voice-wave.webp'
 
 const settings = useSettingsStore()
 const modelStore = useModelServiceStore()

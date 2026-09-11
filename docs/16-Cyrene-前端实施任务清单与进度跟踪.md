@@ -25,13 +25,17 @@
 - 修法为 dev 下经 IPC 供给字节（不放开 `corsEnabled`、不起本地 HTTP），闸门与协议通道共用新增的 `src/main/live2d/serve-gate.ts`。真机 dev 形态探针 8/8 通过（`Live2D 就绪 · Wanko`），禁用修复后探针**复现用户现象且文案逐字一致**。详见[根因定位与修复记录](review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md)。
 - 同轮修复的文档回归：上一批我曾把 doc 17 §4.1 里**正确**的 `corsEnabled:false` 限制说明判为「未经实测的强断言」而删除——判断错误，依据是一条与实现不符的 dev CSP 注释。doc 17 §4.1 与 README 已按实测结论改写，dev CSP 中因此长期冗余的 `connect-src cyrene:` 已移除。
 - **全量前端评审批次（2026-09-11，未改任何业务代码）**：[评审报告](review/2026-09-11-full-frontend-review.md) 覆盖 `src/{main,preload,renderer,shared}`、`tests/`、`scripts/`、构建与 CI 配置及 `docs/`，结论为 0 Critical / 12 High / 40 Medium / 33 Low。该报告自行**证伪**了两条 High 级 Subagent 结论与一条任务书假设（本轮复核：证伪正确）。
-- 该报告是**问题目录**而非工作队列：Medium/Low 多数自陈「今日不可达」或属一致性/整洁度，不应作为勾选清单使用。其结论的处置**尚未开始**，见 §5。
+- 该报告是**问题目录**而非工作队列：Medium/Low 多数自陈「今日不可达」或属一致性/整洁度，不应作为勾选清单使用。报告建议的 P0 批次**尚未开始**；已先处置 UI 改版引入的三条回归，见下与 §5。
 - 本轮复核（逐处读码，非采信结论）确认机制成立的条目：H-01（`upload-service.ts:143` 唯一边界是 userData **一个目录**，`isPathBlacklisted` 在附件链 0 次调用）、H-02、H-03、H-04（`flush` 全仓仅 2 个调用点）、H-10（`message.store.ts` 无任何定时器）、H-11b、H-12、M-08、M-20、M-27、M-30、M-35。
 - H-02 复核补充：`onRowResized` 在内容增长时只写 `heights`，不动 `scrollTop`/`atBottom`；且因 `atBottom` 仍为 `true`，`v-if="!atBottom"` 的「回到底部」按钮**也不出现**——用户连手动找回的入口都没有，比报告描述的更严重。
 - **报告 §11 R-09 结论已纠正（2026-09-11）**：该报告称本机 `pnpm test:integration`「22 文件全红（81 failed / 12 passed / 47 skipped）」。本轮独立重跑**不可复现**：单文件 `ipc-security.spec.ts` 18/18 通过，全套 **22 files / 138 passed + 2 skipped，exit 0**（227s），与 2026-09-10 批次数字一致；重跑前本机无残留 Electron 进程、无 `cy-int-ud-*` 目录。
-- R-09 定性：该次全红是**运行环境态**，既非产品缺陷也非门禁失效——报告「非产品缺陷」的方向判断正确，但事实描述错误，其 Testing 维度据此的扣分不成立。**本机集成门禁健康、本地验证能力完好**，报告建议的「等有 CI 的机器复跑确认」无必要，后续修复批次可照旧在本地做变异验证。
+- R-09 定性（**2026-09-11 补正**）：该次全红是**运行环境态**，非产品缺陷、非门禁失效，「非产品缺陷」的方向判断成立。但原措辞「不可复现」过强——其描述的症状**间歇可复现**：本地单独运行 `audit-lifecycle.spec.ts` 曾 4/4 失败于 `electron.launch: Process failed to launch!`（debugger 连上后 1006 断开）；`ee8f7fa` 那次 CI 红是该文件 `expect.poll(timeout:5000)` 等不到 `credential:set` 落盘，`gh run rerun --failed` 后转绿。故全套可绿（已两次实测），但此类中断会偶发。
 - 报告最值得保留的两条结构性判断（已复核属实）：① **收口点是路由点而非策略点**——`registerHandler` 只校验来源与参数个数、`createIpcHandler` 只校验形状，故 `MAX_IPC_MESSAGE_BYTES` 只在 1 条通道真正执行、`PATH_BLACKLIST_DEFAULTS` 在附件链 0 次调用，H-01 与 M-03 是同一根因的两个实例；
 - ② **测试保护了 bug**——`debounce-trailing.spec.ts:11-13` 把防抖（而非节流）语义钉成了正确行为，这是 H-03 能在 214 个测试文件下长期存活的原因。建议把「这条断言在实现坏掉时会红吗」列入评审清单项，这比修单个缺陷更能防止下一批同类问题。
+- **UI 改版后的复评（2026-09-11）**：用户 UI 批次 `034c110`／`85f2602`／`116d529` 落地后按 HEAD 重核报告 UI 条目。已改善：M-20 部分修复（`CyChatInput` 4 处、`CyNavRail` 1 处的 `--cy-accent` 文本误用已清除）。逐处读码确认**仍在**：H-02（不跟随底部且不可复制）、M-19、M-21、M-22、M-23、M-24。
+- 复评发现该 UI 批次**新引入三条**，本批已修：① `--cy-accent` 被调浅（`#dce8ff`→`#e7edff`），使安全授权按钮文本对比度由 1.23:1 **降到 1.17:1**（暗色 1.31:1）——改用配对文字色 `--cy-accent-text`（11.0:1／13.1:1）并按规则级加守护断言；② 主题背景用 `@media (prefers-color-scheme: dark)` 切换、而全仓其它颜色用 `light-dark()`，应用内主题落地时会出现「token 翻了、背景图没翻」——补根节点 `data-theme` 覆盖路径并与 `color-scheme` 同步；③ 装饰图 `cyrene-deco-voice-wave.png` 为 1024×768／496 KB，而实际渲染宽度 ≤280px——按 2× 出图改**无损** webp（106,918 B，−78%）。
+- 三条修复均过**变异验证**：还原文本色→授权按钮断言红；去掉 `:not([data-theme='light'])`→主题断言红；再单独去掉 `color-scheme: dark`→另一条红；放回 PNG→回退断言红；把 webp 换成 444 KB→尺寸上限断言红。装饰图保真度用客观指标核验（alpha 通道逐位相同；白底／黑底合成后 PSNR 69.1／68.5 dB，差异在 ±1/255 内）。
+- 复评另记两条**治理问题（未处置）**：① `85f2602` 的 check-runs 数为 **0**——该 UI 大改从未被 CI 验证（本轮本地补齐门禁为绿；`116d529` 的 CI 以它为祖先一并覆盖）；② `ui/设计风格.md`（1349 行）落在 `docs/` 治理体系之外，`docs:check` 与 doc 00 均不覆盖，且已在响应式口径上与 doc 03 冲突（其 §35 仅列 1366+ 桌面档）。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
@@ -115,6 +119,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **全量评审报告落库批次（2026-09-11，仅文档变更，无代码改动）**：`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，227s），用于复核报告 §11 R-09（见 §1）。`pnpm typecheck` / `pnpm lint` / 单元测试本轮**未重跑**——本批不含代码改动，不得把 2026-09-10 的数字读作本批结果。GitHub CI 结果见下方 CI 历史的 `90aee67` 行。
 
+**UI 改版引入的三条回归修复批次（2026-09-11，本批）**：`pnpm typecheck` PASS；`pnpm lint` PASS；`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test` PASS（**215 files / 2690 passed + 6 expected-fail + 21 skipped**，较上批 +3＝背景素材 +2、授权按钮 +1）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，245s）；`pnpm build` PASS，产物中装饰图由 496,074 B 的 PNG 换成 **106,918 B** 的无损 webp。新增与收紧的 5 条断言均过变异验证（见 §1）。
+
 维护规则：
 
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
@@ -145,8 +151,10 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 1. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
-4. 全量评审批次的处置**尚未开始**：报告建议 P0-1～P0-7，本轮按决定只落库、不改代码。恢复开发前需先定批次与顺序；其中 P0-7（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI）依赖外部授权事实与阶段 8 决策，不在可立即执行范围。
-5. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
+4. 全量评审建议的 P0-1～P0-7 **尚未开始**：恢复开发前需先定批次与顺序；其中 P0-7（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI）依赖外部授权事实与阶段 8 决策，不在可立即执行范围。
+5. M-20 其余 **6 处** `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）**未动**——属视觉设计取舍，待用户决定；本批只收口了安全授权按钮。
+6. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
+7. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
 
 ## 6. 状态维护规则
 

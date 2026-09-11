@@ -13,6 +13,8 @@ import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
 import type { PublicToolEvent } from '@shared/contracts/tool'
 import { GRANT_DEFAULT_TTL_MS } from '@shared/contracts/tool'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 
 const mockApi = {
   onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(),
@@ -124,5 +126,23 @@ describe('CyToolApproval 第三入口「允许指定目录」（批次 C Task 7�
     await nextTick()   // 第二个 nextTick：granting=false 的渲染 flush 在 promise 续延之后入队，需再冲刷一次
     // 完成恢复：成功后面板关闭——确认按钮随面板移除（不再存在禁用态；emit('close') 既有语义）
     expect(w.find('[data-testid="approval-grant-confirm"]').exists()).toBe(false)
+  })
+})
+
+// 2026-09-11 全量评审 M-20 的收口断言：安全授权按钮曾用「背景族」token 作文本色。
+// `--cy-accent`（亮色 #e7edff / 暗色 #2a3c5f）是给实底用的浅色，在白底/深底上作文字只有 ≈1.17:1，
+// 而 token-contract.spec.ts 只校验「引用的 token 已定义」，不区分用法，因此该缺陷能长期存活。
+// 本断言按文件与规则级钉住：授权按钮的 color 必须是配对的文字色 token。
+describe('CyToolApproval 授权按钮文本可读性（M-20）', () => {
+  it('「允许一次」/「本次允许」不得用背景族 token 作文本色', () => {
+    const sfc = readFileSync(join(__dirname, '../../src/renderer/src/components/CyToolApproval.vue'), 'utf8')
+    for (const sel of ['.cy-btn-approve', '.cy-btn-grant']) {
+      const body = sfc.match(new RegExp(`\\${sel}\\s*\\{[^}]*\\}`))?.[0] ?? ''
+      expect(body, `应存在规则 ${sel}`).not.toBe('')
+      // 只取 color 属性的值：不能直接 match(/color:/)，那会命中 border-color:
+      const values = [...body.matchAll(/(?:^|[;\s])color:\s*([^;}]+)/g)].map((m) => m[1].trim())
+      expect(values, `${sel} 应显式声明 color`).toHaveLength(1)
+      expect(values[0], `${sel} 的文本色应为与 accent 配对的可读文字色`).toBe('var(--cy-accent-text)')
+    }
   })
 })
