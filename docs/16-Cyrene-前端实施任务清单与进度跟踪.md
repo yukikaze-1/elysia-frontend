@@ -193,6 +193,14 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **本批方法论教训（第三次同族，已单列）**：我直接跑 `vitest run --config vitest.integration.config.mts` 测组件改动，而该命令**不重建 `out/`**，于是两次「修复后仍冻结」的结论其实都跑在**旧产物**上，白绕一圈。前两批的教训是「变异前要重建」「还原后要重建」，本次补第三条：**任何被测改动都要先确认它在产物里**（最终靠一个临时探针属性在 DOM 里回读为空才发现整轮都在测旧构建）。另修一处**未还原的变异残留**（上批 Mutation B 的 `void watchdog` 顶掉了 `clearGeneration` 的 `disarm()`），由 `grep MUTATION` 扫出——变异残留必须扫，不能靠记忆。
 
+**P1-12 renderer 错误进诊断包（2026-09-11，`70c9467`）**
+- 评审核实：renderer 侧 JS 错误**从不进入诊断导出**——三个错误源（Vue `errorHandler`、window `'error'`、`'unhandledrejection'`）只做 `console.error`，Main **没有**订阅 `console-message`，summary 也只含 origin/status/protocolVersion。注释把「JS 异常是独立候选」列为目标而代码从未落地。
+- **修法**：订阅 `console-message` → 既有 logger → 诊断包（**不新开 IPC 通道**）。理由：logger 落盘前已做 **sanitize+redact 双净化**（正是报告要求的管道）；**不新增暴露面**（对契约零改动）；且 `console-message` 天然覆盖「没想到去插桩」的错误。
+- **噪声风险按有界处理**：只转发 error 级、10s 滑窗限流 20 条、单条截断 500 字符；**被抑制的条数本身也补记**（`renderer:console-suppressed`）——静默丢弃会重演"看不见"这个原始缺陷。
+- **⚠️ 实现中撞到会让整项失效的签名坑（值得单列）**：Electron 43 的 `WebContents.on('console-message')` **参数在事件对象自身**上，位置参数（`level: number` 等）是**已废弃**形态——而 d.ts **只声明了废弃形态**，故 `(_ev, details)` 会把 `details` 推成 `number`；且现代形态的 `level` 是**字符串**，沿用数字比较则 `'error' >= 3` 为 false ⇒ **一条都不会转发**，正好重演本缺陷的"静默无痕"。现两种形态都归一，并有专门用例守卫。与本仓库在 `render-process-gone`（2 参 vs 3 参）上的签名坑同族。
+- **验证**：单测 13 条（两种 level 形态、默认不转发 info/warning、限流、**抑制可见性**、窗口重置、超长截断、logger 缺失不抛）；**e2e 3 条真机读 Main 日志**（`console.error(marker)` 落盘、`setTimeout(throw)` 未捕获异常同样落盘、诊断面可读）；**变异**——移除转发 → e2e 3 条全红（真机复现修复前状态）。
+- **边界**：只把 renderer 错误接进日志/诊断包，不含「summary 里单列 renderer 错误计数」；也未改 `renderer/src/main.ts` 的三处 `console.error`（它们经 console-message 自然被捕获，少改一处即少一处漂移面）。
+
 **H-08 与 P1-1 批次（2026-09-11，`64ac75d`／`03ca4e6`）**
 
 - **H-08 长会话性能（两个安全半边）**：① **估算器扫全文 → 记忆化**。`estimateMessageHeight` 代价是 **O(全文长度)**（assistant 分支 `split('\n')` 分配整段行数组 + 每段一次全局正则），而 `buildPrefix` 对**每个尚未实测的行**都调它一次 ⇒ 每次 prefix 重算重扫未渲染行全文。记忆化键**刻意不用全文哈希**（那本身就是 O(全文)、等于没省），改用 **O(段数)** 的廉价版本号。② **markdown 渲染缓存 O(N²) → 有界**：键是整段源文本，流式每个 80ms 节拍产生更长新文本 ⇒ **一条回复写入 N 个条目、总字节 O(N²)**，此前只在会话切换时清空；现限幅 300 条 FIFO 淘汰。
