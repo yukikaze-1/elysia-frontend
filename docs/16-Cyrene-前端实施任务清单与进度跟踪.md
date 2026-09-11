@@ -193,7 +193,24 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **本批方法论教训（第三次同族，已单列）**：我直接跑 `vitest run --config vitest.integration.config.mts` 测组件改动，而该命令**不重建 `out/`**，于是两次「修复后仍冻结」的结论其实都跑在**旧产物**上，白绕一圈。前两批的教训是「变异前要重建」「还原后要重建」，本次补第三条：**任何被测改动都要先确认它在产物里**（最终靠一个临时探针属性在 DOM 里回读为空才发现整轮都在测旧构建）。另修一处**未还原的变异残留**（上批 Mutation B 的 `void watchdog` 顶掉了 `clearGeneration` 的 `disarm()`），由 `grep MUTATION` 扫出——变异残留必须扫，不能靠记忆。
 
-**P1-12 renderer 错误进诊断包（2026-09-11，`70c9467`）**
+**P1-11 类型/lint 门禁加固（2026-09-11）**
+
+- **背景**：基座 `@electron-toolkit/tsconfig` 是 `strict: true` 但**显式** `noImplicitAny: false`——本仓库长期允许隐式 any，而 `strict` 这个名义容易让人以为已经守住。评审要求「两个 tsconfig 打开 noImplicitAny + type-aware lint」。
+- **noImplicitAny：已开启（两处 tsconfig），实测**先测量再动手**：node 侧 **59** 条、web 侧 **0** 条**。59 条里只有 **2** 条在生产代码（`chat-service.ts` 的 `activate`/`deleteConversation` 参数——同一对象里其它方法都有类型，只有这两处漏了），其余是测试。已全部清零。
+- **修的过程中被类型立刻抓到真问题**：给 live2d-install.spec 的 `integrity.json` 补类型时，我第一版**手写**的声明把字段写成 `bytes`（真实是 `size`），加进去立刻 TS2339；改为**直接引用生产者**（`manifest.ts` 的 `IntegrityEntry`）后，又顺势暴露 `find()` 的 possibly-undefined。**这正是「隐式 any 让断言里的字段名写错也编译通过」的实例**——修复本身证明了门禁的价值。
+- 4 处 `.mjs` 脚本导入（TS7016）用**逐函数声明**（`scripts/*.d.mts`）解决，**刻意不用** `declare module '*.mjs'` 兜底——那会把"看得见的报错"换成"看不见的失守"。
+- **type-aware lint：生产代码接入三条高信号规则，实测后**缩小**了范围**：
+  - 全集 `recommendedTypeChecked` 实测 **1171** 条，绝大多数是风格类（`require-await` ≈250、`no-unnecessary-type-assertion` ≈185），会淹没真正的语义问题；与门禁加固混做一个提交只能靠批量 disable 收场——**那等于用"关规则"冒充"加门禁"**，故全集接入列为独立一轮。
+  - 改为只接 **`no-floating-promises` / `await-thenable` / `no-misused-promises`**（近几批的真实缺陷正是「异步语义用错 / promise 没人管」）。生产代码命中 **4 条**（后因 `.vue` 也纳入 type-aware 又现出 3 条，共 7 条），全部当场修完：
+    - `process-error-guards.ts`：`deps.audit` 是 `void|Promise<void>`，有意不 await；但**不能**只写 `void`——它若拒绝会在 unhandledRejection 处理器**内部**再造未处理拒绝（潜在自递归），故用 `Promise.resolve(...).catch()` 显式吞掉。
+    - `main-window.ts`：`shell.openExternal` 漏 `.catch`，而**同一文件的 will-navigate 分支有**——两处行为本应一致，已补齐。
+    - `desktop-api.ts` / `voice.store.ts`：`await` 一个同步函数（`unwrap(..., z.undefined())` 返回 void；`setVoice` 是同步 `void`）——空操作，会让读者误以为存在异步屏障。
+    - `CyChatInput.vue` / `CyToolApproval.vue`：`cancel()` 悬空（内部已 try/catch → 用 `void`）；`decide()` **会拒绝**（IPC 失败）→ 用 `void ... .catch()`；`nextTick` 回调式悬空 → `void`。
+  - **过程中我自己制造过一次安全回归并立即修正**：改 `toolRevokeGrant` 时一度写成 `unwrap(undefined, z.undefined())`——**丢掉真实响应、跳过 preload 的逐通道校验**。这正是"消 lint 告警"时最容易犯的错；已在代码注释里写明该行不得再被如此"简化"。
+- **变异验证**：在 `chat-service.ts` 塞入隐式 any → `pnpm typecheck` 红于 `TS7006`；把 `CyChatInput.vue` 的 `void messageStore.cancel()` 改回裸调用 → `pnpm lint` 红于 `no-floating-promises`。两道门禁都确认是活的。
+- **边界如实记录**：type-aware 只覆盖 `src/**`（测试代码另有 85 条命中，测试里"发起 promise 不等待"常是有意的，需逐个判断语义）；全集 type-checked 规则、以及测试目录的接入，都属独立一轮。
+
+
 
 - 评审核实：renderer 侧 JS 错误**从不进入诊断导出**——三个错误源（Vue `errorHandler`、window `'error'`、`'unhandledrejection'`）只做 `console.error`，Main **没有**订阅 `console-message`，summary 也只含 origin/status/protocolVersion。注释把「JS 异常是独立候选」列为目标而代码从未落地。
 - **修法**：订阅 `console-message` → 既有 logger → 诊断包（**不新开 IPC 通道**）。理由：logger 落盘前已做 **sanitize+redact 双净化**（正是报告要求的管道）；**不新增暴露面**（对契约零改动）；且 `console-message` 天然覆盖「没想到去插桩」的错误。
