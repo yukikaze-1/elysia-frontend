@@ -21,16 +21,8 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest'
 import type { Page } from 'playwright'
 import { launchApp, closeApp, type LaunchedApp } from './helpers/app'
 
-/**
- * 恢复预算：必须明显大于 50s 静默窗口。
- *
- * 取 150s 而非「50s + 一点余量」的原因（实测教训）：本用例单跑在 51.5s 收敛，但整套集成
- * （26 个 spec 串行 + 本机另有其它 Electron 项目在跑）时，渲染进程的事件循环会被抢占，
- * 50s 的定时器可能远晚于 50s 才被调度——90s 预算在整套运行下超时过一次。
- * 放宽预算**不削弱判别力**：没有修复时占位**永远不会消失**，任何有限预算都会红
- * （变异验证已证：不武装看门狗 → 本用例在 90s 预算下红）。
- */
-const RECOVERY_BUDGET_MS = 150_000
+/** 恢复预算：必须明显大于 50s 静默窗口，同时给慢启动留余量 */
+const RECOVERY_BUDGET_MS = 90_000
 
 let launched: LaunchedApp
 let page: Page
@@ -136,5 +128,5 @@ describe('生成静默看门狗（H-10）端到端', () => {
     // 用 locator.isEditable()（Playwright 的断言匹配器 toBeEditable 属于 @playwright/test 的 expect，
     // 与本仓库 vitest 的 chai expect 不是同一个——实测报 `Invalid Chai property: toBeEditable`）
     await waitFor(async () => input.isEditable(), 15_000, '输入框恢复可编辑')
-  }, 240_000)
+  }, 150_000)
 })
