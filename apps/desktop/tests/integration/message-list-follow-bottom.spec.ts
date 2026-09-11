@@ -92,4 +92,38 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       expect(selectable).toBe('text')
     } finally { await closeApp(launched) }
   })
+
+  // H-02 续修（2026-09-11）：**流式持续增长**下的贴底保持。
+  //
+  // ① 只发一条消息（单次增长），而真实故障形态是流式回复**连续多次**增长：每一次增长都让
+  // scrollHeight 变大而 scrollTop 不变，若「是否跟随」用的是瞬时位置而不是用户意图，
+  // 就会在某个瞬间被判成「用户已上翻」→ 永久放弃跟随 → 缺口累积且**不会自愈**
+  // （此后不再产生 scroll 事件 → 没有 settle → 没有重锚）。
+  // 探针实测：scrollTop 冻在 6146 而 scrollHeight 从 7176 涨到 12093；CI 上以距底 779px 现形。
+  // 本用例用 60 段多分段流式回复把增长次数放大到足以稳定复现。
+  it('④ 流式回复持续增长时始终贴底（跟随意图不被瞬时位置吞掉）', async () => {
+    const launched = await launchApp(undefined, {
+      env: { CYRENE_MOCK_HISTORY_LARGE: '200', CYRENE_MOCK_MULTI_SEGMENT: '60' }
+    })
+    try {
+      const { page } = launched
+      await connectAndActivateFirst(page)
+      await expect.poll(() => bottomGap(page), POLL).toBeLessThanOrEqual(40)
+
+      await page.getByLabel('消息输入框').fill('流式贴底验证')
+      await page.getByLabel('消息输入框').press('Enter')
+
+      // 流式期间采样：允许「正在增长、尚未重锚」的瞬时值，但**不得累积**。
+      // 阈值 200px 的依据：缺陷实测为 779px／4825px 量级；修复后探针实测缺口在 0–93px 之间抖动。
+      let worst = 0
+      for (let i = 0; i < 25; i++) {
+        worst = Math.max(worst, await bottomGap(page))
+        await page.waitForTimeout(200)
+      }
+      expect(worst, `流式期间距底距离累积到 ${worst}px（跟随意图被瞬时位置吞掉？）`).toBeLessThanOrEqual(200)
+
+      // 收敛后必须严格贴底（缺陷下永不收敛）
+      await expect.poll(() => bottomGap(page), POLL).toBeLessThanOrEqual(40)
+    } finally { await closeApp(launched) }
+  })
 })
