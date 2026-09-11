@@ -117,6 +117,61 @@ describe('决策链', () => {
     await svc.handleRequest(mkReq())
     expect(submitStatus).toHaveBeenCalledWith(expect.objectContaining({ callId: 'call_1', status: 'accepted' }))
   })
+
+  // —— H-09（2026-09-11）：写路径的同步 diff 不得在授权前冻结主线程 ——
+  //
+  // 原缺陷：step 7 在**授权之前**就算 diff，而内容大小上限只在 executor（授权之后）；
+  // `diffLines` 是同步 Myers 且不让出事件循环 ⇒ 一个数百 KB～数 MB 的 content 足以让整个应用卡住一拍，
+  // 而此时所有超时都是定时器驱动的、**都无法触发**。更荒谬的是这种写入本来就会被拒。
+  it('H-09：超大 content 在**授权前**即被拒（不再白算一次 diff）', async () => {
+    writeFileSync(`${FIXTURES}/w.txt`, 'old')
+    const { svc, events } = mkService()
+    const huge = 'x'.repeat(2 * 1024 * 1024 + 1)
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: huge } }))
+    const ev = events.at(-1)!
+    expect(ev.status).toBe('failed')
+    // 错误码/文案与 executor 的同名上限完全一致 ⇒ 用户可见行为不因前移而改变
+    expect(ev.error?.code).toBe('CONTENT_TOO_LARGE')
+    expect(ev.error?.message).toContain('2 MiB')
+  })
+
+  it('H-09：超大 content 不进入 awaiting_permission（不打扰用户去批准一个必被拒的写入）', async () => {
+    writeFileSync(`${FIXTURES}/w.txt`, 'old')
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: 'y'.repeat(2 * 1024 * 1024 + 1) } }))
+    expect(events.some((e) => e.status === 'awaiting_permission'), '不得弹出一个注定失败的授权窗').toBe(false)
+  })
+
+  it('H-09：超过 diff 预览阈值时省略 lines（安全字段照常），且**没有**调用同步 diff', async () => {
+    writeFileSync(`${FIXTURES}/w.txt`, 'old')
+    // 内容 > MAX_DIFF_INPUT_BYTES 但 < MAX_WRITE_CONTENT_BYTES：写入合法，只该省掉预览
+    const big = 'line\n'.repeat(60_000) // ≈ 300 KiB
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: big } }))
+    const ev = events.at(-1)!
+    expect(ev.status).toBe('awaiting_permission')
+    expect(ev.diff!.totalLines, '大输入应省略 diff 预览').toBe(0)
+    // 安全字段必须保留：isNewFile 驱动「授权后文件被创建 → 拒绝覆盖」，丢了就是安全回归
+    expect(ev.diff!.isNewFile).toBe(false)
+  })
+
+  it('H-09：常规大小仍产出完整预览（省略逻辑不得误伤正常路径）', async () => {
+    writeFileSync(`${FIXTURES}/w.txt`, 'old line 1\nold line 2\n')
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: 'new line 1\nnew line 2\n' } }))
+    const ev = events.at(-1)!
+    expect(ev.status).toBe('awaiting_permission')
+    expect(ev.diff!.totalLines, '小文件必须仍有预览').toBeGreaterThan(0)
+    expect(ev.diff!.isNewFile).toBe(false)
+  })
+
+  it('H-09：新建文件路径不受影响（isNewFile 仍为 true）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/brand-new.txt`, content: 'hello' } }))
+    const ev = events.at(-1)!
+    expect(ev.status).toBe('awaiting_permission')
+    expect(ev.diff!.isNewFile).toBe(true)
+  })
 })
 describe('幂等与状态机', () => {
   it('同 callId 参数不一致 → PARAM_MISMATCH', async () => {

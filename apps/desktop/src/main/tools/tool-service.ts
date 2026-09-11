@@ -68,6 +68,15 @@ export interface ToolService {
 export const FILE_READ_MAX_BYTES = 2 * 1024 * 1024
 export const RESULT_INLINE_BYTES = 64 * 1024
 export const MAX_WRITE_CONTENT_BYTES = 2 * 1024 * 1024
+/**
+ * H-09（2026-09-11）：diff **预览**的输入上限（区别于写入上限）。
+ *
+ * 理由不是「防冻结」（实测 2 MiB 仅 ~26 ms，见 preReadForDiff 注释），而是**不做白工**：
+ * diff 的唯一用途是一段最多 100 行的给人看的预览（MAX_DIFF_LINES），而 `computeTextDiff` 内部的
+ * 同步 Myers 会在截断检查**之前**把全文按行分配——为 100 行预览去 diff 数百 KB 至 2 MiB 并不划算。
+ * 超过本阈值只省略 lines/added/removed，安全字段（isNewFile / oldHash / formatNote）照常产出，写入行为不变。
+ */
+export const MAX_DIFF_INPUT_BYTES = 256 * 1024
 export const SELECT_EXEMPT_TTL_MS = 10 * 60 * 1000
 export const TEXT_FILE_FILTERS = { name: '文本文件', extensions: ['txt','md','markdown','json','log','csv','tsv','js','ts','jsx','tsx','py','rb','go','rs','c','h','cpp','hpp','java','kt','swift','css','scss','html','htm','yaml','yml','toml','ini','cfg','conf','xml','svg','sh','bash','env'] }
 export const PATH_SUMMARY_MAX = 120
@@ -419,6 +428,21 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   }
   /** 决策链 step 7（A2/L7）：write 授权前预读 + Diff（预读失败 FILE_TOO_LARGE/FILE_IS_BINARY → handleRequest 转 terminal failed，A-15） */
   async function preReadForDiff(rec: ToolRecord, realPath: string): Promise<void> {
+    // H-09（2026-09-11）：**先**校验待写内容大小，再读旧文件/算 diff。
+    //
+    // 原顺序是「先 diff（step 7）再授权（step 8）」，而大小上限只在 executor（授权之后）——
+    // 于是一个超限的写入会先被同步 Myers diff 完整算一遍，然后**照样被拒**：这次 diff 是纯粹的白工，
+    // 而且在用户授权**之前**就发生了。现把同一上限前移到此（错误码/文案与 executor 完全一致，
+    // 故用户可见行为不变），超限时既不读旧文件、也不分配 diff。
+    //
+    // 严重性的实测修正（勿再照抄评审措辞）：评审称这会让「整个应用卡住一拍、所有超时都无法触发」。
+    // 本机实测 `computeTextDiff` 的阻塞时长为 2 MiB→26 ms、4 MiB→61 ms、16 MiB→209 ms、32 MiB→485 ms
+    // （见 doc 16 §3.1）。即：在写入上限（2 MiB）处约为**一帧**，并非冻结；只有远超上限的输入才到几百毫秒。
+    // 故本条的价值在「不做白工 + 不在授权前做事」，而非消除冻结——按实测口径记录，不重复夸大的措辞。
+    const content = String(rec.arguments_['content'])
+    if (Buffer.byteLength(content, 'utf8') > MAX_WRITE_CONTENT_BYTES) {
+      throw new ToolExecError('CONTENT_TOO_LARGE', '内容超过 2 MiB 上限')
+    }
     if (!fs.existsSync(realPath)) { rec.diff = { lines: [], added: 0, removed: 0, truncated: false, totalLines: 0, formatNote: '新建文件：UTF-8 无 BOM / LF', isNewFile: true }; return }
     const st = fs.statSync(realPath)
     if (st.size > FILE_READ_MAX_BYTES) throw new ToolExecError('FILE_TOO_LARGE', '目标文件超过 2 MiB 上限')
@@ -427,12 +451,23 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     // ignoreBOM:true——TextDecoder 缺省会剥 BOM，detectTextFormat 的 hasBom 探测需见原始 BOM（D6B-19/L-2，Task 3 统一）
     try { oldText = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(buf) }
     catch { throw new ToolExecError('FILE_IS_BINARY', '目标文件不是 UTF-8 文本') }
-    const d = computeTextDiff(oldText.replace(/^﻿/, ''), String(rec.arguments_['content']))   // L1：diff 用去 BOM 串（format 探测仍用原串，防 BOM 噪音首行差异）
     const fmt = detectTextFormat(oldText)
     const eolNote = fmt.eol === 'crlf' ? 'CRLF' : 'LF'
+    const formatNote = `将按原文件格式写入：UTF-8${fmt.hasBom ? '（带 BOM）' : ' 无 BOM'} / ${eolNote}${fmt.endsWithNewline ? ' / 末尾换行将补齐' : ''}`
+    // H-09：diff 输入超过 MAX_DIFF_INPUT_BYTES 时**省略预览**，只保留安全相关字段。
+    // 理由：`computeTextDiff` 内部 `diffLines` 是同步 Myers，且在 MAX_DIFF_LINES 检查**之前**就已按行分配全文；
+    // 对 2 MiB 级输入，预览的收益远小于阻塞主线程的代价（评审建议的「超阈值输入直接省略预览」）。
+    // 注意必须保留 isNewFile（executor 的「授权后文件被创建 → 拒绝覆盖」判据）与 oldHash（写前哈希复核判据）——
+    // 省略的只是给人看的 lines/added/removed，安全语义一个不少。
+    if (Buffer.byteLength(oldText, 'utf8') > MAX_DIFF_INPUT_BYTES || Buffer.byteLength(content, 'utf8') > MAX_DIFF_INPUT_BYTES) {
+      rec.diff = { lines: [], added: 0, removed: 0, truncated: true, totalLines: 0,
+        formatNote: `${formatNote}；文件较大，差异预览已省略`, isNewFile: false }
+      rec.oldHash = createHash('sha256').update(buf).digest('hex')
+      return
+    }
+    const d = computeTextDiff(oldText.replace(/^﻿/, ''), content)   // L1：diff 用去 BOM 串（format 探测仍用原串，防 BOM 噪音首行差异）
     rec.diff = { lines: d.lines, added: d.added, removed: d.removed, truncated: d.truncated, totalLines: d.totalLines,
-      formatNote: `将按原文件格式写入：UTF-8${fmt.hasBom ? '（带 BOM）' : ' 无 BOM'} / ${eolNote}${fmt.endsWithNewline ? ' / 末尾换行将补齐' : ''}`,
-      isNewFile: false }
+      formatNote, isNewFile: false }
     rec.oldHash = createHash('sha256').update(buf).digest('hex')   // 写前哈希检查依据（原子替换前复核，A-1）
   }
   async function handleRequest(req: DesktopToolRequest): Promise<void> {
