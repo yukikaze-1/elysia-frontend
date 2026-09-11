@@ -25,6 +25,8 @@ import type { AuditEvent } from './diagnostics/audit'
 import type { Logger } from './diagnostics/logger'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
 import { createPersistFlushRequester } from './persistence/persist-flush'
+import { installProcessErrorGuards } from './app/process-error-guards'
+import { broadcastToWindows } from './windows/broadcast'
 import { CredentialStore } from './credentials/credential-store'
 import { SessionStore } from './persistence/session-store'
 import { CharacterDraftStore } from './persistence/character-draft-store'
@@ -164,6 +166,10 @@ async function main(): Promise<void> {
     const diagLogger = diagnostics.logger
     app.on('child-process-gone', (_ev, d) => handleChildProcessGone(d, { logger: diagLogger, audit }))
     setCrashSink({ logger: diagLogger, audit })
+    // ③ 2026-09-11（H-12）：主进程未捕获异常兜底——此前 `unhandledRejection`/`uncaughtException`
+    //    全仓 0 注册，浮空 promise 的拒绝既不进日志也不进审计。纯增量：`process.on` 追加监听，
+    //    不覆盖 Electron 自带处理器；存续语义与理由见 process-error-guards.ts 文件头。
+    installProcessErrorGuards({ logger: diagLogger, audit, sanitize })
     // 启动门禁（B2/P0-02）：dev 模式下 ELECTRON_RENDERER_URL 必须指向受信地址（回环或 allowlist）。
     // 在 requestSingleInstanceLock 之后——只有持锁主实例评估（第二实例已在 lock 处 exit(0)）。
     // fatal exit 异步，故 untrusted 后必须 return，否则继续建窗/装配。
@@ -352,7 +358,7 @@ async function main(): Promise<void> {
       audit,
       submitStatus: async (cmd) => { const ok = await statusSender.send(cmd); if (!ok) throw new Error('send failed') },
       uploadAttachment: (callId, bytes, mime, label) => statusSender.uploadToolAttachment(callId, bytes, mime, label),
-      pushEvent: (ev) => { for (const w of BrowserWindow.getAllWindows()) w.webContents.send(PushChannels.toolEvent, ev) },
+      pushEvent: (ev) => { broadcastToWindows(BrowserWindow.getAllWindows(), PushChannels.toolEvent, ev) },
       ...(toolAllowRoot !== undefined ? { allowRoots: toolAllowRoot } : {}),
       ...(captureSources !== undefined
         ? {

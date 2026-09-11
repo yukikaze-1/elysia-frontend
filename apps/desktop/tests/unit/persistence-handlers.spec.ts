@@ -27,6 +27,22 @@ describe('openExternal（spec §4.2 http/https 白名单）', () => {
     expect(() => openExternal('not a url')).toThrow()
     expect(() => openExternal('https://e.com/' + 'a'.repeat(2100))).toThrow()
   })
+
+  // H-12（2026-09-11）：此前是裸 `void shell.openExternal(...)`——拒绝逃逸成主进程未捕获异常，
+  // 既不进日志也不进审计，而 renderer 早已收到 {ok:true}（UI 认为链接打开了）。
+  it('shell.openExternal 拒绝 → 记 warn 日志且不外抛（UI 契约不变，失败不再静默）', async () => {
+    const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }
+    mockShell.openExternal.mockRejectedValueOnce(new Error('no browser handler'))
+    expect(() => openExternal('https://example.com/', { logger, sanitize })).not.toThrow()
+    await vi.waitFor(() => expect(logger.warn).toHaveBeenCalledTimes(1))
+    expect(logger.warn).toHaveBeenCalledWith('open-external-failed', { message: 'no browser handler' })
+  })
+
+  it('未注入 logger 时拒绝仍被吞掉（不产生未捕获异常）', async () => {
+    mockShell.openExternal.mockRejectedValueOnce(new Error('boom'))
+    expect(() => openExternal('https://example.com/')).not.toThrow()
+    await Promise.resolve()
+  })
 })
 
 describe('persistence 四通道接线（request/response schema 组合）', () => {
