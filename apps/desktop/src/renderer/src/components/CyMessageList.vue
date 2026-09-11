@@ -102,24 +102,49 @@ const viewportHeight = ref(600)
 const atBottom = ref(true)
 
 /**
- * 跟随底部（H-02，2026-09-11）。`atBottom` 编码的是「用户当前贴底」这一意图，
- * 但此前**没有任何一处由内容增长触发**（全文件 8 个赋值点：onScroll / commitScrollHeights /
- * restoreLoadAnchor / currentId watch / restoreScrollFor / backToBottom / scrollToHighlight /
- * 视口变矮），且 `.cy-messages` 用 `overflow-anchor: none` 关掉了浏览器原生补偿。
- * 于是新行与流式增长都落在视口下方、scrollTop 不动，而 atBottom 仍为 true →
- * 连「回到底部」按钮都不出现，用户按 Enter 后看不到自己的消息。
+ * 跟随底部（H-02，2026-09-11；**意图/位置分离重做于同日 CI 复盘**）。
  *
- * 修法：内容增长后若本就在底部，等到 DOM 更新完再把 scrollTop 贴到底；
- * 用户已上翻（atBottom=false）则什么都不做（保持锚点，安全）。
+ * `atBottom` 编码的是「用户**此刻**是否在底部」这一瞬时位置；而「是否要继续跟随」是**意图**。
+ * 两者本被当成一件事，于是流式增长期间会出现一次致命的自我否定：
+ *   内容增长 → scrollHeight 变大而 scrollTop 未变 → 下一个 scroll/commit 事件把 atBottom 重算为 false
+ *   → followBottomIfSticky 早退 → 此后再增长都不跟随，缺口一路累积。
+ * 本地（负载低）时重锚总能在那一刻之前跑完，故一直绿；CI 上时序一变就红于距底 779px
+ * （[run 34632031117](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34632031117)）。
+ *
+ * 修法：**意图与位置分离**。`stickToBottom` 只在两种时刻改变——
+ *   ① 用户滚到（近）底部 → true；② 用户**主动上翻**（scrollTop 变小）→ false。
+ * 内容增长导致的 scrollHeight 变化（scrollTop 不变）**不**改变意图；程序化的非贴底定位
+ * （切会话恢复锚点、来源跳转、loadOlder 锚点恢复）由各自代码显式置 false。
+ * `atBottom` 仍只用于「回到底部」按钮的显示。
+ */
+const stickToBottom = ref(true)
+const BOTTOM_EPS = 40
+
+function computeAtBottom(el: HTMLElement): boolean {
+  return el.scrollTop + el.clientHeight >= el.scrollHeight - BOTTOM_EPS
+}
+
+/**
+ * 跟随意图（H-02 续修，2026-09-11）。
+ *
+ * 承重的是**意图与瞬时位置分离**：原实现用 `atBottom`（瞬时位置）决定是否跟随，而流式期间它会
+ * 瞬时为 false（探针实测多处 `atb=false`），一旦据此跳过就再无恢复路径，缺口永久冻结
+ * （实测 5157px，perf-gate/follow-bottom 都能复现）。
+ *
+ * 意图的清除判据就是朴素的「scrollTop 变小」＝用户上翻。**刻意不加几何条件**：
+ * 我曾加过一条「且最大可滚动量未增长才算用户上翻」的判别，想防「浏览器夹小 scrollTop 被误判」，
+ * 结果被 perf-gate ②b 当场抓住——流式期间用户上翻时 maxScroll 恰好在增长，该条件使意图**永远清不掉**，
+ * 于是每一次内容增长都把用户从正在阅读的位置拽回底部（断言 `top >= clientH` 红于 245 < 534）。
+ * 那个「夹小」担忧在这两处实测里都没有出现，为一个未证实的假设牺牲真实可用性是错的。
  */
 async function followBottomIfSticky(): Promise<void> {
-  if (!atBottom.value) return
+  if (!stickToBottom.value) return
   await nextTick()
   const el = container.value
   if (!el) return
   el.scrollTop = el.scrollHeight
   scrollTop.value = el.scrollTop
-  atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  atBottom.value = computeAtBottom(el)
 }
 
 /** 连续维护的锚点（scroll/窗口变化时更新；切会话时「先捕获后 flush」用它） */
@@ -162,8 +187,14 @@ const win = computed(() => {
 function onScroll(): void {
   const el = container.value
   if (!el) return
+  const prevTop = scrollTop.value
   scrollTop.value = el.scrollTop
-  atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  const atBottomNow = computeAtBottom(el)
+  atBottom.value = atBottomNow
+  // H-02（意图/位置分离）：滚到（近）底部 → 恢复跟随意图；scrollTop 变小（用户上翻，含拖滚动条）→ 放弃跟随。
+  // 内容增长只改 scrollHeight、不改 scrollTop，故不会误清意图。
+  if (atBottomNow) stickToBottom.value = true
+  else if (el.scrollTop < prevTop) stickToBottom.value = false
   // UI 问题 1：滚动期间进入「滚动中」态，实测高写 pendingHeights（不立即合并）
   // → 滚动中 padding/scrollHeight 稳定，thumb 不跳；滚动停 150ms 后合并一次修正。
   isScrolling.value = true
@@ -194,9 +225,10 @@ function commitScrollHeights(): void {
   if (!hasPending) return
   const el = container.value
   if (!el) { pendingHeights.value = {}; return }
-  // H-02：合并前记录「用户原本是否贴底」。估高→实测高修正会改变 scrollHeight，
+  // H-02：合并前记录「用户是否要继续跟随底部」。估高→实测高修正会改变 scrollHeight，
   // 若本就在底部，修正后必须重新贴底；否则会停在离底部数百像素处（实测 551px）。
-  const wasAtBottom = atBottom.value
+  // 用**意图**而非瞬时位置：修正本身就会让瞬时位置短暂地不贴底。
+  const wasAtBottom = stickToBottom.value
   // ② 捕获当前可视顶部锚点（用旧 prefix——合并前的布局）；offset = scrollTop - prefix[锚点]
   const anchor = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
   // 合并 pending 高进 heights → prefix 重算
@@ -275,6 +307,8 @@ watch(() => conversationStore.currentId, (id, oldId) => {
   heights.value = {}
   scrollTop.value = 0
   atBottom.value = true
+  // 新会话默认「跟随底部」；若随后 restoreScrollFor 恢复到锚点位置，那里会按实际位置显式改写意图
+  stickToBottom.value = true
   pendingRestoreId = id ?? undefined
 })
 
@@ -302,7 +336,9 @@ function restoreScrollFor(id: string): void {
     el.scrollTop = el.scrollHeight
   }
   scrollTop.value = el.scrollTop
-  atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  atBottom.value = computeAtBottom(el)
+  // 恢复锚点是**有意的**非贴底定位：显式放弃跟随意图（否则随后一次内容增长会把用户拽回底部）
+  stickToBottom.value = atBottom.value
 }
 
 function backToBottom(): void {
@@ -310,6 +346,7 @@ function backToBottom(): void {
   if (!el) return
   el.scrollTop = el.scrollHeight
   atBottom.value = true
+  stickToBottom.value = true
 }
 
 /** G4 D6：来源跳转高亮——滚动居中 + 6s 清除 + aria-live 播报（非纯颜色，配「已定位」chip）。
@@ -331,7 +368,9 @@ function scrollToHighlight(id: string): boolean {
   const targetTop = prefix.value[idx] ?? 0
   el.scrollTop = Math.max(0, targetTop - el.clientHeight / 2) // 估高近似居中（实测高误差由后续 scrollIntoView 精确修正）
   scrollTop.value = el.scrollTop
-  atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+  atBottom.value = computeAtBottom(el)
+  // 来源跳转是**有意的**非贴底定位：放弃跟随，避免随后增长把用户从定位处拽走
+  stickToBottom.value = false
   return true
 }
 

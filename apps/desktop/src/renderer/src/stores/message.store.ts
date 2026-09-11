@@ -541,7 +541,10 @@ export const useMessageStore = defineStore('message', () => {
     delete generationIdentityById.value[generationId]
     // H-10：终态清理同时解除静默窗口（含 completed/failed/protocol 失败/取消四条路径，
     // 它们都经此处收敛）。
-    void watchdog // MUTATION-B: 终态不再解除窗口
+    // 注：单靠此处 disarm 并不构成唯一防线——onGenerationSilence 的 activeGenerationId 守卫
+    // 已能挡住误伤（变异验证：单独去掉 disarm 时 8 条单测全绿；同时去掉守卫才红于用例③）。
+    // 保留 disarm 是为了不留下「一定会被守卫丢弃」的空转定时器。
+    watchdog.disarm()
     // The active id is cleared eagerly on failure/cancellation.  Do not let
     // that make the accumulator immortal: terminal cleanup owns the
     // accumulator by its generation id, not by the current active pointer.
