@@ -101,12 +101,16 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
 
 <style scoped>
 .cy-nav {
+  position: relative;
+  /* backdrop-filter 会创建独立堆叠上下文；显式抬高宿主，确保连接浮层不被后绘制的会话/聊天列盖住。 */
+  z-index: 20;
   grid-area: nav;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--cy-space-5);
   padding: var(--cy-space-7) var(--cy-space-3-5);
+  overflow: visible;
   background: color-mix(in srgb, var(--cy-nav) 62%, transparent);
   border-right: 1px solid var(--cy-border);
   backdrop-filter: blur(18px) saturate(110%);

@@ -353,6 +353,9 @@ const editError = computed(() => connectErr.value ?? (connection.error ? errorMe
   flex-direction: column;
   gap: var(--cy-space-5);
   width: 320px;
+  max-height: min(560px, calc(100dvh - 96px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--cy-space-6);
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);

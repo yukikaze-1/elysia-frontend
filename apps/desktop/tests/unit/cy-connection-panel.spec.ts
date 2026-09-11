@@ -6,6 +6,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import type { BackendEvent } from '@shared/contracts'
 import CyConnectionPanel from '../../src/renderer/src/components/CyConnectionPanel.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -49,6 +51,21 @@ beforeEach(() => {
 })
 
 describe('CyConnectionPanel 两级结构（UII-QQ 设置页批次）', () => {
+  it('连接浮层宿主高于普通内容列且允许越界显示', () => {
+    const renderer = join(__dirname, '../../src/renderer/src')
+    const navSource = readFileSync(join(renderer, 'components/CyNavRail.vue'), 'utf8')
+    const panelSource = readFileSync(join(renderer, 'components/CyConnectionPanel.vue'), 'utf8')
+    const navRule = navSource.match(/\.cy-nav\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    const popRule = panelSource.match(/\.cy-conn-pop\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+
+    expect(navRule).toContain('position: relative')
+    expect(navRule).toContain('z-index: 20')
+    expect(navRule).toContain('overflow: visible')
+    expect(popRule).toContain('position: absolute')
+    expect(popRule).toContain('bottom: 0')
+    expect(popRule).toContain('overflow-y: auto')
+  })
+
   it('摘要态：状态文字 + 地址摘要 + 版本 + 连接设置入口（无 Endpoint/Token 输入）', async () => {
     const api = makeApi()
     setDesktopApi(api)
