@@ -30,8 +30,7 @@
 - H-02 复核补充：`onRowResized` 在内容增长时只写 `heights`，不动 `scrollTop`/`atBottom`；且因 `atBottom` 仍为 `true`，`v-if="!atBottom"` 的「回到底部」按钮**也不出现**——用户连手动找回的入口都没有，比报告描述的更严重。
 - **报告 §11 R-09 的两组观测（2026-09-11）**：报告称本机 `pnpm test:integration`「22 文件全红（81 failed / 12 passed / 47 skipped）」，而本轮多次重跑得到**全绿**（单文件 `ipc-security.spec.ts` 18/18；全套 **22 files / 138 passed + 2 skipped，exit 0**，227s 与 245s 各一次）。**两组都是真的**，由同一机制决定（`out/` 的构建模式），见下条与 §3.1。
 - R-09 定性（**2026-09-11 二次修正**）：该报告的症状描述**属实**，但**不是环境玄学、也不是 Playwright 握手偶发**——本地那些 `Process failed to launch!` 的根因是 dev/production 构建与 harness 覆盖门冲突，已定位并给出可复现判据，见 §3.1「集成测试「全红」的真正机制」。简言之：`pnpm dev`（或 `pnpm build`）会重写 `out/`，而集成套件跑的正是 `out/` 产物，`CYRENE_TEST_APP_DATA` 被 fail-closed 拒绝。先前措辞「不可复现 / 运行环境态」的方向对（非产品缺陷、非门禁失效）但成因错，现予取代。另：报告用于反证该结论的「进程存活 12 秒」推理不成立（模态框会让进程一直活着），见同节方法论陷阱。
-- 报告最值得保留的两条结构性判断（已复核属实）：① **收口点是路由点而非策略点**——`registerHandler` 只校验来源与参数个数、`createIpcHandler` 只校验形状，故 `MAX_IPC_MESSAGE_BYTES` 只在 1 条通道真正执行、`PATH_BLACKLIST_DEFAULTS` 在附件链 0 次调用，H-01 与 M-03 是同一根因的两个实例；
-- ② **测试保护了 bug**——`debounce-trailing.spec.ts:11-13` 把防抖（而非节流）语义钉成了正确行为，这是 H-03 能在 214 个测试文件下长期存活的原因。建议把「这条断言在实现坏掉时会红吗」列入评审清单项，这比修单个缺陷更能防止下一批同类问题。
+- 报告最值得保留的两条结构性判断（已复核属实）：① **收口点是路由点而非策略点**——`registerHandler` 只校验来源与参数个数、`createIpcHandler` 只校验形状，故 `MAX_IPC_MESSAGE_BYTES` 只在 1 条通道真正执行、`PATH_BLACKLIST_DEFAULTS` 在附件链 0 次调用，H-01 与 M-03 是同一根因的两个实例；- ② **测试保护了 bug**——`debounce-trailing.spec.ts:11-13` 把防抖（而非节流）语义钉成了正确行为，这是 H-03 能在 214 个测试文件下长期存活的原因。建议把「这条断言在实现坏掉时会红吗」列入评审清单项，这比修单个缺陷更能防止下一批同类问题。
 - **UI 改版后的复评（2026-09-11）**：用户 UI 批次 `034c110`／`85f2602`／`116d529` 落地后按 HEAD 重核报告 UI 条目。已改善：M-20 部分修复（`CyChatInput` 4 处、`CyNavRail` 1 处的 `--cy-accent` 文本误用已清除）。逐处读码确认**仍在**：H-02（不跟随底部且不可复制）、M-19、M-21、M-22、M-23、M-24。
 - 复评发现该 UI 批次**新引入三条**，本批已修：① `--cy-accent` 被调浅（`#dce8ff`→`#e7edff`），使安全授权按钮文本对比度由 1.23:1 **降到 1.17:1**（暗色 1.31:1）——改用配对文字色 `--cy-accent-text`（11.0:1／13.1:1）并按规则级加守护断言；② 主题背景用 `@media (prefers-color-scheme: dark)` 切换、而全仓其它颜色用 `light-dark()`，应用内主题落地时会出现「token 翻了、背景图没翻」——补根节点 `data-theme` 覆盖路径并与 `color-scheme` 同步；③ 装饰图 `cyrene-deco-voice-wave.png` 为 1024×768／496 KB，而实际渲染宽度 ≤280px——按 2× 出图改**无损** webp（106,918 B，−78%）。
 - 三条修复均过**变异验证**：还原文本色→授权按钮断言红；去掉 `:not([data-theme='light'])`→主题断言红；再单独去掉 `color-scheme: dark`→另一条红；放回 PNG→回退断言红；把 webp 换成 444 KB→尺寸上限断言红。装饰图保真度用客观指标核验（alpha 通道逐位相同；白底／黑底合成后 PSNR 69.1／68.5 dB，差异在 ±1/255 内）。
@@ -144,6 +143,18 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **方法论教训（本轮两次踩到，值得单列）**：① 变异验证**必须先重新构建**——首次变异忘了 `electron-vite build --mode test`，对着旧产物跑出假绿；② 第一版 H-04 e2e 用「当前会话草稿」作断言，被既有断线路径兜住而**恒绿**，是变异验证把它揪出来的；③ 「可视行数变多」也曾被我误用作贴底断言（虚拟化下滚动后行数减少是正常的），改为产品级断言「自己的消息在视口内」。
 
+**安全/数据止血批次（2026-09-11，H-12／H-11b／H-01）**
+
+报告 P0 里剩下的三条安全/数据项已修复，均按「修 → 变异验证 → 提交」完成；三项都在 HEAD 逐条复核过现场。
+
+- **H-12 主进程异常兜底（`de808ea`）**：此前 `src/main` 全仓 **0 处**注册 `unhandledRejection`/`uncaughtException`。新增 `app/process-error-guards.ts`（按 `handleChildProcessGone` 的「纯函数 + deps 注入 + 单测」先例）：两类异常都写 error 日志 + 审计，文本经脱敏并截断。**两个处理器的存续语义故意不同**：`unhandledRejection` 只留痕不终止（Node 无监听器时会升级为未捕获异常并终止进程，而已观测实例是良性的「浏览器拒绝打开链接」）；`uncaughtException` 只留痕、不替调用方决定是否终止（`process.on` 是追加监听，不覆盖 Electron 自带处理器，故为纯增量）。另修 `pushEvent` 缺销毁守卫（三个 send 点里唯一无守卫者）与 `openExternal` 的裸 `void`（拒绝逃逸成未捕获异常）。变异三处均红。
+- **H-11b 持久化 fail-closed（`12268f9`）**：`corrupt-isolation` 的 `rename(...).catch(() => {})` 改为上抛（ENOENT 例外）；`session-store` 新增 `SESSION_SCHEMA_VERSION` + `describeSchemaProblem`（`schemaVersion` 此前**声明了却从不读**）、降级态 `getLastError()`、以及 `writeDrafts`/`writeCache` 的 `assertWritable` 守卫——隔离失败后拒绝一切写入，原文件逐字节不动。**有意未采纳**报告「非空文件解析出空态也算损坏」的建议：合法空库写出的正是同样形状，该启发式会误报。
+- **H-01 附件黑名单（`31e309b`）**：`PATH_BLACKLIST_DEFAULTS` 此前在这条链 0 次调用。现于 **validate 与 upload 两条链**、`realpath` 之后套用（upload 侧复验必要——Renderer 可跳过 validate 直接 upload），按 realpath 匹配故符号链接也拦得住。**取舍**：采用完整默认黑名单，因此 `/tmp` 与 `%TEMP%` 亦被拒（从临时目录选附件会失败）；理由与回退方式见 §5。
+
+**方法论教训（本批又踩一次）**：变异验证不仅「必须先重新构建」，还必须确认**变异真的改变了代码路径**——本批 H-11b 首轮变异我写成恒 false 判断、原守卫仍在，跑出假绿；且发现 session-store 侧测试用的是注入替身、绕过了真实 isolation 实现，补了接缝用例后才真正变红。H-01 同款：首轮把守卫改成恒 false 而非移除。
+
+**本批一次偶发（如实记录，不当作通过）**：H-01 的全量集成跑中 `electron-voice` 的 `9b. 断线清理（实时）` 红过一次；单跑该 spec **16/16 全绿**（含 9b 1041ms），且附件黑名单不触及语音链路，判定为偶发。此类中断与 CI 上出现过的是同一族。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
@@ -173,10 +184,13 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 1. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
-4. 全量评审建议的 P0 批次**已开始**：H-02／H-03／H-04 三项已修复并验证（见 §1 与 §3.1），其余待定；其中 P0-7（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI）依赖外部授权事实与阶段 8 决策，不在可立即执行范围。
-5. M-20 其余 **6 处** `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）**未动**——属视觉设计取舍，待用户决定；本批只收口了安全授权按钮。
-6. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
-7. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
+4. 全量评审建议的 P0 批次**已基本完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；仅 P0-7 未动（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI），它依赖外部授权事实与阶段 8 决策。
+5. **待你决定的两项取舍**：① H-01 采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒（改一处即可放开）；② H-12 的 `uncaughtException` 目前只留痕、不主动终止进程——「主进程异常后是否应终止」属产品决策。
+6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。
+7. H-11b 的降级故障只到「Main 拒绝写入 + 日志/诊断计数 + `getLastError()`」；**renderer 侧仍不会向用户显示持久化故障**（`draft.store` 的持久化失败是 fail-open 吞掉的），属 M-19 一类。
+8. M-20 其余 **6 处** `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）**未动**——属视觉设计取舍，待用户决定；本批只收口了安全授权按钮。
+9. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
+10. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
 
 ## 6. 状态维护规则
 
