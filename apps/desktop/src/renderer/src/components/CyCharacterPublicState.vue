@@ -4,6 +4,7 @@ import type { CharacterBindingSnapshot, CharacterPublicState, ConnectionState } 
 import type { PublicError } from '../utils/public-error'
 // 别名：本组件已有一个 errorMessage computed（模板绑定用），避免与集中映射器重名
 import { errorMessage as resolveErrorMessage } from '../utils/error-message'
+import { characterIdentityMatches } from '../utils/character-identity'
 import { useConnectionStore } from '../stores/connection.store'
 import { useCharacterRuntimeStore, type CharacterRuntimeLoadState } from '../stores/character-runtime.store'
 import {
@@ -68,10 +69,10 @@ const exactState = computed(() => {
   const currentState = runtime.activeState
   // Keep the component fail-closed even when a host supplies a test double:
   // the current role card may only consume the exact active revision.
+  // H-06/H-07：判据取自 utils/character-identity（**唯一来源**）——本处反应是 return undefined
+  // （渲染空），store 侧同一判据的反应是 throw；规则一处、反应各异。
   if (!currentBinding || !currentState) return undefined
-  if (currentState.characterId !== currentBinding.characterId
-    || currentState.characterInstanceId !== currentBinding.characterInstanceId
-    || currentState.characterRevision !== currentBinding.characterRevision) return undefined
+  if (!characterIdentityMatches(currentState, currentBinding)) return undefined
   return currentState
 })
 const runtimeStatus = computed(() => runtime.activeStatus)

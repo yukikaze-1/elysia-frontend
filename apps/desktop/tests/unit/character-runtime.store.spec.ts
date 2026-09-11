@@ -216,6 +216,9 @@ describe('characterRuntimeStore FE-F1a', () => {
     expect(store.activeStatus).toBe('error')
     expect(store.activeError).toMatchObject({ code: 'CHARACTER_STATE_IDENTITY_MISMATCH' })
     expect(store.activeError?.message).not.toContain('builtin/cyrene')
+    // H-06/H-07：错误文案带**字段名**（本用例是 characterId 不符）——便于在诊断里区分
+    // 「id 不符 / 实例不符 / 修订号不符」三种失配；字段名是结构性信息，仍不含任何载荷值。
+    expect(store.activeError?.message, '应指明是哪个字段失配（此前三种情况共用一句无从区分的文案）').toContain('characterId')
 
     store.setConnectionEpoch(2)
     store.setConnectionEpoch(1)

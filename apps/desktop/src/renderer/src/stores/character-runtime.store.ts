@@ -7,16 +7,19 @@ import type {
 } from '@shared/contracts'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { characterIdentityMismatch } from '../utils/character-identity'
 import { cloneValue } from '@shared/domain'
 
 export type CharacterRuntimeLoadState = 'idle' | 'loading' | 'ready' | 'stale' | 'error'
 
 type CharacterStateExpectation = Pick<CharacterBindingSnapshot, 'characterId' | 'characterInstanceId' | 'characterRevision'>
 
-function stateIdentityError(): Error {
+function stateIdentityError(mismatch?: string): Error {
   // Do not include the returned payload in this error. A malformed/foreign
   // snapshot must be fail-closed without accidentally exposing backend data.
-  return new Error('[CHARACTER_STATE_IDENTITY_MISMATCH] 角色状态身份校验失败')
+  // 只带**字段名**（不是值）：字段名是结构性信息，不泄露后端数据，却能让诊断区分
+  // 「id 不符」「实例不符」「修订号不符」——此前三种情况共用一句无从区分的文案。
+  return new Error(`[CHARACTER_STATE_IDENTITY_MISMATCH] 角色状态身份校验失败${mismatch ? `（字段：${mismatch}）` : ''}`)
 }
 
 function missingApiError(): Error {
@@ -269,15 +272,13 @@ export const useCharacterRuntimeStore = defineStore('character-runtime', () => {
     const task = operation
       .then((state) => {
         if (!currentRequest(owner)) return
-        if (
-          state.characterInstanceId !== instanceId
-          || (expected !== undefined && (
-            state.characterId !== expected.characterId
-            || state.characterInstanceId !== expected.characterInstanceId
-            || state.characterRevision !== expected.characterRevision
-          ))
-        ) {
-          throw stateIdentityError()
+        // H-06/H-07：身份判据收敛到 utils/character-identity（唯一来源）。
+        // 本处的**反应**是 throw（fail-closed）；组件侧的同一判据反应是 return undefined——
+        // 规则一处、反应各异，正是本次收敛的目标。
+        if (state.characterInstanceId !== instanceId) throw stateIdentityError('characterInstanceId')
+        if (expected !== undefined) {
+          const mismatch = characterIdentityMismatch(state, expected)
+          if (mismatch !== undefined) throw stateIdentityError(mismatch)
         }
         const existingState = statesByInstanceId.value[instanceId]
         if (existingState && existingState.characterId !== state.characterId) throw stateIdentityError()
