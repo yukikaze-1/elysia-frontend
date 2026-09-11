@@ -15,6 +15,25 @@ export const DRAFT_MAX_BYTES = 100 * 1024
 export const DRAFT_MAX_ENTRIES = 50
 export const CACHE_TOP_N = 20
 export const CACHE_MESSAGES_PER_CONV = 300
+/** 两个会话文件共用的当前 schema 版本（写入方与读取校验方同源，杜绝字面量双处漂移） */
+export const SESSION_SCHEMA_VERSION = 1
+
+/**
+ * 判断已成功解析的 JSON 是否与当前 schema 兼容（H-11b，2026-09-11）。
+ *
+ * 背景：`schemaVersion` 此前**声明了却从不读**——`DraftsFile.schemaVersion: 1` 只是接口上的装饰，
+ * 读取路径只检查 `data.entries` 是不是对象。于是「字段名变化（正是『旧数据不迁移』决策预期的情形）
+ * 或任何外来 JSON」都会在第一次写入时被**无痕丢弃**，用户看不到任何征兆。
+ *
+ * 返回 `undefined` 表示兼容；否则返回问题标签（进入隔离路径 + 留痕）。
+ * 抽成纯函数便于单测。
+ */
+export function describeSchemaProblem(raw: unknown): string | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return 'not-an-object'
+  const version = (raw as { schemaVersion?: unknown }).schemaVersion
+  if (version !== SESSION_SCHEMA_VERSION) return `schema-version-mismatch:${String(version)}`
+  return undefined
+}
 
 interface DraftEntry { text: string; updatedAt: string }
 interface SnapshotEntry { messages: Message[]; updatedAt: string; lastSyncAt: string }
@@ -44,6 +63,8 @@ export class SessionStore {
   private readonly isolation: CorruptIsolation
   private drafts: DraftsFile = { schemaVersion: 1, entries: {}, scrollAnchors: {} }
   private cache: CacheFile = { schemaVersion: 1, conversations: [], snapshots: {} }
+  /** 持久化降级态（H-11b）：损坏文件隔离失败后置位，此后拒绝一切写入以保现场 */
+  private degraded: { file: string; reason: string } | undefined
 
   constructor(private readonly deps: SessionStoreDeps) {
     this.draftsFile = join(deps.appCache, 'drafts-v1.json')
@@ -105,22 +126,56 @@ export class SessionStore {
   }
 
   private async readFile<T>(file: string, parse: (raw: unknown) => T): Promise<T> {
+    let raw: unknown
     try {
       const { fd } = await openSafeFile(file, { mode: 'existing', purpose: 'read', safeRoot: this.deps.safeRoot })
-      try { return parse(JSON.parse(await fd.readFile('utf8'))) } finally { await fd.close() }
+      try { raw = JSON.parse(await fd.readFile('utf8')) } finally { await fd.close() }
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return parse({}) // 首次启动无文件 → 空
-      // 整文件损坏：统一层隔离保留现场（不含正文），重建空（countDiagnostic 计数在 isolation.isolate 内部，防双计数）
-      this.deps.logger.warn('persistence:corrupt-isolated', { file: basename(file) })
-      await this.isolation.isolate(file, 'session', this.deps.safeRoot)
-      return parse({})
+      // 整文件不可读/不可解析：隔离保留现场（不含正文），重建空
+      return await this.isolateAndRebuild(file, parse, `read-failed:${(e as NodeJS.ErrnoException).code ?? 'unknown'}`)
     }
+    // H-11b：JSON 可解析 ≠ schema 兼容。版本不符/非对象此前会被静默当作空态丢弃。
+    const problem = describeSchemaProblem(raw)
+    if (problem) return await this.isolateAndRebuild(file, parse, problem)
+    return parse(raw)
+  }
+
+  /**
+   * 隔离损坏文件并重建空态（H-11b）。隔离**失败**时进入降级态：保现场 + 拒绝后续一切写入。
+   * 这正是此前最危险的一条路径——改名失败被吞、内存态清空，下一次击键把原文件无痕覆写。
+   */
+  private async isolateAndRebuild<T>(file: string, parse: (raw: unknown) => T, reason: string): Promise<T> {
+    this.deps.logger.warn('persistence:corrupt-isolated', { file: basename(file), reason })
+    try {
+      await this.isolation.isolate(file, 'session', this.deps.safeRoot)   // countDiagnostic 在 isolate 内部（防双计数）
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      this.degraded = { file: basename(file), reason: `${reason}; isolate-failed:${detail}` }
+      this.deps.countDiagnostic('persistence:degraded')
+      this.deps.logger.error('persistence:degraded', { file: basename(file), reason, message: detail })
+    }
+    return parse({})
+  }
+
+  /** 降级原因（H-11b）；undefined 表示持久化正常。供诊断与测试读取。 */
+  getLastError(): { file: string; reason: string } | undefined { return this.degraded }
+
+  /** 写入前守卫：降级态下拒绝一切写入，绝不覆写未能隔离的原文件 */
+  private assertWritable(): void {
+    if (!this.degraded) return
+    throw new CyreneError(
+      CyreneErrorCode.UNKNOWN,
+      `持久化已降级（${this.degraded.file}：${this.degraded.reason}），已拒绝写入以保留现场`
+    )
   }
 
   private async writeDrafts(): Promise<void> {
+    this.assertWritable()
     await atomicWriteFile(this.draftsFile, JSON.stringify(this.drafts), { safeRoot: this.deps.safeRoot })
   }
   private async writeCache(): Promise<void> {
+    this.assertWritable()
     await atomicWriteFile(this.cacheFile, JSON.stringify(this.cache), { safeRoot: this.deps.safeRoot })
   }
 

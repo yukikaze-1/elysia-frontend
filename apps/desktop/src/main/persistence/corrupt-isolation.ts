@@ -35,7 +35,16 @@ export function createCorruptIsolation(deps: CorruptIsolationOpts): CorruptIsola
     async isolate(file, tag, safeRoot) {
       if (safeRoot) await assertContained(file, safeRoot)  // 安全 MED-3：safeRoot 必传则校验
       const dest = `${file}.corrupt-${tag}-${nowIso()}`
-      await rename(file, dest).catch(() => {})  // 隔离保留现场，不污染后续写入
+      // H-11b（2026-09-11）：隔离失败**必须上抛**，不能吞。
+      // 此前是 `await rename(file, dest).catch(() => {})`，于是「改名失败（AV/备份代理/只读目录）
+      // → 原文件仍在磁盘上 → 调用方内存态被清空 → 下一次击键无痕覆写」这条静默数据销毁路径成立。
+      // 现由调用方据此进入降级态并拒绝一切写入，保现场。
+      try {
+        await rename(file, dest)
+      } catch (err) {
+        // ENOENT = 读与改名之间文件已消失：无物可保留、也无物可覆写 → 视为隔离完成
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      }
       deps.countDiagnostic('persistence:corrupt-isolated')
       return dest
     },

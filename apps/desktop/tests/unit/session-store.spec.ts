@@ -3,7 +3,7 @@ import { describe, expect, it, afterEach, vi } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile, realpath } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { SessionStore } from '../../src/main/persistence/session-store'
+import { SessionStore, describeSchemaProblem } from '../../src/main/persistence/session-store'
 import type { Conversation, Message } from '@shared/contracts'
 
 function msg(id: string, createdAt: string, extra = ''): Message {
@@ -217,5 +217,95 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
     await env.s.persistSession({ conversationId: 'c1', draft: { text: 'SECRET_DRAFT_ABC', updatedAt: 't' }, scrollAnchor: null })
     const joined = [...env.logger.info.mock.calls, ...env.logger.warn.mock.calls, ...env.logger.error.mock.calls].map((c) => JSON.stringify(c)).join('\n')
     expect(joined).not.toContain('SECRET_DRAFT_ABC')
+  })
+})
+
+// —— H-11b（2026-09-11）：持久化损坏路径改 fail-closed ——
+// 修复前：`schemaVersion` 声明了却从不读；隔离改名失败被 `.catch(() => {})` 吞掉，
+// 于是「原文件仍在磁盘上 → 内存态被清空 → 下一次击键无痕覆写」这条静默数据销毁路径成立。
+describe('SessionStore 损坏路径 fail-closed（H-11b）', () => {
+  async function makeRaw(base: string, counts: string[], logger: Record<string, unknown> = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }) {
+    const s = new SessionStore({
+      appCache: base, safeRoot: await realpath(base), logger: logger as never,
+      countDiagnostic: (code: string) => { counts.push(code) }, getActiveConversationId: () => 'c1'
+    })
+    return { s, logger }
+  }
+
+  it('describeSchemaProblem：非对象 / 版本不符 / 兼容 三态（版本此前从不被读）', () => {
+    expect(describeSchemaProblem(null)).toBe('not-an-object')
+    expect(describeSchemaProblem([1, 2])).toBe('not-an-object')
+    expect(describeSchemaProblem('x')).toBe('not-an-object')
+    expect(describeSchemaProblem({})).toBe('schema-version-mismatch:undefined')
+    expect(describeSchemaProblem({ schemaVersion: 2 })).toBe('schema-version-mismatch:2')
+    expect(describeSchemaProblem({ schemaVersion: 1 })).toBeUndefined()
+  })
+
+  it('版本不符的文件被隔离而非静默当空态（原文件保留在 .corrupt-*）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-h11b-'))
+    const counts: string[] = []
+    // 旧/外来 schema：字段名变化正是「旧数据不迁移」决策预期的情形
+    await writeFile(join(base, 'drafts-v1.json'), JSON.stringify({ schemaVersion: 99, entries: { c1: { text: '旧格式草稿', updatedAt: 't' } } }), { encoding: 'utf8', mode: 0o600 })
+    const { s } = await makeRaw(base, counts)
+    await s.load()
+    expect(s.hydrate().drafts).toHaveLength(0)                  // 内存态重建为空
+    const files = await readdir(base)
+    expect(files.some((n) => n.includes('.corrupt-session-'))).toBe(true)   // 但原文件被保留
+    expect(files).not.toContain('drafts-v1.json')
+    await rm(base, { recursive: true, force: true })
+  })
+
+  it('隔离失败 → 进入降级态 + 拒绝写入（原文件绝不被覆写）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-h11b2-'))
+    const counts: string[] = []
+    const raw = JSON.stringify({ schemaVersion: 99, entries: { c1: { text: '必须保住', updatedAt: 't' } } })
+    await writeFile(join(base, 'drafts-v1.json'), raw, { encoding: 'utf8', mode: 0o600 })
+    const { s } = await makeRaw(base, counts)
+    // 注入隔离失败（模拟 AV/备份代理/只读目录下 rename 失败）
+    const isolation = (s as unknown as { isolation: { isolate(): Promise<string> } }).isolation
+    isolation.isolate = async () => { throw new Error('EPERM: rename denied') }
+    await s.load()
+    expect(s.getLastError()?.file).toBe('drafts-v1.json')
+    expect(counts).toContain('persistence:degraded')
+    // 关键：拒绝写入 —— 此前会走到 writeDrafts 并把原文件覆写成空态
+    await expect(s.persistSession({ conversationId: 'c1', draft: { text: '新内容', updatedAt: 't2' }, scrollAnchor: null }))
+      .rejects.toThrow(/持久化已降级/)
+    // 原文件逐字节未变
+    expect(await readFile(join(base, 'drafts-v1.json'), 'utf8')).toBe(raw)
+    await rm(base, { recursive: true, force: true })
+  })
+
+  it('未降级时 getLastError 为 undefined 且写入正常（不误报）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-h11b3-'))
+    const counts: string[] = []
+    const { s } = await makeRaw(base, counts)
+    await s.load()
+    expect(s.getLastError()).toBeUndefined()
+    await s.persistSession({ conversationId: 'c1', draft: { text: 'ok', updatedAt: 't' }, scrollAnchor: null })
+    expect(s.hydrate().drafts.find((d) => d.conversationId === 'c1')?.text).toBe('ok')
+    expect(counts).not.toContain('persistence:degraded')
+    await rm(base, { recursive: true, force: true })
+  })
+
+  // 接缝覆盖：走**真实** isolation 实现（不是注入替身），确认失败会一路传到降级态。
+  // safeRoot 指向别处 → assertContained 拒绝 → isolate 上抛 → SessionStore 进入降级态。
+  it('真实隔离失败（safeRoot 不含该文件）→ 降级态 + 拒绝写入（覆盖 store↔isolation 接缝）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-h11b4-'))
+    const other = await mkdtemp(join(tmpdir(), 'cyrene-h11b4-root-'))
+    const counts: string[] = []
+    const raw = JSON.stringify({ schemaVersion: 99, entries: { c1: { text: '必须保住', updatedAt: 't' } } })
+    await writeFile(join(base, 'drafts-v1.json'), raw, { encoding: 'utf8', mode: 0o600 })
+    const s = new SessionStore({
+      appCache: base, safeRoot: await realpath(other), logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      countDiagnostic: (code: string) => { counts.push(code) }, getActiveConversationId: () => 'c1'
+    })
+    await s.load()
+    expect(s.getLastError(), '真实隔离失败必须进入降级态').toBeDefined()
+    expect(counts).toContain('persistence:degraded')
+    await expect(s.persistSession({ conversationId: 'c1', draft: { text: '新', updatedAt: 't2' }, scrollAnchor: null }))
+      .rejects.toThrow(/持久化已降级/)
+    expect(await readFile(join(base, 'drafts-v1.json'), 'utf8'), '原文件逐字节未变').toBe(raw)
+    await rm(base, { recursive: true, force: true })
+    await rm(other, { recursive: true, force: true })
   })
 })
