@@ -3,10 +3,11 @@
 // 按 assistantSegments(segmentIndex 排序)渲染:内心独白 details 折叠(默认收起,标题仅「内心独白」)+
 // public_reply 白色气泡 + 工具卡 + 元数据低权重行。UII-QQ 重构:去掉「外层大卡片+状态行+蓝色正文框」
 // 多层嵌套;completed 不展示,failed/interrupted 仍明确展示(inner_voice 数据不删,只改展示)。
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import type { AssistantSegment, CharacterBindingSnapshot, CharacterGenerationRef, Message, CharacterPresentation } from '@shared/contracts'
 import { stickerRenderUrl } from '@shared/domain'
 import { formatFullTime, formatMessageTime } from '../utils/message-time'
+import { copyText } from '../utils/clipboard'
 import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
 import CyToolCard from './CyToolCard.vue'   // 阶段 6 批次 B（Task 7）：归档工具卡片（只读）
@@ -124,6 +125,28 @@ function isTextSegment(seg: AssistantSegment): boolean {
 function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video' | 'audio' | 'file' | 'link'; mediaType?: string; name?: string; size?: number; url?: string }> {
   return (props.message.attachments ?? []).map((a) => ({ attachmentId: a.attachmentId, kind: a.kind, mediaType: a.mediaType, name: a.name, size: a.size }))
 }
+
+// —— H-02（2026-09-11）：消息级复制 ——
+// 报告实测：`body { user-select: none }` + 无操作行 + 无右键菜单，使「复制回答」三条路全断。
+// 本组件补操作行（选择能力由 CyMessageList 对消息行恢复 user-select 承担）。
+// 复制内容 = 用户可读正文：user 取 content；assistant 取 public_reply 分段拼接（内心独白与
+// 技术元数据不外带——它们不是「回答」本身）。
+const copyableText = computed(() => {
+  if (isUser.value) return props.message.content ?? ''
+  return publicSegments.value.filter(isTextSegment).map(segmentText).join('\n\n').trim()
+})
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function onCopy(): Promise<void> {
+  if (!copyableText.value) return
+  const ok = await copyText(copyableText.value)
+  if (!ok) return
+  copied.value = true
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => { copied.value = false }, 1500)
+}
+// 虚拟列表会频繁挂载/卸载行——定时器必须随组件销毁清理，否则卸载后仍写 ref
+onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 </script>
 
 <template>
@@ -143,6 +166,10 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
         <CyAttachmentMedia :kind="a.kind" :attachment-id="a.attachmentId" :media-type="a.mediaType" :name="a.name" :size="a.size" />
       </div>
       <span v-if="message.status === 'failed'" class="cy-user-error-badge" title="发送失败">发送失败</span>
+      <!-- H-02：消息操作行（右对齐随 user 列） -->
+      <div v-if="copyableText" class="cy-msg-actions">
+        <button type="button" class="cy-msg-action" data-testid="message-copy" :aria-label="copied ? '已复制' : '复制消息'" @click="onCopy">{{ copied ? '已复制' : '复制' }}</button>
+      </div>
     </div>
     <span class="cy-avatar cy-avatar-user" role="img" :title="userDisplayName" :aria-label="userDisplayName">我</span>
   </div>
@@ -198,11 +225,36 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
         <span v-if="message.usage">{{ message.usage.total }} tokens</span>
       </div>
       <span v-if="terminalNote" class="cy-status-note">{{ terminalNote }}</span>
+      <!-- H-02：消息操作行（复制回答——本产品最高频操作，此前三条路全断） -->
+      <div v-if="copyableText" class="cy-msg-actions">
+        <button type="button" class="cy-msg-action" data-testid="message-copy" :aria-label="copied ? '已复制' : '复制回答'" @click="onCopy">{{ copied ? '已复制' : '复制' }}</button>
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* H-02：消息操作行——默认低权重，hover/focus-within 才显形；不改变行高契约（虚拟列表按实测高自适应） */
+.cy-msg-actions { display: flex; gap: var(--cy-space-4); opacity: 0; transition: opacity var(--cy-motion-fast) ease; }
+.cy-message-row:hover .cy-msg-actions,
+.cy-message-row:focus-within .cy-msg-actions { opacity: 1; }
+/* 键盘/触屏可达性：聚焦在按钮上时必须可见（不能只靠 hover） */
+.cy-msg-actions:focus-within { opacity: 1; }
+.cy-msg-action {
+  padding: var(--cy-space-1) var(--cy-space-4);
+  border: 1px solid var(--cy-border);
+  border-radius: var(--cy-radius-pill);
+  background: var(--cy-surface);
+  color: var(--cy-muted);
+  font-size: var(--cy-font-sm);
+  cursor: pointer;
+}
+.cy-msg-action:hover { color: var(--cy-text); background: var(--cy-surface-hover); }
+/* 消息正文可选中（H-02）：全局 body 为 user-select:none，此前连 Ctrl+A/Ctrl+C 都无效 */
+.cy-bubble,
+.cy-inner-voice-text,
+.cy-msg-emotion { user-select: text; }
+
 .cy-message-row {
   display: flex;
   align-items: flex-start;

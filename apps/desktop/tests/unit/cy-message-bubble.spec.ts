@@ -4,8 +4,8 @@
 // 非法 createdAt 安全隐藏；流式→completed 时间不变；tool 占位无时间。
 // 子组件 stub；组件用 host 本地时区格式化——断言与组件同源（同一 format* 函数 + 正则口径），
 // 不依赖测试机时区/日期；时区精确转换由 message-time.spec 以显式 timeZone 锁定。
-import { describe, expect, it } from 'vitest'
-import { reactive } from 'vue'
+import { describe, expect, it, vi } from 'vitest'
+import { nextTick, reactive } from 'vue'
 import { mount } from '@vue/test-utils'
 import type { Message } from '@shared/contracts'
 import CyMessageBubble from '../../src/renderer/src/components/CyMessageBubble.vue'
@@ -180,6 +180,64 @@ describe('CyMessageBubble 时间戳（UII-QQ 时间戳批次）', () => {
     expect(avatar.attributes('role')).toBe('img')
     expect(avatar.attributes('aria-label')).toBe('Yomu')
     expect(avatar.attributes('title')).toBe('Yomu')
+    w.unmount()
+  })
+})
+
+// —— H-02（2026-09-11）：消息级复制。此前 `body { user-select: none }` + 无操作行 + 无右键菜单，
+// 「复制回答」三条路全断。此处确定性覆盖「复制什么内容」与「是否真的调用了剪贴板」。 ——
+describe('CyMessageBubble 复制按钮（H-02）', () => {
+  async function mountWithClipboard(message: Message) {
+    const writeText = vi.fn(async (_text: string) => {})
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    const w = mountBubble(message)
+    return { w, writeText }
+  }
+
+  it('assistant：复制 public_reply 正文，且**不含**内心独白与工具元数据', async () => {
+    const { w, writeText } = await mountWithClipboard(baseMsg({
+      role: 'assistant',
+      content: undefined,
+      assistantSegments: [
+        { segmentId: 'i1', segmentIndex: 0, channel: 'inner_voice', kind: 'text', text: '内心独白不该被复制', completed: true },
+        { segmentId: 'p1', segmentIndex: 1, channel: 'public_reply', kind: 'text', text: '第一段回答', completed: true },
+        { segmentId: 'p2', segmentIndex: 2, channel: 'public_reply', kind: 'markdown', text: '第二段回答', completed: true }
+      ]
+    }))
+    await w.find('[data-testid="message-copy"]').trigger('click')
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const copied = writeText.mock.calls[0][0]
+    expect(copied).toContain('第一段回答')
+    expect(copied).toContain('第二段回答')
+    expect(copied, '内心独白不是「回答」本身，不应外带').not.toContain('内心独白不该被复制')
+    w.unmount()
+  })
+
+  it('user：复制自己的消息正文', async () => {
+    const { w, writeText } = await mountWithClipboard(baseMsg({ role: 'user', content: '我的问题' }))
+    await w.find('[data-testid="message-copy"]').trigger('click')
+    expect(writeText).toHaveBeenCalledWith('我的问题')
+    w.unmount()
+  })
+
+  it('复制成功后按钮切到「已复制」，1.5s 后复位', async () => {
+    vi.useFakeTimers()
+    const { w } = await mountWithClipboard(baseMsg({ role: 'user', content: 'x' }))
+    const btn = w.find('[data-testid="message-copy"]')
+    expect(btn.text()).toBe('复制')
+    await btn.trigger('click')
+    await nextTick()
+    expect(btn.text()).toBe('已复制')
+    vi.advanceTimersByTime(1500)
+    await nextTick()
+    expect(btn.text()).toBe('复制')
+    w.unmount()
+    vi.useRealTimers()
+  })
+
+  it('无可复制正文（如纯 tool 消息）→ 不渲染复制按钮', () => {
+    const w = mountBubble(baseMsg({ role: 'tool', content: undefined }))
+    expect(w.find('[data-testid="message-copy"]').exists()).toBe(false)
     w.unmount()
   })
 })

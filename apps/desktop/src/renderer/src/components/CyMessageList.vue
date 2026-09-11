@@ -101,6 +101,27 @@ const scrollTop = ref(0)
 const viewportHeight = ref(600)
 const atBottom = ref(true)
 
+/**
+ * 跟随底部（H-02，2026-09-11）。`atBottom` 编码的是「用户当前贴底」这一意图，
+ * 但此前**没有任何一处由内容增长触发**（全文件 8 个赋值点：onScroll / commitScrollHeights /
+ * restoreLoadAnchor / currentId watch / restoreScrollFor / backToBottom / scrollToHighlight /
+ * 视口变矮），且 `.cy-messages` 用 `overflow-anchor: none` 关掉了浏览器原生补偿。
+ * 于是新行与流式增长都落在视口下方、scrollTop 不动，而 atBottom 仍为 true →
+ * 连「回到底部」按钮都不出现，用户按 Enter 后看不到自己的消息。
+ *
+ * 修法：内容增长后若本就在底部，等到 DOM 更新完再把 scrollTop 贴到底；
+ * 用户已上翻（atBottom=false）则什么都不做（保持锚点，安全）。
+ */
+async function followBottomIfSticky(): Promise<void> {
+  if (!atBottom.value) return
+  await nextTick()
+  const el = container.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+  scrollTop.value = el.scrollTop
+  atBottom.value = el.scrollTop + el.clientHeight >= el.scrollHeight - 40
+}
+
 /** 连续维护的锚点（scroll/窗口变化时更新；切会话时「先捕获后 flush」用它） */
 const lastAnchor = ref<{ conversationId: string; anchor: ReturnType<typeof captureAnchor> }>()
 /** 评审 P1-2：loadOlder 前捕获的锚点（前插后 restoreScrollTop 恢复可视位置，向上翻不跳动） */
@@ -173,6 +194,9 @@ function commitScrollHeights(): void {
   if (!hasPending) return
   const el = container.value
   if (!el) { pendingHeights.value = {}; return }
+  // H-02：合并前记录「用户原本是否贴底」。估高→实测高修正会改变 scrollHeight，
+  // 若本就在底部，修正后必须重新贴底；否则会停在离底部数百像素处（实测 551px）。
+  const wasAtBottom = atBottom.value
   // ② 捕获当前可视顶部锚点（用旧 prefix——合并前的布局）；offset = scrollTop - prefix[锚点]
   const anchor = captureAnchor(items.value, prefix.value, el.scrollTop, el.clientHeight)
   // 合并 pending 高进 heights → prefix 重算
@@ -181,8 +205,13 @@ function commitScrollHeights(): void {
   // ③ 恢复锚点：DOM 更新后按新 prefix 定位 anchor，使可视位置不变（无累计 delta，不放大）
   void nextTick(() => {
     if (!container.value) return
-    const target = restoreScrollTop(items.value, prefix.value, anchor)
-    container.value.scrollTop = target
+    if (wasAtBottom) {
+      // 贴底态：高度修正不应把用户从底部推开（上翻态才走锚点恢复）
+      container.value.scrollTop = container.value.scrollHeight
+    } else {
+      const target = restoreScrollTop(items.value, prefix.value, anchor)
+      container.value.scrollTop = target
+    }
     scrollTop.value = container.value.scrollTop
     atBottom.value = container.value.scrollTop + container.value.clientHeight >= container.value.scrollHeight - 40
   })
@@ -227,6 +256,8 @@ function onRowResized(id: string, entry: ResizeObserverEntry): void {
     return
   }
   heights.value[id] = h
+  // H-02：行高增长（流式文本变长 / markdown 突发）也是内容增长——贴底时同步跟随
+  void followBottomIfSticky()
 }
 
 /** 切会话：先捕获（持续维护的 lastAnchor）再 flush 旧会话草稿+锚点（D6 时序定死）；
@@ -252,7 +283,10 @@ watch(() => items.value.length, (len) => {
   if (len > 0 && pendingRestoreId === conversationStore.currentId) {
     pendingRestoreId = undefined
     void nextTick(() => restoreScrollFor(conversationStore.currentId!))
+    return
   }
+  // H-02：追加新行（发送自己的消息 / 流式新分段）时贴底跟随。切会话恢复路径已 return，互不干扰。
+  void followBottomIfSticky()
 })
 
 function restoreScrollFor(id: string): void {
