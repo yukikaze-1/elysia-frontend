@@ -7,6 +7,7 @@ import { evaluateDevRendererUrl } from '../config/trusted-renderer-origin'
 import { PROTOCOL_SCHEME, RENDERER_HOST } from '../protocol'
 import { classifyNavigation } from './navigation'
 import { registerMicrophonePermission } from './mic-permission'
+import { createRendererConsoleSink } from './renderer-console'
 import type { AuditEvent } from '../diagnostics/audit'
 import type { Logger } from '../diagnostics/logger'
 
@@ -15,6 +16,13 @@ import type { Logger } from '../diagnostics/logger'
 //    LOW-2：crashSink 只存 logger/audit（无 onRendererGone 死成员——renderer 已死收不到 push，改 marker 持久化）。
 let crashSink: { logger?: Logger; audit?: (e: Omit<AuditEvent, 'ts'>) => void } = {}
 export function setCrashSink(sink: typeof crashSink): void { crashSink = sink }
+
+/**
+ * P1-12：renderer 控制台 sink——模块级（同 crashSink 理由：`focusOrDefer` 不带 opts）。
+ * logger 经 getter **惰性转发**到当前 `crashSink.logger`：sink 在窗口创建时可能早于 `setCrashSink`，
+ * 直接持有 logger 引用会永远停在 undefined。
+ */
+const rendererConsoleSink = createRendererConsoleSink({ logger: { warn: (code, fields) => crashSink.logger?.warn(code, fields) } })
 let crashMarker: { reason: string; exitCode: number; ts: number } | null = null
 /** 一次性读后清：返回最近一次 Renderer 崩溃 reason/exitCode（剥 ts——契约 RendererCrashEvent 无 ts），读后置 null */
 export function getCrashMarker(): { reason: string; exitCode: number } | null {
@@ -113,6 +121,24 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   win.webContents.setWindowOpenHandler((details) => {
     if (details.url.startsWith('http:') || details.url.startsWith('https:')) shell.openExternal(details.url)
     return { action: 'deny' }
+  })
+
+  // P1-12（M-01，2026-09-11）：renderer 控制台错误 → Main 日志（进而进诊断包）。
+  // 此前 renderer 侧 JS 错误完全不在诊断包里，而 renderer 恰是最常出问题的一侧。
+  // 用**模块级** sink（与 crashSink 同款理由：second-instance/activate 的 focusOrDefer 不带 opts，
+  // 每窗口 sink 会丢），只转发 error 级并按滑窗限流（详见 renderer-console.ts 头注）。
+  // 签名（Electron 43 实测，勿凭记忆改）：`WebContents.on('console-message')` 的**第一个参数**
+  // 就是事件对象本身，参数在它上面（`Event<WebContentsConsoleMessageEventParams>`：message/level/
+  // lineNumber/sourceId/frame）；后面那几个位置参数（level:number、message:string…）是**已废弃**的
+  // 兼容形态。d.ts 只声明了废弃形态的位置参数，故 `(e, details)` 写法会把 details 推成 number——
+  // 这正是本仓库在 `render-process-gone` 上踩过的同类签名坑。
+  win.webContents.on('console-message', (details) => {
+    rendererConsoleSink.handle({
+      level: details.level,
+      message: details.message,
+      sourceId: details.sourceId,
+      lineNumber: details.lineNumber
+    })
   })
 
   win.webContents.on('will-navigate', (event, url) => {
