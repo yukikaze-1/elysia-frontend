@@ -147,7 +147,9 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 报告 P0 里剩下的三条安全/数据项已修复，均按「修 → 变异验证 → 提交」完成；三项都在 HEAD 逐条复核过现场。
 
-- **H-12 主进程异常兜底（`de808ea`）**：此前 `src/main` 全仓 **0 处**注册 `unhandledRejection`/`uncaughtException`。新增 `app/process-error-guards.ts`（按 `handleChildProcessGone` 的「纯函数 + deps 注入 + 单测」先例）：两类异常都写 error 日志 + 审计，文本经脱敏并截断。**两个处理器的存续语义故意不同**：`unhandledRejection` 只留痕不终止（Node 无监听器时会升级为未捕获异常并终止进程，而已观测实例是良性的「浏览器拒绝打开链接」）；`uncaughtException` 只留痕、不替调用方决定是否终止（`process.on` 是追加监听，不覆盖 Electron 自带处理器，故为纯增量）。另修 `pushEvent` 缺销毁守卫（三个 send 点里唯一无守卫者）与 `openExternal` 的裸 `void`（拒绝逃逸成未捕获异常）。变异三处均红。
+- **H-12 主进程异常兜底（`de808ea`，语义经 `67dcf79` 修正）**：此前 `src/main` 全仓 **0 处**注册 `unhandledRejection`/`uncaughtException`。新增 `app/process-error-guards.ts`（按 `handleChildProcessGone` 的「纯函数 + deps 注入 + 单测」先例）。**两个处理器的存续语义故意不同**：`uncaughtException` 留痕后**主动接管 fail-safe**（弹窗 + 收尾 + 退出）；`unhandledRejection` 只留痕并继续运行——这是对 Node 默认（无监听器则升级为未捕获异常并终止）的**有意偏离**，代价（真正严重的拒绝也会被放过）已写入代码注释。另修 `pushEvent` 缺销毁守卫与 `openExternal` 的裸 `void`。
+- **H-12 的一处自纠（重要，勿再犯）**：上一批我写的是「`process.on` 是追加监听，不覆盖 Electron 自带处理器，既有默认行为照旧发生」。**该论证被对照实验推翻**：不装配本模块时出现 Electron 原生弹窗「A JavaScript error occurred in the main process」，装配后该弹窗消失且进程存活——即 **Electron 在已有应用处理器时会让位**。故注册监听器**顶掉了平台默认 fail-safe**；若只留痕不接管，等于把「崩溃退出」换成「异常静默吞掉且带未定义状态继续运行」，比原来更危险。**教训：凡「纯增量/不影响既有行为」的断言都必须实测**，平台在「已有处理器时是否让位」这类语义上极易想当然。
+- **同轮修掉的第二个真问题**：首轮修正后实测发现进程存活但**审计里什么都没有**、紧接着窗口关闭——`fatalRuntime` 的退出抢在 fire-and-forget 的审计写入之前，把要留的痕带走，「至少留痕」这个唯一目的落空。现 `handleUncaughtException` 为 async：日志 → **await 审计** → `onFatal`；`index.ts` 新增 `auditAsync` 供其使用。顺序保证由单测钉住（审计未 resolve 时 `onFatal` 绝不能被调用）。
 - **H-11b 持久化 fail-closed（`12268f9`）**：`corrupt-isolation` 的 `rename(...).catch(() => {})` 改为上抛（ENOENT 例外）；`session-store` 新增 `SESSION_SCHEMA_VERSION` + `describeSchemaProblem`（`schemaVersion` 此前**声明了却从不读**）、降级态 `getLastError()`、以及 `writeDrafts`/`writeCache` 的 `assertWritable` 守卫——隔离失败后拒绝一切写入，原文件逐字节不动。**有意未采纳**报告「非空文件解析出空态也算损坏」的建议：合法空库写出的正是同样形状，该启发式会误报。
 - **H-01 附件黑名单（`31e309b`）**：`PATH_BLACKLIST_DEFAULTS` 此前在这条链 0 次调用。现于 **validate 与 upload 两条链**、`realpath` 之后套用（upload 侧复验必要——Renderer 可跳过 validate 直接 upload），按 realpath 匹配故符号链接也拦得住。**取舍**：采用完整默认黑名单，因此 `/tmp` 与 `%TEMP%` 亦被拒（从临时目录选附件会失败）；理由与回退方式见 §5。
 
@@ -192,7 +194,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
 4. 全量评审建议的 P0 批次**已基本完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；仅 P0-7 未动（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI），它依赖外部授权事实与阶段 8 决策。
-5. **待你决定的两项取舍**：① H-01 采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒（改一处即可放开）；② H-12 的 `uncaughtException` 目前只留痕、不主动终止进程——「主进程异常后是否应终止」属产品决策。
+5. **H-01 的取舍已按推荐定案**：采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒——理由是这两个目录的同用户临时文件同样可能含密钥，而附件链是 Renderer 唯一能用字符串指认本地文件的地方；代价明确且**改一处即可放开**。H-12 的两处取舍亦已定案：`uncaughtException` 接管 fail-safe（弹窗 + 退出），`unhandledRejection` 只留痕不终止。
 6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。
 7. H-11b 的降级故障只到「Main 拒绝写入 + 日志/诊断计数 + `getLastError()`」；**renderer 侧仍不会向用户显示持久化故障**（`draft.store` 的持久化失败是 fail-open 吞掉的），属 M-19 一类。
 8. M-20 其余 **6 处** `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）**未动**——属视觉设计取舍，待用户决定；本批只收口了安全授权按钮。
