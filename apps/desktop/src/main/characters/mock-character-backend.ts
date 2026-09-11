@@ -148,11 +148,7 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
   getConversationBinding(characterId: string): CharacterBindingSnapshot | undefined {
     const detail = this.characters.find((item) => item.summary.characterId === characterId)
     if (!detail || detail.summary.status !== 'active') return undefined
-    const instanceId = detail.summary.characterId === 'builtin/elysia'
-      ? 'instance-elysia'
-      : detail.summary.characterId === 'builtin/cyrene'
-        ? 'instance-cyrene'
-        : `instance-${detail.summary.characterId.replace(/[^A-Za-z0-9_-]/g, '-')}`
+    const instanceId = this.instanceIdFor(detail.summary.characterId)
     return {
       characterId: detail.summary.characterId,
       characterInstanceId: instanceId,
@@ -238,6 +234,7 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
       const detail = this.detailFromDraft(id, command.draft, 1, 'user')
       this.characters.push(detail)
       this.histories.set(id, [cloneValue(detail.current)])
+      this.ensureStateFor(detail)   // H-07：自建角色必须同时有公开状态（否则状态卡片永久 CHARACTER_INSTANCE_NOT_FOUND）
       return parseStrict(CharacterDetailSchema, cloneValue(detail), 'create-result')
     })
   }
@@ -250,6 +247,9 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
       const next = this.detailFromDraft(command.characterId, command.draft, detail.current.revision + 1, 'user')
       this.replaceCharacter(next)
       this.histories.get(command.characterId)!.push(cloneValue(next.current))
+      // H-07：revision 推进后必须让公开状态跟上——否则 follow_latest 绑定到新 revision 时，
+      // 渲染层身份栅栏（state.characterRevision !== expected）必然抛错，且重试不会自愈。
+      this.ensureStateFor(next, command.statePolicy)
       return parseStrict(CharacterMutationResultSchema, {
         character: cloneValue(next), stateImpact: this.stateImpact(command.characterId, command.statePolicy)
       }, 'update-result')
@@ -266,6 +266,7 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
       const detail = this.detailFromDraft(id, draft, 1, 'user')
       this.characters.push(detail)
       this.histories.set(id, [cloneValue(detail.current)])
+      this.ensureStateFor(detail)   // H-07：克隆出的角色同样必须有公开状态
       return parseStrict(CharacterDetailSchema, cloneValue(detail), 'clone-result')
     })
   }
@@ -301,6 +302,7 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
       const next = this.detailFromDraft(command.characterId, this.draftFrom(target), detail.current.revision + 1, 'user')
       this.replaceCharacter(next)
       this.histories.get(command.characterId)!.push(cloneValue(next.current))
+      this.ensureStateFor(next, command.statePolicy)   // H-07：回滚也推进 revision，公开状态必须跟上
       return parseStrict(CharacterMutationResultSchema, {
         character: cloneValue(next), stateImpact: this.stateImpact(command.characterId, command.statePolicy)
       }, 'rollback-result')
@@ -338,6 +340,58 @@ export class MockCharacterBackend implements CharacterServiceBackendPort {
       ({ revision: current.revision, checksum: current.checksum, createdBy: current.createdBy, createdAt: current.createdAt }))
     const validated = revisions.map((revision) => parseStrict(CharacterRevisionSummarySchema, revision, 'revision'))
     return Promise.resolve().then(() => this.page(validated, input.cursor, input.limit, `revisions:${input.characterId}`))
+  }
+
+  /**
+   * H-07（2026-09-11）：角色 → 实例 id 的**唯一**推导点。
+   *
+   * 此前该推导内联在 `getConversationBinding` 里，而 `this.states` 只在构造时喂了两个内置实例，
+   * 于是 mock 下**每一个用户自建角色**都拿不到公开状态：
+   * `createCharacter`/`cloneCharacter` 把角色推进 `characters` 与 `histories`，却**从不写 `states`**，
+   * 而会话绑定（`getConversationBinding`）已经指向 `instance-custom-mock-N` ⇒
+   * `getCharacterState('instance-custom-mock-1')` 永久 `CHARACTER_INSTANCE_NOT_FOUND`，
+   * 公开状态卡片对自建角色永久报错。全仓原本**没有任何** `instance-custom*` 用例，故从未被发现。
+   * 现提取为单一来源，创建/克隆/更新三处共用，推导不可能再与绑定分叉。
+   */
+  private instanceIdFor(characterId: string): string {
+    if (characterId === 'builtin/elysia') return 'instance-elysia'
+    if (characterId === 'builtin/cyrene') return 'instance-cyrene'
+    return `instance-${characterId.replace(/[^A-Za-z0-9_-]/g, '-')}`
+  }
+
+  /**
+   * 确保该角色**存在**公开状态，并把 `characterRevision` 对齐到角色当前 revision。
+   *
+   * 第二个缺陷（同属 H-07）：`states` 的 `characterRevision` 在构造时定死、此后**永不更新**，
+   * 而 `updateCharacter` 会推进 `detail.current.revision`；follow_latest 绑定到新 revision 后，
+   * 渲染层的身份栅栏（`state.characterRevision !== expected.characterRevision`）必然抛错 ⇒
+   * 「读取失败且不会自愈」（重试也只在 Main 的 15s TTL 内拿回同一个旧 revision 值）。
+   *
+   * `statePolicy` 语义与契约一致：`preserve` 保留情绪等演化字段，只推进 revision；
+   * `reset_evolution` 额外把情绪重置为初始值（与 resetCharacterEvolution 同款形状）。
+   */
+  private ensureStateFor(detail: CharacterDetail, statePolicy: 'preserve' | 'reset_evolution' = 'preserve'): void {
+    const characterId = detail.summary.characterId
+    const instanceId = this.instanceIdFor(characterId)
+    const revision = detail.current.revision
+    const existing = this.states.get(instanceId)
+    const now = this.now()
+    if (!existing) {
+      // 新角色（create/clone）：建一份初始状态，revision 对齐当前
+      this.states.set(instanceId, this.makeState(detail, instanceId, now, '平静', 0.5))
+      return
+    }
+    if (existing.characterRevision === revision && statePolicy === 'preserve') return   // 无需变更
+    const next = parseStrict(CharacterPublicStateSchema, {
+      ...cloneValue(existing),
+      characterRevision: revision,
+      stateVersion: existing.stateVersion + 1,
+      ...(statePolicy === 'reset_evolution'
+        ? { mood: { label: '平静', intensity: 0, updatedAt: now }, currentActivity: '等待交流', lastInteractionAt: now }
+        : {}),
+      updatedAt: now
+    }, `state:${instanceId}`)
+    this.states.set(instanceId, next)
   }
 
   getCharacterState(instanceId: string): Promise<CharacterPublicState> {
