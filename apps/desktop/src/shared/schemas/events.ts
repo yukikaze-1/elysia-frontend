@@ -9,11 +9,26 @@ export const SegmentKindSchema = z.enum([
 /** 工具 Runtime（三值；与 contracts/tool.ts ToolRuntime 对齐；ModelExecutionLocation 是另一概念） */
 export const ToolRuntimeSchema = z.enum(['backend', 'desktop', 'local_worker'])
 
+/**
+ * 事件信封（所有后端事件 `.extend()` 的基座）。
+ *
+ * H-05（2026-09-11）：**在这里加 `.strict()` 而不是逐个成员加**——zod 4 的 `.extend()` 会把
+ * 基座的 catchall（strictness）继承下去（本机实测：strict 基座派生出的 schema 拒绝未知键，
+ * 松散基座派生出的不拒绝），故一处即可覆盖全部 28 个成员。
+ *
+ * 这样做的真正价值不是"少改 15 处"，而是**让新成员无法忘记**：此前 28 个成员里 13 个写了 `.strict()`、
+ * 15 个没写，全靠作者记性——契约字段漂移因此是默认结果而不是意外。现在新增事件 schema 只要照惯例
+ * `.extend()` 就自动严格；万一有人不走基座，`tests/unit/event-schema-mirror.spec.ts` 会点名报错。
+ *
+ * 方向性说明：严格化使「携带未声明字段的事件」从**静默剥离**变为**显式拒绝**，与 CLAUDE.md 的
+ * 「未知或畸形外部输入必须显式失败，不得用宽松 schema 掩盖漂移」一致。本仓库 raw 帧 schema 早已全部
+ * `.strict()`，且 frame-mapper 逐字段重建领域事件，故未知键到不了这一层（全套门禁为证）。
+ */
 export const BackendEventEnvelopeSchema = z.object({
   eventId: z.string().min(1),
   sequence: z.number().int().nonnegative(),
   timestamp: z.string().optional()
-})
+}).strict()
 
 /** 表现/TTS 事件的角色归属（迁移期 optional；能力开启后的必填由运行时 gate 校验）。 */
 const eventIdentityText = () => z.string().min(1).refine((v) => v.trim().length > 0, '身份字段不能全为空白')

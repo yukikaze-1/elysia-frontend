@@ -92,6 +92,17 @@ export const MessageToolInfoSchema = z.object({
 })
 
 // —— 阶段 6 批次 B：工具 schema（镜像 ToolCallRecord/PublicToolEvent；ToolCallRecordSchema 需在 MessageSchema 定义之前，D6B-10）——
+// H-05（2026-09-11）：DiffLine/ToolDiff **必须先于** ToolCallRecordSchema 声明——`ToolCallRecord`
+// 契约含 `diff?`（contracts/tool.ts:31），而原顺序把 ToolDiffSchema 放在 ToolCallRecordSchema **之后**，
+// 于是 schema 里干脆没有 `diff` 成员，两处镜像长期不一致。因该 schema 是 `.strict()`，一旦真的出现
+// 携带 `diff` 的 ToolCallRecord（F-7 契约并入实时记录时），整个 MessageSchema 解析会失败并把消息丢弃
+// ——属**静默 fail-closed 隐患**（当前不可达：toolCalls 只来自 rest-mapper，不带 diff）。
+const DiffLineSchema = z.object({ kind: z.enum(['added', 'removed', 'unchanged']), text: z.string() }).strict()
+const ToolDiffSchema = z.object({
+  lines: z.array(DiffLineSchema), added: z.number(), removed: z.number(),
+  truncated: z.boolean(), totalLines: z.number(), formatNote: z.string(), isNewFile: z.boolean(),   // totalLines=A-20（「共 X 行」）
+}).strict()
+
 export const ToolCallRecordSchema = z.object({
   id: z.string(),
   toolName: z.string(),
@@ -110,13 +121,9 @@ export const ToolCallRecordSchema = z.object({
   startedAt: z.string().optional(),
   finishedAt: z.string().optional(),
   attachmentCount: z.number().int().nonnegative().optional(),
+  diff: ToolDiffSchema.optional(),   // H-05：补齐契约成员（见上方说明）
 }).strict()
 
-const DiffLineSchema = z.object({ kind: z.enum(['added', 'removed', 'unchanged']), text: z.string() }).strict()
-const ToolDiffSchema = z.object({
-  lines: z.array(DiffLineSchema), added: z.number(), removed: z.number(),
-  truncated: z.boolean(), totalLines: z.number(), formatNote: z.string(), isNewFile: z.boolean(),   // totalLines=A-20（「共 X 行」）
-}).strict()
 const CaptureSourceSchema = z.object({ sourceId: z.string(), sourceName: z.string(), thumbnailDataUrl: z.string() }).strict()
 const CapturePreviewSchema = z.object({ sourceId: z.string(), previewDataUrl: z.string() }).strict()
 
