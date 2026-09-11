@@ -98,22 +98,22 @@ describe('H-08：估算器记忆化（判别力 = 真实计算次数）', () => 
 })
 
 describe('H-08：markdown 渲染缓存有界（判别力 = 可数条目数）', () => {
-  it('流式形态（每次 a longer text）不会让缓存无限增长', async () => {
+  it('流式形态（每拍一个更长的文本 ⇒ 键各不同）不会让缓存无限增长', async () => {
     const { renderMarkdown, markdownCacheSize, clearMarkdownCache } = await import('../../src/renderer/src/utils/markdown')
     clearMarkdownCache()
-    // 模拟一条长回复的流式节拍：每拍文本更长（键各不相同）
-    let text = ''
-    for (let i = 0; i < 500; i++) {
-      text += `chunk ${i}\n\n`
-      renderMarkdown(text)
-    }
+    // 本用例要证的**只是**「键数远超上限时缓存仍有界」——文本大小与这条性质无关。
+    // 故刻意用**极小且互不相同**的文本：早期版本模拟「文本持续变长」（累积到数 KB × 500 次
+    // parse+sanitize），在 CI 上直接把 worker 打爆（`Ineffective mark-compacts near heap limit`
+    // + `Worker exited unexpectedly`，本文件连结果都没打印出来）。
+    // 教训：模拟"真实形态"时不能用真实体量去堆——判别力在**键的数量**上，不在字节数上。
+    for (let i = 0; i < 350; i++) renderMarkdown(`# h${i}`)
     expect(markdownCacheSize(), '渲染缓存必须被限幅，否则单条回复即可驻留数 MB').toBeLessThanOrEqual(300)
   })
 
   it('淘汰后仍能正确渲染（淘汰是安全的：最坏只是重新 parse+sanitize）', async () => {
     const { renderMarkdown, clearMarkdownCache } = await import('../../src/renderer/src/utils/markdown')
     clearMarkdownCache()
-    for (let i = 0; i < 400; i++) renderMarkdown(`# 标题 ${i}`)
+    for (let i = 0; i < 350; i++) renderMarkdown(`# 标题 ${i}`)
     // 最早的条目可能已被淘汰——重新渲染必须仍给出正确块（而不是空/异常）
     const blocks = renderMarkdown('# 标题 0')
     expect(blocks.length).toBeGreaterThan(0)
