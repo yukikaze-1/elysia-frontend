@@ -155,6 +155,10 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **本批一次偶发（如实记录，不当作通过）**：H-01 的全量集成跑中 `electron-voice` 的 `9b. 断线清理（实时）` 红过一次；单跑该 spec **16/16 全绿**（含 9b 1041ms），且附件黑名单不触及语音链路，判定为偶发。此类中断与 CI 上出现过的是同一族。
 
+**本批两次偶发（如实记录，均非产品缺陷，均已取证并重跑转绿）**：
+- 本地：H-01 的全量集成跑中 `electron-voice` `9b. 断线清理（实时）` 红过一次；单跑该 spec **16/16 全绿**（含 9b 1041ms）。
+- CI：本批推送后 `integration tests` 红过一次（[run 34612277649](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34612277649)），失败点是 `markdown-xss.spec.ts` 的 `locator.click` 等 REAL/MOCK 按钮**超时 30s** 加 `Execution context was destroyed`——属 UI 就绪超时而非安全断言失败；本地单跑该 spec **2/2 通过**（664ms/845ms），`gh run rerun --failed` 后全绿。失败日志已在重跑前取回本地副本（GitHub 不保留被覆盖的 attempt 日志）。两次都与本批改动无逻辑关联（附件黑名单不触及 markdown/语音链路），判定为 runner 负载类偶发。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
