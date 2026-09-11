@@ -36,6 +36,28 @@ function modelsDirFor(root: string): string {
 
 interface CliResult { code: number; stdout: string; stderr: string }
 
+/**
+ * integrity.json 的形状（P1-11）。CLI 产出的这个文件此前一律 `JSON.parse(...)` → `any`，
+ * 于是下面几处 `files.find((f) => f.path === ...)` 的 `f` 全是隐式 any——断言写错字段名也不会被发现。
+ *
+ * 类型**直接引用生产者**（`src/main/live2d/manifest.ts` 的 `IntegrityEntry`），不在此另写一份：
+ * 我第一版手写的声明把字段写成 `bytes`（真实是 `size`），一加上去就报 TS2339——正是这类镜像该避免的。
+ */
+type IntegrityEntry = import('../../src/main/live2d/manifest').IntegrityEntry
+interface IntegrityFile { files: IntegrityEntry[] }
+
+/** 读并**带类型**解析 integrity.json（避免 any 扩散到断言里） */
+async function readIntegrity(dst: string): Promise<IntegrityFile> {
+  return JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8')) as IntegrityFile
+}
+
+/** 取某路径的条目；缺失即失败（比 `!` 断言更有信息量，也免掉 possibly-undefined） */
+function entryOf(integrity: IntegrityFile, path: string): IntegrityEntry {
+  const found = integrity.files.find((f) => f.path === path)
+  if (!found) throw new Error(`integrity.json 缺条目 ${path}（实际：${integrity.files.map((f) => f.path).join(', ')}）`)
+  return found
+}
+
 /** spawn 实际 CLI（同 package.json live2d:install 的 node flags） */
 async function runCli(args: string[], env: Record<string, string>): Promise<CliResult> {
   try {
@@ -54,14 +76,16 @@ async function runCli(args: string[], env: Record<string, string>): Promise<CliR
 }
 
 /** 建模型 fixture 目录；文件内容在 beforeAll 里写入 */
-let root
-let userDataRoot
-let haruSrc // 带 icon.png 的合法模型（预览 + 动作 + 表情）
-let haruNoIconSrc // 无 icon.png 的合法模型（preview 省略路径）
-let badTextureSrc // 引用不存在的纹理
-let missingMocSrc // model3.json 缺 Moc
-let notADir // 普通文件冒充模型目录
-let standardNameSrc // 源入口即命名 model3.json（规范化免自删除）
+// P1-11：显式标注（此前无初值的 `let` 在 noImplicitAny 下是 evolving any——
+// 8 条声明会连带出 41 条使用点报错）
+let root: string
+let userDataRoot: string
+let haruSrc: string // 带 icon.png 的合法模型（预览 + 动作 + 表情）
+let haruNoIconSrc: string // 无 icon.png 的合法模型（preview 省略路径）
+let badTextureSrc: string // 引用不存在的纹理
+let missingMocSrc: string // model3.json 缺 Moc
+let notADir: string // 普通文件冒充模型目录
+let standardNameSrc: string // 源入口即命名 model3.json（规范化免自删除）
 
 async function writeTree(base: string, files: Record<string, string>) {
   for (const [rel, content] of Object.entries(files)) {
@@ -211,7 +235,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     expect(preview).toBe('icon-bytes')
 
     // integrity.json：排除 manifest/integrity 自身，含 LICENSE.txt/preview.png 与全部模型文件
-    const integrity = JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8'))
+    const integrity = await readIntegrity(dst)
     const paths = integrity.files.map((f) => f.path)
     expect(integrity.files).toHaveLength(9) // 6 源文件 + icon.png + LICENSE.txt + preview.png
     expect(paths).toContain('model3.json') // 规范化入口（源 Haru.model3.json 已替换为 model3.json）
@@ -226,7 +250,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     expect(paths).not.toContain('manifest.json')
     expect(paths).not.toContain('integrity.json')
     // 每条目 path/size/sha256 与真实文件一致
-    const tex = integrity.files.find((f) => f.path === 'textures/texture_01.png')
+    const tex = entryOf(integrity, 'textures/texture_01.png')
     expect(tex.size).toBe(Buffer.byteLength('png-01'))
     expect(tex.sha256).toBe(createHash('sha256').update('png-01').digest('hex'))
   })
@@ -241,7 +265,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     const manifest = JSON.parse(await readFile(join(dst, 'manifest.json'), 'utf8'))
     expect(manifest).not.toHaveProperty('preview')
     await expect(lstat(join(dst, 'preview.png'))).rejects.toThrow()
-    const integrity = JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8'))
+    const integrity = await readIntegrity(dst)
     expect(integrity.files.some((f) => f.path === 'preview.png')).toBe(false)
     expect(integrity.files.some((f) => f.path === 'LICENSE.txt')).toBe(true)
   })
@@ -309,8 +333,8 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     expect(stdout).toContain('haru-noicon 装配完成')
     const dst = join(modelsDirFor(userDataRoot), 'haru-noicon')
     expect(await readFile(join(dst, 'Haru.moc3'), 'utf8')).toBe('moc-bytes-v2')
-    const integrity = JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8'))
-    const moc = integrity.files.find((f) => f.path === 'Haru.moc3')
+    const integrity = await readIntegrity(dst)
+    const moc = entryOf(integrity, 'Haru.moc3')
     expect(moc.sha256).toBe(createHash('sha256').update('moc-bytes-v2').digest('hex'))
     expect(moc.size).toBe(Buffer.byteLength('moc-bytes-v2'))
   })
@@ -349,7 +373,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     // 入口 model3.json 必须存在（此前 bug：rm 自删除）
     expect((await lstat(join(dst, 'model3.json'))).isFile()).toBe(true)
     // integrity 应含 model3.json（可被 registry/resolve 供给）
-    const integrity = JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8'))
+    const integrity = await readIntegrity(dst)
     expect(integrity.files.map((f) => f.path)).toContain('model3.json')
   })
 })

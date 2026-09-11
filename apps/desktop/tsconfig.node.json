@@ -18,6 +18,12 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "types": ["electron-vite/node", "vite/client"],
+    // P1-11（2026-09-11）：基座 `@electron-toolkit/tsconfig` 是 `strict: true` 但**显式**
+    // `noImplicitAny: false`，即本仓库长期允许隐式 any。隐式 any 的代价在这里已经被实测过：
+    // 一处 `JSON.parse(...)` 就能让下游断言里的 `f.path`/`f.size` 全部退化成 any，
+    // 字段名写错也编译通过（本轮开启后立刻在 live2d-install.spec 上抓到这类问题）。
+    // 现已清零并开启，防止回潮。
+    "noImplicitAny": true,
     "paths": {
       "@shared/*": ["./src/shared/*"]
     }

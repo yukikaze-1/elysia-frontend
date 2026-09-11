@@ -279,7 +279,9 @@ export const useVoiceStore = defineStore('voice', () => {
    *  confirmDispatching 在动作执行期间为 true（try/finally 保证失败也复位）——UI 据此避免把
    *  「confirm 已开始但动作尚未定型」判成失败（getUserMedia 权限提示可能 >3s）。 */
   async function confirmConsent(): Promise<void> {
-    await useSettingsStore().setVoice({ consentBackendStt: true })
+    // P1-11：`setVoice` 是**同步**函数（settings.store.ts:111 `function setVoice(...): void`），
+    // 此处 await 是空操作，已移除——await 一个非 thenable 只会让读者误以为存在异步持久化屏障。
+    useSettingsStore().setVoice({ consentBackendStt: true })
     const action = pendingAction.value
     consentPending.value = false
     pendingAction.value = null

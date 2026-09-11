@@ -586,7 +586,10 @@ async function toolListGrants(): Promise<PermissionGrant[]> {
   return unwrap(await invokeWithArgs<PermissionGrant[]>(IpcChannels.toolGrants, {}), GrantListResponseSchema)
 }
 async function toolRevokeGrant(id: string): Promise<void> {
-  await unwrap(await invokeWithArgs<void>(IpcChannels.toolGrantRevoke, { id }), z.undefined())
+  // P1-11：`unwrap(..., z.undefined())` 的返回类型是 void（非 thenable），外层 await 是空操作，已移除。
+  // 注意仍**必须**把真实响应交给 unwrap 校验——曾一度写成 `unwrap(undefined, ...)`（丢掉响应、跳过校验），
+  // 那是安全回归：preload 的职责就是逐通道校验 Main 的返回。
+  unwrap(await invokeWithArgs<void>(IpcChannels.toolGrantRevoke, { id }), z.undefined())
 }
 async function toolListHistory(limit?: number): Promise<HistoryEntry[]> {
   return unwrap(await invokeWithArgs<HistoryEntry[]>(IpcChannels.toolHistory, limit === undefined ? {} : { limit }), HistoryResponseSchema)

@@ -238,7 +238,9 @@ function onPickerKeydown(e: KeyboardEvent): void {
 }
 
 function stop(): void {
-  messageStore.cancel()
+  // P1-11（type-aware lint 抓到）：`cancel()` 是 async 且**内部已 try/catch**（乐观置位、后端结果不阻塞），
+  // 故既不会拒绝也不需要等——用 `void` 显式表达"有意不等待"，而不是让一个 promise 悬空。
+  void messageStore.cancel()
 }
 
 // —— G3 附件收集（点击/拖拽/粘贴仅 source 不同；拖拽/粘贴只建条目，不自动上传/发送，spec §4.3）——

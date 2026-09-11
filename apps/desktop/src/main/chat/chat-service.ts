@@ -99,14 +99,15 @@ export function createChatService(deps: ChatServiceDeps) {
     queryChatHistory: (input: ChatHistoryQuery) => adapter.queryChatHistory(input),
     getMessageContext: (input: MessageContextQuery) => adapter.getMessageContext(input),
     listStickers: () => adapter.listStickers(),
-    activate: async (id) => {
+    // P1-11：参数显式标注（此前隐式 any——同一对象里其它方法都有类型，只有这两处漏了）
+    activate: async (id: string) => {
       const r = await adapter.activateConversation(id)
       deps.sessionStore?.setActiveConversation(id).catch(() => {}) // 记录 lastActiveConversationId
       return r
     },
     createConversation: (input: CreateConversationInput) => adapter.createConversation(input),
     renameConversation: (input: { conversationId: string; title: string }) => adapter.renameConversation(input.conversationId, input.title),
-    deleteConversation: async (id) => {
+    deleteConversation: async (id: string) => {
       await adapter.deleteConversation(id)
       deps.sessionStore?.purgeConversation(id).catch(() => {}) // 联动删草稿+锚点+快照
     },

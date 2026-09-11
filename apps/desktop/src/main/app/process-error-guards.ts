@@ -59,7 +59,12 @@ function summarize(label: string, value: unknown, deps: ProcessErrorDeps): strin
 /** 未处理的 Promise 拒绝：error 级日志 + 审计留痕，随后继续运行（见文件头的有意偏离及其代价） */
 export function handleUnhandledRejection(reason: unknown, deps: ProcessErrorDeps): void {
   deps.logger.error('main:unhandled-rejection', { message: deps.sanitize(describeThrown(reason)) })
-  deps.audit({ type: 'main:unhandled-rejection', summary: summarize('主进程未处理的 Promise 拒绝', reason, deps) })
+  // P1-11（type-aware lint 抓到）：`deps.audit` 的签名是 `void | Promise<void>`，此处**有意不 await**
+  // （本函数是同步的，且必须立刻返回——见文件头「unhandledRejection 只留痕」的既定决策）。
+  // 但**不能**只写 `void deps.audit(...)`：若它返回的 Promise 拒绝，就会在
+  // unhandledRejection 处理器**内部**再制造一个未处理拒绝（潜在自递归）。
+  // 故显式吞掉拒绝：既保持不阻塞，也不产生新的未处理拒绝。留痕失败本身已由 logger 那一行覆盖。
+  Promise.resolve(deps.audit({ type: 'main:unhandled-rejection', summary: summarize('主进程未处理的 Promise 拒绝', reason, deps) })).catch(() => {})
 }
 
 /**

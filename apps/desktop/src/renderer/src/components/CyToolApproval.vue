@@ -65,11 +65,20 @@ watch(() => open.value, (v) => {
     openGrantPicker.value = false
     grantError.value = ''
     ttlMs.value = GRANT_DEFAULT_TTL_MS   // F-18：每次打开回默认 24h
-    nextTick(() => denyBtn.value?.focus())
+    // P1-11：`nextTick` 返回 promise，回调式调用会让它悬空——用 `void` 显式表达"有意不等待"
+    // （聚焦是尽力而为，失败无需处理）。
+    void nextTick(() => denyBtn.value?.focus())
   }
 })
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape' && open.value) { toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny'); returnToTrigger(); emit('close') }
+  // P1-11（type-aware lint 抓到）：`decide` 是 `async { await api.toolDecide(...) }`——**会拒绝**
+  // （IPC 失败时）。此前它被直接悬空调用，失败即变成 renderer 的未处理拒绝。
+  // 这里显式吞掉拒绝：Esc 关闭面板的行为不应被后端失败阻塞（面板已关、UI 状态已复位），
+  // 而"决策没送到"这件事由工具流自身的状态机呈现（记录停在 requesting/audit 面），不靠这个 promise。
+  if (e.key === 'Escape' && open.value) {
+    void toolStore.decide(current.value!.desktopCallId ?? current.value!.id, 'deny').catch(() => { /* 见上：不阻塞关闭 */ })
+    returnToTrigger(); emit('close')
+  }
   if (e.key === 'Tab' && open.value) { trapTab(e) }
 }
 /** 焦点陷阱：Tab/Shift+Tab 在面板内循环（CyHistoryViewer 先例） */

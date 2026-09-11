@@ -9,6 +9,10 @@
   ],
   "compilerOptions": {
     "composite": true,
+    // P1-11（2026-09-11）：同 node 侧——基座 `@electron-toolkit/tsconfig` 显式关了 noImplicitAny。
+    // web 侧开启后实测**零新增错误**（渲染层本就没有隐式 any），故属"零成本防线"：
+    // 只在将来有人引入隐式 any 时才会红。
+    "noImplicitAny": true,
     "paths": {
       "@renderer/*": ["./src/renderer/src/*"],
       "@shared/*": ["./src/shared/*"]

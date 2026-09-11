@@ -119,7 +119,11 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   win.on('closed', () => clearTimeout(t))
 
   win.webContents.setWindowOpenHandler((details) => {
-    if (details.url.startsWith('http:') || details.url.startsWith('https:')) shell.openExternal(details.url)
+    // P1-11（type-aware lint 抓到）：这里此前没有接 `.catch`，而**同一个文件的 will-navigate 分支有**。
+    // 外链打开失败会变成 Main 的未处理拒绝；两处行为应当一致，故补齐（fail-closed：拒绝时什么都不做）。
+    if (details.url.startsWith('http:') || details.url.startsWith('https:')) {
+      shell.openExternal(details.url).catch(() => { /* 系统浏览器拒绝时吞掉，fail-closed */ })
+    }
     return { action: 'deny' }
   })
 
