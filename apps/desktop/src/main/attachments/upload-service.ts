@@ -7,6 +7,7 @@ import type { AttachmentInfo, AttachmentKind } from '@shared/contracts'
 import type { BackendAdapter, UploadContent } from '../transport/backend-adapter'
 import type { SafeOpenPlatform } from '../persistence/safe-open'
 import { precheckFiles, sniffKind, sizeLimitFor, wireKindHint } from './attachment-policy'
+import { isPathBlacklisted } from '../tools/tool-policy'
 
 export interface UploadFs {
   realpath(p: string): Promise<string>
@@ -26,6 +27,25 @@ const HEAD_LEN = 16
 
 function isInside(root: string, p: string): boolean {
   return p === root || p.startsWith(root + '/') || (process.platform === 'win32' && p.toLowerCase().startsWith(root.toLowerCase() + '\\'))
+}
+
+/**
+ * 敏感路径黑名单（H-01，2026-09-11）。
+ *
+ * 背景：`UploadFileDescriptor.path` 是 **Renderer 可传的裸字符串**（`channels.ts` 只限长度 1024），
+ * Main 侧此前的唯一边界是「排除 userData 一个目录」+「须为普通文件」+「按魔数嗅探的大小上限」。
+ * 工具域早就有 `PATH_BLACKLIST_DEFAULTS`（`~/.ssh`、`~/.aws`、`~/.gnupg`、`.env`、`.git-credentials`…），
+ * 但它**在这条链上一次都没被调用**——于是「Renderer 被攻陷 → 读任意文件 → POST 到任意 HTTPS 主机」
+ * 这条链条成立（违反 CLAUDE.md 的进程边界不变量：Renderer 不得指认本地路径）。
+ *
+ * 本条为**止血**：只把既有黑名单接进来，不改 preload↔Main 的附件契约（`path` 仍在）。
+ * 结构性修法（Main 签发不可猜 fileRef、`path` 只由 `webUtils.getPathForFile` 铸造）另议，见 doc 16 §5。
+ * 传入的必须是 realpath 后的路径——黑名单按 realpath 段边界匹配，符号链接已在此之前解开。
+ */
+function blacklistMessage(realPath: string, platformKind: 'posix' | 'windows'): string | undefined {
+  return isPathBlacklisted(realPath, undefined, { platform: platformKind })
+    ? '拒绝读取系统或凭据敏感目录内的文件'
+    : undefined
 }
 
 function toDomainAttachment(a: AttachmentInfo, messageId?: string): MessageAttachment {
@@ -101,6 +121,12 @@ export class UploadService {
             results.push({ localId: d.localId, ok: false, reason: 'forbidden_path', message: '拒绝上传应用数据目录内的文件' })
             continue
           }
+          // H-01：工具域既有黑名单在这条链上从未被调用
+          const blocked = blacklistMessage(real, this.platform.kind)
+          if (blocked) {
+            results.push({ localId: d.localId, ok: false, reason: 'forbidden_path', message: blocked })
+            continue
+          }
           const fd = await this.fs.open(d.path, this.platform.existingReadFlags)
           let st
           try { st = await fd.stat() } finally { await fd.close() }
@@ -141,6 +167,9 @@ export class UploadService {
           // P2-2：敏感范围复验（realpath+isInside，与 validateFiles 同级防御，防 Renderer 伪造 path）
           const real = await this.fs.realpath(d.path)
           if (isInside(this.userDataBase(), real)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `拒绝上传应用数据目录内的文件: ${d.localId}`)
+          // H-01：与 validateFiles 同级复验（防 Renderer 绕过校验直接 upload）
+          const blocked = blacklistMessage(real, this.platform.kind)
+          if (blocked) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `${blocked}: ${d.localId}`)
           // 上传前 fs.stat 复验：实际大小与普通文件（防 Renderer 伪造描述符/队列状态漂移，spec §4.5）
           const st = await this.fs.stat(d.path)
           if (!st.isFile()) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件不是普通文件: ${d.localId}`)

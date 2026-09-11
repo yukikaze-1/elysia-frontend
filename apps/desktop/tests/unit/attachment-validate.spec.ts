@@ -2,9 +2,14 @@
 // Task 7:UploadService.validateFiles——数量/聚合/单文件限额、kind 矩阵、魔数嗅探、敏感范围/非普通文件拒（spec §2/§4.5）。
 // env=node：注入假 UploadFs + posixPlatform，无真实 fs。
 import { describe, expect, it } from 'vitest'
+import { homedir } from 'os'
 import { posixPlatform } from '../../src/main/persistence/safe-open'
 import { UploadService, type UploadFs } from '../../src/main/attachments/upload-service'
 import type { UploadFileDescriptor } from '@shared/contracts'
+
+// H-01（2026-09-11）后 fixture 必须落在**非黑名单**路径：`/home/u/...` 会命中「他人 home」规则、
+// `/tmp/...` 会命中 `/tmp` 条目。用当前用户真实 home 下的路径，测试意图（not_readable / size_limit）不变。
+const HOME_DOC = `${homedir()}/Documents`
 
 function fakeFs(over: Partial<UploadFs> = {}): UploadFs {
   return {
@@ -40,7 +45,7 @@ describe('UploadService.validateFiles', () => {
   })
   it('路径型 → 打开失败（非普通文件）→ failed(not_readable)', async () => {
     const fs = fakeFs({ open: async () => { throw new Error('EISDIR') } })
-    const r = await svc(fs).validateFiles([desc({ path: '/home/u/Documents' })])
+    const r = await svc(fs).validateFiles([desc({ path: HOME_DOC })])
     expect(r[0].ok).toBe(false)
     expect(r[0].reason).toBe('not_readable')
   })
@@ -49,6 +54,22 @@ describe('UploadService.validateFiles', () => {
     const r = await svc(fs).validateFiles([desc({ path: '/home/u/.cyrene/credentials.json' })])
     expect(r[0].ok).toBe(false)
     expect(r[0].reason).toBe('forbidden_path')
+  })
+
+  // H-01（2026-09-11）：工具域既有的 PATH_BLACKLIST_DEFAULTS 此前在这条链上一次都没被调用
+  it('路径在黑名单（/etc）→ failed(forbidden_path) + 明确文案', async () => {
+    const fs = fakeFs({ realpath: async () => '/etc/passwd' })
+    const r = await svc(fs).validateFiles([desc({ path: '/etc/passwd' })])
+    expect(r[0].ok).toBe(false)
+    expect(r[0].reason).toBe('forbidden_path')
+    expect(r[0].message).toContain('敏感目录')
+  })
+
+  it('合法用户目录不被黑名单误伤（否则附件功能整体不可用）', async () => {
+    const target = `${HOME_DOC}/a.png`
+    const fs = fakeFs({ realpath: async () => target })
+    const r = await svc(fs).validateFiles([desc({ path: target })])
+    expect(r[0].ok, '普通用户目录必须仍然可用').toBe(true)
   })
   it('聚合超 64MB → failed(too_large_aggregate)', async () => {
     const big = 50 * 1024 * 1024
@@ -62,8 +83,8 @@ describe('UploadService.validateFiles', () => {
   it('P1-1：混合批次——单文件超限只 fail 该文件，其余合法文件 ok:true 继续（逐项校验，spec §4.3/§4.4）', async () => {
     const over = 11 * 1024 * 1024   // image 限 10MB
     const r = await svc().validateFiles([
-      desc({ localId: 'a', size: over, mediaType: 'image/png', path: '/tmp/a.png' }),
-      desc({ localId: 'b', size: 10, mediaType: 'image/png', path: '/tmp/b.png' })
+      desc({ localId: 'a', size: over, mediaType: 'image/png', path: `${HOME_DOC}/a.png` }),
+      desc({ localId: 'b', size: 10, mediaType: 'image/png', path: `${HOME_DOC}/b.png` })
     ])
     expect(r).toEqual([
       { localId: 'a', ok: false, reason: 'size_limit', message: '超过该类型大小上限' },

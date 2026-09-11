@@ -56,3 +56,42 @@ describe('UploadService.uploadBatch / cancel', () => {
     expect(calls[0].kind).toBe('audio')
   })
 })
+
+// —— H-01（2026-09-11）：附件链此前完全没调用工具域既有的 PATH_BLACKLIST_DEFAULTS ——
+// `path` 是 Renderer 可传的裸字符串，唯一边界只有「排除 userData 一个目录」，
+// 于「~/.ssh、~/.aws、.env、.git-credentials」这类最敏感文件上没有任何拦截。
+// 本组用例钉住止血：黑名单在 validate 与 upload 两条链上都生效，且按 **realpath** 匹配。
+describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
+  it('uploadBatch 路径落在黑名单 → 拒绝（renderer 绕过 validate 直接 upload 也拦得住）', async () => {
+    const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
+    const fs = fakeFs()
+    fs.realpath = async () => '/etc/shadow'
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs })
+    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', path: '/tmp/looks-benign' }]))
+      .rejects.toThrow(/敏感目录/)
+    expect(uploadAttachments, '黑名单命中必须在上传前拦下').not.toHaveBeenCalled()
+  })
+
+  it('uploadBatch 按 realpath 匹配——原始字符串无害但真实路径在敏感目录，同样拒绝', async () => {
+    const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
+    const fs = fakeFs()
+    fs.realpath = async () => '/root/.ssh/id_rsa'
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs })
+    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', path: '/home/me/Desktop/innocent.txt' }]))
+      .rejects.toThrow(/敏感目录/)
+    expect(uploadAttachments).not.toHaveBeenCalled()
+  })
+
+  it('正常用户目录不被误伤（黑名单只拦敏感范围）', async () => {
+    const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [
+      { attachmentId: 'att_1', kind: 'image', mime: 'image/png', size: 4, url: '/api/attachments/att_1', filename: 'a.png' }
+    ])
+    const fs = fakeFs()
+    const home = (await import('os')).homedir()
+    fs.realpath = async () => `${home}/Documents/a.png`
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs })
+    const out = await svc.uploadBatch('u1', [{ localId: 'l1', name: 'a.png', size: 4, mediaType: 'image/png', source: 'picker', path: `${home}/Documents/a.png` }])
+    expect(out).toHaveLength(1)
+    expect(uploadAttachments).toHaveBeenCalledTimes(1)
+  })
+})
