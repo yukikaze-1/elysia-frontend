@@ -218,6 +218,46 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
     const joined = [...env.logger.info.mock.calls, ...env.logger.warn.mock.calls, ...env.logger.error.mock.calls].map((c) => JSON.stringify(c)).join('\n')
     expect(joined).not.toContain('SECRET_DRAFT_ABC')
   })
+
+  // —— H-11a（2026-09-11）：并发写同一文件不得丢写/失败 ——
+  //
+  // 本 store 有多条写同一文件的路径，而 chat-service 侧三条都是 fire-and-forget。
+  // 修复前临时名固定 + 无写序列化；本轮实测 Windows 上并发写同一路径会以
+  // `EPERM: operation not permitted, rename` 失败（5/20），争用在**目标文件**而非临时文件上。
+  it('并发 persistSession / setActiveConversation 写同一 drafts 文件：全部成功且最终态是最新一次写', async () => {
+    env = await makeStore()
+    const results = await Promise.allSettled([
+      env.s.persistSession({ conversationId: 'c1', draft: { text: 'a', updatedAt: 't1' }, scrollAnchor: null }),
+      env.s.setActiveConversation('c1'),
+      env.s.persistSession({ conversationId: 'c2', draft: { text: 'b', updatedAt: 't2' }, scrollAnchor: null }),
+      env.s.setActiveConversation('c2'),
+      env.s.persistSession({ conversationId: 'c3', draft: { text: 'c', updatedAt: 't3' }, scrollAnchor: null })
+    ])
+    const rejected = results.filter((r) => r.status === 'rejected')
+    expect(rejected, `并发写出现失败：${rejected.map((r) => String((r as PromiseRejectedResult).reason)).join(' | ')}`).toEqual([])
+
+    // 落盘内容必须是最后一次调用时的完整内存态（三条草稿都在，lastActive 为最后一次设置的值）
+    const raw = JSON.parse(await readFile(join(env.base, 'drafts-v1.json'), 'utf8')) as {
+      entries: Record<string, { text: string }>; lastActiveConversationId?: string
+    }
+    expect(Object.keys(raw.entries).sort()).toEqual(['c1', 'c2', 'c3'])
+    expect(raw.entries['c3'].text).toBe('c')
+    expect(raw.lastActiveConversationId).toBe('c2')
+  })
+
+  it('并发 cacheMessages / syncConversationList 写同一 cache 文件：全部成功且无撕裂', async () => {
+    env = await makeStore()
+    const results = await Promise.allSettled([
+      env.s.cacheMessages({ conversationId: 'c1', messages: [msg('m1', '2026-01-01T00:00:00Z')], updatedAt: 'u1' }),
+      env.s.syncConversationList([conv('c1', 'u1'), conv('c2', 'u2')]),
+      env.s.cacheMessages({ conversationId: 'c2', messages: [msg('m2', '2026-01-02T00:00:00Z')], updatedAt: 'u2' })
+    ])
+    const rejected = results.filter((r) => r.status === 'rejected')
+    expect(rejected, `并发写出现失败：${rejected.map((r) => String((r as PromiseRejectedResult).reason)).join(' | ')}`).toEqual([])
+    // 可解析 = 没有半截 JSON 落盘（原子替换的核心承诺）
+    const raw = JSON.parse(await readFile(join(env.base, 'message-cache-v1.json'), 'utf8')) as { snapshots: Record<string, unknown> }
+    expect(Object.keys(raw.snapshots).sort()).toEqual(['c1', 'c2'])
+  })
 })
 
 // —— H-11b（2026-09-11）：持久化损坏路径改 fail-closed ——

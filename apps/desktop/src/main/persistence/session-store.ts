@@ -170,13 +170,39 @@ export class SessionStore {
     )
   }
 
+  /**
+   * H-11a（2026-09-11）：写序列化尾巴（**纵深防御**）。
+   *
+   * 本 store 有多条写**同一文件**的路径（drafts：`persistSession` × `setActiveConversation` ×
+   * `purgeConversation`；cache：`cacheMessages` × `syncConversationList` × `purgeConversation`），
+   * 且 `chat-service` 侧三条都是 fire-and-forget。
+   *
+   * 真正的并发安全已在 `atomicWriteFile` 内落地（按目标路径排队 + UUID 临时名），故此处**不是**唯一防线；
+   * 保留它的价值在于把「本 store 的写是有序的」这一意图写在本地——读这段代码的人不必先去读底层writer
+   * 才知道顺序有保证，且将来换 writer 实现时顺序语义不会随之丢失。
+   * 同仓先例：`credential-store.ts` 的 `queue`、`character-draft-store.ts` 的 `writeTail`。
+   *
+   * 语义：`then(op, op)` 两个参数——任一 op reject 只影响该次调用者，不毒化后续排队者。
+   */
+  private writeTail: Promise<void> = Promise.resolve()
+
+  private enqueueWrite<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.writeTail.then(op, op)
+    this.writeTail = run.then(() => {}, () => {})
+    return run
+  }
+
   private async writeDrafts(): Promise<void> {
     this.assertWritable()
-    await atomicWriteFile(this.draftsFile, JSON.stringify(this.drafts), { safeRoot: this.deps.safeRoot })
+    // 在**调用时刻**序列化（而非排队执行时）：每次写持久化的是「它被要求写的那一刻」的状态，
+    // 顺序由队列保证，故最后落盘的必然是最新一次调用的状态。
+    const data = JSON.stringify(this.drafts)
+    await this.enqueueWrite(() => atomicWriteFile(this.draftsFile, data, { safeRoot: this.deps.safeRoot }))
   }
   private async writeCache(): Promise<void> {
     this.assertWritable()
-    await atomicWriteFile(this.cacheFile, JSON.stringify(this.cache), { safeRoot: this.deps.safeRoot })
+    const data = JSON.stringify(this.cache)
+    await this.enqueueWrite(() => atomicWriteFile(this.cacheFile, data, { safeRoot: this.deps.safeRoot }))
   }
 
   /** 响应装箱：默认全量；超 MAX_IPC_MESSAGE_BYTES 时按顺序降级（spec §4.2 P1-2），降级记诊断计数、不记正文 */

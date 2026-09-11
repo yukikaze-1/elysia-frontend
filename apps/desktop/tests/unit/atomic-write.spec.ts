@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { atomicWriteFile } from '../../src/main/credentials/atomic-write'
-import { SafeOpenConflictError } from '../../src/main/persistence/safe-open'
 
 function makeDir(): string {
   const root = mkdtempSync(join(tmpdir(), 'cy-atomic-'))
@@ -27,19 +26,35 @@ describe('atomicWriteFile', () => {
     expect(readFileSync(p, 'utf8')).toBe('new')
     expect(existsSync(join(root, 'config', 'credentials.json.tmp'))).toBe(false)
   })
-  it('陈旧 temp（EEXIST）→ unlink 重试成功', async () => {
+  // H-11a（2026-09-11）：临时名从固定的 `<name>.tmp` 改为 `<name>.<uuid>.tmp`，故下面两条用例的
+  // **前提**（同名 temp 相撞 → EEXIST）已不存在——它们此前保护的是「陈旧 temp 不把写入变成砖」，
+  // 现在这条性质由「名字根本不会相撞」更强地保证。此处改写为断言**新契约**，而不是删掉了事：
+  // 陈旧 temp 仍会被回收（主动 sweep），且回收失败不影响写入。
+  it('陈旧（早于阈值）temp 被回收，且不阻塞本次写入', async () => {
     const root = makeDir()
     const p = join(root, 'config', 'credentials.json')
-    writeFileSync(join(root, 'config', 'credentials.json.tmp'), 'stale', { mode: 0o600 })
+    const stale = join(root, 'config', 'credentials.json.00000000-0000-4000-8000-000000000000.tmp')
+    writeFileSync(stale, 'stale', { mode: 0o600 })
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000)   // 2 小时前 > 1 小时阈值
+    utimesSync(stale, old, old)
+
     await atomicWriteFile(p, 'fresh', { safeRoot: root })
+
     expect(readFileSync(p, 'utf8')).toBe('fresh')
-    expect(existsSync(join(root, 'config', 'credentials.json.tmp'))).toBe(false)
+    expect(existsSync(stale), '早于阈值的陈旧 temp 应被回收').toBe(false)
   })
-  it('陈旧 temp 仍 EEXIST（tmp 为目录，unlink 失败）→ 抛 SafeOpenConflictError（上抛不静默）', async () => {
+  it('名字像 temp 的目录不会被回收误伤，且写入照常成功', async () => {
     const root = makeDir()
     const p = join(root, 'config', 'credentials.json')
-    mkdirSync(join(root, 'config', 'credentials.json.tmp')) // tmp 是目录：unlink EISDIR 被吞，重试仍 EEXIST → 上抛
-    await expect(atomicWriteFile(p, 'x', { safeRoot: root })).rejects.toBeInstanceOf(SafeOpenConflictError)
+    const dirLikeTemp = join(root, 'config', 'credentials.json.00000000-0000-4000-8000-000000000001.tmp')
+    mkdirSync(dirLikeTemp)
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    utimesSync(dirLikeTemp, old, old)
+
+    await atomicWriteFile(p, 'x', { safeRoot: root })
+
+    expect(readFileSync(p, 'utf8')).toBe('x')
+    expect(existsSync(dirLikeTemp), 'sweep 只回收普通文件，不得删目录').toBe(true)
   })
   it('父目录逃逸 safeRoot → 拒绝', async () => {
     const root = makeDir()
