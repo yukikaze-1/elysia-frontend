@@ -8,7 +8,9 @@
 // （V-2 惰性读取——测试中途经 app.evaluate 翻转 Main 进程 env 可观测）；设置页入口无 settings-open testid，
 // 沿用套件先例 getByRole('设置'/'关闭设置') + .cy-settings-nav-item（对齐 electron-live2d/electron-voice）。
 import { describe, expect, it, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'   // readFileSync：H14
+import { mkdirSync, writeFileSync, readFileSync, rmSync, mkdtempSync } from 'node:fs'   // readFileSync：H14
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { launchApp, closeApp } from './helpers/app'
 
 const POLL = { timeout: 5000, interval: 200 }
@@ -16,16 +18,19 @@ const POLL = { timeout: 5000, interval: 200 }
 // renderer 主线程时 page.evaluate 慢到 ~3.75s/次，5s 窗口只够约 1 次读值；15s 保证慢环境也能读到
 // （对齐 electron-live2d.spec.ts:450 `{ ...POLL, timeout: 15000 }` 的慢渲染放宽）。
 const SLOW_POLL = { timeout: 15000, interval: 200 }
-const FIXTURE_ROOT = '/tmp/cyrene-fixtures'
 /**
- * 「黑名单目录」用例的注入值（2026-09-10 修复）：必须取**本平台** PATH_BLACKLIST_DEFAULTS 里真实存在的根。
- * 原写死 `/etc` 只在 POSIX 成立——Windows 上 normalizeToolPath 用 path.win32.resolve 解析成 `C:\etc`，
- * 黑名单条目 `/etc` 按字面比较不命中（Windows 条目是 C:\Windows / C:\Program Files / ~\AppData 等），
- * 于是 grant 成功、错误提示永不出现，用例在 Windows 长期红灯（2026-08-22 阶段7批次A 决策记录已记录
- * 「Windows 平台前提，非产品回归」）。改用 C:\Windows 后两个平台都真正走到 PATH_BLOCKLISTED 分支。
+ * fixture 根（M-33，2026-09-11）。
+ *
+ * 原为硬编码 `'/tmp/cyrene-fixtures'`——在 Windows 上 `normalizeToolPath` 用 `path.win32.resolve`
+ * 把它解析成 `C:\tmp\cyrene-fixtures`，于是 mock allow-root 走的是与真实用户目录**不同**的字符串变换路径
+ * （本仓库已两次被 Windows 路径处理咬过：`safe-open.ts`/`atomic-write.ts` 的 8.3 短名、
+ * `normalizeToolPath` 的盘符解析），而 Windows 是首要目标平台。
+ * 现改为平台原生临时目录下的 mkdtemp，让 Windows 也真正走一遍真实路径语义。
+ * 目录在模块加载时创建一次；`ensureFixture` 每次重建（afterEach 会删），故用例间互不影响。
  */
+const FIXTURE_ROOT = mkdtempSync(join(tmpdir(), 'cy-tools-'))
 const BLACKLISTED_DIR = process.platform === 'win32' ? 'C:\\Windows' : '/etc'
-const FIXTURE = `${FIXTURE_ROOT}/note.txt`
+const FIXTURE = join(FIXTURE_ROOT, 'note.txt')
 const FLOW_READ = JSON.stringify({ kind: 'desktop', request: { toolName: 'desktop.file.read', arguments: { path: FIXTURE } } })
 
 async function ensureFixture(content = 'hello fixture\n'): Promise<void> {

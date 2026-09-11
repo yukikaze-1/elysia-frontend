@@ -36,7 +36,7 @@ function makeDeps() {
 
 describe('createCorruptIsolation 骨架', () => {
   it('isolate 正常隔离 → .corrupt-<tag>-<ts> 备份 + countDiagnostic', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ci-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-corrupt-'))
     const f = join(dir, 'x.json')
     writeFileSync(f, 'bad')
     const deps = makeDeps()
@@ -49,7 +49,7 @@ describe('createCorruptIsolation 骨架', () => {
   })
 
   it('isolate 带 safeRoot 负例——传安全根外路径应拒绝', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ci-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-corrupt-'))
     const iso = createCorruptIsolation(makeDeps())
     await expect(iso.isolate('/etc/passwd', 'x', dir)).rejects.toThrow()
   })
@@ -59,7 +59,7 @@ describe('createCorruptIsolation 骨架', () => {
     // 修复对齐 safe-open.ts 用 relative(safeRootDir, fileReal) 判定——真实路径不在安全根下即拒。
     // 构造：dir = <tmpdir>/ci-XXX；safeRoot=dir，file = <tmpdir>/ci-XXX-bro/x.json（同前缀兄弟目录，非 dir 内）。
     // 若用 startsWith(dir)，<tmpdir>/ci-XXX-bro 会以 <tmpdir>/ci-XXX 开头 → 被误判"在内"——这是 C-13 要修的。
-    const dir = mkdtempSync(join(tmpdir(), 'ci-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-corrupt-'))
     // 兄弟目录：dir 的字符串前缀 + '-bro' 后缀，realpath 后以 dir 开头但实际不在 dir 树内
     const bro = join(tmpdir(), `${basename(dir)}-bro`)
     mkdirSync(bro, { recursive: true })
@@ -71,7 +71,7 @@ describe('createCorruptIsolation 骨架', () => {
   })
 
   it('isolate 安全根内路径正常通过（C-13 回归：不在内才拒）', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ci-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-corrupt-'))
     const f = join(dir, 'y.json')
     writeFileSync(f, 'ok')
     const iso = createCorruptIsolation(makeDeps())
@@ -87,7 +87,7 @@ describe('createCorruptIsolation 骨架', () => {
   })
 
   it('pruneCorrupt 只留最新一份（HIGH-1）', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ci-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-corrupt-'))
     const f = join(dir, 'x.json')
     writeFileSync(f + '.corrupt-settings-aaa', 'a')
     writeFileSync(f + '.corrupt-settings-bbb', 'b')
@@ -104,7 +104,7 @@ describe('createCorruptIsolation 骨架', () => {
 // 调用方以为「已隔离」而重建空态，于是原文件留在磁盘上、内存态已空，下一次击键即覆写。
 describe('isolate 失败语义（H-11b）', () => {
   it('改名失败（EPERM）→ 上抛，且原文件仍在磁盘上未被误判为已隔离', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ci-h11b-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-h11b-'))
     const f = join(dir, 'x.json')
     writeFileSync(f, 'bad')
     const deps = makeDeps()
@@ -118,7 +118,7 @@ describe('isolate 失败语义（H-11b）', () => {
   })
 
   it('源文件已消失（ENOENT）→ 视为隔离完成（无物可保留、无物可覆写），不误报降级', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ci-h11b2-'))
+    const dir = mkdtempSync(join(tmpdir(), 'cy-h11b2-'))
     const f = join(dir, 'x.json')
     writeFileSync(f, 'bad')
     const deps = makeDeps()
