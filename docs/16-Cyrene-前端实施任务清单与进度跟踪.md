@@ -193,7 +193,19 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **本批方法论教训（第三次同族，已单列）**：我直接跑 `vitest run --config vitest.integration.config.mts` 测组件改动，而该命令**不重建 `out/`**，于是两次「修复后仍冻结」的结论其实都跑在**旧产物**上，白绕一圈。前两批的教训是「变异前要重建」「还原后要重建」，本次补第三条：**任何被测改动都要先确认它在产物里**（最终靠一个临时探针属性在 DOM 里回读为空才发现整轮都在测旧构建）。另修一处**未还原的变异残留**（上批 Mutation B 的 `void watchdog` 顶掉了 `clearGeneration` 的 `disarm()`），由 `grep MUTATION` 扫出——变异残留必须扫，不能靠记忆。
 
-**P2-6 与 H-05 批次（2026-09-11，`b3c7baf`／`bd065b6`）**
+**H-07 mock 侧确定性缺陷批次（2026-09-11，`07c71dd`）**
+
+只读侦察定位到两处**确定性**缺陷，本轮读码确认并各自变异验证；两者都在 mock 角色后端，且都会让公开状态卡片走向「永久读取失败」：
+
+- **缺陷①（评审未提，更严重）**：`createCharacter`/`cloneCharacter` 把角色推进 `characters` 与 `histories`，却**从不写 `states`**；而 `getConversationBinding` 早已把自建角色绑定到 `instance-<mangled-id>`。故 mock 下**每一个用户自建角色**的公开状态卡片永久 `CHARACTER_INSTANCE_NOT_FOUND`——不是"有时"，是必然。全仓原本**没有任何** `instance-custom*` 用例（grep 0 命中），从未被发现。
+- **缺陷②**：`states` 的 `characterRevision` 构造时定死、此后永不更新，而 `updateCharacter`/`rollbackCharacter` 会推进角色 revision ⇒ follow_latest 绑定到新 revision 后渲染层身份栅栏必然抛错，且**重试不自愈**（只在 Main 的 15s TTL 内取回同一个旧 revision 值）。
+- **修法**：提取 `instanceIdFor()` 作唯一推导点（原推导内联在绑定里，与 `states` 键空间各自演化——正是分叉温床）；新增 `ensureStateFor(detail, statePolicy)`（无则建、有则推进 revision+`stateVersion`；`reset_evolution` 重置情绪、`preserve` 保留）；三处调用点 create/clone/update+rollback。
+- **验证**：新增 `mock-character-state-coverage.spec.ts` 7 条，覆盖原先缺失的那条路径（自建/克隆可读、revision 与**绑定**对拍、reset 语义、回滚、内置回归、未创建实例仍拒绝）。变异：移除 create 的 `ensureStateFor` → 3 条红；让状态永不刷新 revision → 3 条红于 `expected 1 to be 2`。
+- **评审措辞再修正**：评审称卡片「既不自愈也不报错」**不准确**——卡片会显示「读取失败 + 重试」并给出错误码，只是**不会自动恢复**（`loadState` 只有协调器元组监听与手动重试两个调用方，无轮询/重订阅）。真实症状是「报错且不自愈」，不是「静默空卡」。
+- **H-07 结构性修法仍未做**：让读路径携带 revision（`getCharacterState(instanceId, expectedRevision)`）、由 Main 在单一键空间做唯一栅栏、删掉组件层第三份重复规则——需改 IPC 契约与 Real 侧，属高风险项、需真机复验。
+
+**H-02 未决的新证据（`34642079698`）**：该次 CI 里 `message-list-follow-bottom` ① 红于 **84px**（阈值 40），而真实缺陷的实测值是 **779px**／**4825px**。即 CI 上的红色形态是**估算→实测高修正过程中的小幅未收敛**（84px 量级），不是「永久冻结」那种数百至数千像素的缺口。这对定判据很关键：40px 阈值落在噪声带内，下一轮应改为「先等收敛再断言」（或按实测把阈值定在 84 与 779 之间并写明依据），同时保留数百像素量级的判别力。同次另一个红是 `electron-live2d` B6（SwiftShader 画布像素 0），与本批改动无关：两者在本地单跑均全绿（31/31），且其后继提交 `07c71dd` 的 CI **5/5 全绿**。
+
 
 - **P2-6 临时目录回收**：**实测把 L-28 的规模修正了一个数量级**——评审判定「集成套件泄漏临时 userData 目录」（本机 103 个 `cy-int-ud-*`／59.65 MB），实测 `$TEMP` 下累积 **6,720 个 `cy*` 目录／22.6 MB、最早 2026-06-23**，分布 40+ 前缀（`cy-creds-` 2576、`cy-settings-` 1430、`cy-atomic-` 762…），**大头在单元测试**。
 - P2-6 根因不是「清理失败」而是**多数 spec 根本没有清理代码**（如 `credential-store.spec.ts` 每次 `mkdtempSync` 却全文件无 `rmSync`）。故修法为**集中回收 + 防漂移门禁**（`tests/helpers/temp-dirs.ts` + 两套 globalSetup），而不是逐个 spec 补 `afterEach`（22 个文件必然再漏）。安全纪律落在实现里：只处理临时目录**直接子目录**、显式允许表（**不用 `cy*` 通配**）、**被活进程引用的跳过（含子路径**——Electron 子进程写 `<dir>/Cyrene`）、太新的跳过（10 分钟，防并发套件）、单条失败不中断。防漂移用例扫描全部测试源码的 `mkdtemp` 前缀，未登记即红并点名；带退化哨兵（扫不到 >20 个前缀即判解析器失效）。
@@ -235,7 +247,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
 4. 全量评审建议的 P0 批次**已基本完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；仅 P0-7 未动（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI），它依赖外部授权事实与阶段 8 决策。
 4.1 **建议的门禁判别力三项已完成**（`b51ba49`，报告 P1-2／P2-5／P1-4，见 §1 与 §3.1）。剩余 **H-05～H-10 六条 High 一条未动**，均属 P1：H-05 契约镜像锚点（P1-3）、H-06／H-07 角色域双缓存（P1-10，高风险、需真机复验）、H-08 长会话性能（P1-9）、H-09 写文件大小校验前移＋diff 出主线程（P1-8）、H-10 流式 watchdog／切会话取消（P1-7）、H-11a 写序列化＋唯一临时名（P1-5）。另 P1-1（`registry` 预算默认值）、P1-11（`noImplicitAny`／type-aware lint）、P1-12（renderer 报错进诊断包）亦未动。
-5. **剩余 High 批次进度（2026-09-11 更新）**：H-10、H-09、H-11a、**H-05**、**P2-6** 已完成（`5396bae`／`6ec4941`／`da9a378`／`bd065b6`／`b3c7baf`，见 §3.1）。**H-02 续修已尝试并回退**（`5d04941`；该改动在 CI 上使既有 `perf-gate` ②b 由绿转红，成因未收敛，见 §3.1「H-02 未决」）。**尚未开始**：H-06／H-07 角色域双缓存（P1-10，高风险、需真机复验）、H-08 长会话性能（P1-9）；以及 P1-1（`registry` 预算默认值）、P1-11（`noImplicitAny`／type-aware lint）、P1-12（renderer 报错进诊断包）。
+5. **剩余 High 批次进度（2026-09-11 更新）**：H-10、H-09、H-11a、**H-05**、**P2-6**、**H-07（mock 侧确定性缺陷）** 已完成（`5396bae`／`6ec4941`／`da9a378`／`bd065b6`／`b3c7baf`／`07c71dd`，见 §3.1）。**H-02 续修已尝试并回退**（`5d04941`；见 §3.1「H-02 未决」，该节已有新证据）。**尚未开始**：**H-07/H-06 的结构性修法**（revision 感知读 + 单一栅栏 + 去组件层重复规则；需真机复验）、H-08 长会话性能（P1-9）；以及 P1-1（`registry` 预算默认值）、P1-11（`noImplicitAny`／type-aware lint）、P1-12（renderer 报错进诊断包）。
 5.1 **H-06／H-07 侦察已定案（2026-09-11，只读复核）**，两处与评审措辞不符，修前须知：① 评审称公开状态卡片「既不自愈也不报错」**不准确**——实际会显示「读取失败 + 重试」并给出错误码，只是**不会自动恢复**（`loadState` 只有两个调用方，无轮询/重订阅）；② 更严重的是侦察发现的**确定性缺陷**：mock 模式下 `createCharacter`／`cloneCharacter` **从不创建 `states` 条目**，故**每一个用户自建角色**的公开状态卡片在 mock 下永久报 `CHARACTER_INSTANCE_NOT_FOUND`（全仓无 `instance-custom*` 用例，从未被覆盖）。修法方向：让读路径携带 revision（`getCharacterState(instanceId, expectedRevision)`），由 Main 在一个键空间上做唯一栅栏，并删掉组件层第三份重复规则；同时修 mock 的 state 映射。
 5. **H-01 的取舍已按推荐定案**：采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒——理由是这两个目录的同用户临时文件同样可能含密钥，而附件链是 Renderer 唯一能用字符串指认本地文件的地方；代价明确且**改一处即可放开**。H-12 的两处取舍亦已定案：`uncaughtException` 接管 fail-safe（弹窗 + 退出），`unhandledRejection` 只留痕不终止。
 6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。
