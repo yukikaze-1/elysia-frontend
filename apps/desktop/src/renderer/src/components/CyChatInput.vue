@@ -155,9 +155,13 @@ const hasActiveGeneration = computed(() => !!messageStore.activeGenerationId)
 
 /** 发送条件:非空/有附件/有待发送贴图 + 未在发送 + 无阻断(附件 failed/validating/uploading) + 有激活会话 + 已连接且会话就绪
  *  P1-5：canSend 计入 pendingStickers 非空——纯贴图也能点发送按钮；附件阻断只挡附件/文本路径（贴图不经附件编排，不受影响），保证按钮/Enter 一致
- *  P4-B：语音会话活跃（mode!=='idle'）→ 文本发送禁用（spec §5.12） */
+ *  P4-B：语音会话活跃（mode!=='idle'）→ 文本发送禁用（spec §5.12）
+ *  H-10：生成进行中（hasActiveGeneration）→ 禁发。Renderer 只有**一个** accumulator，
+ *  并在 generation.started 处强制中断上一代（message.store 的 previousGenerationId 分支），
+ *  故「再发一条」并不会并行两条，而是直接掐掉正在看的那条回复——这是缺陷不是特性。
+ *  同时该按钮位置已由「停止生成」按钮占据，禁发与之一致。 */
 const canSend = computed(() =>
-  voiceStore.mode === 'idle' &&
+  voiceStore.mode === 'idle' && !hasActiveGeneration.value &&
   (draft.value.trim().length > 0 || attachmentStore.hasReady || pendingStickers.value.length > 0) &&
   !messageStore.sending && (pendingStickers.value.length > 0 || !attachmentStore.canSend.blockReason) &&
   !!conversationStore.currentId && connectionStore.state.status === 'connected' && conversationStore.ready && !conversationStore.busy
@@ -183,6 +187,10 @@ function onEnter(e: KeyboardEvent): void {
 }
 
 async function send(): Promise<void> {
+  // H-10：生成进行中一律不发送——**包括「纯贴图」这条刻意绕过 canSend 的路径**
+  // （下一行 early-return 对 pendingStickers 非空放行，那是为附件阻断开的例外，不该顺带
+  // 放行并发 generation）。Renderer 只有一个 accumulator，再发会掐掉正在显示的回复。
+  if (hasActiveGeneration.value) return
   if (!canSend.value && pendingStickers.value.length === 0) return
   let ok = false
   const text = draft.value.trim()

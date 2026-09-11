@@ -266,6 +266,16 @@ const MOCK_DIRECTIVE_STATES: ReadonlySet<string> = new Set([
 export interface MockBackendOptions {
   /** 每个事件的触发间隔(毫秒) */
   emitDelayMs?: number
+  /**
+   * H-10 集成注入：`CYRENE_MOCK_STALL_GENERATION=1` 时，发送触发的这次生成**只发
+   * `generation.started`（夹具首条）然后彻底静默**——精确模拟「后端已受理但卡住 / 丢终态」。
+   *
+   * 为什么不复用 `emitDelayMs` 造这个场景：该值被 `parseMockEmitDelayEnv` 钳在 [10,5000]
+   * （:142-147），最长只有 5s，永远够不到 50s 的静默窗口；为了测试去抬高这个上限又会
+   * 改变所有既有用例所依赖的钳制语义。故单列一个**语义明确**的开关：它表达的就是
+   * 「卡住」这件事本身，而不是靠延时数学逼近。
+   */
+  stallGeneration?: boolean
   /** 覆盖内置夹具(测试用) */
   fixtureRaw?: string
   /** 连接状态变化回调(connect/disconnect 时触发) */
@@ -391,6 +401,8 @@ export class MockBackend implements BackendAdapter {
   private readonly toolFlow?: MockToolFlow
   /** 阶段 6 批次 A（F-6-22）：归档配对 seed（CYRENE_MOCK_TOOL_HISTORY）；缺省 false 不注入 */
   private readonly toolHistory: boolean
+  /** H-10 集成注入：发送触发的生成只发 generation.started 后静默（CYRENE_MOCK_STALL_GENERATION=1） */
+  private readonly stallGeneration: boolean
   /** 阶段 7 批次 A（Task 3）：回复正文夹具覆盖文本（CYRENE_MOCK_REPLY_FIXTURE env 桥；缺省 undefined 不覆盖） */
   private readonly replyFixtureText?: string
   /** 阶段 6 批次 B（Task 6）：桌面工具请求 sink（构造注入；缺省 undefined 不交付） */
@@ -525,6 +537,7 @@ export class MockBackend implements BackendAdapter {
       })
     }
     this.emitDelayMs = options.emitDelayMs ?? 30
+    this.stallGeneration = options.stallGeneration === true
     this.generationEmotion = options.generationEmotion
     this.mockMouthLevel = options.mockMouthLevel
     this.ttsAudioSink = options.ttsAudioSink
@@ -1150,7 +1163,10 @@ export class MockBackend implements BackendAdapter {
     // 阶段 7 批次 A（Task 3）：回复正文覆盖标记（每代局部——并发两代互不串扰；首批 public_reply delta 后关闭，
     // 其后 public_reply delta 置空 → 回复正文 = 夹具文本，内声优不受影响）
     let replyFixtureFirstDelta = true
-    this.fixture.forEach((event, index) => {
+    // H-10：卡住注入——只重放夹具首条（generation.started），其后一个事件都不发。
+    // 这正是「后端已受理请求、然后没了下文」的形态：界面进入生成中，但永远等不到终态。
+    const replayEvents = this.stallGeneration ? this.fixture.slice(0, 1) : this.fixture
+    replayEvents.forEach((event, index) => {
       const fresh: Record<string, unknown> = { ...event }
       if ('generationId' in event) fresh.generationId = genId
       if ('messageId' in event) fresh.messageId = msgId

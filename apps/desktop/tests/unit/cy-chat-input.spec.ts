@@ -14,6 +14,7 @@ import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useDraftStore } from '../../src/renderer/src/stores/draft.store'
+import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useHistoryViewerStore } from '../../src/renderer/src/stores/historyViewer.store'
 
 const mockApi = {
@@ -69,6 +70,41 @@ beforeEach(() => {
   s.voice.enabled = true
   s.voice.realtimeEnabled = false
   s.voice.consentBackendStt = true
+})
+
+describe('CyChatInput 发送门控（H-10，2026-09-11）', () => {
+  it('常态：会话就绪 + 有草稿 → 发送按钮**可用**（既有用例只测了禁用方向，故本方向此前无人守）', () => {
+    // 这条断言是有代价换来的：H-10 里我给 canSend 加了 `!hasActiveGeneration`，
+    // 漏写 `.value` ⇒ 表达式恒为 false ⇒ **所有用户的发送按钮永久禁用**。
+    // 当时 223 个测试文件全绿——因为既有的发送按钮用例只断言「busy 时禁用」，
+    // 没有任何用例断言「正常时可用」。绿不等于对，这就是那次的证据。
+    useDraftStore().drafts['conv-1'] = '可以发送的消息'
+    const wrapper = mountInput()
+    expect(isDisabled(wrapper, '[aria-label="发送"]'), '正常态下发送按钮必须可用').toBe(false)
+    wrapper.unmount()
+  })
+
+  it('生成进行中：发送按钮禁用 + 显示停止按钮（渲染器只有一个 accumulator，再发会掐掉当前回复）', () => {
+    useDraftStore().drafts['conv-1'] = '生成中不该能再发'
+    useMessageStore().activeGenerationId = 'gen-1'
+    const wrapper = mountInput()
+    expect(isDisabled(wrapper, '[aria-label="发送"]')).toBe(true)
+    expect(wrapper.find('.cy-stop-btn').exists(), '生成中应同时给出停止入口').toBe(true)
+    wrapper.unmount()
+  })
+
+  it('生成结束（活动代释放）后发送按钮恢复可用', () => {
+    useDraftStore().drafts['conv-1'] = '回到可发送'
+    const store = useMessageStore()
+    store.activeGenerationId = 'gen-1'
+    const wrapper = mountInput()
+    expect(isDisabled(wrapper, '[aria-label="发送"]')).toBe(true)
+    store.activeGenerationId = undefined
+    return wrapper.vm.$nextTick().then(() => {
+      expect(isDisabled(wrapper, '[aria-label="发送"]')).toBe(false)
+      wrapper.unmount()
+    })
+  })
 })
 
 describe('CyChatInput 语音入口守卫（Minor 24，UII02rev 独立按钮）', () => {

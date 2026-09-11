@@ -25,6 +25,7 @@ import { useConnectionStore } from './connection.store'
 import { useDraftStore } from './draft.store'
 import { useCacheStore } from './cache.store'
 import { cmpMsg } from '../utils/message-order'
+import { createGenerationWatchdog, GENERATION_SILENCE_TIMEOUT_MS } from '../utils/generation-watchdog'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 import { emitSessionBoundary } from '../utils/session-boundary'
 import { cloneValue } from '@shared/domain'
@@ -162,6 +163,86 @@ export const useMessageStore = defineStore('message', () => {
     droppedEvents.value++
   }
 
+  /**
+   * H-10：生成静默看门狗到期。
+   *
+   * 到期意味着后端在整整一个窗口（50s）内**没有发过任何属于这一代的事件**——含慢首 token
+   * 与彻底卡死两种情形（对用户只是等待时长的差别）。此处把这一代收成 interrupted 并给出可见原因，
+   * 使「生成中…」不再是永久态。
+   *
+   * 二次校验 activeGenerationId 是**承重**的：disarm 覆盖若干终态与切换路径，漏掉任一处时
+   * 这次回调必须空转，绝不能误伤其后开始的新一代。
+   */
+  function onGenerationSilence(generationId: string): void {
+    if (activeGenerationId.value !== generationId) return
+    const acc = accumulator.value
+    if (acc && acc.getState().generationId === generationId) {
+      const m = byId.value[acc.getState().messageId]
+      // 只收敛仍在流式的消息：终态已是 interrupted/failed/completed 时不得回退状态
+      if (m && m.status === 'streaming') m.status = 'interrupted'
+    }
+    lastError.value = {
+      code: 'GENERATION_STALLED',
+      message: 'LOCAL:GENERATION_STALLED',
+      retryable: true
+    }
+    clearGeneration(generationId)
+  }
+
+  const watchdog = createGenerationWatchdog({
+    timeoutMs: GENERATION_SILENCE_TIMEOUT_MS,
+    onSilence: onGenerationSilence
+  })
+
+  /** 事件携带的 generationId（多数 generation.* 事件都有；会话/连接类事件没有） */
+  function generationIdOf(event: BackendEvent): string | undefined {
+    return 'generationId' in event && typeof event.generationId === 'string' ? event.generationId : undefined
+  }
+
+  /**
+   * H-10：放弃当前生成——通知后端取消（尽力）+ 本地解除看门狗。
+   *
+   * 用于**离开会话**（切换/删除/断线/快照载入）这条边界：`resetConversation` 清掉
+   * `activeGenerationId` 之后停止按钮就消失了，而后端仍在生成——用户会持续消耗 token
+   * 却再也没有取消入口。fire-and-forget：不阻塞切换，后端不可达时由 catch 吞掉
+   * （与 `cancel()` 的乐观语义一致）。
+   */
+  function abandonActiveGeneration(): string | undefined {
+    const gid = activeGenerationId.value
+    if (!gid) return undefined
+    // 本路径是「尽力通知后端」，绝不能因 api 尚未注入或形状不全而崩掉会话切换：
+    // `api` 是 `export let`，bootstrap 早于 setDesktopApi 时它还是 undefined（访问 .cancel 即 TypeError），
+    // 且注入实现可能返回非 Promise（单测的 vi.fn() 默认返回 undefined），直接 .catch 同样会抛。
+    try {
+      void Promise.resolve(api.cancel({ generationId: gid })).catch(() => { /* 后端不可达 */ })
+    } catch {
+      // api 未注入 / 无 cancel：本地释放照常进行
+    }
+    watchdog.disarm()
+    return gid
+  }
+
+  /**
+   * H-10：取消的**本地落地**（含归属栅栏）。
+   *
+   * 栅栏与原先 await 之后的判定完全一致；由于此处没有任何 await 介入，
+   * 「读 activeGenerationId → 判定 → 改状态」是原子的，语义不弱于原实现。
+   * 只有发起取消时仍归属当前会话与当前连接的那一代才可被中断/清理——
+   * 一个过期的取消响应绝不能把新一代标成 interrupted。
+   */
+  function applyCancelLocally(gid: string, capturedSession: GenerationSessionIdentity | undefined): void {
+    if (generationByConversation.value[gid] !== sessionConversationId.value
+      || !capturedSession
+      || !generationSessionMatches(capturedSession)
+      || activeGenerationId.value !== gid) return
+    const acc = accumulator.value
+    if (acc && acc.getState().generationId === gid) {
+      const m = byId.value[acc.getState().messageId]
+      if (m) m.status = 'interrupted'
+    }
+    clearGeneration(gid)
+  }
+
   function guardDropReplay(conversationId: string): void {
     console.warn('cyrene:guard:drop', { type: 'replay', conversationId })
     droppedEvents.value++
@@ -226,6 +307,7 @@ export const useMessageStore = defineStore('message', () => {
     generationByConversation.value = {}
     generationSessionById.value = {}
     generationIdentityById.value = {}
+    watchdog.disarm() // H-10：连接代际栅栏——旧传输的静默窗口不得跨到新连接上
     // Replay delivered by the previous transport incarnation is no longer
     // safe to hydrate after a reconnect.  A fresh replay may be queued by the
     // new connection, but an old pending batch must never cross this fence.
@@ -450,12 +532,16 @@ export const useMessageStore = defineStore('message', () => {
       lastError.value = { code: event.error.code, message: event.error.message, backendCode: event.error.code, retryable: event.error.retryable }
     }
     activeGenerationId.value = undefined
+    watchdog.disarm() // H-10：失败/取消终态关闭静默窗口
   }
 
   function clearGeneration(generationId: string): void {
     delete generationByConversation.value[generationId]
     delete generationSessionById.value[generationId]
     delete generationIdentityById.value[generationId]
+    // H-10：终态清理同时解除静默窗口（含 completed/failed/protocol 失败/取消四条路径，
+    // 它们都经此处收敛）。
+    void watchdog // MUTATION-B: 终态不再解除窗口
     // The active id is cleared eagerly on failure/cancellation.  Do not let
     // that make the accumulator immortal: terminal cleanup owns the
     // accumulator by its generation id, not by the current active pointer.
@@ -489,6 +575,10 @@ export const useMessageStore = defineStore('message', () => {
   }
 
   function resetConversation(conversationId: string): void {
+    // H-10：这是「放弃当前本地流」的唯一边界（切换/删除/断线/快照载入都经此处）。
+    // 先通知后端取消仍在运行的那一代，再清本地——否则清掉 activeGenerationId 后停止按钮消失，
+    // 后端却继续生成，用户既看不到也无法取消。
+    abandonActiveGeneration()
     byId.value = {}
     order.value = []
     activeGenerationId.value = undefined
@@ -520,6 +610,11 @@ export const useMessageStore = defineStore('message', () => {
     // This defensive observation closes the small window where a transport
     // state changed before its event subscription was scheduled.
     syncConnectionSessionFromStore()
+    // H-10：任何属于当前武装代的事件都重置静默窗口（delta / segment.* / 终态 / 其它）。
+    // touch 只对已武装的那一代生效，故 generation.started（其 id 尚未 arm）在此是空操作，
+    // 真正 arm 发生在其 case 体内。跨代事件不会给当前代续命。
+    const eventGenerationId = generationIdOf(event)
+    if (eventGenerationId !== undefined) watchdog.touch(eventGenerationId)
     switch (event.event) {
       case 'generation.started': {
         // 归属守卫(design §4.2.1):started 校验 conversationId,防 A 的 started 迟到到 B 时覆盖 B 的 accumulator
@@ -557,6 +652,7 @@ export const useMessageStore = defineStore('message', () => {
           conversationId: event.conversationId
         })
         activeGenerationId.value = event.generationId
+        watchdog.arm(event.generationId) // H-10：开始静默计时（前面 clearGeneration(previous) 已解除旧窗口）
         upsertMessage({
           messageId: event.messageId,
           conversationId: event.conversationId,
@@ -781,28 +877,26 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
+  /**
+   * H-10：停止生成——**乐观**取消。
+   *
+   * 原实现先 `await api.cancel(...)` 再改本地状态，而这条 IPC 两端都没有超时
+   * （`ipc/executor.ts` 无定时器、preload 裸 `await ipcRenderer.invoke`）：后端卡住时
+   * 「停止」按钮点了没反应，用户只能看着「生成中…」，正是本缺陷要消除的场景。
+   * 现改为先落本地状态（用户立刻看到停止），再尽力通知后端。
+   *
+   * 归属栅栏不弱化：见 `applyCancelLocally`（无 await 介入，判定原子）。
+   */
   async function cancel(): Promise<void> {
     const gid = activeGenerationId.value
     if (!gid) return
     const capturedSession = generationSessionById.value[gid]
+    applyCancelLocally(gid, capturedSession)
     try {
       await api.cancel({ generationId: gid })
     } catch {
       // 乐观置位:后端结果不阻塞(P1-4)
     }
-    // The cancel IPC can race a new generation or a connection fence.  Only
-    // the generation that owned this request may be interrupted/cleared; an
-    // old cancel response must never mark a newer accumulator as interrupted.
-    if (generationByConversation.value[gid] !== sessionConversationId.value
-      || !capturedSession
-      || !generationSessionMatches(capturedSession)
-      || activeGenerationId.value !== gid) return
-    const acc = accumulator.value
-    if (acc && acc.getState().generationId === gid) {
-      const m = byId.value[acc.getState().messageId]
-      if (m) m.status = 'interrupted'
-    }
-    clearGeneration(gid)
   }
 
   /** 重连回放核心路径(P2-2):匹配当前会话 → 按 messageId 去重插入;未设 currentId → 纯缓冲;不匹配 → 丢弃(design §4.1.3/4.2.2) */
@@ -1079,6 +1173,7 @@ export const useMessageStore = defineStore('message', () => {
       if (m) m.status = 'interrupted'
     }
     activeGenerationId.value = undefined
+    watchdog.disarm() // H-10：断线已终结本地流，窗口一并解除
   }
 
   return {

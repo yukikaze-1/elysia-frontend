@@ -53,6 +53,9 @@ const ERROR_TEXT: Record<string, string> = {
   // —— 消息/生成域 ——
   CHARACTER_GENERATION_PROTOCOL_MISMATCH: '回复身份校验失败，已停止本次生成。',
   MESSAGE_PROTOCOL_MISMATCH: '消息所属会话或角色身份校验失败，请重试。',
+  // H-10：静默看门狗到期（后端在窗口内一个事件都没发）。文案必须说清「已停止等待」而不是
+  // 「发送失败」——用户的消息实际已发出，重发前应知道这一点。
+  GENERATION_STALLED: '回复长时间没有进展，已停止等待。可以重新发送。',
   // —— 角色草稿/持久化域 ——
   CHARACTER_DRAFT_STORAGE_UNAVAILABLE: '本地草稿存储暂时不可用；请稍后重试。',
   SCHEMA_VALIDATION_FAILED: '数据格式无效；请刷新后重试。',

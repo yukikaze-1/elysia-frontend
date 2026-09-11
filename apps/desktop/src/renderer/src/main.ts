@@ -13,6 +13,7 @@ import { useVoiceStore } from './stores/voice.store'
 import { useSettingsStore } from './stores/settings.store'
 import { useLive2dStore } from './stores/live2d.store'
 import { useToolStore } from './stores/tool.store'
+import { useAttachmentStore } from './stores/attachment.store'
 import { useIdentityStore } from './stores/identity.store'
 import { useCharacterCatalogStore } from './stores/character-catalog.store'
 import { useCharacterEditorStore } from './stores/character-editor.store'
@@ -93,6 +94,23 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
         pendingPathSummary: { callId: string; pathSummary: string } | null
       }
       getPermissionPending: () => import('@shared/contracts/tool').ToolCallRecord | null
+      /** H-10（2026-09-11）：生成生命周期探针（集成用例断言「卡住后真的释放了活动代」） */
+      getGenerationState: () => {
+        activeGenerationId: string | null
+        sending: boolean
+        lastErrorCode: string | null
+        stalled: boolean
+        conversationReady: boolean
+        conversationBusy: boolean
+        currentId: string | null
+        droppedEvents: number
+        voiceMode: string
+        attachmentBlockReason: string | null
+        sendButtonCount: number
+        draftFromStore: string
+        connectionStatus: string
+        featureCharacterProfiles: boolean | null
+      }
     }
   }).__cyreneTest = {
     getMouthLevel: () => useLive2dStore().mouthLevel,
@@ -113,7 +131,32 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
       return { kind: s.mouthSourceKind, moved: s.mouthMoved, settled: s.mouthSettled }
     },
     getToolState: () => { const s = useToolStore(); return { records: s.records, liveOrder: s.liveOrder, activeConversationId: s.activeConversationId, waitingForApproval: s.waitingForApproval, pendingPathSummary: s.pendingPathSummary } },
-    getPermissionPending: () => { const s = useToolStore(); return s.liveRecords().find(r => r?.status === 'awaiting_permission') ?? null }
+    getPermissionPending: () => { const s = useToolStore(); return s.liveRecords().find(r => r?.status === 'awaiting_permission') ?? null },
+    /**
+     * H-10（2026-09-11）：生成生命周期探针——集成用例据此断言「卡住后**真的**释放了活动代」，
+     * 而不是只看流式占位的出现/消失（DOM 只能证明表象，且 H-04 那批已有一次 e2e 断言选错对象的教训）。
+     * 同时暴露 composer 的发送门控输入，便于失败时一眼看出是哪一项挡住了发送。
+     */
+    getGenerationState: () => {
+      const m = useMessageStore()
+      const c = useConversationStore()
+      return {
+        activeGenerationId: m.activeGenerationId ?? null,
+        sending: m.sending,
+        lastErrorCode: m.lastError?.code ?? null,
+        stalled: m.lastError?.code === 'GENERATION_STALLED',
+        conversationReady: c.ready,
+        conversationBusy: c.busy,
+        currentId: c.currentId ?? null,
+        droppedEvents: m.droppedEvents,
+        voiceMode: useVoiceStore().mode,
+        attachmentBlockReason: useAttachmentStore().canSend.blockReason ?? null,
+        sendButtonCount: document.querySelectorAll('.cy-send-btn').length,
+        draftFromStore: c.currentId ? (useDraftStore().drafts[c.currentId] ?? '') : '',
+        connectionStatus: useConnectionStore().state.status,
+        featureCharacterProfiles: useConnectionStore().state.features?.characterProfiles ?? null
+      }
+    }
   }
 }
 

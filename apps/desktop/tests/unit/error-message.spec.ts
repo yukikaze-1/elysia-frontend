@@ -46,7 +46,8 @@ describe('errorMessage：回退链顺序', () => {
     const localCodes = [
       'CHARACTER_REQUIRED', 'IDENTITY_REQUIRED', 'OFFLINE_VIEW', 'OFFLINE_NOT_CACHED',
       'CHARACTER_GENERATION_PROTOCOL_MISMATCH', 'MESSAGE_PROTOCOL_MISMATCH',
-      'CHARACTER_DRAFT_STORAGE_UNAVAILABLE', 'SCHEMA_VALIDATION_FAILED', 'IDENTITY_SAVE_STALE'
+      'CHARACTER_DRAFT_STORAGE_UNAVAILABLE', 'SCHEMA_VALIDATION_FAILED', 'IDENTITY_SAVE_STALE',
+      'GENERATION_STALLED' // H-10：静默看门狗到期
     ]
     for (const code of localCodes) {
       const text = errorMessage(err({ code, message: `LOCAL:${code}` }), FALLBACK)
