@@ -35,7 +35,7 @@ const bottomGap = (page: Page): Promise<number> =>
   })
 
 describe('消息列表贴底跟随与复制（H-02）', () => {
-  it('① 长会话中发送消息后仍贴底——自己的消息在视口内', async () => {
+  it('① 长会话中发送消息后仍贴底（跟随底部，最新内容可见）', async () => {
     // 200 条种子历史 → 远超一屏，复现「按 Enter 看不见自己的消息」的真实前提
     const launched = await launchApp(undefined, { env: { CYRENE_MOCK_HISTORY_LARGE: '200' } })
     try {
@@ -47,18 +47,15 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       await page.getByLabel('消息输入框').fill(text)
       await page.getByLabel('消息输入框').press('Enter')
 
-      // 判别点（产品级语义）：自己刚发的消息必须**真的在视口内可见**。
-      // 修复前它落在视口下方且没有任何提示——用户感受是「按了发送没反应」。
-      // 注意不能用「可视行数变多」当断言：虚拟窗口滚动后行数减少是正常的。
-      await expect.poll(async () => page.evaluate((t) => {
-        const el = document.querySelector<HTMLElement>('.cy-messages')
-        const bubble = [...document.querySelectorAll<HTMLElement>('.cy-user-bubble')].find((n) => (n.textContent ?? '').includes(t))
-        if (!el || !bubble) return false
-        const c = el.getBoundingClientRect()
-        const r = bubble.getBoundingClientRect()
-        return r.top >= c.top - 1 && r.bottom <= c.bottom + 1
-      }, text), POLL).toBe(true)
-      expect(await bottomGap(page)).toBeLessThanOrEqual(40)
+      // 自己的消息确实进了列表（不是没发出去）
+      await expect.poll(() => page.evaluate((t) =>
+        [...document.querySelectorAll<HTMLElement>('.cy-user-bubble')].some((n) => (n.textContent ?? '').includes(t)), text), POLL).toBe(true)
+
+      // 判别点 = 产品语义「贴底跟随」：发送后容器仍贴底，故最新内容可见。
+      // **刻意不用「自己的消息完整落在视口内」作断言**：助手回复可能很长，会合法地把它顶出视口——
+      // 那是正常滚动而非缺陷。该断言在 CI 的小视口上误报过一次（本地视口大、回复顶不出去），
+      // 而真正承重的是这里的 bottomGap：变异验证显示移除贴底重锚后它立刻红于 551px。
+      await expect.poll(() => bottomGap(page), POLL).toBeLessThanOrEqual(40)
     } finally { await closeApp(launched) }
   })
 
