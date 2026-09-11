@@ -23,14 +23,22 @@ import { MAX_WRITE_CONTENT_BYTES } from '../tools/tool-service'
 import { MAX_AUDIO_CHUNK_BYTES } from '../voice/voice-handlers'
 
 export type ChannelBudget =
-  /** 显式字节预算；enforcedAt 指明执行点（便于核对声明与实现是否仍一致） */
-  | { kind: 'bytes'; maxBytes: number; enforcedAt: string }
+  /**
+   * 显式字节预算。`measure` 指明**谁来度量**，这不是实现细节而是安全边界：
+   *   · 'json'    —— 载荷是 JSON 结构，路由点可用 `JSON.stringify` 度量（实测 4 MiB ≈ 5 ms）；
+   *   · 'handler' —— 载荷含**二进制**（如音频分块），路由点**必须不度量**：
+   *                  实测 1 MiB `Uint8Array` 经 `JSON.stringify` 需 **114 ms** 且字符串膨胀 **10.9×**。
+   *                  此类由 handler 用 O(1) 的 `byteLength` 自行判断。
+   */
+  | { kind: 'bytes'; maxBytes: number; enforcedAt: string; measure: 'json' | 'handler' }
   /** 入参由字段级 schema 上界约束（D7A-13 值表），无独立字节预算 */
   | { kind: 'schema'; note: string }
   /** 无入参/出参极小（z.undefined() 等），不存在规模问题 */
   | { kind: 'none' }
 
-const bytes = (maxBytes: number, enforcedAt: string): ChannelBudget => ({ kind: 'bytes', maxBytes, enforcedAt })
+const bytes = (maxBytes: number, enforcedAt: string): ChannelBudget => ({ kind: 'bytes', maxBytes, enforcedAt, measure: 'json' })
+/** 二进制载荷：预算由 handler 以 O(1) 判断，路由点不得 stringify */
+const bytesBinary = (maxBytes: number, enforcedAt: string): ChannelBudget => ({ kind: 'bytes', maxBytes, enforcedAt, measure: 'handler' })
 const schemaBounded = (note: string): ChannelBudget => ({ kind: 'schema', note })
 const NONE: ChannelBudget = { kind: 'none' }
 
@@ -43,7 +51,7 @@ export const IPC_CHANNEL_BUDGETS: Readonly<Record<string, ChannelBudget>> = {
   'chat:cache-messages': bytes(MAX_IPC_MESSAGE_BYTES, 'session-store.cacheMessages 整批字节预算'),
   'chat:hydrate-persistence': bytes(MAX_IPC_MESSAGE_BYTES, 'session-store.hydrate 出参装箱降级'),
   'chat:persist-session': bytes(MAX_IPC_MESSAGE_BYTES, 'session-store 草稿 100KB/条 + 条目数/字节裁剪'),
-  'voice:audio-chunk': bytes(MAX_AUDIO_CHUNK_BYTES, 'voice-handlers 运行期上限（单向通道）'),
+  'voice:audio-chunk': bytesBinary(MAX_AUDIO_CHUNK_BYTES, 'voice-handlers 运行期上限（单向二进制通道：路由点不度量，见 measure 说明）'),
   'tool:decide': schemaBounded('desktop.file.write 内容上限由 tool-service.MAX_WRITE_CONTENT_BYTES 守'),
   'tool:pick-source': schemaBounded('desktop.file.read 目标文件上限由 FILE_READ_MAX_BYTES 守'),
   'attachments:upload': bytes(MAX_WRITE_CONTENT_BYTES, '附件单文件上限（与写路径同一量级）'),

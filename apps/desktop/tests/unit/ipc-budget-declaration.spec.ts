@@ -91,6 +91,18 @@ describe('IPC 通道预算声明（P1-1）', () => {
     }
   })
 
+  it('每个字节类声明都指明**谁来度量**（json=路由点 / handler=二进制，安全边界而非实现细节）', () => {
+    // P1-1 运行时收口后，measure 决定路由点是否对该通道做 JSON 度量。
+    // 漏填/填错会把二进制载荷送进 JSON.stringify——实测 1 MiB Uint8Array 需 114ms 且膨胀 10.9×。
+    const kinds = new Set<string>()
+    for (const [channel, budget] of Object.entries(IPC_CHANNEL_BUDGETS)) {
+      if (budget.kind !== 'bytes') continue
+      expect(['json', 'handler'], `${channel} 的 measure 取值非法`).toContain(budget.measure)
+      kinds.add(budget.measure)
+    }
+    expect(kinds.size, '两类度量都应存在（全为 json 说明二进制通道被漏标）').toBe(2)
+  })
+
   it('schema 类声明必须写明依据（"没有独立预算"必须是明确判断，不是省略）', () => {
     for (const [channel, budget] of Object.entries(IPC_CHANNEL_BUDGETS)) {
       if (budget.kind !== 'schema') continue
