@@ -214,8 +214,9 @@ function activateConv(id: string): void {
   grid-area: conv;
   min-width: 0;
   padding: var(--cy-space-7) var(--cy-space-5);
-  background: var(--cy-pane);
+  background: color-mix(in srgb, var(--cy-surface) 48%, transparent);
   border-right: 1px solid var(--cy-border);
+  backdrop-filter: blur(18px) saturate(110%);
   overflow-y: auto;
 }
 
@@ -235,16 +236,18 @@ function activateConv(id: string): void {
 .cy-icon-button {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-radius-5);
-  background: var(--cy-surface);
-  color: var(--cy-muted);
+  background: var(--cy-accent-tint);
+  color: var(--cy-accent-strong);
+  transition: background var(--cy-motion-fast) ease, transform var(--cy-motion-fast) ease;
 }
 
 .cy-icon-button:hover {
   background: var(--cy-surface-hover);
+  transform: translateY(-1px);
 }
 
 .cy-icon-button:disabled,
@@ -275,6 +278,12 @@ function activateConv(id: string): void {
   background: var(--cy-surface);
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-radius-5);
+  transition: border-color var(--cy-motion-fast) ease, box-shadow var(--cy-motion-fast) ease;
+}
+
+.cy-search:focus-within {
+  border-color: var(--cy-accent-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cy-accent-strong) 12%, transparent);
 }
 
 .cy-search input {

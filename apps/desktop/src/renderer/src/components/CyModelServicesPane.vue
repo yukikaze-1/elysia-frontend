@@ -119,14 +119,16 @@ const emptyStateText = computed(() => `暂无 ${TABS.find((t) => t.key === tab.v
 <style scoped>
 .cy-model-services { display: flex; flex-direction: column; gap: var(--cy-space-6); min-height: 0; }
 .cy-ms-top { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-5); flex-wrap: wrap; }
-.cy-ms-tabs { display: flex; gap: var(--cy-space-3); }
-.cy-ms-tab { padding: var(--cy-space-2-5) var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); }
-.cy-ms-tab.active { background: var(--cy-accent); color: var(--cy-accent-text); border-color: var(--cy-accent); }
-.cy-ms-add { padding: var(--cy-space-3) var(--cy-space-7); border: 0; border-radius: var(--cy-radius-4-5); background: var(--cy-accent); color: var(--cy-accent-text); font-size: var(--cy-font-md); }
+.cy-ms-tabs { display: inline-flex; gap: var(--cy-space-2); padding: var(--cy-space-1); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: color-mix(in srgb, var(--cy-surface-soft) 70%, transparent); }
+.cy-ms-tab { min-width: 64px; min-height: 34px; padding: var(--cy-space-2-5) var(--cy-space-6); border: 1px solid transparent; border-radius: var(--cy-radius-pill); background: transparent; color: var(--cy-muted); font-size: var(--cy-font-md); transition: background var(--cy-motion-fast) ease, color var(--cy-motion-fast) ease; }
+.cy-ms-tab:hover { color: var(--cy-accent-strong); background: var(--cy-surface-hover); }
+.cy-ms-tab.active { background: var(--cy-accent-tint); color: var(--cy-accent-strong); border-color: color-mix(in srgb, var(--cy-accent-strong) 24%, transparent); }
+.cy-ms-add { min-height: 36px; padding: var(--cy-space-3) var(--cy-space-7); border: 0; border-radius: var(--cy-radius-4-5); background: var(--cy-brand-gradient); color: var(--cy-on-brand); font-size: var(--cy-font-md); box-shadow: 0 5px 14px color-mix(in srgb, var(--cy-accent-strong) 18%, transparent); transition: transform var(--cy-motion-fast) ease, filter var(--cy-motion-fast) ease; }
+.cy-ms-add:hover { filter: brightness(1.04); transform: translateY(-1px); }
 .cy-ms-error { display: flex; align-items: center; gap: var(--cy-space-4); padding: var(--cy-space-4) var(--cy-space-5-5); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
 .cy-ms-error-close { margin-left: auto; padding: var(--cy-space-1) var(--cy-space-4); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3-5); background: var(--cy-surface); color: var(--cy-muted); }
 .cy-ms-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: var(--cy-font-lg); }
 .cy-ms-group { display: flex; flex-direction: column; gap: var(--cy-space-4); }
-.cy-ms-group-title { margin: var(--cy-space-3) 0 0; font-size: var(--cy-font-lg); color: var(--cy-muted); font-weight: 600; }
+.cy-ms-group-title { margin: var(--cy-space-3) 0 0; font-size: var(--cy-font-lg); color: var(--cy-text-secondary); font-weight: 600; letter-spacing: 0.01em; }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 </style>

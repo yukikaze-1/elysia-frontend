@@ -35,13 +35,13 @@ onBeforeUnmount(() => { if (voiceNoticeTimer) clearTimeout(voiceNoticeTimer) })
 // 问题 9：nav note（阶段4 P4-A 等）是开发期占位标签泄漏，子页全实现后未清理——删除 note 列；
 // 面包屑去「· 阶段 N」。placeholder 仅占位兜底（五项都已实现，实际不触发）。
 const NAV_ITEMS = [
-  { key: 'model', label: '模型服务', placeholder: '' },
-  { key: 'identity', label: '我的档案', placeholder: '' },
-  { key: 'characters', label: '角色', placeholder: '' },
-  { key: 'voice', label: '语音', placeholder: '普通录音/实时语音会话/输入法转写/TTS 自动朗读' },
-  { key: 'appearance', label: '外观与 Live2D', placeholder: '' },
-  { key: 'security', label: '安全与权限', placeholder: '安全策略/权限审批/已授权命令' },
-  { key: 'diagnostics', label: '开发与诊断', placeholder: '开发者模式/日志' }
+  { key: 'model', label: '模型服务', icon: '<rect x="4" y="4" width="16" height="16" rx="2" /><path d="M8 8h8M8 12h8M8 16h5" />', placeholder: '' },
+  { key: 'identity', label: '我的档案', icon: '<circle cx="12" cy="8" r="3" /><path d="M5 20a7 7 0 0 1 14 0" />', placeholder: '' },
+  { key: 'characters', label: '角色', icon: '<circle cx="9" cy="8" r="3" /><path d="M3.5 20a5.5 5.5 0 0 1 11 0M16 5.5a2.5 2.5 0 0 1 0 5M16 14a4 4 0 0 1 4.5 4" />', placeholder: '' },
+  { key: 'voice', label: '语音', icon: '<rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />', placeholder: '普通录音/实时语音会话/输入法转写/TTS 自动朗读' },
+  { key: 'appearance', label: '外观与 Live2D', icon: '<path d="M12 3 14 8l5 .5-3.8 3.3 1.2 5.2-4.4-2.7L7.6 17l1.2-5.2L5 8.5 10 8z" />', placeholder: '' },
+  { key: 'security', label: '安全与权限', icon: '<path d="M12 3 19 6v5c0 4.5-2.8 8-7 10-4.2-2-7-5.5-7-10V6z" /><path d="m9 12 2 2 4-4" />', placeholder: '安全策略/权限审批/已授权命令' },
+  { key: 'diagnostics', label: '开发与诊断', icon: '<rect x="4" y="5" width="16" height="14" rx="2" /><path d="m8 10 2 2-2 2M12 14h4" />', placeholder: '开发者模式/日志' }
 ] as const
 
 type NavKey = (typeof NAV_ITEMS)[number]['key']
@@ -121,7 +121,12 @@ onBeforeUnmount(() => { triggerElement = null })
             :aria-pressed="activeNav === item.key"
             @click="selectNav(item.key)"
           >
-            <span>{{ item.label }}</span>
+            <span class="cy-settings-nav-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <g v-html="item.icon" />
+              </svg>
+            </span>
+            <span class="cy-settings-nav-copy">{{ item.label }}</span>
             <span v-if="item.key === 'identity' && identityStore.profile && !identityStore.initialized" class="cy-nav-mark" aria-label="未完成初始化">未完成</span>
           </button>
         </nav>
@@ -157,20 +162,25 @@ onBeforeUnmount(() => { triggerElement = null })
   display: flex;           /* flex 居中面板，min(920px, 92vw) / min(640px, 84vh) 定高不溢出窗口 */
   align-items: center;
   justify-content: center;
-  background: var(--cy-overlay);
-  backdrop-filter: blur(2px);
+  padding: clamp(var(--cy-space-4), 3vw, var(--cy-space-8));
+  background-color: var(--cy-overlay);
+  background-image: linear-gradient(var(--cy-overlay), var(--cy-overlay)), var(--cy-settings-background);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  backdrop-filter: blur(10px) saturate(115%);
 }
 .cy-settings {
   display: flex;
   flex-direction: column;
-  width: min(920px, 92vw);
-  height: min(640px, 84vh);
+  width: min(1180px, calc(100vw - 48px));
+  height: min(760px, 84vh);
   min-height: 0;           /* 允许收缩：面板不被内容撑破高度（FE-S3-RUN2-P1-01 同款纪律） */
   border-radius: var(--cy-radius-7);
   overflow: hidden;
-  background: var(--cy-pane);
+  background: var(--cy-surface-strong);
   border: 1px solid var(--cy-border);
-  box-shadow: var(--cy-shadow);
+  box-shadow: var(--cy-shadow-panel);
 }
 .cy-settings-header {
   flex: 0 0 auto;
@@ -180,41 +190,48 @@ onBeforeUnmount(() => { triggerElement = null })
   gap: var(--cy-space-6);
   padding: var(--cy-space-6) var(--cy-space-8);
   border-bottom: 1px solid var(--cy-border);
+  background: var(--cy-surface-glass);
 }
 .cy-settings-title { display: flex; align-items: baseline; gap: var(--cy-space-4); }
-.cy-settings-title strong { font-size: var(--cy-font-xl); }
-.cy-close-btn { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); }
+.cy-settings-title strong { font-size: 20px; }
+.cy-close-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: 18px; }
 .cy-settings-layout { flex: 1 1 0; display: flex; min-height: 0; }
 .cy-settings-nav {
-  flex: 0 0 200px;
+  flex: 0 0 216px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--cy-space-2);
   padding: var(--cy-space-5) var(--cy-space-4);
   border-right: 1px solid var(--cy-border);
-  background: var(--cy-surface-soft);
+  background: color-mix(in srgb, var(--cy-surface-soft) 76%, transparent);
 }
 .cy-settings-nav-item {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
+  justify-content: flex-start;
   gap: var(--cy-space-3);
-  padding: var(--cy-space-4-5) var(--cy-space-5-5);
+  min-height: 44px;
+  padding: var(--cy-space-4) var(--cy-space-5);
   border-radius: var(--cy-radius-4-5);
+  border: 1px solid transparent;
   color: var(--cy-muted);
   font-size: var(--cy-font-lg);
   text-align: left;
 }
-.cy-settings-nav-item:hover { background: var(--cy-surface-hover); }
-.cy-settings-nav-item.active { color: var(--cy-accent-text); background: var(--cy-accent); }
-.cy-nav-mark { padding: var(--cy-space-0-5) var(--cy-space-3); border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-warning); font-size: 9px; }
+.cy-settings-nav-item:hover { color: var(--cy-accent-strong); background: var(--cy-surface-hover); }
+.cy-settings-nav-item.active { color: var(--cy-accent-text); background: var(--cy-accent-tint); border-color: color-mix(in srgb, var(--cy-accent-strong) 22%, transparent); }
+.cy-settings-nav-icon { display: inline-grid; flex: 0 0 22px; place-items: center; color: currentColor; }
+.cy-settings-nav-icon svg { width: 20px; height: 20px; }
+.cy-settings-nav-copy { min-width: 0; }
+.cy-nav-mark { margin-left: auto; padding: var(--cy-space-0-5) var(--cy-space-3); border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-warning); font-size: 9px; }
 .cy-settings-nav-item.active .cy-nav-mark { color: currentColor; border-color: currentColor; }
 .cy-settings-body {
   flex: 1 1 0;
   min-width: 0;
   overflow-y: auto;   /* 内容区内部滚动，面板不溢出窗口 */
   padding: var(--cy-space-8) var(--cy-space-9);
+  background: color-mix(in srgb, var(--cy-pane) 92%, transparent);
   /* 问题 7（字型级重渲染）：hover 重绘时字形在合成层边界/亚像素相位间重光栅化产生 ~1px 上移。
      内容包装层提升为稳定合成层，消除 hover 重绘引起的相位翻转（transform/opacity only，§10 合规；缓解非根除）。 */
   transform: translateZ(0);
@@ -245,8 +262,8 @@ onBeforeUnmount(() => { triggerElement = null })
 }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 @media (max-width: 680px) {
-  .cy-settings { width: min(96vw, 920px); height: min(92vh, 640px); }
-  .cy-settings-nav { flex-basis: 150px; }
+  .cy-settings { width: 100%; height: min(760px, 92vh); }
+  .cy-settings-nav { flex-basis: 176px; }
   .cy-settings-body { padding: var(--cy-space-6-5); }
 }
 </style>

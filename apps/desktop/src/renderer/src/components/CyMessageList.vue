@@ -369,8 +369,9 @@ onMounted(() => {
 
 <template>
   <div ref="container" class="cy-messages" aria-live="polite" @scroll.passive="onScroll">
-    <div v-if="isEmpty" class="cy-empty">
-      <p>{{ conversationStore.offlineView ? '该会话离线不可读或为空' : '新会话,开始对话' }}</p>
+    <div v-if="isEmpty" class="cy-empty" role="status">
+      <strong>{{ conversationStore.offlineView ? '这个会话暂时无法读取' : '想聊点什么？' }}</strong>
+      <span>{{ conversationStore.offlineView ? '连接恢复后可以重新读取会话内容。' : '从一句话开始，角色会在这里听你说。' }}</span>
     </div>
     <template v-else>
       <div :style="{ height: win.paddingTop + 'px' }" class="cy-vlist-pad" />
@@ -396,9 +397,9 @@ onMounted(() => {
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
       <div :style="{ height: win.paddingBottom + 'px' }" class="cy-vlist-pad" />
-      <div v-if="isStreaming" class="cy-streaming-placeholder">
+      <div v-if="isStreaming" class="cy-streaming-placeholder" role="status">
         <span class="cy-typing-dot" />
-        <span>生成中…</span>
+        <span>{{ conversationStore.currentCharacter?.displayName ?? '角色' }}正在输入…</span>
       </div>
     </template>
 
@@ -412,7 +413,8 @@ onMounted(() => {
 <style scoped>
 /* UII-QQ：扁平中性底（去渐变）+ scrollbar-gutter stable（滚动条出现/消失不横跳）；
    行居中为 940px 阅读轨道——行仍是 :scope 直接子元素（perf-gate/虚拟列表契约不变） */
-.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 var(--cy-space-8); overflow-y: auto; overflow-x: hidden; overflow-anchor: none; scrollbar-gutter: stable; background: var(--cy-pane); }
+/* 与 .cy-main 的 24% 叠加后，消息区仍保留约 62% 底图；消息气泡自身提供阅读对比度。 */
+.cy-messages { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 var(--cy-space-8); overflow-y: auto; overflow-x: hidden; overflow-anchor: none; scrollbar-gutter: stable; background: color-mix(in srgb, var(--cy-pane) 18%, transparent); }
 .cy-vlist-row { display: flex; flex-direction: column; gap: var(--cy-space-4-5); width: min(100%, 940px); margin-inline: auto; padding: var(--cy-space-1) 0; }
 .cy-vlist-row.cy-turn-start { padding-top: var(--cy-space-9); }
 /* P3：全局首条消息 6px 顶距——不能用 :first-child（列表首位恒为 .cy-vlist-pad，永不匹配），用显式类 */
@@ -425,7 +427,9 @@ onMounted(() => {
 .cy-vlist-row.cy-highlighted { outline: 2px solid var(--cy-accent-strong); border-radius: var(--cy-radius-6); }   /* G4 D6：高亮非纯颜色——outline + chip + aria-live */
 .cy-located-chip { display: inline-block; align-self: flex-start; padding: var(--cy-space-0-5) var(--cy-space-4); border-radius: var(--cy-radius-pill); color: var(--cy-accent-text); background: var(--cy-accent); font-size: var(--cy-font-sm); }
 .cy-sr-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-.cy-empty { display: grid; flex: 1; place-items: center; color: var(--cy-muted); font-size: var(--cy-font-lg); }
+.cy-empty { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: var(--cy-space-3); padding: var(--cy-space-8); color: var(--cy-muted); font-size: var(--cy-font-lg); text-align: center; }
+.cy-empty strong { color: var(--cy-text); font-size: var(--cy-font-xl); font-weight: 600; }
+.cy-empty span { max-width: 34em; font-size: var(--cy-font-md); line-height: 1.65; }
 .cy-back-bottom { position: sticky; bottom: 12px; align-self: center; z-index: 2; padding: var(--cy-space-3) var(--cy-space-6-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
 .cy-back-bottom:hover { color: var(--cy-accent); background: var(--cy-surface-hover); }
 .cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: stretch; width: min(100%, 940px); margin-inline: auto; padding: var(--cy-space-4-5) var(--cy-space-6-5) var(--cy-space-4-5) 41px; margin-top: var(--cy-space-3); color: var(--cy-muted); font-size: var(--cy-font-md); }

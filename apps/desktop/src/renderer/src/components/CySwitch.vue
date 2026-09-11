@@ -49,8 +49,8 @@ function onKeydown(e: KeyboardEvent): void {
   appearance: none;
   position: relative;
   flex: 0 0 auto;
-  width: 40px;
-  height: 22px;
+  width: 42px;
+  height: 24px;
   margin: 0;
   padding: 0;
   border: 1px solid var(--cy-border);
@@ -67,8 +67,8 @@ function onKeydown(e: KeyboardEvent): void {
   position: absolute;
   top: 50%;
   left: 2px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--cy-radius-circle);
   background: var(--cy-surface);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
@@ -78,8 +78,8 @@ function onKeydown(e: KeyboardEvent): void {
 
 /* 开启：蓝色轨道；滑块移到右侧；滑块内显示小型蓝色对勾（纯 CSS 字符，非图片） */
 .cy-switch:checked {
-  background: var(--cy-accent-strong);
-  border-color: var(--cy-accent-strong);
+  background: var(--cy-brand-gradient);
+  border-color: transparent;
 }
 
 .cy-switch:checked::after {

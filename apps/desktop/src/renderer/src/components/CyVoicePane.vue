@@ -11,10 +11,12 @@ import { useSettingsStore } from '../stores/settings.store'
 import { useModelServiceStore } from '../stores/model-service.store'
 import { useVoiceStore } from '../stores/voice.store'
 import CySwitch from './CySwitch.vue'
+import voiceDecorationUrl from '../assets/backgrounds/cyrene-deco-voice-wave.png'
 
 const settings = useSettingsStore()
 const modelStore = useModelServiceStore()
 const voiceStore = useVoiceStore()
+const VOICE_DECORATION_URL = voiceDecorationUrl
 
 const MIC_TEST_MS = 3000
 
@@ -147,10 +149,19 @@ onBeforeUnmount(() => {
   <section class="cy-voice-pane" aria-label="语音设置">
     <h3 class="cy-vp-title">语音输入</h3>
 
-    <div class="cy-vp-group">
+    <div class="cy-vp-group cy-vp-input-group">
+      <img
+        class="cy-vp-deco"
+        :src="VOICE_DECORATION_URL"
+        alt=""
+        aria-hidden="true"
+        loading="lazy"
+        decoding="async"
+        draggable="false"
+      />
       <label class="cy-vp-row">
         <CySwitch :model-value="settings.voice.enabled" aria-label="启用语音输入" @change="(v) => onToggle('enabled', v)" />
-        <span class="cy-vp-label">启用语音输入<small>普通录音 + 输入法转写入口</small></span>
+        <span class="cy-vp-label"><span class="cy-vp-label-main">启用语音输入 <span class="cy-toggle-state" :class="{ on: settings.voice.enabled }">{{ settings.voice.enabled ? '已开启' : '已关闭' }}</span></span><small>普通录音 + 输入法转写入口</small></span>
       </label>
       <label class="cy-vp-row">
         <CySwitch
@@ -159,15 +170,15 @@ onBeforeUnmount(() => {
           aria-label="启用实时语音会话"
           @change="(v) => onToggle('realtimeEnabled', v)"
         />
-        <span class="cy-vp-label">启用实时语音会话</span>
+        <span class="cy-vp-label"><span class="cy-vp-label-main">启用实时语音会话 <span class="cy-toggle-state" :class="{ on: settings.voice.realtimeEnabled }">{{ settings.voice.realtimeEnabled ? '已开启' : '已关闭' }}</span></span></span>
       </label>
       <label class="cy-vp-row">
         <CySwitch :model-value="settings.voice.autoReadReply" aria-label="TTS 自动朗读 AI 回复" @change="(v) => onToggle('autoReadReply', v)" />
-        <span class="cy-vp-label">TTS 自动朗读 AI 回复</span>
+        <span class="cy-vp-label"><span class="cy-vp-label-main">TTS 自动朗读 AI 回复 <span class="cy-toggle-state" :class="{ on: settings.voice.autoReadReply }">{{ settings.voice.autoReadReply ? '已开启' : '已关闭' }}</span></span></span>
       </label>
       <label class="cy-vp-row">
         <CySwitch :model-value="settings.voice.showCaptions" aria-label="显示直接语音字幕" @change="(v) => onToggle('showCaptions', v)" />
-        <span class="cy-vp-label">显示直接语音字幕</span>
+        <span class="cy-vp-label"><span class="cy-vp-label-main">显示直接语音字幕 <span class="cy-toggle-state" :class="{ on: settings.voice.showCaptions }">{{ settings.voice.showCaptions ? '已开启' : '已关闭' }}</span></span></span>
       </label>
     </div>
 
@@ -244,9 +255,34 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: var(--cy-space-4-5);
   padding: var(--cy-space-6) var(--cy-space-7);
-  background: var(--cy-surface);
+  background: var(--cy-surface-glass);
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-radius-6);
+  box-shadow: var(--cy-shadow-soft);
+}
+
+.cy-vp-input-group {
+  position: relative;
+  overflow: hidden;
+}
+
+.cy-vp-input-group > :not(.cy-vp-deco) {
+  position: relative;
+  z-index: 1;
+}
+
+.cy-vp-deco {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  width: min(42%, 280px);
+  max-height: calc(100% - var(--cy-space-6));
+  object-fit: contain;
+  object-position: center right;
+  transform: translateY(-50%);
+  opacity: 0.68;
+  pointer-events: none;
+  user-select: none;
 }
 
 .cy-vp-sub {
@@ -271,6 +307,10 @@ onBeforeUnmount(() => {
   font-size: var(--cy-font-lg);
 }
 
+.cy-vp-label-main { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--cy-space-3); }
+.cy-toggle-state { color: var(--cy-muted); font-size: var(--cy-font-sm); font-weight: 500; }
+.cy-toggle-state.on { color: var(--cy-success); }
+
 .cy-vp-label small {
   color: var(--cy-muted);
   font-size: var(--cy-font-sm);
@@ -288,6 +328,7 @@ onBeforeUnmount(() => {
 }
 
 .cy-vp-field select {
+  min-height: 40px;
   padding: var(--cy-space-3) var(--cy-space-4-5);
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-radius-4);
@@ -304,6 +345,7 @@ onBeforeUnmount(() => {
 }
 
 .cy-vp-btn {
+  min-height: 36px;
   padding: var(--cy-space-3) var(--cy-space-7);
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-radius-4);

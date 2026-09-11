@@ -5,6 +5,7 @@
 // 连接状态移入 NavRail 底部（CyConnectionPanel），角色开关改为聊天区右缘折叠把手（仅面板隐藏时显示）。
 import { computed } from 'vue'
 import { useConversationStore } from '../stores/conversation.store'
+import { useMessageStore } from '../stores/message.store'
 import { useLayoutStore } from '../stores/layout.store'
 import { useAppStore } from '../stores/app.store'
 import CyMessageList from './CyMessageList.vue'
@@ -13,6 +14,7 @@ import CyTtsPlayer from './CyTtsPlayer.vue'
 import CyLiveToolCards from './CyLiveToolCards.vue'   // 阶段 6 批次 B（Task 7）：工具实时区（消息列表与输入区之间）
 
 const conversationStore = useConversationStore()
+const messageStore = useMessageStore()
 const layout = useLayoutStore()
 const appStore = useAppStore()
 
@@ -21,6 +23,8 @@ const convTitle = computed(() => {
   return c?.title ?? '新会话'
 })
 const currentCharacter = computed(() => conversationStore.currentCharacter)
+// 长对话自动收紧顶部欢迎信息，给消息和输入区让出稳定空间；首轮仍保留完整上下文。
+const compactHeader = computed(() => messageStore.order.length >= 4)
 
 function openCharacterDetails(): void {
   const characterId = currentCharacter.value?.characterId
@@ -33,7 +37,7 @@ function openCharacterDetails(): void {
 
 <template>
   <section class="cy-chat" :class="{ 'cy-live2d-off': !layout.effective.live2dShown }">
-    <header class="cy-chat-header">
+    <header class="cy-chat-header" :class="{ 'is-compact': compactHeader }">
       <!-- UII-QQ IA：头部仅会话标题（左对齐可省略）。全局连接状态在 NavRail 底部；
            聊天记录/资源在 Composer 工具栏；角色开关在右缘把手（面板隐藏时显示） -->
       <div class="cy-chat-heading">
@@ -85,8 +89,15 @@ function openCharacterDetails(): void {
   min-height: 50px;
   padding: var(--cy-space-4) var(--cy-space-7);
   border-bottom: 1px solid var(--cy-border);
-  background: var(--cy-surface);
+  background: var(--cy-surface-glass);
+  backdrop-filter: blur(18px) saturate(110%);
   min-width: 0;
+  transition: min-height var(--cy-motion-base) ease, padding var(--cy-motion-base) ease;
+}
+
+.cy-chat-header.is-compact {
+  min-height: 40px;
+  padding-block: var(--cy-space-2);
 }
 
 .cy-chat-heading {
@@ -101,6 +112,18 @@ function openCharacterDetails(): void {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.cy-chat-header.is-compact .cy-chat-heading h2 {
+  font-size: var(--cy-font-lg);
+}
+
+.cy-chat-header.is-compact .cy-chat-character {
+  font-size: var(--cy-font-xs);
+}
+
+.cy-chat-header.is-compact .cy-chat-character-detail {
+  display: none;
 }
 
 .cy-chat-character {

@@ -284,10 +284,11 @@ const live2dStats = computed(() => live2dStore.getStats())
 /* 布局纪律同 CySecurityPane（cy-l2d-pane/group/sub 卡片式；内部滚动归父级 .cy-settings-body） */
 .cy-l2d-pane { display: flex; flex-direction: column; gap: var(--cy-space-8); }
 .cy-l2d-title { margin: 0; font-size: var(--cy-font-xl); font-weight: 600; }
-.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface-glass); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); box-shadow: var(--cy-shadow-soft); }
 .cy-l2d-sub { margin: 0 0 var(--cy-space-1); font-size: var(--cy-font-lg); font-weight: 600; color: var(--cy-muted); display: flex; align-items: center; gap: var(--cy-space-4); }
 .cy-security-empty { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.7; }
-.cy-security-btn { padding: var(--cy-space-1-5) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; font-size: var(--cy-font-md); }
+.cy-security-btn { min-height: 34px; padding: var(--cy-space-1-5) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; font-size: var(--cy-font-md); transition: background var(--cy-motion-fast) ease, transform var(--cy-motion-fast) ease; }
+.cy-security-btn:hover:not(:disabled) { background: var(--cy-surface-hover); transform: translateY(-1px); }
 .cy-diagnostic-line { margin: 0; display: flex; gap: var(--cy-space-5); font-size: var(--cy-font-md); align-items: baseline; }
 .cy-diagnostic-key { flex: 0 0 88px; color: var(--cy-muted); }
 .cy-diagnostic-val { color: var(--cy-text-secondary); overflow-wrap: anywhere; }

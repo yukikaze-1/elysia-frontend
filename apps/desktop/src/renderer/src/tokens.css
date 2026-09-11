@@ -10,15 +10,16 @@
   --cy-font-base: 14px;
   --cy-user-font-scale: 1;
 
-  --cy-window: light-dark(#eef2f8, #11151d);
-  --cy-titlebar: light-dark(#e8edf5, #171c26);
-  --cy-nav: light-dark(#dce4f0, #1b2230);
-  --cy-pane: light-dark(#f5f7fb, #181e29);
-  --cy-surface: light-dark(#ffffff, #222a37);
-  --cy-surface-soft: light-dark(#f0f4fa, #293241);
-  --cy-surface-hover: light-dark(#e7edf7, #303a4a);
-  --cy-text: light-dark(#1f2938, #eef3fb);
-  --cy-muted: light-dark(#6b7687, #a9b4c5);
+  /* Cyrene brand palette: blue-violet function color + restrained sakura warmth. */
+  --cy-window: light-dark(#eef4ff, #111824);
+  --cy-titlebar: light-dark(#f3f6ff, #171e2c);
+  --cy-nav: light-dark(#e7eeff, #1a2335);
+  --cy-pane: light-dark(#f7f9ff, #181f2c);
+  --cy-surface: light-dark(#ffffff, #222a3a);
+  --cy-surface-soft: light-dark(#f3f6ff, #29364b);
+  --cy-surface-hover: light-dark(#e9efff, #32415b);
+  --cy-text: light-dark(#17255d, #eef3fb);
+  --cy-muted: light-dark(#5f6f98, #a9b4c5);
   /* C-14（#29）：补齐组件引用的未定义 cy-* token——四组件（CyToolCard/CyToolApproval/CySecurityPane/CyDiagnosticsPane）
      沿用同款写法宜收口。映射到既有 token（surface 系/文本系），light-dark 一致，消除组件引用落空。 */
   --cy-bg: var(--cy-surface);
@@ -26,24 +27,35 @@
   --cy-bg-muted: var(--cy-surface-hover);
   --cy-text-muted: var(--cy-muted);
   --cy-text-secondary: var(--cy-muted);
-  --cy-border: light-dark(#d7deea, #333d4d);
-  --cy-accent: light-dark(#dce8ff, #294466);
-  --cy-accent-strong: light-dark(#4b75ca, #7da8ff);
-  --cy-accent-text: light-dark(#18386f, #eef5ff);
-  --cy-user: light-dark(#dcecff, #284a70);
-  --cy-success: light-dark(#32765a, #73d7aa);
-  --cy-warning: light-dark(#9b6817, #efbf69);
-  --cy-danger: light-dark(#a33d47, #ff939b);
+  --cy-border: light-dark(#d9e3fb, #35445f);
+  --cy-accent: light-dark(#e7edff, #2a3c5f);
+  --cy-accent-strong: light-dark(#687cff, #91a7ff);
+  --cy-accent-text: light-dark(#27357f, #f0f4ff);
+  --cy-user: light-dark(#e8efff, #304567);
+  --cy-success: light-dark(#27895f, #73d7aa);
+  --cy-warning: light-dark(#a56d13, #efbf69);
+  --cy-danger: light-dark(#c65367, #ff939b);
   --cy-hair: light-dark(#6f7ea7, #8798ce);
   --cy-hair-shadow: light-dark(#4d5d87, #596a9c);
   --cy-skin: light-dark(#ffe2d5, #e5b7aa);
   --cy-eye: light-dark(#4167a7, #9ac4ff);
   --cy-clothes: light-dark(#dbe5f7, #354764);
   --cy-glow: light-dark(#b9d2ff, #5c8bd8);
-  --cy-overlay: light-dark(rgba(52, 62, 80, 0.36), rgba(0, 0, 0, 0.56));
-  --cy-shadow: 0 18px 50px light-dark(rgba(52, 69, 98, 0.18), rgba(0, 0, 0, 0.38));
+  --cy-pink: light-dark(#f18bd5, #c976b4);
+  --cy-purple: light-dark(#a78bfa, #9d8bf0);
+  --cy-on-brand: #ffffff;
+  --cy-overlay: light-dark(rgba(55, 72, 138, 0.28), rgba(0, 0, 0, 0.56));
+  --cy-shadow: 0 18px 50px light-dark(rgba(55, 72, 138, 0.16), rgba(0, 0, 0, 0.38));
+  --cy-shadow-panel: 0 18px 60px light-dark(rgba(55, 72, 138, 0.16), rgba(0, 0, 0, 0.42));
+  /* 玻璃层保持真实透视：主内容区还有独立的 alpha 预算，避免多层面板把底图吃光。 */
+  --cy-surface-glass: light-dark(rgba(255, 255, 255, 0.64), rgba(27, 35, 52, 0.72));
+  --cy-surface-strong: light-dark(rgba(255, 255, 255, 0.9), rgba(27, 35, 52, 0.92));
+  /* 源文件相对引用由 Vite 处理，兼容 dev server 与 cyrene://renderer 打包协议。 */
+  --cy-chat-background: url('./assets/backgrounds/cyrene-bg-chat-light.webp');
+  --cy-settings-background: url('./assets/backgrounds/cyrene-bg-settings-light.webp');
+  --cy-brand-gradient: linear-gradient(135deg, #7c8cff 0%, #a78bfa 52%, #f18bd5 100%);
   /* QQ 风格聊天重构（UII-QQ）：柔和选中底色 / 气泡轻阴影——与 accent 区分，选中态不再用过重纯 accent */
-  --cy-accent-tint: light-dark(#e9f1fd, #22334f);
+  --cy-accent-tint: light-dark(#eef2ff, #22334f);
   --cy-shadow-soft: 0 1px 2px light-dark(rgba(31, 41, 56, 0.06), rgba(0, 0, 0, 0.3)),
     0 2px 10px light-dark(rgba(31, 41, 56, 0.05), rgba(0, 0, 0, 0.22));
 
@@ -63,7 +75,7 @@
      分布在 54 个文件），换结构要改 55 个文件——"换肤"只在颜色维度成立。
      以下 token 是这次审计的收口。
 
-     取值来自实测频次（apps/desktop/src/renderer/src/**/<style>）：
+     取值来自实测频次（renderer source style files）：
        间距 744 处：8px 116、10px 96、6px 79、12px 56、9px 54、7px 53、5px 49、
                     14px 39、2px 38、4px 38、11px 23、13px 21、16px 19、1px 19、3px 18、18px 12
        圆角 202 处（另有 50% 13 处）：8px 45、12px 37、999px 29、10px 24、9px 22、
@@ -125,6 +137,13 @@
   --cy-motion-base: 180ms;  /* 状态切换：开关滑动、描边渐变（3 处） */
 }
 
+@media (prefers-color-scheme: dark) {
+  :root {
+    --cy-chat-background: url('./assets/backgrounds/cyrene-bg-chat-dark.webp');
+    --cy-settings-background: url('./assets/backgrounds/cyrene-bg-settings-dark.webp');
+  }
+}
+
 /* 键盘可达性（红线 §7）：统一 focus-visible 轮廓——hover/active 之外的可达性兜底 */
 :focus-visible {
   outline: 2px solid var(--cy-accent-strong);
@@ -145,8 +164,9 @@ body,
 body {
   color: var(--cy-text);
   background: var(--cy-window);
-  font-family: Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: 'Microsoft YaHei', 'PingFang SC', Inter, 'Segoe UI', sans-serif;
   font-size: calc(var(--cy-font-base) * var(--cy-user-font-scale));
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   user-select: none;
   overflow: hidden;
@@ -163,4 +183,17 @@ button {
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--cy-muted);
+  opacity: 0.72;
+}
+
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
 }

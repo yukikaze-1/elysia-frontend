@@ -133,7 +133,7 @@ function fmtTs(ts: string): string {
 /* 布局纪律同 CyLive2DPane（cy-l2d-pane/group/sub 卡片式；内部滚动归父级 .cy-settings-body） */
 .cy-l2d-pane { display: flex; flex-direction: column; gap: var(--cy-space-8); }
 .cy-l2d-title { margin: 0; font-size: var(--cy-font-xl); font-weight: 600; }
-.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface-glass); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); box-shadow: var(--cy-shadow-soft); }
 .cy-l2d-sub { margin: 0 0 var(--cy-space-1); font-size: var(--cy-font-lg); font-weight: 600; color: var(--cy-muted); }
 .cy-security-empty { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.7; }
 .cy-security-grants, .cy-security-history { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--cy-space-4); }
@@ -144,7 +144,8 @@ function fmtTs(ts: string): string {
 .cy-security-grant-backend { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-security-grant-exp { margin-left: auto; color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-security-grant-revoked { color: var(--cy-danger); font-size: var(--cy-font-sm); }
-.cy-security-btn { padding: var(--cy-space-1-5) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; font-size: var(--cy-font-md); }
+.cy-security-btn { min-height: 34px; padding: var(--cy-space-1-5) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); cursor: pointer; font-size: var(--cy-font-md); transition: background var(--cy-motion-fast) ease, transform var(--cy-motion-fast) ease; }
+.cy-security-btn:hover:not(:disabled) { background: var(--cy-surface-hover); transform: translateY(-1px); }
 .cy-security-filters { display: flex; gap: var(--cy-space-4); }
 .cy-security-filter, .cy-security-search { padding: var(--cy-space-2) var(--cy-space-4); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-3); background: var(--cy-bg); font-size: var(--cy-font-md); color: var(--cy-text); }
 .cy-security-search { flex: 1; min-width: 0; }

@@ -228,20 +228,22 @@ function retryCandidateCatalog(): void {
 .cy-state-card.error, .cy-save-message.error, .cy-save-message.conflict { color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
 .cy-save-message.success { color: var(--cy-success); }
 .cy-onboarding { color: var(--cy-text); background: var(--cy-accent); }
-.cy-identity-form { display: flex; flex-direction: column; gap: var(--cy-space-6-5); padding: var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: 13px; background: var(--cy-surface); }
+.cy-identity-form { display: flex; flex-direction: column; gap: var(--cy-space-6-5); padding: var(--cy-space-7); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); background: var(--cy-surface-glass); box-shadow: var(--cy-shadow-soft); }
 .cy-field-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--cy-space-6); }
 .cy-field { display: flex; flex-direction: column; gap: var(--cy-space-2-5); min-width: 0; color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-field em { color: var(--cy-danger); font-style: normal; }
-.cy-field input, .cy-field select { width: 100%; min-width: 0; box-sizing: border-box; padding: var(--cy-space-4) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-pane); color: var(--cy-text); font: inherit; font-size: var(--cy-font-lg); }
+.cy-field input, .cy-field select { width: 100%; min-width: 0; min-height: 42px; box-sizing: border-box; padding: var(--cy-space-4) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-surface-soft); color: var(--cy-text); font: inherit; font-size: var(--cy-font-lg); transition: border-color var(--cy-motion-fast) ease, box-shadow var(--cy-motion-fast) ease; }
+.cy-field input:focus, .cy-field select:focus { border-color: var(--cy-accent-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cy-accent-strong) 10%, transparent); outline: none; }
 .cy-field small { color: var(--cy-danger); font-size: var(--cy-font-sm); }
 .cy-form-actions { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--cy-space-6); padding-top: var(--cy-space-1); }
 .cy-form-actions > div { display: flex; gap: var(--cy-space-4); flex: 0 0 auto; }
-button { padding: var(--cy-space-3) var(--cy-space-6); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-md); }
-button.primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
+button { min-height: 36px; padding: var(--cy-space-3) var(--cy-space-6); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-md); transition: background var(--cy-motion-fast) ease, border-color var(--cy-motion-fast) ease, transform var(--cy-motion-fast) ease; }
+button.primary { border-color: transparent; color: var(--cy-on-brand); background: var(--cy-brand-gradient); }
 .cy-load-more-candidates { align-self: flex-start; margin-top: var(--cy-space-1-5); }
 .cy-candidate-error { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-4); }
 button:disabled { opacity: 0.5; cursor: default; }
-button:hover:not(:disabled) { background: var(--cy-surface-hover); }
+button:hover:not(:disabled) { background: var(--cy-surface-hover); transform: translateY(-1px); }
+button.primary:hover:not(:disabled) { filter: brightness(1.04); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 @media (max-width: 720px) {
   .cy-field-row { grid-template-columns: 1fr; }

@@ -459,8 +459,9 @@ onBeforeUnmount(() => {
   align-items: stretch;
   min-height: 0;
   overflow: hidden;
-  background: linear-gradient(180deg, var(--cy-pane), var(--cy-titlebar));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--cy-surface) 48%, transparent), color-mix(in srgb, var(--cy-pane) 58%, transparent));
   border-left: 1px solid var(--cy-border);
+  backdrop-filter: blur(18px) saturate(110%);
 }
 
 .cy-live-head {

@@ -107,8 +107,9 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
   align-items: center;
   gap: var(--cy-space-5);
   padding: var(--cy-space-7) var(--cy-space-3-5);
-  background: var(--cy-nav);
+  background: color-mix(in srgb, var(--cy-nav) 62%, transparent);
   border-right: 1px solid var(--cy-border);
+  backdrop-filter: blur(18px) saturate(110%);
 }
 
 .cy-nav-button,
@@ -126,7 +127,7 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
 
 .cy-nav-button:hover,
 .cy-nav-collapse:hover {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 
@@ -145,8 +146,8 @@ const bottomItems: Array<{ key: AppView; label: string; icon: string }> = [
 .cy-nav-button[aria-pressed='true'],
 .cy-nav-collapse[aria-pressed='true'] {
   color: var(--cy-accent-text);
-  background: var(--cy-accent);
-  border-color: var(--cy-accent);
+  background: var(--cy-accent-tint);
+  border-color: color-mix(in srgb, var(--cy-accent-strong) 24%, transparent);
 }
 
 .cy-nav-button[aria-pressed='true']:hover,

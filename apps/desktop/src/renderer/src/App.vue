@@ -93,12 +93,22 @@ watch(() => layout.notice, (n) => {
 
 <style scoped>
 .cy-app {
+  position: relative;
+  isolation: isolate;
   display: grid;
   /* UII-QQ 设置页批次：应用内标题栏移除——网格单行（原生系统标题栏承担窗口标题） */
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--cy-window);
+  background-color: var(--cy-window);
+  background-image:
+    radial-gradient(circle at 8% 88%, color-mix(in srgb, var(--cy-pink) 14%, transparent), transparent 24%),
+    radial-gradient(circle at 82% 4%, color-mix(in srgb, var(--cy-purple) 12%, transparent), transparent 28%),
+    linear-gradient(135deg, color-mix(in srgb, var(--cy-window) 10%, transparent), color-mix(in srgb, var(--cy-window) 4%, transparent)),
+    var(--cy-chat-background);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 /* 隐藏区兜底（2026-09-10）：网格模板对隐藏区保留 0px 轨道（见 layout/effective-layout.ts
@@ -121,7 +131,9 @@ watch(() => layout.notice, (n) => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--cy-surface);
+  /* 中央背景穿透预算：与 .cy-messages 叠加后仍保留约 62% 底图可见度。 */
+  background: color-mix(in srgb, var(--cy-pane) 24%, transparent);
+  backdrop-filter: blur(2px) saturate(105%);
 }
 
 /* tasks 占位视图：落在 chat 区（导航常驻其左侧，可随时切回） */

@@ -81,32 +81,37 @@ function resultText(r: { ok: boolean; latencyMs?: number; error?: string } | und
 
     <footer class="cy-profile-actions">
       <template v-if="isBackend">
-        <button class="cy-profile-btn" :disabled="connTesting" @click="onTestConnectivity()">
-          <i v-if="connTesting" class="cy-spinner" aria-hidden="true" />
-          {{ connTesting ? '测试中…' : '测试连接' }}
-        </button>
-        <button class="cy-profile-btn" :disabled="usableTesting" @click="onTestUsable()">
-          <i v-if="usableTesting" class="cy-spinner" aria-hidden="true" />
-          {{ usableTesting ? '测试中…' : '可用性测试' }}
-        </button>
-        <button
-          class="cy-profile-btn cy-profile-activate"
-          :disabled="modelStore.activating[profile.type] || isActive || !profile.enabled"
-          :title="!profile.enabled ? '服务未启用（services.*.enabled=false），无法设为当前' : undefined"
-          @click="onActivate()"
-        >
-          <i v-if="modelStore.activating[profile.type]" class="cy-spinner" aria-hidden="true" />
-          {{ modelStore.activating[profile.type] ? '切换中…' : !profile.enabled ? '服务已停用' : isActive ? '当前使用中' : '设为当前' }}
-        </button>
-        <template v-if="profile.source === 'custom'">
-          <button class="cy-profile-btn" @click="emit('edit')">编辑</button>
-          <button class="cy-profile-btn" @click="emit('copy')">复制</button>
-          <button v-if="!confirmDelete" class="cy-profile-btn cy-profile-danger" @click="armDelete()">删除</button>
-          <template v-else>
-            <button class="cy-profile-btn cy-profile-danger" @click="onDelete()">确认删除</button>
-            <button class="cy-profile-btn" @click="cancelDelete()">取消</button>
+        <div class="cy-profile-actions-tests">
+          <button class="cy-profile-btn" :disabled="connTesting" @click="onTestConnectivity()">
+            <i v-if="connTesting" class="cy-spinner" aria-hidden="true" />
+            {{ connTesting ? '测试中…' : '测试连接' }}
+          </button>
+          <button class="cy-profile-btn" :disabled="usableTesting" @click="onTestUsable()">
+            <i v-if="usableTesting" class="cy-spinner" aria-hidden="true" />
+            {{ usableTesting ? '测试中…' : '可用性测试' }}
+          </button>
+        </div>
+        <div class="cy-profile-actions-main">
+          <button
+            class="cy-profile-btn cy-profile-activate"
+            :class="{ 'is-current': isActive }"
+            :disabled="modelStore.activating[profile.type] || isActive || !profile.enabled"
+            :title="!profile.enabled ? '服务未启用（services.*.enabled=false），无法设为当前' : undefined"
+            @click="onActivate()"
+          >
+            <i v-if="modelStore.activating[profile.type]" class="cy-spinner" aria-hidden="true" />
+            {{ modelStore.activating[profile.type] ? '切换中…' : !profile.enabled ? '服务已停用' : isActive ? '当前使用中' : '设为当前' }}
+          </button>
+          <template v-if="profile.source === 'custom'">
+            <button class="cy-profile-btn" @click="emit('edit')">编辑</button>
+            <button class="cy-profile-btn" @click="emit('copy')">复制</button>
+            <button v-if="!confirmDelete" class="cy-profile-btn cy-profile-danger" @click="armDelete()">删除</button>
+            <template v-else>
+              <button class="cy-profile-btn cy-profile-danger" @click="onDelete()">确认删除</button>
+              <button class="cy-profile-btn" @click="cancelDelete()">取消</button>
+            </template>
           </template>
-        </template>
+        </div>
       </template>
       <span v-else class="cy-muted">该执行位置由本机承载，当前版本不提供调用</span>
     </footer>
@@ -123,7 +128,7 @@ function resultText(r: { ok: boolean; latencyMs?: number; error?: string } | und
 </template>
 
 <style scoped>
-.cy-profile-card { display: flex; flex-direction: column; gap: var(--cy-space-4); padding: var(--cy-space-5-5) var(--cy-space-6-5); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-profile-card { display: flex; flex-direction: column; gap: var(--cy-space-4); padding: var(--cy-space-5-5) var(--cy-space-6-5); background: var(--cy-surface-glass); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); box-shadow: var(--cy-shadow-soft); }
 .cy-profile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-5); flex-wrap: wrap; }
 .cy-profile-title { display: flex; align-items: center; gap: var(--cy-space-4); flex-wrap: wrap; min-width: 0; }
 .cy-profile-title strong { font-size: var(--cy-font-base); }
@@ -142,11 +147,16 @@ function resultText(r: { ok: boolean; latencyMs?: number; error?: string } | und
 .cy-profile-endpoint { font-family: ui-monospace, monospace; }
 .cy-cap-chip { padding: 0 var(--cy-space-3-5); border-radius: var(--cy-radius-pill); background: var(--cy-surface-soft); border: 1px solid var(--cy-border); color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-profile-models { margin-left: auto; }
-.cy-profile-actions { display: flex; align-items: center; gap: var(--cy-space-3-5); flex-wrap: wrap; }
-.cy-profile-btn { display: inline-flex; align-items: center; gap: var(--cy-space-2-5); padding: var(--cy-space-2-5) var(--cy-space-5-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); }
+.cy-profile-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--cy-space-3-5); flex-wrap: wrap; }
+.cy-profile-actions-tests, .cy-profile-actions-main { display: flex; align-items: center; gap: var(--cy-space-3-5); flex-wrap: wrap; }
+.cy-profile-actions-main { margin-left: auto; }
+.cy-profile-btn { display: inline-flex; align-items: center; gap: var(--cy-space-2-5); min-height: 34px; padding: var(--cy-space-2-5) var(--cy-space-5-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); transition: background var(--cy-motion-fast) ease, border-color var(--cy-motion-fast) ease, color var(--cy-motion-fast) ease, transform var(--cy-motion-fast) ease; }
 .cy-profile-btn:disabled { opacity: 0.55; cursor: default; }
-.cy-profile-btn:hover:not(:disabled) { background: var(--cy-surface-hover); }
+.cy-profile-btn:hover:not(:disabled) { background: var(--cy-surface-hover); transform: translateY(-1px); }
 .cy-profile-activate { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
+.cy-profile-activate:not(:disabled) { border-color: transparent; color: var(--cy-on-brand); background: var(--cy-brand-gradient); box-shadow: 0 5px 14px color-mix(in srgb, var(--cy-accent-strong) 20%, transparent); }
+.cy-profile-activate.is-current { border-color: color-mix(in srgb, var(--cy-success) 45%, transparent); color: var(--cy-success); background: color-mix(in srgb, var(--cy-success) 10%, transparent); box-shadow: none; }
+.cy-profile-activate.is-current:hover:not(:disabled) { transform: none; }
 .cy-profile-danger { color: var(--cy-danger); border-color: color-mix(in srgb, var(--cy-danger) 45%, transparent); }
 .cy-profile-results { display: flex; flex-direction: column; gap: var(--cy-space-1-5); }
 .cy-ms-result { font-size: var(--cy-font-sm); }

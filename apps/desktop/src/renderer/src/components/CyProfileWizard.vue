@@ -165,7 +165,7 @@ function onKeydown(e: KeyboardEvent): void {
 
         <form class="cy-wizard-form" @submit.prevent="onTestAndSave()">
           <div class="cy-wizard-body">
-            <label class="cy-field">
+            <label class="cy-field cy-wizard-type">
               <span>类型</span>
               <select v-model="typeModel" :disabled="isEditMode" aria-label="模型服务类型">
                 <option value="llm">LLM（大语言模型）</option>
@@ -176,7 +176,7 @@ function onKeydown(e: KeyboardEvent): void {
 
             <!-- UII-QQ 设置页批次：表单按「Provider 连接信息 / 模型信息 / capabilities」分区——
                  在线获取模型、协议（Chat Completions/Responses）选择等待后端正式契约，本轮不做假实现 -->
-            <div class="cy-wizard-group" role="group" aria-label="Provider 连接信息">
+            <div class="cy-wizard-group cy-wizard-provider" role="group" aria-label="Provider 连接信息">
               <div class="cy-wizard-group-title">Provider 连接信息</div>
               <label class="cy-field">
                 <span>Endpoint（baseUrl）<em class="cy-req">*</em></span>
@@ -189,7 +189,7 @@ function onKeydown(e: KeyboardEvent): void {
               <p v-if="isEditMode" class="cy-wizard-crednote">{{ credNote }}</p>
             </div>
 
-            <div class="cy-wizard-group" role="group" aria-label="模型信息">
+            <div class="cy-wizard-group cy-wizard-model" role="group" aria-label="模型信息">
               <div class="cy-wizard-group-title">模型信息</div>
               <label class="cy-field">
                 <span>名称 <em class="cy-req">*</em></span>
@@ -202,7 +202,7 @@ function onKeydown(e: KeyboardEvent): void {
               <p class="cy-wizard-note">在线获取 Provider 支持的模型列表需要后端正式契约，暂未开放——当前请手动填写模型 ID。</p>
             </div>
 
-            <div class="cy-wizard-group" role="group" aria-label="能力声明">
+            <div class="cy-wizard-group cy-wizard-capabilities" role="group" aria-label="能力声明">
               <div class="cy-wizard-group-title">能力声明</div>
               <label class="cy-field">
                 <span>capabilities（逗号分隔，可选）</span>
@@ -240,7 +240,7 @@ function onKeydown(e: KeyboardEvent): void {
 .cy-wizard {
   display: flex;
   flex-direction: column;
-  width: min(480px, 90vw);
+  width: min(820px, calc(100vw - 32px));
   height: min(680px, calc(100dvh - 32px));
   max-height: calc(100dvh - 32px);
   overflow: hidden;
@@ -254,13 +254,16 @@ function onKeydown(e: KeyboardEvent): void {
 .cy-close-btn { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); }
 .cy-ms-error { display: flex; flex: 0 0 auto; align-items: center; gap: var(--cy-space-4); margin: var(--cy-space-5) var(--cy-space-8) 0; padding: var(--cy-space-4) var(--cy-space-5-5); color: var(--cy-danger); background: var(--cy-surface-soft); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-5); font-size: var(--cy-font-md); }
 .cy-wizard-form { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; overflow: hidden; }
-.cy-wizard-body { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; gap: var(--cy-space-5); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: var(--cy-space-6) var(--cy-space-8); }
+.cy-wizard-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; flex: 1 1 auto; min-height: 0; gap: var(--cy-space-5); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: var(--cy-space-6) var(--cy-space-8); }
+.cy-wizard-type { grid-column: 1 / -1; }
+.cy-wizard-capabilities { grid-column: 2; }
 /* UII-QQ 设置页批次：表单分区（Provider 连接 / 模型信息 / 能力声明） */
 .cy-wizard-group { display: flex; flex-direction: column; gap: var(--cy-space-5); padding: var(--cy-space-5) var(--cy-space-6); background: var(--cy-surface-soft); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-5); }
 .cy-wizard-group-title { color: var(--cy-muted); font-size: var(--cy-font-sm); font-weight: 600; letter-spacing: 0.02em; }
 .cy-wizard-note { margin: 0; font-size: var(--cy-font-sm); color: var(--cy-muted); }
 .cy-field { display: flex; flex-direction: column; gap: var(--cy-space-2); font-size: var(--cy-font-md); color: var(--cy-muted); }
-.cy-field input, .cy-field select { padding: var(--cy-space-3-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-lg); }
+.cy-field input, .cy-field select { min-height: 42px; padding: var(--cy-space-3-5) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4-5); background: var(--cy-surface-soft); color: var(--cy-text); font-size: var(--cy-font-lg); transition: border-color var(--cy-motion-fast) ease, box-shadow var(--cy-motion-fast) ease; }
+.cy-field input:focus, .cy-field select:focus { border-color: var(--cy-accent-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cy-accent-strong) 10%, transparent); outline: none; }
 .cy-field select:disabled { opacity: 0.6; }
 .cy-req { color: var(--cy-danger); font-style: normal; }
 .cy-wizard-crednote { margin: 0; font-size: var(--cy-font-sm); color: var(--cy-muted); }
@@ -268,7 +271,12 @@ function onKeydown(e: KeyboardEvent): void {
 .cy-profile-btn { display: inline-flex; align-items: center; gap: var(--cy-space-2-5); padding: var(--cy-space-3) var(--cy-space-6-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-text); font-size: var(--cy-font-md); }
 .cy-profile-btn:disabled { opacity: 0.55; cursor: default; }
 .cy-profile-btn:hover:not(:disabled) { background: var(--cy-surface-hover); }
-.cy-profile-primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
-.cy-profile-activate { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
+.cy-profile-primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); background: var(--cy-accent-tint); }
+.cy-profile-activate { border-color: transparent; color: var(--cy-on-brand); background: var(--cy-brand-gradient); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
+@media (max-width: 680px) {
+  .cy-wizard { width: min(100%, 480px); }
+  .cy-wizard-body { grid-template-columns: 1fr; }
+  .cy-wizard-type, .cy-wizard-capabilities { grid-column: auto; }
+}
 </style>

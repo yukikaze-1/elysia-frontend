@@ -461,8 +461,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
      inline-size containment 只锁宽度计算（footer 宽由父 flex 决定），不影响高度布局 */
   container-type: inline-size;
   padding: var(--cy-space-5) var(--cy-space-8) var(--cy-space-6);
-  background: var(--cy-pane);
+  background: var(--cy-surface-glass);
   border-top: 1px solid var(--cy-border);
+  backdrop-filter: blur(18px) saturate(110%);
 }
 
 /* —— UII-QQ：单一 Composer 容器（合并原「工具框 + 输入框」双框结构）—— */
@@ -470,13 +471,15 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   display: flex;
   flex-direction: column;
   padding: var(--cy-space-3) var(--cy-space-5) var(--cy-space-4);
-  background: var(--cy-surface);
+  background: var(--cy-surface-strong);
   border: 1px solid var(--cy-border);
   border-radius: var(--cy-radius-7);
+  box-shadow: var(--cy-shadow-soft);
 }
 
 .cy-composer-shell:focus-within {
   border-color: var(--cy-accent-strong);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cy-accent-strong) 10%, transparent), var(--cy-shadow-soft);
 }
 
 /* 上工具栏：＋ 附件 / 😊 表情 / 🎙️ 录音（QQ 桌面端同款顶部工具条） */
@@ -507,7 +510,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-history-btn:hover {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 
@@ -615,7 +618,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-voice-btn:hover:not(:disabled) {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 
@@ -674,7 +677,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-attach-btn:hover:not(:disabled) {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 
@@ -702,14 +705,16 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   min-width: 64px;
   height: 32px;
   padding: 0 var(--cy-space-6);
-  color: var(--cy-accent-text);
-  background: var(--cy-accent-strong);
+  color: var(--cy-on-brand);
+  background: var(--cy-brand-gradient);
   font-size: var(--cy-font-md);
   font-weight: 500;
+  transition: filter var(--cy-motion-fast) ease, transform var(--cy-motion-fast) ease;
 }
 
 .cy-send-btn:hover:not(:disabled) {
   filter: brightness(1.06);
+  transform: translateY(-1px);
 }
 
 .cy-send-btn:disabled {
@@ -731,7 +736,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-realtime-chip:hover:not(:disabled) {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 
@@ -753,7 +758,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 }
 
 .cy-emoji-btn:hover {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 
@@ -770,7 +775,7 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
   border: 1px solid transparent;
 }
 .cy-record-btn:hover:not(:disabled) {
-  color: var(--cy-accent);
+  color: var(--cy-accent-strong);
   background: var(--cy-surface-hover);
 }
 .cy-record-btn:disabled {

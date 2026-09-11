@@ -90,7 +90,7 @@ const statusText = computed(() => {
     <div class="cy-l2d-group">
       <label class="cy-l2d-row">
         <CySwitch :model-value="settings.live2d.enabled" aria-label="启用 Live2D 角色" @change="onEnabled" />
-        <span class="cy-l2d-label">启用 Live2D 角色<small>加载模型并显示在聊天右侧角色栏</small></span>
+        <span class="cy-l2d-label"><span class="cy-l2d-label-main">启用 Live2D 角色 <span class="cy-toggle-state" :class="{ on: settings.live2d.enabled }">{{ settings.live2d.enabled ? '已开启' : '已关闭' }}</span></span><small>加载模型并显示在聊天右侧角色栏</small></span>
       </label>
     </div>
 
@@ -176,7 +176,7 @@ const statusText = computed(() => {
           aria-label="鼠标跟随"
           @change="(v) => onToggle('mouseTracking', v)"
         />
-        <span class="cy-l2d-label">鼠标跟随<small>视线随光标移动，离开后平滑回正</small></span>
+        <span class="cy-l2d-label"><span class="cy-l2d-label-main">鼠标跟随 <span class="cy-toggle-state" :class="{ on: settings.live2d.mouseTracking }">{{ settings.live2d.mouseTracking ? '已开启' : '已关闭' }}</span></span><small>视线随光标移动，离开后平滑回正</small></span>
       </label>
       <label class="cy-l2d-row">
         <CySwitch
@@ -185,7 +185,7 @@ const statusText = computed(() => {
           aria-label="自动动作"
           @change="(v) => onToggle('autoMotions', v)"
         />
-        <span class="cy-l2d-label">自动动作<small>待机眨眼/呼吸与状态动画调度</small></span>
+        <span class="cy-l2d-label"><span class="cy-l2d-label-main">自动动作 <span class="cy-toggle-state" :class="{ on: settings.live2d.autoMotions }">{{ settings.live2d.autoMotions ? '已开启' : '已关闭' }}</span></span><small>待机眨眼/呼吸与状态动画调度</small></span>
       </label>
       <label class="cy-l2d-row">
         <CySwitch
@@ -194,7 +194,7 @@ const statusText = computed(() => {
           aria-label="口型同步"
           @change="(v) => onToggle('lipSync', v)"
         />
-        <span class="cy-l2d-label">口型同步<small>说话时嘴部随内容开合（与自动动作共同控制）</small></span>
+        <span class="cy-l2d-label"><span class="cy-l2d-label-main">口型同步 <span class="cy-toggle-state" :class="{ on: settings.live2d.lipSync }">{{ settings.live2d.lipSync ? '已开启' : '已关闭' }}</span></span><small>说话时嘴部随内容开合（与自动动作共同控制）</small></span>
       </label>
       <label class="cy-l2d-row">
         <CySwitch
@@ -203,7 +203,7 @@ const statusText = computed(() => {
           aria-label="减少动态"
           @change="(v) => onToggle('reduceMotion', v)"
         />
-        <span class="cy-l2d-label">减少动态<small>禁用鼠标跟随与点击动作（减轻晕动）</small></span>
+        <span class="cy-l2d-label"><span class="cy-l2d-label-main">减少动态 <span class="cy-toggle-state" :class="{ on: settings.live2d.reduceMotion }">{{ settings.live2d.reduceMotion ? '已开启' : '已关闭' }}</span></span><small>禁用鼠标跟随与点击动作（减轻晕动）</small></span>
       </label>
     </div>
 
@@ -235,17 +235,20 @@ const statusText = computed(() => {
 
 .cy-l2d-title { margin: 0; font-size: var(--cy-font-xl); font-weight: 600; }
 
-.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); }
+.cy-l2d-group { display: flex; flex-direction: column; gap: var(--cy-space-4-5); padding: var(--cy-space-6) var(--cy-space-7); background: var(--cy-surface-glass); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-6); box-shadow: var(--cy-shadow-soft); }
 .cy-l2d-sub { margin: 0 0 var(--cy-space-1); font-size: var(--cy-font-lg); font-weight: 600; color: var(--cy-muted); }
 
 .cy-l2d-row { display: flex; align-items: center; gap: var(--cy-space-4-5); cursor: pointer; }
 .cy-l2d-label { display: flex; flex-direction: column; gap: var(--cy-space-0-5); color: var(--cy-text); font-size: var(--cy-font-lg); }
+.cy-l2d-label-main { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--cy-space-3); }
+.cy-toggle-state { color: var(--cy-muted); font-size: var(--cy-font-sm); font-weight: 500; }
+.cy-toggle-state.on { color: var(--cy-success); }
 .cy-l2d-label small { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 
 .cy-l2d-field { display: flex; flex-direction: column; gap: var(--cy-space-2-5); }
 .cy-l2d-field-label { color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-l2d-field-control { display: flex; align-items: center; gap: var(--cy-space-5); }
-.cy-l2d-field-control input[type='range'] { flex: 1; min-width: 0; accent-color: var(--cy-accent); }
+.cy-l2d-field-control input[type='range'] { flex: 1; min-width: 0; accent-color: var(--cy-accent-strong); }
 .cy-l2d-field-value { flex: 0 0 44px; text-align: right; color: var(--cy-muted); font-size: var(--cy-font-md); font-variant-numeric: tabular-nums; }
 .cy-l2d-field select { width: 100%; padding: var(--cy-space-3) var(--cy-space-4-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface-soft); color: var(--cy-text); font-size: var(--cy-font-lg); }
 .cy-l2d-hint { margin: 0; color: var(--cy-muted); font-size: var(--cy-font-sm); }
@@ -257,7 +260,7 @@ const statusText = computed(() => {
   color: var(--cy-text); font-size: var(--cy-font-lg); text-align: left;
 }
 .cy-l2d-model:hover:not(:disabled) { background: var(--cy-surface-hover); }
-.cy-l2d-model.active { border-color: var(--cy-accent); background: var(--cy-accent); color: var(--cy-accent-text); }
+.cy-l2d-model.active { border-color: var(--cy-accent-strong); background: var(--cy-accent-tint); color: var(--cy-accent-text); box-shadow: inset 3px 0 0 var(--cy-accent-strong); }
 .cy-l2d-model:disabled { opacity: 0.55; cursor: not-allowed; }
 .cy-l2d-model-preview { width: 40px; height: 40px; border-radius: var(--cy-radius-4); object-fit: cover; flex: none; background: var(--cy-surface); }
 .cy-l2d-model-nothumb { display: grid; place-items: center; color: var(--cy-muted); font-size: var(--cy-font-xs); }
