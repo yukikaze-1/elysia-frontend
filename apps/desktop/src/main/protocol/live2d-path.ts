@@ -3,8 +3,13 @@
 // 'cyrene://renderer/__cyrene-live2d/{modelId}/{relPath}'；modelId 为 ASCII slug 不编码（正则 + 非 '.'/'..'）；
 // relPath 按 '/' 分段 percent-decode 逐段拒：空段、'.'、'..'、解码后含 '/'、'\'、NUL 的段。
 // 与 '__cyrene-media' 互斥：live2d 分支在 handler 内位于 media 分支之后（media 在前），且 parse 前缀本身即区分。
+//
+// 2026-09-10：前缀改由 shared/contracts/live2d.ts 单一提供——Renderer 侧 adapter.ts 与 dev 形态 IPC
+// 供给通道消费同一常量，不再各写一份字面量靠注释对齐。
 
-export const LIVE2D_PATH_PREFIX = '/__cyrene-live2d/'
+import { LIVE2D_PATH_PREFIX } from '@shared/contracts'
+
+export { LIVE2D_PATH_PREFIX }
 
 const MODEL_ID_RE = /^[A-Za-z0-9._-]+$/
 

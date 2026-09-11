@@ -23,11 +23,19 @@ describe('IPC 安全', () => {
     })
     // 阶段 7 后为 74 键；角色 FE-B/C 增加 6 个方法，FE-D1 增加 7 个写/校验/预览方法，
     // FE-D2 增加 4 个具名本地草稿方法，FE-E 增加 resetCharacterEvolution，共 92 键。
+    // 2026-09-10 增加 readLive2dModelFile（dev 形态 Live2D 模型文件供给），共 93 键。
     //
     // 2026-09-10 修复：本表曾停留在 91 键（漏 `resetCharacterEvolution`，由 e9d2897 加入 preload），
     // 于是这条「暴露面不得未经 review 增长」的唯一哨兵长期红灯、保护意义归零——任何真实的意外面扩张
     // 都会被同一个红灯掩盖。表**刻意硬编码**、不从 IpcChannels 派生（派生会让断言恒真）；
     // 为让下次漂移一眼可读，先断言 added/removed 差集，再断言全等（原写法只给一个 92 元素大 diff）。
+    //
+    // readLive2dModelFile 的 review 结论（2026-09-10）：**不新增能力**。入参 (modelId, relPath) 经
+    // 请求 schema 收窄（ASCII slug、非 `.`/`..`、无 NUL），判定全部在 Main 侧，且与协议通道共用同一个
+    // gateLive2dFile（verifyIntegrity → registered/available → containment 白名单）；只回字节与 mime，
+    // **绝对路径不出 Main**。打包形态下 Renderer 本就能同源 fetch 同一批字节，故该通道只是把等价读取
+    // 搬到 dev 可用的传输上（dev 页面跨源，cyrene:// 的 corsEnabled:false 会拒绝原生 fetch）。
+    // 见 docs/review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md。
     const EXPECTED_SURFACE = [
       'activate', 'activateModelProfile', 'archiveCharacter', 'attachmentsCancel', 'attachmentsCheck', 'attachmentsUpload', 'attachmentsValidate',
       'audioCancel',
@@ -35,7 +43,7 @@ describe('IPC 安全', () => {
       'diagnosticsClearLogs', 'diagnosticsDevModeSet', 'diagnosticsExport', 'diagnosticsOpenLogDir', 'diagnosticsState',
       'disconnect', 'getActiveModelSelection', 'getAppInfo', 'getCharacter', 'getCharacterDraft', 'getCharacterState', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getLastCrash', 'getMe', 'getMessageContext', 'getMessages',
       'getRuntimeInfo', 'hydratePersistence', 'listCharacterDrafts', 'listCharacterRevisions', 'listCharacters', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'onDiagnosticsDevEvent', 'onToolEvent',
-      'openExternal', 'persistSession', 'previewCharacter', 'previewTts', 'queryChatHistory', 'renameConversation', 'resetCharacterEvolution', 'rollbackCharacter', 'saveCharacterDraft', 'saveModelProfile',
+      'openExternal', 'persistSession', 'previewCharacter', 'previewTts', 'queryChatHistory', 'readLive2dModelFile', 'renameConversation', 'resetCharacterEvolution', 'rollbackCharacter', 'saveCharacterDraft', 'saveModelProfile',
       'send', 'setBackendToken', 'setEndpoint', 'setTtsVoice', 'settingsLoad', 'settingsSave', 'testModelProfile',
       'toolCancel', 'toolConfirmUpload', 'toolDecide', 'toolGrantDirectory', 'toolList', 'toolListGrants', 'toolListHistory', 'toolPickSource', 'toolRevokeGrant',
       'updateCharacter', 'updateMe', 'validateCharacter',

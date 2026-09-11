@@ -48,6 +48,7 @@ import type {
   DiagnosticsState,
   FileValidationResult,
   HistoryEntry,
+  Live2dModelFileResult,
   Live2DModelSummary,
   Message,
   MessageContextQuery,
@@ -172,6 +173,8 @@ export interface DesktopApiLike {
   settingsSave(patch: SettingsPatch): Promise<SettingsState>
   // —— 阶段 5 批次 A Live2D 面 ——
   listLive2dModels(): Promise<Live2DModelSummary[]>
+  /** dev 形态模型文件字节供给（2026-09-10；打包/preview 形态走 cyrene:// 协议，不经此通道） */
+  readLive2dModelFile(modelId: string, relPath: string): Promise<Live2dModelFileResult>
   // —— 阶段 6 批次 B 工具面（Task 7，L3 修正）：tool:event 订阅 + 四 invoke 通道（Task 6 已实装 preload）——
   onToolEvent(handler: (event: PublicToolEvent) => void): () => void
   toolDecide(input: { callId: string; decision: 'allow_once' | 'deny' }): Promise<void>

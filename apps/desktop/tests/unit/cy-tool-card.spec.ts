@@ -133,6 +133,23 @@ describe('CyToolCard 展开详情', () => {
     expect(w.find('[data-testid="tool-error"]').text()).toContain('boom')
     w.unmount()
   })
+
+  it('错误文案经集中映射：已映射码显示友好文案而非原始 message（2026-09-10 收口）', async () => {
+    // SCHEMA_VALIDATION_FAILED 在 utils/error-message 的合并表里有映射。此前本组件直接渲染
+    // record.error.message，绕过了该表——任何新增映射对本卡片静默失效。
+    const w = mountCard(rec({ status: 'failed', error: { code: 'SCHEMA_VALIDATION_FAILED', message: 'zod: expected string' } }))
+    const text = w.find('[data-testid="tool-error"]').text()
+    expect(text).toContain('数据格式无效')
+    expect(text).not.toContain('zod: expected string')
+    w.unmount()
+  })
+
+  it('错误文案回退链第 ③ 档保留：无映射码仍显示后端已公开原文', async () => {
+    // 工具侧真实执行错误没有本地映射，其可读说明必须原样显示（丢弃会变成空白或泛化句）
+    const w = mountCard(rec({ status: 'failed', error: { code: 'E_FILE_IO', message: '文件被占用，请关闭后重试' } }))
+    expect(w.find('[data-testid="tool-error"]').text()).toContain('文件被占用，请关闭后重试')
+    w.unmount()
+  })
 })
 
 describe('CyToolCard 状态切换与用户选择', () => {

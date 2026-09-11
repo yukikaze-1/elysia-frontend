@@ -19,6 +19,11 @@
 - README、CLAUDE.md、doc 10 和 doc 12 不再复制本节的实时状态。
 - 门禁体系整改（2026-09-10）：评估发现自动门禁长期失效——CI 自 2026-08-16 起未再绿过，`verify:sensitive` 全红、`check:contract` 空转通过，且 `DataCloneError` 真机崩溃信号已在 CI 日志中连续出现 4 天而无人查看。本轮已完成整改，门禁健康记录见 §3.1，完整证据与残余风险见[门禁体系评估与整改记录](review/2026-09-10-前端门禁体系评估与整改记录.md)。第三方资产授权另立阻塞项 `EXT-01`，见 [决策记录](review/2026-09-10-第三方资产授权与来源立为阻塞项-决策记录.md)。
 - 门禁整改轮暴露的三项产品缺陷与集成偶发根因已处置（2026-09-10，`f462edd`／`2c1f34c`）：① 角色编辑器清空「主动间隔」会使保存被原生约束**静默拦截**（无反应、零提示、内容未保存）——现回退 3600 并由表单自查后就地解释原因；② 附件媒体「字节完好但本机解不开」时占位永不出现、元素静默损坏——现把渲染失败与附件状态分开表达并给出可重试占位；③ 集成套件被中断后遗留的测试应用跨运行争抢 CPU/GPU 导致 Live2D spec 偶发超时——现由 `globalSetup` 在套件启动时按进程树回收（真机端到端 20 → 0 进程）。决策与验证见[修复决策记录](review/2026-09-10-三项产品缺陷与集成孤儿进程修复-决策记录.md)。
+- **Live2D「模型加载失败」根因定位并修复（2026-09-10）**：上一批交付的诊断态首次把真实原因显示出来——「原因：Failed to fetch」与「已发现 3 个模型，其中可用 3 个」并列。
+- 根因是 **dev 形态模型文件供给跨源被拒**：模型文件只在 `cyrene://` 上供给，而 `pnpm dev` 页面在 `http://localhost:<port>`，`cyrene` scheme 恒为 `corsEnabled:false`（阶段 5 D-4 安全结论），跨源 `fetch` 被 Chromium 拒绝；清单走 invoke 通道不受影响，故两者并不矛盾。
+- 该限制自阶段 5 起记录在案（F-后续-2）但从未修复，且**集成测试全部运行 prod 形态**（`helpers/app.ts` 无条件删除 `ELECTRON_RENDERER_URL`），因此没有任何测试覆盖 dev 形态。
+- 修法为 dev 下经 IPC 供给字节（不放开 `corsEnabled`、不起本地 HTTP），闸门与协议通道共用新增的 `src/main/live2d/serve-gate.ts`。真机 dev 形态探针 8/8 通过（`Live2D 就绪 · Wanko`），禁用修复后探针**复现用户现象且文案逐字一致**。详见[根因定位与修复记录](review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md)。
+- 同轮修复的文档回归：上一批我曾把 doc 17 §4.1 里**正确**的 `corsEnabled:false` 限制说明判为「未经实测的强断言」而删除——判断错误，依据是一条与实现不符的 dev CSP 注释。doc 17 §4.1 与 README 已按实测结论改写，dev CSP 中因此长期冗余的 `connect-src cyrene:` 已移除。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
@@ -57,17 +62,17 @@
 
 上表记录的是**功能验收**口径；本小节记录**门禁健康**。二者分开的理由见 [门禁体系评估](review/2026-09-10-前端门禁体系评估与整改记录.md) §2.3：上表可以写「PASS」而自动门禁同时全红，此前正是这个缺口让 CI 连续 25 天无人查看。
 
-| 门禁 | 命令 | 2026-09-10 整改批次（`4971053`） | 2026-09-10 缺陷修复批次（`cf217eb`） | 2026-09-10 测试陈旧性审查批次（本地，未推送） | 2026-09-10 多套 UI 基础批次（`98efd5d`） |
-|---|---|---|---|---|---|
-| 类型检查 | `pnpm typecheck` | PASS | PASS | PASS | PASS |
-| Lint | `pnpm lint` | PASS | PASS | PASS | PASS |
-| 文档结构 | `pnpm docs:check` | PASS | PASS（19 core / 67 review / 40 superpowers / 42 archived） | PASS（19 core / 68 review / 40 superpowers / 42 archived） | PASS（19 core / 69 review / 40 superpowers / 42 archived） |
-| 敏感信息扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（扫描 715 文件、按规则豁免 557 行、allowlist 放行 63 行） | PASS（扫描 735 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） | PASS（未触碰扫描面；仅测试文件与文档变更） | PASS（扫描 736 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） |
-| 单元测试 | `pnpm test` | PASS（207 files / 2596 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped；本轮仅换断言写法，用例数不变） | PASS（**212 files / 2653 passed + 6 expected-fail + 21 skipped**；新增 3 条门禁 + `cy-code-block`，详见下） |
-| 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） | PASS（22 files / 136 passed + 2 skipped，连续三轮全绿；孤儿根因已消除，见下） | PASS（22 files / 136 passed + 2 skipped；`electron-live2d` 27/27、`perf-gate` 实测 `found=500`） | PASS（22 files / 136 passed + 2 skipped；`markdown-xss` 2/2、`electron-live2d` 27/27、`electron-voice` 16/16 均复绿） |
-| 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **PASS（exit 0）**：首次对**真实 Linux 后端**验证——`192.168.1.18:~/elysia-agent`（`200d4b52`）契约 `WS v2 36/36 + REST 16/16`；桌面副本（`ceceabe8`）为 `33/33 + 16/16`，差异来自版本 |
-| 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 |
-| GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） |
+| 门禁 | 命令 | 2026-09-10 整改批次（`4971053`） | 2026-09-10 缺陷修复批次（`cf217eb`） | 2026-09-10 测试陈旧性审查批次（本地，未推送） | 2026-09-10 多套 UI 基础批次（`98efd5d`） | 2026-09-10 Live2D dev 供给修复批次（本地） |
+|---|---|---|---|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS | PASS | PASS | PASS | PASS |
+| Lint | `pnpm lint` | PASS | PASS | PASS | PASS | PASS |
+| 文档结构 | `pnpm docs:check` | PASS | PASS（19 core / 67 review / 40 superpowers / 42 archived） | PASS（19 core / 68 review / 40 superpowers / 42 archived） | PASS（19 core / 69 review / 40 superpowers / 42 archived） | PASS（19 core / 74 review / 40 superpowers / 42 archived） |
+| 敏感信息扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（扫描 715 文件、按规则豁免 557 行、allowlist 放行 63 行） | PASS（扫描 735 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） | PASS（未触碰扫描面；仅测试文件与文档变更） | PASS（扫描 736 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） | PASS（扫描 751 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行） |
+| 单元测试 | `pnpm test` | PASS（207 files / 2596 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped） | PASS（208 files / 2622 passed + 7 expected-fail + 21 skipped；本轮仅换断言写法，用例数不变） | PASS（**212 files / 2653 passed + 6 expected-fail + 21 skipped**；新增 3 条门禁 + `cy-code-block`，详见下） | PASS（**214 files / 2682 passed + 6 expected-fail + 21 skipped**；新增 `live2d-serve-gate` 10 条、`live2d-dev-resource-fetch` 11 条、`cy-tool-card` 2 条；两处新断言均过变异验证） |
+| 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） | PASS（22 files / 136 passed + 2 skipped，连续三轮全绿；孤儿根因已消除，见下） | PASS（22 files / 136 passed + 2 skipped；`electron-live2d` 27/27、`perf-gate` 实测 `found=500`） | PASS（22 files / 136 passed + 2 skipped；`markdown-xss` 2/2、`electron-live2d` 27/27、`electron-voice` 16/16 均复绿） | PASS（22 files / 138 passed + 2 skipped；新增 `electron-live2d` 用例 `5b` 断言两供给通道同门禁同字节。另：`ipc-security` 暴露面白名单按预期变红一次，见下） |
+| 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **PASS（exit 0）**：首次对**真实 Linux 后端**验证——`192.168.1.18:~/elysia-agent`（`200d4b52`）契约 `WS v2 36/36 + REST 16/16`；桌面副本（`ceceabe8`）为 `33/33 + 16/16`，差异来自版本 | **PASS（exit 0）**：真实 Linux 后端 `fdf39898`（经 SSH 取回 `frontend_contract` 后本地校验）→ `WS v2 36/36 + REST 16/16`。本批未触碰后端线协议，此跑为回归确认 |
+| 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 | **未执行**：本轮未触碰打包链 |
+| GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） | 见正文（本批推送后追加） |
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：
 
@@ -88,6 +93,14 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 缺陷修复批次（`f462edd`／`2c1f34c`／`cf217eb`）另外消除了一条**集成偶发的真实根因**：套件被中断时 `launchApp` 拉起的测试应用不会退出，带着 `cy-int-ud-` 临时 userData 跨运行驻留并争抢 CPU/GPU。现已由 `globalSetup` 在套件启动时按进程树回收（真机端到端 20 → 0 进程），因此上面「集成测试」一行的偶发注记不再适用。证据见[修复决策记录](review/2026-09-10-三项产品缺陷与集成孤儿进程修复-决策记录.md)。
 
 测试陈旧性审查（本批次）另外核实：`markdown-sanitize.spec.ts` 的 7 个 `it.fails` canary **仍然必要**——升级 happy-dom 至最新（20.14.3）后输出逐字节不变，根因为 happy-dom 在 `Node.prototype` 上自带硬编码返回 `''` 的 `nodeName` getter，而 DOMPurify 的 `lookupGetter` 遇首个自有描述符即返回，永久锁定该空值。**每次升级 happy-dom 必须复跑该文件**（升级会让 canary 反向失效）。详见[测试陈旧性审查](review/2026-09-10-前端测试陈旧性审查.md)。
+
+**Live2D dev 供给修复批次：`ipc-security` 暴露面白名单按预期变红一次（2026-09-10，值得记录）**
+
+新增 preload 方法 `readLive2dModelFile` 后，`tests/integration/ipc-security.spec.ts` 的「`desktopApi` 只暴露白名单方法」用例立即失败。**这是该门禁设计意图的正确体现**，不是回归：它把「暴露面不得未经 review 增长」钉成硬编码表（刻意不从 `IpcChannels` 派生，派生会让断言恒真）。处置为在表中加入该方法**并写明 review 结论**——不新增能力（入参经 schema 收窄、判定全在 Main、只回字节与 mime、绝对路径不出 Main；打包形态下 Renderer 本就能同源 fetch 同一批字节）。
+
+该用例的历史（见其注释）说明这类门禁的价值与风险都在同一处：它曾长期停留在 91 键而漏掉 `resetCharacterEvolution`，于是「唯一哨兵」长期红灯、保护意义归零——**任何真实的意外面扩张都会被同一个红灯掩盖**。因此本次不是简单补一个字符串，而是要求任何新增都必须附带结论。
+
+**同批新增的两条断言均做过变异验证**（避免只看绿灯）：把 `gateLive2dFile` 的 `verifyIntegrity` 与 `listInstalledModels` 顺序对调 → 新 spec 2 条失败，而**既有 `protocol-live2d.spec.ts` 19/19 仍全绿**（即 fail-closed 时序此前完全没有被测试钉住）；把 `needsIpcResourceSupply()` 改为恒 `true` → 新 spec 4 条失败。
 
 维护规则：
 

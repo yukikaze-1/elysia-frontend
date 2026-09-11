@@ -13,6 +13,7 @@ import type { ToolCallRecord, ToolCallStatus, ToolRuntime } from '@shared/contra
 import { useToolStore } from '../stores/tool.store'
 import { copyText } from '../utils/clipboard'
 import { effectiveTruncated, formatDuration, formatToolBrief, formatToolDetail, parseStructuredSummary, singleLineText } from '../utils/tool-display'
+import { errorMessage } from '../utils/error-message'
 import CyImageAttachment from './CyImageAttachment.vue'
 
 const props = defineProps<{ record: ToolCallRecord; readonly?: boolean }>()
@@ -96,6 +97,19 @@ const errorCode = computed(() => {
   const c = props.record.error?.code
   return c && c !== 'TOOL_ERROR' ? c : ''
 })
+/**
+ * 错误文案（2026-09-10）：**不再直接渲染 `record.error.message`**，改经 utils/error-message 单一来源。
+ *
+ * 此前这里是渲染层最后一处绕过集中映射的原始文案渲染点——其后果不是「显示错字」，而是
+ * 「本地码有映射却在此地被绕过」：任何新增的错误码映射对本卡片静默失效，排查时表现为
+ * 「同一错误在别处友好、在此处仍是技术原文」。回退链第 ③ 档保留 Main 已公开原文，
+ * 故工具侧真实执行错误（如后端/桌面工具给出的可读失败说明）显示不变。
+ */
+const errorText = computed(() => {
+  const err = props.record.error
+  if (!err?.message) return ''
+  return errorMessage({ code: err.code ?? 'UNKNOWN', message: err.message }, '工具执行失败，请重试。')
+})
 
 // L3（fix round 1）：pathSummary 按 record 的 callId 绑定（pendingPathSummary 侧信道 callId 匹配才展示，
 // 不串到其它卡片）
@@ -169,7 +183,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
       </section>
       <!-- 错误区仅真实失败/超时渲染（取消/拒绝非执行错误；数据保留在 record 供诊断）；浅红底 + 左红强调线收敛视觉 -->
       <div v-if="showError" class="cy-tool-error" data-testid="tool-error">
-        <span class="cy-tool-error-msg">{{ record.error?.message }}</span>
+        <span class="cy-tool-error-msg">{{ errorText }}</span>
         <p v-if="errorCode" class="cy-tool-error-code" data-testid="tool-error-code">{{ errorCode }}</p>
       </div>
       <p v-if="record.attachmentCount" class="cy-tool-attachments">含 {{ record.attachmentCount }} 个附件</p>

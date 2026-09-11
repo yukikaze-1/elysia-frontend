@@ -53,6 +53,7 @@ export const IpcChannels = {
   settingsLoad: 'settings:load',                         // 阶段 4 批次 B：设置装载（invoke）
   settingsSave: 'settings:save',                         // 阶段 4 批次 B：设置保存（invoke，patch merge）
   live2dListModels: 'live2d:list-models',                // 阶段 5 批次 A：Live2D 模型摘要清单（invoke）
+  live2dReadModelFile: 'live2d:read-model-file',         // 2026-09-10：dev 形态模型文件字节供给（invoke；打包形态走 cyrene:// 协议，不经此通道）
   toolDecide: 'tool:decide',                              // 阶段 6 批次 B：权限决策（allow_once/deny，invoke）
   toolCancel: 'tool:cancel',                              // 阶段 6 批次 B：取消工具调用（invoke）
   toolList: 'tool:list',                                  // 阶段 6 批次 B：工具公开事件清单（invoke）

@@ -34,7 +34,7 @@ import type { Live2DController, Live2DControllerStatus } from '../../src/rendere
 import type { Live2DModelSummary } from '@shared/contracts'
 
 const mockApi = {
-  settingsLoad: vi.fn(), settingsSave: vi.fn(), listLive2dModels: vi.fn()
+  settingsLoad: vi.fn(), settingsSave: vi.fn(), listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn()
 }
 
 const MODELS: Live2DModelSummary[] = [

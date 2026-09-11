@@ -285,6 +285,50 @@ describe('阶段5批次A Live2D Electron 集成（A7）', () => {
     } finally { await closeApp(launched) }
   })
 
+  it('5b.dev 供给通道：live2d:read-model-file 与协议通道同门禁、同字节', async () => {
+    const ud = freshUserData()
+    const launched = await launchL2d(ud)
+    try {
+      const { page } = launched
+      await waitLive2dSettled(page)
+      // 打包/preview 形态页面自身即 cyrene://renderer（同源）→ 渲染层走原生 fetch，**不使用**本通道；
+      // 这里直接驱动它，验证 dev 形态（页面在 http://localhost 跨源，被 corsEnabled:false 拒绝）所依赖的
+      // IPC 供给路径在真实 Electron 里成立。2026-09-10：dev 下 fetch(cyrene://) 必抛原生 Failed to fetch，
+      // 该通道即为此而加（见 src/renderer/src/live2d/dev-resource-fetch.ts）。
+      const meta = await page.evaluate(async () => {
+        const r = await window.desktopApi.readLive2dModelFile('haru', 'model3.json')
+        return r.ok ? { ok: true as const, len: r.bytes.byteLength, mime: r.mime } : r
+      })
+      expect(meta.ok).toBe(true)
+      if (meta.ok) {
+        expect(meta.len).toBeGreaterThan(0)
+        expect(meta.mime).toBe('application/json')
+      }
+      // 同字节：两条通道共用同一个 registry 与同一道 gateLive2dFile，故供给内容必须逐字节一致
+      const identical = await page.evaluate(async () => {
+        const r = await window.desktopApi.readLive2dModelFile('haru', 'model3.json')
+        if (!r.ok) return false
+        const viaProtocol = new Uint8Array(
+          await (await fetch('cyrene://renderer/__cyrene-live2d/haru/model3.json')).arrayBuffer()
+        )
+        if (viaProtocol.byteLength !== r.bytes.byteLength) return false
+        for (let i = 0; i < viaProtocol.byteLength; i++) if (viaProtocol[i] !== r.bytes[i]) return false
+        return true
+      })
+      expect(identical).toBe(true)
+      // 拒绝矩阵与协议通道一致（同一门禁实现）：越界 relPath → 403、未注册 modelId → 404
+      const traversal = await page.evaluate(() => window.desktopApi.readLive2dModelFile('haru', '../../../../etc/passwd'))
+      expect(traversal).toEqual({ ok: false, status: 403 })
+      const unknown = await page.evaluate(() => window.desktopApi.readLive2dModelFile('nope', 'model3.json'))
+      expect(unknown).toEqual({ ok: false, status: 404 })
+      // modelId 收窄在请求 schema 层（ASCII slug，非 . / ..）→ 非法 id 直接参数校验失败，不落到闸门
+      const malformed = await page.evaluate(() =>
+        window.desktopApi.readLive2dModelFile('..', 'model3.json').then(() => 'resolved').catch((e: unknown) => String(e))
+      )
+      expect(malformed).toContain('SCHEMA_VALIDATION_FAILED')
+    } finally { await closeApp(launched) }
+  })
+
   it('6.设备丢失：触发 webglcontextlost → 一次重建（ready/fallback）+ 聊天可用', async () => {
     const ud = freshUserData()
     const launched = await launchL2d(ud)

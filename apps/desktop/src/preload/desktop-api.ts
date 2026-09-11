@@ -47,6 +47,7 @@ import type {
   DiagnosticsState,
   FileValidationResult,
   HistoryEntry,
+  Live2dModelFileResult,
   Live2DModelSummary,
   Message,
   MessageContextQuery,
@@ -128,6 +129,7 @@ import {
   GrantListResponseSchema,
   HistoryResponseSchema,
   Live2DModelSummarySchema,
+  Live2dModelFileResultSchema,
   MessagePageSchema,
   MessageSchema,
   ModelProfileSchema,
@@ -532,6 +534,21 @@ async function listLive2dModels(): Promise<Live2DModelSummary[]> {
   return unwrap(await invoke<Live2DModelSummary[]>(IpcChannels.live2dListModels), z.array(Live2DModelSummarySchema))
 }
 
+/**
+ * 读取模型目录内单个文件的字节（2026-09-10，dev 形态专用供给通道）。
+ *
+ * 只在页面与 `cyrene://` 跨源时使用（`pnpm dev`：页面在 `http://localhost:<port>`）——此时对
+ * `cyrene://renderer/__cyrene-live2d/…` 的 fetch 必被 Chromium 拒绝（scheme 恒 `corsEnabled:false`，
+ * 阶段 5 D-4 安全结论）。打包/preview 形态页面自身即 `cyrene://renderer`（同源），仍走协议通道。
+ * 入参原样交给 Main；判定（含路径收窄、完整性、containment 白名单）全部在 Main 侧，Renderer 不解析路径。
+ */
+async function readLive2dModelFile(modelId: string, relPath: string): Promise<Live2dModelFileResult> {
+  return unwrap(
+    await invokeWithArgs<Live2dModelFileResult>(IpcChannels.live2dReadModelFile, { modelId, relPath }),
+    Live2dModelFileResultSchema
+  )
+}
+
 // —— 阶段 6 批次 B 工具面（Task 6，spec A-5/B-4/M5）：tool:event 推送订阅 + 四 invoke 通道（invokeWithArgs + unwrap 惯例）——
 /** 订阅 tool:event（Main pushEvent → PushChannels.toolEvent）；PublicToolEventSchema 校验，非法丢弃 + warn；返回取消函数 */
 function onToolEvent(handler: (ev: PublicToolEvent) => void): () => void {
@@ -767,6 +784,7 @@ export const desktopApi = {
   settingsSave,
   // —— 阶段 5 批次 A Live2D 面 ——
   listLive2dModels,
+  readLive2dModelFile,
   // —— 阶段 6 批次 B/C 工具面 ——
   onToolEvent,
   toolDecide,

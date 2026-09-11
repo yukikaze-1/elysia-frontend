@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
 import { BackendFeatureFlagsSchema, CharacterBindingSnapshotSchema, CharacterGenerationRefSchema, CharacterIdSchema } from './character'
-import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2dModelFileResult, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 import type { CreateConversationInput } from '@shared/contracts/conversation'
 import { DIAGNOSTICS_PREVIEW_MAX, DIAGNOSTICS_TYPE_MAX } from '@shared/contracts'
 
@@ -402,6 +402,16 @@ export const Live2DModelSummarySchema: z.ZodType<Live2DModelSummary> = z.object(
   integrityState: z.enum(['unverified', 'verified', 'failed'])
 })
 export const Live2DListResponseSchema = z.array(Live2DModelSummarySchema)
+
+/**
+ * dev 形态模型文件读取响应（2026-09-10，IPC `live2d:read-model-file`）。
+ * bytes 用 z.instanceof(Uint8Array)：O(1) 判定，不对 MB 级纹理做逐元素校验；
+ * 非 Uint8Array（如字符串/数组走私）在此被拒。
+ */
+export const Live2dModelFileResultSchema: z.ZodType<Live2dModelFileResult> = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true), bytes: z.instanceof(Uint8Array), mime: z.string() }),
+  z.object({ ok: z.literal(false), status: z.number().int() })
+])
 
 // —— 阶段 6 批次 C：GET tools/calls 响应 schema（D6C-11，镜像 frontend_contract/contract.raw.ts:1586-1610；
 //    repo 9 值枚举，非 ToolWireStatus 六态——result→succeeded、error→failed 为后端固定翻译；

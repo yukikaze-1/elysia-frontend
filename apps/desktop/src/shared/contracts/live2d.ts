@@ -11,6 +11,16 @@
  *  'high'→'quality'、'low'→'low_power' 由 schema 归一函数处理。帧率/降帧消费归批次 C。 */
 export type PerformanceMode = 'auto' | 'quality' | 'balanced' | 'low_power'
 
+/**
+ * `cyrene://` Live2D 供给分支的路径前缀（不含 scheme/host）——**协议层、适配器、dev 供给通道的单一来源**。
+ *
+ * 2026-09-10 收口：此前 Main 侧 protocol/live2d-path.ts 与 Renderer 侧 adapter.ts 各写一份字面量，
+ * 只靠注释声明「二者对应」。dev 形态模型加载失败的排查中，正是这条隐式耦合让「谁在什么 origin 上
+ * 请求哪个 scheme」难以一眼看出。现改为共享常量：改一处即两边同步。
+ * 完整 URL 形态：打包/preview = `cyrene://renderer${LIVE2D_PATH_PREFIX}{modelId}/{relPath}`。
+ */
+export const LIVE2D_PATH_PREFIX = '/__cyrene-live2d/'
+
 /** Live2D 性能读数（7D）：FrameBudget 帧耗时 EMA + 目标帧率 + 模式——诊断页「Live2D 性能」数据源。 */
 export interface Live2dFrameStats {
   emaCostMs: number
@@ -53,3 +63,21 @@ export interface Live2DModelSummary {
   licenseRef: string       // 模型目录内许可文件相对路径（validation 要求存在）
   integrityState: Live2DIntegrityState  // unverified（list 未 hash 复核）/ verified（verifyIntegrity 通过）/ failed
 }
+
+/**
+ * 模型文件读取结果（IPC `live2d:read-model-file`）——**dev 形态专用供给通道**。
+ *
+ * 为什么存在（2026-09-10）：dev 形态（`pnpm dev`）页面由 Vite dev server 供给，origin 是
+ * `http://localhost:<port>`；模型文件却只在 `cyrene://renderer/__cyrene-live2d/…` 上。scheme 恒
+ * `corsEnabled:false`（阶段 5 D-4 安全结论：放开后非受信 origin 也能读 `cyrene://` 资源），故跨源 fetch
+ * 被 Chromium 直接拒绝，界面只能显示原生 `Failed to fetch`——而模型清单走 invoke 通道不受影响，
+ * 于是表现为「清单 3/3 可用，却加载失败」。打包/preview 形态页面自身即 `cyrene://renderer`（同源），
+ * 仍走协议通道，不经本通道。
+ *
+ * 不授予额外能力：打包形态下 Renderer 本就能同源 fetch 同一批字节，本通道只是把等价读取搬到 dev 可用的
+ * 传输上；门禁（verify → registered/available → containment 白名单）与协议通道共用 serve-gate.ts 同一实现。
+ * `ok:false` 只回 HTTP 语义状态码，不回原因文本——原始错误留在 Main。
+ */
+export type Live2dModelFileResult =
+  | { ok: true; bytes: Uint8Array; mime: string }
+  | { ok: false; status: number }

@@ -32,9 +32,11 @@ import { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion
 import { CubismExpressionMotionManager } from '@framework/motion/cubismexpressionmotionmanager'
 import { CubismModelMatrix } from '@framework/math/cubismmodelmatrix'
 import type { Live2DGLContextAttributes, Live2DGLEngine } from './gl/types'
+import { LIVE2D_PATH_PREFIX } from '@shared/contracts'
 
-/** cyrene:// live2d 供给分支前缀（与 Main 侧 protocol/live2d-path.ts 的 LIVE2D_PATH_PREFIX 对应） */
-const LIVE2D_BASE = 'cyrene://renderer/__cyrene-live2d/'
+/** cyrene:// live2d 供给分支前缀（与 Main 侧 protocol/live2d-path.ts 的 LIVE2D_PATH_PREFIX 同源：
+ *  2026-09-10 起改由 @shared/contracts 单一提供，不再两处各写字面量靠注释对齐）。 */
+const LIVE2D_BASE = `cyrene://renderer${LIVE2D_PATH_PREFIX}`
 /** vendored shader 的公开路径（Task 1：public/live2d/shaders/ → /live2d/shaders/） */
 const SHADER_PATH = '/live2d/shaders/'
 /** 单帧 dt 上限（秒）：防止切后台长时间挂起后物理爆参 */

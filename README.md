@@ -74,7 +74,12 @@ Remove-Item Env:CYRENE_BACKEND
 
 ## 打包产物运行与 Live2D/媒体协议验证
 
-`pnpm dev` 下 Renderer 在 `http://localhost:5173`，而打包产物加载 `cyrene://renderer/index.html`。**Live2D 与媒体在两种形态下都可用**：dev CSP 已放行 `cyrene:`（`connect-src` 供 Framework 取 shader 文本，`img-src`/`media-src` 供媒体），`cyrene://` 协议处理器在未打包时同样注册。
+`pnpm dev` 下 Renderer 由 Vite dev server 供给（`http://localhost:<port>`），而打包产物加载 `cyrene://renderer/index.html`。**Live2D 与媒体在两种形态下都可用**，但 Live2D 模型文件的传输方式按是否同源分支（2026-09-10 修复）：
+
+- dev 形态：页面与 `cyrene://` **跨源**，而 `cyrene` scheme 恒为 `corsEnabled:false`（安全设计），原生 `fetch` 会被 Chromium 拒绝 → 模型文件改走 IPC `live2d:read-model-file`。
+- 打包形态：页面自身即 `cyrene://renderer`（同源）→ 原生 `fetch`。
+
+若你在 `pnpm dev` 下看到「模型加载失败 / 原因：Failed to fetch」**同时**「已发现 N 个模型，其中可用 N 个」——那是修复前的旧形态（这两句并不矛盾：清单走 invoke 通道不受跨源限制）。详见 [doc 17 §4.1](docs/17-Cyrene-前端开发环境与依赖安装记录.md)。
 
 因此下面这一步**不是跑 Live2D 的前置条件**，而是用来验证与发布形态一致的行为（自定义协议、产物 CSP、打包资源解析）：
 

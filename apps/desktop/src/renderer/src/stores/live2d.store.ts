@@ -11,6 +11,7 @@
 import { computed, ref, shallowRef, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { Live2DAdapter } from '../live2d/adapter'
+import { createDevLive2dFetch, needsIpcResourceSupply } from '../live2d/dev-resource-fetch'
 import { webglEngine } from '../live2d/gl/webgl'
 import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } from '../live2d/controller'
 import { statePriority, type CharacterState } from '../live2d/state-machine'
@@ -47,7 +48,14 @@ export function setMouthSourceFactory(f: MouthSourceFactory | undefined): void {
 
 function buildController(): Live2DController {
   if (controllerFactory) return controllerFactory()
-  const adapter = new Live2DAdapter({ engine: webglEngine })
+  const adapter = new Live2DAdapter({
+    engine: webglEngine,
+    // dev 形态（`pnpm dev`：页面在 http://localhost:<port>）模型文件在 cyrene:// 上属跨源，
+    // 而 scheme 恒 corsEnabled:false（阶段 5 D-4 安全结论）→ 原生 fetch 必被 Chromium 拒绝
+    // （界面只拿到原生 Failed to fetch）。此时改用 IPC 供给，见 dev-resource-fetch.ts。
+    // 打包/preview 形态页面自身即 cyrene://renderer（同源）→ 不注入，走原生 fetch，与既有行为逐字节一致。
+    ...(needsIpcResourceSupply() ? { fetchImpl: createDevLive2dFetch((id, rel) => api.readLive2dModelFile(id, rel)) } : {})
+  })
   // list 走注入的 desktopApi（preload live2d:list-models）；真实 + mock 覆盖
   return new Live2DController({ adapter, list: () => api.listLive2dModels() })
 }

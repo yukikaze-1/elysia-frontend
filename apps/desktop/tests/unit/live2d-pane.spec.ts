@@ -27,7 +27,7 @@ import { DEFAULT_LIVE2D } from '@shared/schemas'
 import type { Live2DModelSummary } from '@shared/contracts'
 
 const mockApi = {
-  settingsLoad: vi.fn(), settingsSave: vi.fn(), listLive2dModels: vi.fn()
+  settingsLoad: vi.fn(), settingsSave: vi.fn(), listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn()
 }
 
 const MODEL_AVAILABLE: Live2DModelSummary = {

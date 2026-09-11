@@ -142,9 +142,18 @@ Real 模式启动后，在连接面板设置 Endpoint 和 Token，再发起连�
 
 ### 4.1 打包产物运行（发布形态验证）
 
-`pnpm dev` 的 Renderer 是 `http://localhost:5173`，打包产物加载 `cyrene://renderer/index.html`。两种形态下 `cyrene://` 协议处理器都会注册，且 dev CSP 显式放行 `cyrene:`（`connect-src` 供 Cubism Framework 取 shader 文本，`img-src`/`media-src` 供媒体）——见 `src/main/config/dev-csp.ts`。
+`pnpm dev` 的 Renderer 由 Vite dev server 供给（`http://localhost:<port>`），打包产物加载 `cyrene://renderer/index.html`。
 
-因此本节**不是跑 Live2D 的前置条件**，而是用来验证与发布形态一致的行为：自定义协议、产物 CSP、打包后资源解析：
+两种形态下 Live2D 模型文件都只在 `cyrene://renderer/__cyrene-live2d/{modelId}/{relPath}` 上供给，但**传输方式按是否同源分支**（2026-09-10 修复，见 `docs/review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md`）：
+
+| 形态 | 页面 origin | 模型文件传输 |
+|---|---|---|
+| `pnpm dev` | `http://localhost:<port>` | IPC `live2d:read-model-file` |
+| `pnpm build` + `pnpm start`（或产物直启） | `cyrene://renderer` | 原生 `fetch`（同源） |
+
+原因是 `cyrene` scheme 恒注册为 `corsEnabled:false`（阶段 5 D-4 安全结论：放开后非受信 origin 也能读 `cyrene://` 资源）。dev 页面与 `cyrene://` 跨源，原生 `fetch` 会被 Chromium 直接拒绝并抛 `TypeError: Failed to fetch`；而模型清单走 invoke 通道不受影响，于是界面会**同时**显示「模型加载失败 / 原因：Failed to fetch」和「已发现 N 个模型，其中可用 N 个」——这两句并不矛盾，是同一原因的两面。dev 形态因此改由 Main 经 IPC 回字节，闸门与协议通道共用 `src/main/live2d/serve-gate.ts`，不放开 `corsEnabled`。
+
+所以**两种形态都能跑 Live2D**。本节仍值得单独跑，因为它验证的是与发布形态一致的行为：自定义协议供给、产物 CSP、打包后资源解析：
 
 ```powershell
 pnpm build
@@ -152,8 +161,6 @@ pnpm start
 ```
 
 `electron-vite preview` 加载 `cyrene://renderer/index.html`。产物直启的等价方式：`cd apps\desktop` 后运行 `..\..\node_modules\electron\dist\electron.exe .`。
-
-> **待实测确认**：上述「dev 下 Live2D 可用」是按代码推断（dev CSP + 协议注册），尚未在 dev 形态下实测过渲染。若你在 `pnpm dev` 下看到 Live2D 报资源加载失败，请记录到 doc 16 并改用本节形态验证——那说明存在 `corsEnabled` 层面的限制，本节措辞需要相应修正。
 
 自动化调试需要 CDP 时使用项目测试 harness，或显式传 `--remote-debugging-port=0`（随机端口；固定端口仍被安全门拒绝），实际端口从 `%APPDATA%\Cyrene\DevToolsActivePort` 读取。
 

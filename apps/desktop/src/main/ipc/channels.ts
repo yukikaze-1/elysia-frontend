@@ -173,6 +173,16 @@ export const audioCancelSchema = z.object({ streamId: z.number().int() })
 
 // —— 阶段 5 批次 A Live2D 命令 request schema（spec D5A-07；响应 schema 在 shared/schemas/ipc-response Live2DListResponseSchema）——
 export const live2dListModelsSchema = z.undefined()
+/**
+ * dev 形态模型文件读取请求（2026-09-10）。
+ * modelId 与协议通道 live2d-path.ts 同纪律：ASCII slug 且非 `.`/`..`——闸门的 registered 判定
+ * （listInstalledModels 精确匹配 id）已能挡住遍历，此处按协议层同款前置收窄，属纵深而非唯一防线。
+ * relPath 只做长度/字符下限收窄；containment + integrity 白名单判定归 registry.resolveModelFile。
+ */
+export const live2dReadModelFileSchema = z.object({
+  modelId: z.string().min(1).max(128).regex(/^[A-Za-z0-9._-]+$/).refine((s) => s !== '.' && s !== '..'),
+  relPath: z.string().min(1).max(1024).refine((s) => !s.includes('\0'))
+})
 
 // —— 阶段 7 批次 A 诊断命令 request schema（响应 schema 在 shared/schemas/ipc-response Diagnostics*）——
 export const diagnosticsStateSchema = z.undefined()
