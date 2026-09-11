@@ -44,7 +44,34 @@ export type MarkdownBlock =
  * key = source 文本，value = 消毒后的块序列（post-sanitize，安全）。敏感文本作为值驻留 renderer 堆内
  * （M-1 接受档）——仅会话内清空（会话边界订阅，见文件末）、不跨信任边界。
  */
+/**
+ * 渲染缓存**有界**（H-08，2026-09-11）。
+ *
+ * 键是**整段源文本**，而流式回复每个 80ms 节流周期都会产生一个更长的新文本
+ * ⇒ 一条回复就写入 N 个条目、总字节 O(N²)，且此前只在会话切换时清空
+ * （`clearMarkdownCache`），单条长回复即可长时间驻留数 MB。
+ *
+ * 上限与淘汰：超出时按插入顺序（Map 保序 = FIFO）淘汰最旧的四分之一。这里是**纯渲染缓存**，
+ * 淘汰永远安全——最坏只是下一次重新 parse+sanitize。刻意不做 LRU（读取时改序会带来额外开销，
+ * 而本缓存的读取密集度远低于写入；FIFO 已足够把内存钉在有界区间）。
+ */
+const MARKDOWN_CACHE_MAX = 300
 const markdownCache = new Map<string, readonly MarkdownBlock[]>()
+
+function evictMarkdownCacheIfNeeded(): void {
+  if (markdownCache.size < MARKDOWN_CACHE_MAX) return
+  const drop = Math.ceil(MARKDOWN_CACHE_MAX / 4)
+  let removed = 0
+  for (const key of markdownCache.keys()) {
+    markdownCache.delete(key)
+    if (++removed >= drop) break
+  }
+}
+
+/** 诊断：当前缓存条目数（测试断言"有界"用；也便于诊断包反映渲染层内存面） */
+export function markdownCacheSize(): number {
+  return markdownCache.size
+}
 
 /** 代码块语言标识的安全字符集（对齐 Markdown 语言标识惯例；防注入 class 名） */
 const LANGUAGE_PATTERN = /^[A-Za-z0-9_+-]{1,32}$/
@@ -106,6 +133,7 @@ export function renderMarkdown(text: string): readonly MarkdownBlock[] {
   if (cached !== undefined) return cached
   const sanitized = DOMPurify.sanitize(marked.parse(text, { async: false }), DOMPURIFY_CONFIG)
   const blocks = splitCodeBlocks(sanitized)
+  evictMarkdownCacheIfNeeded()
   markdownCache.set(text, blocks)
   return blocks
 }

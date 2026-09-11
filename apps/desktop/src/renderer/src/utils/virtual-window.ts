@@ -12,8 +12,70 @@ function countFences(text: string): number {
   return Math.ceil(n / 2)
 }
 
+/**
+ * 估算记忆化（H-08，2026-09-11）。
+ *
+ * 背景（评审核实 + 本轮读码确认）：`estimateMessageHeight` 的代价是 **O(全文长度)**——
+ * assistant 分支要 `text.split('\n')` 分配整段行数组，还对每段跑一次全局正则
+ * （`/^\s*[-*] |^\s*\d+\. /gm`）。而 `buildPrefix` 对**每个尚未实测的行**都会调它一次，
+ * 于是每次 prefix 重算都会把未渲染行的全文重扫一遍（长会话里这是数 MB 级扫描）。
+ *
+ * 记忆化键的取法（**刻意不用全文哈希**——那本身就是 O(全文)，等于没省）：
+ * 用「role + content 长度 + 段数 + 段文本长度之和」这类**O(段数)** 的廉价版本号。
+ * 它覆盖了所有现实变更（流式追加会同时改变段数与总长）。已知边界：若内容被替换成
+ * **完全等长**且段数相同的文本，版本号不变、会复用旧估算——代价只是估算略偏，
+ * 而估算误差本就被 ResizeObserver 的实测高修正吸收（`heights[key] = h` 后即不再走估算路径），
+ * 属自愈误差，不会累积。
+ *
+ * 缓存**有界**（`ESTIMATE_CACHE_MAX`）：本轮 H-08 的另一半正是「永不封顶」，
+ * 给估算器加一个无界缓存会把刚修好的问题换个地方再造一遍。
+ */
+const ESTIMATE_CACHE_MAX = 2000
+const estimateCache = new Map<string, { version: string; height: number }>()
+
+/** 诊断计数（测试与调试用）：真实 compute 次数。命中缓存不增加——判别力就建立在这一点上 */
+export const estimateHeightStats = {
+  computes: 0,
+  cacheHits: 0,
+  reset(): void { this.computes = 0; this.cacheHits = 0; estimateCache.clear() },
+  size(): number { return estimateCache.size }
+}
+
+/** 廉价版本号：O(段数)，不扫字符 */
+function estimateVersionOf(m: Message): string {
+  if (m.role === 'user') return `u|${m.content?.length ?? 0}`
+  if (m.role !== 'assistant') return `${m.role}|0`
+  let total = 0
+  const segs = m.assistantSegments ?? []
+  for (const seg of segs) total += seg.text?.length ?? 0
+  return `a|${segs.length}|${total}`
+}
+
 /** 消息列表专用估算（fence counting 等，原 estimateHeight 的 Message 版逻辑） */
 export function estimateMessageHeight(m: Message): number {
+  const version = estimateVersionOf(m)
+  const cached = estimateCache.get(m.messageId)
+  if (cached !== undefined && cached.version === version) {
+    estimateHeightStats.cacheHits++
+    return cached.height
+  }
+  const height = computeMessageHeight(m)
+  estimateHeightStats.computes++
+  // 有界：超出上限时按插入顺序淘汰最旧的一批（Map 保序）。估算可随时重算，淘汰永远安全。
+  if (estimateCache.size >= ESTIMATE_CACHE_MAX) {
+    const drop = Math.ceil(ESTIMATE_CACHE_MAX / 4)
+    let removed = 0
+    for (const key of estimateCache.keys()) {
+      estimateCache.delete(key)
+      if (++removed >= drop) break
+    }
+  }
+  estimateCache.set(m.messageId, { version, height })
+  return height
+}
+
+/** 真实计算（无缓存）——O(全文)；只有 computeMessageHeight 与单测直接调用它 */
+export function computeMessageHeight(m: Message): number {
   const BASE = 36
   const LINE = 20
   if (m.role === 'user') {
