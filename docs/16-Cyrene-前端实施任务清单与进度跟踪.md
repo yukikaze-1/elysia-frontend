@@ -72,7 +72,7 @@
 | 集成测试 | `pnpm test:integration` | PASS（22 files；本机存在 Live2D 资源竞争型偶发，单文件运行稳定 27/27，见评估记录 §8.2） | PASS（22 files / 136 passed + 2 skipped，连续三轮全绿；孤儿根因已消除，见下） | PASS（22 files / 136 passed + 2 skipped；`electron-live2d` 27/27、`perf-gate` 实测 `found=500`） | PASS（22 files / 136 passed + 2 skipped；`markdown-xss` 2/2、`electron-live2d` 27/27、`electron-voice` 16/16 均复绿） | PASS（22 files / 138 passed + 2 skipped；新增 `electron-live2d` 用例 `5b` 断言两供给通道同门禁同字节。另：`ipc-security` 暴露面白名单按预期变红一次，见下） |
 | 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **PASS（exit 0）**：首次对**真实 Linux 后端**验证——`192.168.1.18:~/elysia-agent`（`200d4b52`）契约 `WS v2 36/36 + REST 16/16`；桌面副本（`ceceabe8`）为 `33/33 + 16/16`，差异来自版本 | **PASS（exit 0）**：真实 Linux 后端 `fdf39898`（经 SSH 取回 `frontend_contract` 后本地校验）→ `WS v2 36/36 + REST 16/16`。本批未触碰后端线协议，此跑为回归确认 |
 | 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 | **未执行**：本轮未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） | 见正文（本批推送后追加） |
+| GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） | **PASS**（`da64667` / [run 34562266876](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34562266876)：5 个 job 全绿，首跑即绿） |
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：
 
@@ -81,6 +81,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 - `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。
 - `98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：多套 UI 基础批次，5 个 job 全绿（typecheck + lint、unit tests、integration tests、windows build-level、packaged artifact smoke）。
 - `becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑 `integration tests` 挂 `electron-voice.spec.ts` 用例 4（`CyRealtimeBar` 未在 POLL 内出现），`gh run rerun --failed` 后**全绿**。
+- `0ac3830` / [run 34525605979](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34525605979)：Live2D 失败态可诊断化批次，5 个 job 全绿。
+- `da64667` / [run 34562266876](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34562266876)：Live2D dev 供给修复批次，5 个 job 全绿且**首跑即绿**（本批新增集成用例 `5b` 与 `ipc-security` 白名单同步均在本地先验证过）。
 
 **`electron-voice.spec.ts` 用例 4 偶发已定位并修复（2026-09-10 追加）**：根因为「采集成功后模式出现」类等待沿用 5s `POLL`，而 `startRecord`/`startRealtime`/`startDictation` 在置 mode 前要 await `getUserMedia → AudioContext → worklet.addModule` 整条真实设备链，高负载 runner 上可超 5s，且该静默期无任何 UI 反馈。现新增 `CAPTURE_POLL`（15s）用于全部此类等待（共 6 处，非只补挂掉那一处）。**未加 `--retry`**——真实挂起仍会失败，只是更晚。定位过程与已排除假设见[多套 UI 基础与模块耦合整改](review/2026-09-10-多套UI基础与模块耦合整改-决策记录.md) §7.2。
 
