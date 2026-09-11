@@ -214,13 +214,14 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         cont.scrollTop = Math.max(0, cont.scrollTop - delta)
         cont.dispatchEvent(new Event('scroll'))
       })
-      await page.waitForTimeout(150)   // 滚动后让 visible prop 更新 + CyMarkdown 80ms 尾沿防抖稳定
+      await page.waitForTimeout(150)   // 滚动后让 visible prop 更新 + CyMarkdown 80ms 节流稳定（H-03 起为节流：尾沿必达）
       const streamingOff = await sampleStreaming()
       expect(streamingOff).not.toBeNull()
       expect(streamingOff!.top).toBeGreaterThanOrEqual(streamingOff!.clientH)   // 完全在视口下方（overscan 内）
       expect(streamingOff!.segs).toBeGreaterThan(0)
       expect(streamingOff!.nonEmpty).toBeGreaterThan(0)   // UI 问题1 修复：视口外也全量渲染真实内容（无骨架/空 source）
-      // 后续新 segment 有 CyMarkdown 80ms 尾沿防抖，采样瞬间可存在少数临时空段——只要非全空即证全量渲染
+      // 后续新 segment 有 CyMarkdown 80ms 节流，采样瞬间可存在少数临时空段——只要非全空即证全量渲染
+      // （H-03 起为节流：至少每 80ms 渲染一次中间态，故空段窗口比防抖时代更短）
       const mid = streamingOff!.id
       // 等 completed：仍保持视口外 → 内容仍非空（全量渲染，不再折叠/空 source）
       // 2026-09-10 修复：原读 `.cy-response-head .cy-muted` 的 'completed'，同 ② 的根因——该结构与
@@ -323,7 +324,7 @@ describe('性能测量门禁（Task 5；聚合计数仅、安全 M-3）', () => 
         // 7D 真机回归：border-box 实测高修复前，前缀和每行欠估 12px（padding 未计）→ strict 窗口偏前，
         // 视口边缘出现「行已与视口相交但 completed segment 仍空 source」。UI 问题1 修复后全量渲染，
         // 任何与视口相交的 .cy-vlist-row 内不得有空 .cy-segment（无几何折叠）。
-        await page.waitForTimeout(150)   // CyMarkdown 80ms 尾沿防抖 + ResizeObserver 实测高写入 → 让可见性翻转/行高补偿先稳定
+        await page.waitForTimeout(150)   // CyMarkdown 80ms 节流（H-03 起；尾沿必达）+ ResizeObserver 实测高写入 → 让可见性翻转/行高补偿先稳定
         const visibleBlank = await page.evaluate(() => {
           const el = document.querySelector('.cy-messages')
           if (!el) return []

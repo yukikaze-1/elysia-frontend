@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // CyMarkdown:markdown → 消毒块序列 → HTML 块 v-html / 代码块组件(C-13)。
-// G2(D7):代码块复制按钮 + 外部链接经 Main 白名单 + 流式渲染 80ms 尾沿防抖。
+// G2(D7):代码块复制按钮 + 外部链接经 Main 白名单 + 流式渲染 80ms 节流。
 // 安全:CSP script-src 'self'(无 unsafe-inline/unsafe-eval)+ utils/markdown sanitize 双保险。
 //
 // 多套 UI 基础（2026-09-10）：代码块此前是 utils/markdown 拼接的 HTML 字符串，本组件只能用
@@ -9,27 +9,29 @@
 // （标题/列表/行内 code/引用/表格），代码块样式归 CyCodeBlock。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { renderMarkdown, type MarkdownBlock } from '../utils/markdown'
-import { createTrailingDebounce } from '../utils/debounce-trailing'
+import { createThrottle } from '../utils/throttle'
 import { api } from '../stores/desktop-api'
 import CyCodeBlock from './CyCodeBlock.vue'
 
 const props = defineProps<{ source: string }>()
 
-const MARKDOWN_DEBOUNCE_MS = 80
+const MARKDOWN_THROTTLE_MS = 80
 
 type KeyedBlock = { key: string; block: MarkdownBlock }
 
 const blocks = ref<readonly MarkdownBlock[]>([])
 let disposed = false
-// 尾沿防抖：流式 delta 高频变化合并重解析；停顿/完成保证最终文本（spec §4.6.3）
-const scheduleRender = createTrailingDebounce(() => { if (!disposed) blocks.value = renderMarkdown(props.source) }, MARKDOWN_DEBOUNCE_MS)
+// 节流（H-03）：流式 delta 高频变化时合并重解析，但**保证至少每 80ms 渲染一次中间态**并
+// 在停顿/完成时补上最终文本（spec §4.6.3）。此前用尾沿防抖，token 间隔 < 80ms 时回调
+// 永不触发，助手气泡整段一次蹦出——节流的冷却窗口不因新调用后移，故不会。
+const scheduleRender = createThrottle(() => { if (!disposed) blocks.value = renderMarkdown(props.source) }, MARKDOWN_THROTTLE_MS)
 
 // 按序号为键：块序列是 (html, code, html, code…) 的有序切分，序号是稳定身份
 const keyedBlocks = computed<KeyedBlock[]>(() => blocks.value.map((block, i) => ({ key: `${i}`, block })))
 
-watch(() => props.source, () => scheduleRender())
+watch(() => props.source, () => scheduleRender.call())
 onMounted(() => { blocks.value = renderMarkdown(props.source) })
-onBeforeUnmount(() => { disposed = true })
+onBeforeUnmount(() => { disposed = true; scheduleRender.cancel() })
 
 /** 事件委托（CSP-safe，无内联 handler，spec §4.6.1/§4.6.2）：仅剩外链点击，代码块复制归 CyCodeBlock */
 function onClick(e: MouseEvent): void {
