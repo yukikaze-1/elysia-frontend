@@ -14,6 +14,20 @@
 import { readFileSync, existsSync, readdirSync } from 'fs'
 import { isDeepStrictEqual } from 'node:util'
 
+/**
+ * 验证完整性账本（L-02 修复，2026-09-11）。
+ *
+ * 此前本脚本有三条"部分验证仍然 exit 0"的路径：`rest.py` 缺失时静默跳过整个 REST 半段、
+ * 没有 `ws-v2-*.jsonl` 时字段级比对退化为两条合成探针、"后端目录存在但两个来源文件都没有"时直接抛栈。
+ * 三者都让「未核对」与「核对通过」在门禁语义上等价——与上一轮 `exit 0` 冒充 NOT VERIFIED 是同族缺陷，
+ * 只是粒度更细。现改为逐段记账：
+ *   - 某段**确实核对过** → 进 verified，最终 exit 0 时逐条列出（让"通过了什么"可读）；
+ *   - 某段**没核对成** → 进 unverified，最终 exit 2 并逐条写明缺什么（让"没核对什么"不可忽略）。
+ * 退出码语义不变：0 = 全部核对且一致；1 = 已核对且不一致；2 = 存在未核对段。
+ */
+const verified = []
+const unverified = []
+
 // 跨仓机器契约接收（多角色设计 §6.2.2）：目录可经环境变量 CYRENE_FRONTEND_CONTRACT_DIR 或首个
 // CLI 参数指定（Windows 开发机 handoff bundle 场景），缺省保持原 Linux 路径；traces 目录同理
 // （CYRENE_FRONTEND_CONTRACT_TRACES），未指定时若 contract 目录内直接含 ws-v2-*.jsonl 则就地使用。
@@ -87,10 +101,15 @@ let backendSchema
 if (existsSync(SCHEMA_JSON)) {
   backendSchema = JSON.parse(readFileSync(SCHEMA_JSON, 'utf8'))
   backendTypes = extractFromJsonSchema(backendSchema) // 从判别联合取 type 字面量
-} else {
+} else if (existsSync(`${BACKEND_DIR}/ws_message.py`)) {
   // 退化:pydantic `Literal["…"]` 提取(接口核验 F2;`/['"]([a-z_]+)['"]\s*[=:]/` 提取不到,禁用)
   const src = readFileSync(`${BACKEND_DIR}/ws_message.py`, 'utf8')
   backendTypes = [...src.matchAll(/Literal\[["']([^"']+)["']\]/g)].map((m) => m[1])
+} else {
+  // L-02：此前这里会 readFileSync 抛 ENOENT 栈——非零退出但**不可读**（栈里看不出"是缺文件还是解析炸了"）。
+  // 归入 NOT VERIFIED 而非崩溃：目录在、来源文件不在，本质是"没核对成"，不是"核对不一致"。
+  console.error(`[check-contract] NOT VERIFIED：${BACKEND_DIR} 内既无 contract.schema.json 也无 ws_message.py，无法取得后端帧 type 集合`)
+  process.exit(2)
 }
 if (backendTypes.length < 3) {
   console.error(`[check-contract] 后端 type 数 ${backendTypes.length} < 3,疑似模式失效`); process.exit(1)
@@ -112,14 +131,17 @@ const wsV2 = backendTypes.filter((t) => WS_V2_FRAME_TYPES.includes(t))
 const missing = wsV2.filter((t) => !frontTypes.includes(t))
 const deferred = backendTypes.filter((t) => !WS_V2_FRAME_TYPES.includes(t))
 if (missing.length) { console.error(`[check-contract] 前端缺 WS v2 帧 type: ${missing.join(', ')}`); process.exit(1) }
+verified.push(`WS v2 帧 type 覆盖（${wsV2.length - missing.length}/${wsV2.length} 型；后端多出 ${deferred.length} 型有意滞后）`)
 
 const { parseRawFrame } = await import(RAW_SCHEMAS.href)
 let checkedFrames = 0
+let traceFrames = 0
 const failures = []
 
-function checkFrame(frame, label) {
+function checkFrame(frame, label, origin = 'probe') {
   const parsed = parseRawFrame(frame)
   checkedFrames += 1
+  if (origin === 'trace') traceFrames += 1
   if (!parsed.success) {
     failures.push(`${label}: 前端 raw schema 拒绝 ${JSON.stringify(parsed.error.issues)}`)
     return
@@ -130,16 +152,23 @@ function checkFrame(frame, label) {
 }
 
 // 后端契约源生成的确定性帧：覆盖主链路及 rejected error.details/retryAfterMs。
-if (existsSync(BACKEND_TRACES)) {
-  for (const name of readdirSync(BACKEND_TRACES)
-    .filter((n) => /^ws-v2-.*\.jsonl$/.test(n) && !n.includes('-legacy-'))
-    .sort()) {
-    const lines = readFileSync(`${BACKEND_TRACES}/${name}`, 'utf8').split('\n').map((line) => line.trim()).filter(Boolean)
-    for (const [index, line] of lines.entries()) {
-      const frame = JSON.parse(line)
-      if (WS_V2_FRAME_TYPES.includes(frame.type)) checkFrame(frame, `${name}:${index + 1}`)
-    }
+// L-02：本段必须**自己记账**——不能因为探针补够了 checkedFrames 就把"没有真实后端帧"读成通过。
+const traceFiles = existsSync(BACKEND_TRACES)
+  ? readdirSync(BACKEND_TRACES).filter((n) => /^ws-v2-.*\.jsonl$/.test(n) && !n.includes('-legacy-')).sort()
+  : []
+for (const name of traceFiles) {
+  const lines = readFileSync(`${BACKEND_TRACES}/${name}`, 'utf8').split('\n').map((line) => line.trim()).filter(Boolean)
+  for (const [index, line] of lines.entries()) {
+    const frame = JSON.parse(line)
+    if (WS_V2_FRAME_TYPES.includes(frame.type)) checkFrame(frame, `${name}:${index + 1}`, 'trace')
   }
+}
+if (traceFiles.length === 0) {
+  unverified.push(`字段级帧深度比对（未找到 ws-v2-*.jsonl：${BACKEND_TRACES}）——本段退化为仅合成探针，探针不能代表后端真实帧`)
+} else if (traceFrames === 0) {
+  unverified.push(`字段级帧深度比对（${traceFiles.length} 个 ws-v2-*.jsonl 中无一条命中 WS_V2_FRAME_TYPES）`)
+} else {
+  verified.push(`字段级帧深度比对（${traceFiles.length} 个契约文件 / ${traceFrames} 条帧解析后与输入逐字段相等）`)
 }
 
 // 生成帧未必穷举所有 optional 组合；只有后端 Schema 实际声明字段时才构造探针。
@@ -175,7 +204,7 @@ if (failures.length > 0) {
 }
 
 console.log(`[check-contract] WS v2 type 覆盖: ${wsV2.length - missing.length}/${wsV2.length} 通过;` +
-  `字段级帧 ${checkedFrames} 条完整保留;未纳帧 ${deferred.length} 个有意滞后(warn)`)
+  `字段级帧 ${checkedFrames} 条完整保留(${traceFrames} 条来自后端契约文件);未纳帧 ${deferred.length} 个有意滞后(warn)`)
 
 // ── REST 段：rest.py 目标模型 ↔ 前端 rest-schemas.ts（阶段3 联调前整改 spec §4.3.1；阶段4 批次A 增 providers/TTS 模型）——
 // 字段名/必填性/role 枚举子集比对；防静默通过（模型数 < 目标数 或任一模型字段数=0 → exit 1）。
@@ -280,7 +309,21 @@ if (restFailures.length) {
   process.exit(1)
 }
 console.log(`[check-contract] REST 段 ${restChecked}/${Object.keys(REST_TARGET_MODELS).length} 模型通过`)
+verified.push(`REST 段（${restChecked} 模型字段名/必填性 + role 枚举子集）`)
 }
 
-if (existsSync(`${BACKEND_DIR}/rest.py`)) await runRestSection()
-else console.log('[check-contract] 后端 rest.py 缺失，REST 段跳过')
+if (existsSync(`${BACKEND_DIR}/rest.py`)) {
+  await runRestSection()   // 内部不一致时自行 exit 1
+} else {
+  // L-02：此前这里是 `console.log('跳过')` 后继续走到 exit 0——"整个 REST 半段没核对"与"核对通过"输出无差别。
+  unverified.push(`REST 段（未找到 ${BACKEND_DIR}/rest.py）——整个 REST 半段未核对`)
+}
+
+// ── 最终判定（L-02）：全部核对 → 0；存在未核对段 → 2（NOT VERIFIED，不是通过）；不一致已在上面 exit 1 ──
+if (unverified.length > 0) {
+  for (const item of unverified) console.error(`[check-contract] NOT VERIFIED：${item}`)
+  console.error(`[check-contract] 已核对 ${verified.length} 段、未核对 ${unverified.length} 段 → exit 2（**不是通过**）`)
+  console.error('[check-contract] 补齐方式：CYRENE_FRONTEND_CONTRACT_DIR=<后端 frontend_contract 目录>（+ 必要时 CYRENE_FRONTEND_CONTRACT_TRACES=<ws-v2-*.jsonl 目录>）')
+  process.exit(2)
+}
+console.log(`[check-contract] 核对结论：全部 ${verified.length} 段通过 —— ${verified.join('；')}`)

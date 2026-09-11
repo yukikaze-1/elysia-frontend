@@ -40,6 +40,26 @@ jobs:
       - name: Sensitive info scan
         run: pnpm --filter @cyrene/desktop verify:sensitive
 
+      # 跨仓契约门禁（P1-4 / M-40 / L-02，2026-09-11）。
+      # 此前 check:contract **完全不在 CI 里**（唯一 workflow 0 命中），于是它既不会红也不会被看见——
+      # 而本仓库吃过一次同类亏：该脚本曾以 exit 0 冒充"通过"，让"未核对"与"核对通过"在门禁语义上等价。
+      # 现在**显式跑并显式标注**，退出码语义由 tests/unit/check-contract-gate.spec.ts 钉住：
+      #   0 = 已核对且一致（notice）
+      #   2 = 存在未核对段（GitHub warning 注解——CI 无后端仓库，常态如此；不是通过，但也不该把 job 变红，
+      #       否则会训练出"忽略这个红"的习惯，那正是门禁失效的起点）
+      #   其余（1 = 已核对且不一致 / 其他） = 红，必须有人处理
+      - name: Cross-repo contract check (NOT VERIFIED is annotated, never silent)
+        run: |
+          set +e
+          pnpm -F @cyrene/desktop check:contract
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "::notice title=跨仓契约::已核对且与前端一致" ;;
+            2) echo "::warning title=跨仓契约未核对::CI 无后端仓库，本次未做跨仓契约核对（NOT VERIFIED，**不是通过**）。在有后端的环境设 CYRENE_FRONTEND_CONTRACT_DIR 后本地执行 pnpm -F @cyrene/desktop check:contract。" ;;
+            *) echo "::error title=跨仓契约不一致::check:contract 退出码 $code（1 = 已核对且不一致）"; exit "$code" ;;
+          esac
+
   # 单元测试（node 环境，纯逻辑）
   unit:
     name: unit tests

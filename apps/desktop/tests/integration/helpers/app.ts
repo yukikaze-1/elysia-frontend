@@ -15,6 +15,14 @@ export interface LaunchOptions {
   /** 追加 Electron/Chromium 命令行开关（Task 15 语音：--use-fake-device-for-media-stream 等，无头环境确定性采集）；
    *  附于 args 末尾，向后兼容——既有调用方省略即可 */
   extraArgs?: string[]
+  /**
+   * dev 形态（M-29/P2-5）：让页面由 **Vite dev server** 供给（`http://127.0.0.1:<port>`）而非 `cyrene://renderer`。
+   *
+   * 必须是显式选项、不能"顺手经 opts.env 传"：下面第 76 行**必须**清掉从父进程继承的
+   * `ELECTRON_RENDERER_URL`——否则本机只要开着 `pnpm dev`，整套集成测试都会悄悄跑成 dev 形态。
+   * 故 dev 形态只能经本选项显式开启，默认关闭，既有调用方语义逐字不变。
+   */
+  rendererUrl?: string
 }
 
 const ROOT = join(__dirname, '../../..')        // apps/desktop（helpers → integration → tests → apps/desktop）
@@ -74,6 +82,8 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
     CYRENE_BACKEND: 'mock',        // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
   }
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
+  // 清掉继承值之后才允许显式注入 dev 形态（见 LaunchOptions.rendererUrl 注释）
+  if (opts.rendererUrl) env['ELECTRON_RENDERER_URL'] = opts.rendererUrl
   const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...(opts.extraArgs ?? [])], cwd: ROOT, env, timeout: 30000 })
   try {
     // 第二道 fail-closed：主进程已成功启动后，在任何测试动作前核对 Electron 实际 appData/userData。
@@ -93,6 +103,20 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
     if (opts.userData === undefined) { try { rmSync(userData, { recursive: true, force: true }) } catch { /* 尽力 */ } }
     throw err
   }
+}
+
+/**
+ * dev 形态启动（M-29/P2-5）：页面由 Vite dev server 供给。
+ *
+ * 除注入 `ELECTRON_RENDERER_URL` 外**与 launchApp 完全同路径**——appData 覆盖门、
+ * harness 标记、Mock 装配三项隔离不变量逐字不变，因此本函数不会为 dev 形态开任何后门。
+ */
+export function launchAppDev(
+  rendererUrl: string,
+  seedFiles?: Array<{ relPath: string; content: string }>,
+  opts: LaunchOptions = {}
+): Promise<LaunchedApp> {
+  return launchApp(seedFiles, { ...opts, rendererUrl })
 }
 
 export async function closeApp(launched: LaunchedApp, opts: { keepUserData?: boolean } = {}): Promise<void> {
