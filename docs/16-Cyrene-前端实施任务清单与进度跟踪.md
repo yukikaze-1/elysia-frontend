@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档状态：** 维护中（项目当前状态的唯一事实源）
-**最后核验：** 2026-09-10
+**最后核验：** 2026-09-11
 **适用阶段：** 阶段 0～8
 **权威范围：** 当前阶段、完成状态、阻塞项、最近验证和下一步；任务定义与阶段门槛分别以 doc 10、doc 12 为准
 
@@ -24,6 +24,14 @@
 - 该限制自阶段 5 起记录在案（F-后续-2）但从未修复，且**集成测试全部运行 prod 形态**（`helpers/app.ts` 无条件删除 `ELECTRON_RENDERER_URL`），因此没有任何测试覆盖 dev 形态。
 - 修法为 dev 下经 IPC 供给字节（不放开 `corsEnabled`、不起本地 HTTP），闸门与协议通道共用新增的 `src/main/live2d/serve-gate.ts`。真机 dev 形态探针 8/8 通过（`Live2D 就绪 · Wanko`），禁用修复后探针**复现用户现象且文案逐字一致**。详见[根因定位与修复记录](review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md)。
 - 同轮修复的文档回归：上一批我曾把 doc 17 §4.1 里**正确**的 `corsEnabled:false` 限制说明判为「未经实测的强断言」而删除——判断错误，依据是一条与实现不符的 dev CSP 注释。doc 17 §4.1 与 README 已按实测结论改写，dev CSP 中因此长期冗余的 `connect-src cyrene:` 已移除。
+- **全量前端评审批次（2026-09-11，未改任何业务代码）**：[评审报告](review/2026-09-11-full-frontend-review.md) 覆盖 `src/{main,preload,renderer,shared}`、`tests/`、`scripts/`、构建与 CI 配置及 `docs/`，结论为 0 Critical / 12 High / 40 Medium / 33 Low。该报告自行**证伪**了两条 High 级 Subagent 结论与一条任务书假设（本轮复核：证伪正确）。
+- 该报告是**问题目录**而非工作队列：Medium/Low 多数自陈「今日不可达」或属一致性/整洁度，不应作为勾选清单使用。其结论的处置**尚未开始**，见 §5。
+- 本轮复核（逐处读码，非采信结论）确认机制成立的条目：H-01（`upload-service.ts:143` 唯一边界是 userData **一个目录**，`isPathBlacklisted` 在附件链 0 次调用）、H-02、H-03、H-04（`flush` 全仓仅 2 个调用点）、H-10（`message.store.ts` 无任何定时器）、H-11b、H-12、M-08、M-20、M-27、M-30、M-35。
+- H-02 复核补充：`onRowResized` 在内容增长时只写 `heights`，不动 `scrollTop`/`atBottom`；且因 `atBottom` 仍为 `true`，`v-if="!atBottom"` 的「回到底部」按钮**也不出现**——用户连手动找回的入口都没有，比报告描述的更严重。
+- **报告 §11 R-09 结论已纠正（2026-09-11）**：该报告称本机 `pnpm test:integration`「22 文件全红（81 failed / 12 passed / 47 skipped）」。本轮独立重跑**不可复现**：单文件 `ipc-security.spec.ts` 18/18 通过，全套 **22 files / 138 passed + 2 skipped，exit 0**（227s），与 2026-09-10 批次数字一致；重跑前本机无残留 Electron 进程、无 `cy-int-ud-*` 目录。
+- R-09 定性：该次全红是**运行环境态**，既非产品缺陷也非门禁失效——报告「非产品缺陷」的方向判断正确，但事实描述错误，其 Testing 维度据此的扣分不成立。**本机集成门禁健康、本地验证能力完好**，报告建议的「等有 CI 的机器复跑确认」无必要，后续修复批次可照旧在本地做变异验证。
+- 报告最值得保留的两条结构性判断（已复核属实）：① **收口点是路由点而非策略点**——`registerHandler` 只校验来源与参数个数、`createIpcHandler` 只校验形状，故 `MAX_IPC_MESSAGE_BYTES` 只在 1 条通道真正执行、`PATH_BLACKLIST_DEFAULTS` 在附件链 0 次调用，H-01 与 M-03 是同一根因的两个实例；
+- ② **测试保护了 bug**——`debounce-trailing.spec.ts:11-13` 把防抖（而非节流）语义钉成了正确行为，这是 H-03 能在 214 个测试文件下长期存活的原因。建议把「这条断言在实现坏掉时会红吗」列入评审清单项，这比修单个缺陷更能防止下一批同类问题。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
@@ -104,6 +112,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 **同批新增的两条断言均做过变异验证**（避免只看绿灯）：把 `gateLive2dFile` 的 `verifyIntegrity` 与 `listInstalledModels` 顺序对调 → 新 spec 2 条失败，而**既有 `protocol-live2d.spec.ts` 19/19 仍全绿**（即 fail-closed 时序此前完全没有被测试钉住）；把 `needsIpcResourceSupply()` 改为恒 `true` → 新 spec 4 条失败。
 
+**全量评审报告落库批次（2026-09-11，仅文档变更，无代码改动）**：`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，227s），用于复核报告 §11 R-09（见 §1）。`pnpm typecheck` / `pnpm lint` / 单元测试本轮**未重跑**——本批不含代码改动，不得把 2026-09-10 的数字读作本批结果。
+
 维护规则：
 
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
@@ -134,6 +144,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 1. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
+4. 全量评审批次的处置**尚未开始**：报告建议 P0-1～P0-7，本轮按决定只落库、不改代码。恢复开发前需先定批次与顺序；其中 P0-7（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI）依赖外部授权事实与阶段 8 决策，不在可立即执行范围。
+5. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
 
 ## 6. 状态维护规则
 
