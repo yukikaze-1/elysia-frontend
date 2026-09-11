@@ -24,6 +24,7 @@ describe('IPC 安全', () => {
     // 阶段 7 后为 74 键；角色 FE-B/C 增加 6 个方法，FE-D1 增加 7 个写/校验/预览方法，
     // FE-D2 增加 4 个具名本地草稿方法，FE-E 增加 resetCharacterEvolution，共 92 键。
     // 2026-09-10 增加 readLive2dModelFile（dev 形态 Live2D 模型文件供给），共 93 键。
+    // 2026-09-11 增加 onPersistFlushRequest / persistFlushDone（H-04 退出前持久化 flush），共 95 键。
     //
     // 2026-09-10 修复：本表曾停留在 91 键（漏 `resetCharacterEvolution`，由 e9d2897 加入 preload），
     // 于是这条「暴露面不得未经 review 增长」的唯一哨兵长期红灯、保护意义归零——任何真实的意外面扩张
@@ -36,14 +37,21 @@ describe('IPC 安全', () => {
     // **绝对路径不出 Main**。打包形态下 Renderer 本就能同源 fetch 同一批字节，故该通道只是把等价读取
     // 搬到 dev 可用的传输上（dev 页面跨源，cyrene:// 的 corsEnabled:false 会拒绝原生 fetch）。
     // 见 docs/review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md。
+    //
+    // H-04 两个新键的 review 结论（2026-09-11）：**不新增能力，且是纯增量契约**。
+    // onPersistFlushRequest 只订阅一条 Main→Renderer 的下行通知（无载荷、无返回值，Renderer 侧
+    // 仅据此调用自身 store 的 flush）；persistFlushDone 是 arity 0 的空 ack（响应 z.undefined()），
+    // 唯一作用是解除 Main 退出流程的等待。二者都不读取任何特权数据、不接受入参、不扩大
+    // Renderer 可触达的资源面——Renderer 本来就持有这些待写状态（草稿/设置/布局），
+    // 该契约只是把「何时落盘」的开关交给 Main，使关窗前 ≤800ms 的输入不再静默丢失。
     const EXPECTED_SURFACE = [
       'activate', 'activateModelProfile', 'archiveCharacter', 'attachmentsCancel', 'attachmentsCheck', 'attachmentsUpload', 'attachmentsValidate',
       'audioCancel',
       'cacheMessages', 'cancel', 'clearBackendToken', 'cloneCharacter', 'connect', 'createCharacter', 'createConversation', 'deleteCharacterDraft', 'deleteConversation', 'deleteModelProfile',
       'diagnosticsClearLogs', 'diagnosticsDevModeSet', 'diagnosticsExport', 'diagnosticsOpenLogDir', 'diagnosticsState',
       'disconnect', 'getActiveModelSelection', 'getAppInfo', 'getCharacter', 'getCharacterDraft', 'getCharacterState', 'getConnectionState', 'getCredentialStatus', 'getEndpoint', 'getLastCrash', 'getMe', 'getMessageContext', 'getMessages',
-      'getRuntimeInfo', 'hydratePersistence', 'listCharacterDrafts', 'listCharacterRevisions', 'listCharacters', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'onDiagnosticsDevEvent', 'onToolEvent',
-      'openExternal', 'persistSession', 'previewCharacter', 'previewTts', 'queryChatHistory', 'readLive2dModelFile', 'renameConversation', 'resetCharacterEvolution', 'rollbackCharacter', 'saveCharacterDraft', 'saveModelProfile',
+      'getRuntimeInfo', 'hydratePersistence', 'listCharacterDrafts', 'listCharacterRevisions', 'listCharacters', 'listConversations', 'listLive2dModels', 'listModelProfiles', 'listStickers', 'listTtsVoices', 'onChatError', 'onChatEvent', 'onChatReplay', 'onChatState', 'onDiagnosticsDevEvent', 'onPersistFlushRequest', 'onToolEvent',
+      'openExternal', 'persistFlushDone', 'persistSession', 'previewCharacter', 'previewTts', 'queryChatHistory', 'readLive2dModelFile', 'renameConversation', 'resetCharacterEvolution', 'rollbackCharacter', 'saveCharacterDraft', 'saveModelProfile',
       'send', 'setBackendToken', 'setEndpoint', 'setTtsVoice', 'settingsLoad', 'settingsSave', 'testModelProfile',
       'toolCancel', 'toolConfirmUpload', 'toolDecide', 'toolGrantDirectory', 'toolList', 'toolListGrants', 'toolListHistory', 'toolPickSource', 'toolRevokeGrant',
       'updateCharacter', 'updateMe', 'validateCharacter',

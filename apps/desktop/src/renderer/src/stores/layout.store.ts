@@ -94,8 +94,19 @@ export const useLayoutStore = defineStore('layout', () => {
     prefs.value = readLayout(LAYOUT_CONSTANTS)
   }
 
+  /**
+   * 退出前 flush（H-04，2026-09-11）：把仍在 200ms 防抖窗口内的布局偏好立刻写入 localStorage。
+   * 仅在确有在途定时器时写（无改动即 no-op，避免无谓写入）；writeLayout 为同步实现。
+   */
+  function flush(): void {
+    if (persistTimer === undefined) return
+    clearTimeout(persistTimer)
+    persistTimer = undefined
+    writeLayout(prefs.value, LAYOUT_CONSTANTS)
+  }
+
   return {
     viewportWidth, prefs, overrides, notice, effective,
-    toggleConversation, toggleLive2d, setLive2dWidth, handleViewportChange, hydrate, clearNotice
+    toggleConversation, toggleLive2d, setLive2dWidth, handleViewportChange, hydrate, clearNotice, flush
   }
 })

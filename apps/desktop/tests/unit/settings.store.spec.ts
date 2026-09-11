@@ -29,7 +29,7 @@ const mockApi = {
   voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
   audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
   // 阶段 5 批次 A（A6）
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(),
+  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
   onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
   // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
   diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
@@ -259,5 +259,26 @@ describe('applyDictationInsert（写草稿）', () => {
     s.applyDictationInsert('文字')
     expect(draftStore.drafts['conv-1']).toBe('草稿') // 不写入任何会话
     void draftStore.flush('conv-1')
+  })
+
+  // —— H-04（2026-09-11）：退出前 flush。此前无任何退出 flush，拨动开关后 ≤500ms 内关窗
+  // 的修改静默丢失，重启才发现被还原。——
+  it('flush 立即落盘待写 patch（不等 500ms）且不重复写（H-04）', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch: Parameters<typeof applyPatch>[1]) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setVoice({ autoReadReply: false })
+    expect(mockApi.settingsSave).not.toHaveBeenCalled()      // 500ms 防抖未到
+    await s.flush()
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)
+    expect(mockApi.settingsSave).toHaveBeenCalledWith({ voice: { autoReadReply: false } })
+    vi.advanceTimersByTime(SETTINGS_SAVE_DEBOUNCE_MS * 2)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)     // 定时器已取消
+  })
+
+  it('flush 无待写 patch → no-op', async () => {
+    const s = useSettingsStore()
+    await s.flush()
+    expect(mockApi.settingsSave).not.toHaveBeenCalled()
   })
 })

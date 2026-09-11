@@ -196,6 +196,9 @@ export interface DesktopApiLike {
   onDiagnosticsDevEvent(handler: (ev: DiagnosticsDevEvent) => void): () => void
   // —— 阶段 7 批次 B（Task 1，H1 修正）：Renderer 崩溃 marker（banner 组件 api.getLastCrash() 消费——DesktopApiLike 手写窄接口必须含它）——
   getLastCrash(): Promise<RendererCrashEvent | null>
+  // —— 2026-09-11（H-04）：退出前持久化 flush 契约（bootstrap 订阅请求 → flush 各 store → 回 ack）——
+  onPersistFlushRequest(handler: () => void): () => void
+  persistFlushDone(): Promise<void>
 }
 
 // —— 编译期镜像校验（2026-09-10 门禁整改）——

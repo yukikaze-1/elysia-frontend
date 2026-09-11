@@ -80,6 +80,17 @@ export const useDraftStore = defineStore('draft', () => {
     return persistNow(conversationId)
   }
 
+  /**
+   * 退出前 flush（H-04，2026-09-11）：把所有**仍在防抖窗口内**的会话草稿立刻落盘。
+   * 背景：`flush` 此前只有「切会话」与「断线」两个调用点，键入后立刻关窗时定时器未到期，
+   * 内容无提示消失。逐会话并发、任一失败不阻断其余（persistNow 内部已 fail-open）。
+   */
+  async function flushAll(): Promise<void> {
+    const pendingIds = [...timers.keys()]
+    if (pendingIds.length === 0) return
+    await Promise.allSettled(pendingIds.map((id) => flush(id)))
+  }
+
   function purge(conversationId: string): void {
     const prev = timers.get(conversationId)
     if (prev !== undefined) { clearTimeout(prev); timers.delete(conversationId) }
@@ -104,6 +115,6 @@ export const useDraftStore = defineStore('draft', () => {
 
   return {
     drafts, scrollAnchors, overLimit, hydrated, evictionNotice,
-    saveDraft, clear, setScrollAnchor, hydrate, flush, purge, removeConversations, dismissEviction
+    saveDraft, clear, setScrollAnchor, hydrate, flush, flushAll, purge, removeConversations, dismissEviction
   }
 })

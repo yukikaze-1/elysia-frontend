@@ -61,6 +61,7 @@ if (window.desktopApi) {
     characterRuntime: characterRuntimeStore,
     characterRuntimeCoordinator: createCharacterRuntimeCoordinator(conversationStore, connectionStore, characterRuntimeStore),
     live2d: useLive2dStore(), // 批次 C（C3）：live2d.directive 分发（handleDirective 消费）
+    layout: useLayoutStore(), // H-04：退出前 flush 布局偏好（localStorage 200ms 防抖）
     tools: useToolStore() // 阶段 6 批次 B（Task 7）：tool.* 事件旁路 + tool:event 常驻订阅 + generation 清终态接线
   }).register()
 }

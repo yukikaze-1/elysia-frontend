@@ -626,6 +626,22 @@ async function getLastCrash(): Promise<RendererCrashEvent | null> {
 }
 
 /**
+ * 2026-09-11（H-04）：订阅 app:persist-flush-request —— Main 在 before-quit 请求 Renderer
+ * flush 各处防抖持久化（草稿/设置/布局/角色草稿），完成后用 persistFlushDone() 回 ack。
+ * 无载荷，故不做 schema 校验（onDiagnosticsDevEvent 先例的直写形式）；返回取消函数。
+ */
+function onPersistFlushRequest(handler: () => void): () => void {
+  const listener = (): void => handler()
+  ipcRenderer.on(PushChannels.persistFlushRequest, listener)
+  return () => ipcRenderer.removeListener(PushChannels.persistFlushRequest, listener)
+}
+
+/** 2026-09-11（H-04）：flush 完成的 ack（arity 0，Main 侧仅用于解除退出等待；无返回数据） */
+async function persistFlushDone(): Promise<void> {
+  unwrap(await invoke<void>(IpcChannels.persistFlushDone), z.undefined())
+}
+
+/**
  * 音频二进制上行（单向 send，D-P18）：显式拷贝 bytes——reactive 代理/共享 ArrayBuffer
  * 直传 ipcRenderer.send 会因 contextBridge 结构化克隆对 exotic 对象抛 DataCloneError。
  * 拷贝用 Uint8Array.from（元素迭代）：`new Uint8Array(proxy)` 会因 TypedArray 内部槽检查对 Proxy 抛
@@ -805,7 +821,10 @@ export const desktopApi = {
   diagnosticsExport,
   onDiagnosticsDevEvent,
   // —— 阶段 7 批次 B（Task 1）：Renderer 崩溃 marker ——
-  getLastCrash
+  getLastCrash,
+  // —— 2026-09-11（H-04）：退出前持久化 flush 契约 ——
+  onPersistFlushRequest,
+  persistFlushDone
 }
 
 export type DesktopApi = typeof desktopApi

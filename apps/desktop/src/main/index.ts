@@ -24,6 +24,7 @@ import { createDiagnosticsService, type DiagnosticsService } from './diagnostics
 import type { AuditEvent } from './diagnostics/audit'
 import type { Logger } from './diagnostics/logger'
 import { createShutdownHandler, createFatalShutdown } from './shutdown'
+import { createPersistFlushRequester } from './persistence/persist-flush'
 import { CredentialStore } from './credentials/credential-store'
 import { SessionStore } from './persistence/session-store'
 import { CharacterDraftStore } from './persistence/character-draft-store'
@@ -457,9 +458,22 @@ async function main(): Promise<void> {
     // 阶段 5 批次 A Live2D 模型注册表（spec D5A-07）：扫 dirs.models，manifest+integrity 两级可用性 + fail-closed verify。
     // 纯磁盘只读，无生命周期（懒加载 integrity），registerHandlers 前装配即可。
     const live2dRegistry = new Live2DModelRegistry({ modelsDir: dirs.models })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, characterDrafts, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, characters: { service: characterService }, audit })
+    // 2026-09-11（H-04）：退出前请求 Renderer flush 防抖持久化（草稿/设置/布局/角色草稿）。
+    // 由 Main 发起而非 Renderer 的 beforeunload——后者无法 await 异步 IPC；ack 经 IpcChannels.persistFlushDone。
+    const persistFlush = createPersistFlushRequester({
+      deliver: () => {
+        const win = getMainWindow()
+        if (!win || win.isDestroyed()) return false // 无窗口即无 Renderer 状态可 flush（fail-open）
+        win.webContents.send(PushChannels.persistFlushRequest)
+        return true
+      },
+      onTimeout: () => diagnostics?.logger.warn('persist-flush:timeout', { message: '退出前 Renderer 持久化 flush 未在预算内确认' })
+    })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, characterDrafts, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, characters: { service: characterService }, persistFlush, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
+        // H-04：最先 flush Renderer 侧防抖态——它是最容易丢且最贴近用户输入的一批写入
+        { name: 'renderer-persist', run: () => persistFlush.request() },
         { name: 'credentials', run: () => store.close() },
         { name: 'adapter', run: () => adapter.disconnect() },
         { name: 'diagnostics', run: () => diagnostics?.closeAll() ?? Promise.resolve() }

@@ -17,11 +17,13 @@ export interface BootstrapStores {
     activateLocal(id: string): Promise<void>
     setConnectionState?(state: ConnectionState): void
   }
-  draft: { hydrate(state: SessionPersistenceState): void }
+  draft: { hydrate(state: SessionPersistenceState): void; flushAll(): Promise<void> } // flushAll：H-04 退出前 flush
   cache: { hydrate(state: SessionPersistenceState): void }
   // P4-B：voiceStore 独立订阅（D-P10）/断线 reset（Important-2）；settingsStore 启动水合（fail-open 不阻塞）
   voice: { init(): void; reset(): void }
-  settings: { hydrate(): void }
+  settings: { hydrate(): void; flush(): Promise<void> } // flush：H-04 退出前 flush
+  // H-04：布局偏好是 localStorage 同步写，退出前只需提前执行 200ms 防抖定时器
+  layout?: { flush(): void }
   // FE-C：角色能力在每个连接世代独立初始化；store 内部吞掉并公开错误，bootstrap 不产生未处理 rejection。
   identity?: { setConnectionEpoch(epoch: number): void; load(force?: boolean): Promise<void> }
   characterCatalog?: {
@@ -34,6 +36,7 @@ export interface BootstrapStores {
     setConnectionEpoch(epoch: number): void
     setConnectionState(status: ConnectionState['status'], features?: ConnectionState['features']): void
     handleCharacterArchived(characterId: string): Promise<number>
+    flushDraft?(): Promise<boolean> // H-04：角色草稿的退出前 flush（store 既有 flushDraft）
   }
   // FE-F1：公开角色状态由独立 runtime store 接收；character.state.changed
   // 不进入 messageStore。连接世代由 bootstrap 的 capability signature 驱动。
@@ -202,6 +205,21 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
     }
     prevStatus = s.status
   }
+  /**
+   * 退出前 flush 各处防抖持久化（H-04，2026-09-11）。与 Main 的 `createPersistFlushRequester` 配套：
+   * Main 在 before-quit 发下行请求，本函数把仍在防抖窗口内的写入立刻落盘，随后由调用方回 ack。
+   * 全部 fail-open（allSettled）——任一 store 失败都不得阻止 ack，否则 Main 只能空等满预算；
+   * 各自 store 内部已各自吞错并保留内存态。
+   */
+  const flushRendererPersistence = async (): Promise<void> => {
+    await Promise.allSettled([
+      stores.draft.flushAll(),
+      stores.settings.flush(),
+      Promise.resolve(stores.layout?.flush()),
+      Promise.resolve(stores.characterEditor?.flushDraft?.())
+    ])
+  }
+
   const register = (): void => {
     api.onChatEvent((e) => {
       // 批次 C（C3）：live2d.directive 与消息流同通道（preload parseBackendEvent 已收得）——在 applyEvent 分发
@@ -258,6 +276,13 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
     api.onChatState((s) => { stateEpoch++; applyChatState(s) })
     api.onChatReplay(({ conversationId, messages }) => stores.message.loadReplay(conversationId, messages))
     api.onChatError((err) => stores.connection.setError(err))
+    // H-04：退出前持久化 flush。ack 无论 flush 成败都要发（fail-open），否则 Main 只能等满超时预算。
+    api.onPersistFlushRequest(() => {
+      void (async () => {
+        await flushRendererPersistence()
+        try { await api.persistFlushDone() } catch { /* 退出流程中：ack 失败只影响 Main 的等待长度，尽力而为 */ }
+      })()
+    })
     // 启动水合：先 hydratePersistence（draft/cache store），再取连接 snapshot 判离线/在线分支。
     // snapshot 若迟到，只丢弃它本身的 apply；离线判断依据最后一个已应用的
     // 状态，从而同时覆盖 connected push→迟到 disconnected snapshot，以及

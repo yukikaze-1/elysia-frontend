@@ -35,6 +35,7 @@ import { registerCharacterHandlers } from '../characters/character-handlers'
 import type { CharacterService } from '../characters/character-service'
 import { registerCharacterDraftHandlers } from '../characters/character-draft-handlers'
 import type { CharacterDraftStore } from '../persistence/character-draft-store'
+import type { PersistFlushRequester } from '../persistence/persist-flush'
 
 export function registerHandlers(deps: {
   credentials: CredentialStore; logger: Logger; chat: ChatService; connectionConfig: ConnectionConfig; sessionStore: SessionStore;
@@ -49,6 +50,7 @@ export function registerHandlers(deps: {
   diagnostics: DiagnosticsService    // 阶段 7 批次 A（Task 5）：诊断五通道数据源
   characters: { service: CharacterService } // 多角色角色域（无 Real REST）
   characterDrafts?: CharacterDraftStore // FE-D2：本地未提交角色草稿（Main app-cache）
+  persistFlush: PersistFlushRequester    // 2026-09-11（H-04）：退出前 Renderer flush 的 ack 接收方
   audit?: (event: Omit<AuditEvent, 'ts'>) => void
 }): void {
   const sanitize = createSanitizePublicMessage({
@@ -68,4 +70,11 @@ export function registerHandlers(deps: {
   registerDiagnosticsHandlers({ service: deps.diagnostics, sanitize, logger: deps.logger })
   registerCharacterHandlers({ service: deps.characters.service, drafts: deps.characterDrafts, sanitize, logger: deps.logger })
   if (deps.characterDrafts) registerCharacterDraftHandlers({ drafts: deps.characterDrafts, sanitize, logger: deps.logger })
+  // 2026-09-11（H-04）：Renderer flush 完成的 ack。arity 0（Renderer 用 invoke 无参调用），
+  // 响应 z.undefined()（同 diagnosticsClearLogs 惯例）。仅解除 Main 退出流程的等待，不返回任何数据。
+  registerHandler(
+    IpcChannels.persistFlushDone,
+    createIpcHandler(z.undefined(), z.undefined(), () => { deps.persistFlush.acknowledge() }, { sanitize }),
+    0
+  )
 }

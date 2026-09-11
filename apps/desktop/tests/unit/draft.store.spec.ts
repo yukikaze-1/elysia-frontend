@@ -22,7 +22,7 @@ const mockApi = {
   voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
   voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
   audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(),
+  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
   onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
   // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
   diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
@@ -95,5 +95,26 @@ describe('draftStore（spec §4.4.1）', () => {
     s.purge('c1')
     expect(s.drafts['c1']).toBeUndefined()
     expect(s.scrollAnchors['c1']).toBeUndefined()
+  })
+
+  // —— H-04（2026-09-11）：退出前 flush。此前 flush 只有「切会话」「断线」两个调用点，
+  // 键入后立刻关窗时定时器未到期，内容无提示消失。——
+  it('flushAll 把仍在防抖窗口内的所有会话一次落盘（H-04）', async () => {
+    const s = useDraftStore()
+    s.saveDraft('c1', 'a'); s.saveDraft('c2', 'b')
+    vi.advanceTimersByTime(300)                                  // 未到 800ms，防抖未触发
+    expect(mockApi.persistSession).not.toHaveBeenCalled()
+    await s.flushAll()
+    expect(mockApi.persistSession).toHaveBeenCalledTimes(2)
+    expect(mockApi.persistSession).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'c1', draft: expect.objectContaining({ text: 'a' }) }))
+    expect(mockApi.persistSession).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'c2', draft: expect.objectContaining({ text: 'b' }) }))
+    vi.advanceTimersByTime(2000)
+    expect(mockApi.persistSession).toHaveBeenCalledTimes(2)       // 定时器已取消，不重复写
+  })
+
+  it('flushAll 无待写会话 → no-op（不产生空写）', async () => {
+    const s = useDraftStore()
+    await s.flushAll()
+    expect(mockApi.persistSession).not.toHaveBeenCalled()
   })
 })

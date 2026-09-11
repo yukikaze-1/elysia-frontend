@@ -182,4 +182,22 @@ describe('layoutStore', () => {
     // store.effective 与同一输入纯函数推导一致
     expect(store.effective).toEqual(computeEffectiveLayout(1200, store.prefs, store.overrides, LAYOUT_CONSTANTS))
   })
+
+  // —— H-04（2026-09-11）：退出前 flush（200ms 防抖的布局偏好）——
+  it('flush 提前执行待写防抖，且不重复写（H-04）', () => {
+    const store = useLayoutStore()
+    store.prefs.live2dVisible = !store.prefs.live2dVisible // 直改 prefs 触发 deep watch（sync）
+    vi.advanceTimersByTime(100)                            // 未到 200ms
+    expect(storage.setItem).not.toHaveBeenCalled()
+    store.flush()
+    expect(storage.setItem).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1000)
+    expect(storage.setItem).toHaveBeenCalledTimes(1)       // 定时器已取消
+  })
+
+  it('flush 无在途定时器 → no-op（不产生无谓写入）', () => {
+    const store = useLayoutStore()
+    store.flush()
+    expect(storage.setItem).not.toHaveBeenCalled()
+  })
 })

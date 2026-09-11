@@ -89,6 +89,7 @@ export const IpcChannels = {
   characterDraftsGet: 'character-drafts:get',
   characterDraftsSave: 'character-drafts:save',
   characterDraftsDelete: 'character-drafts:delete',
+  persistFlushDone: 'app:persist-flush-done',            // 2026-09-11（H-04）：Renderer flush 完成的 ack（invoke，arity 0；下行请求走 PushChannels.persistFlushRequest）
 } as const
 export type IpcChannelName = (typeof IpcChannels)[keyof typeof IpcChannels]
 
@@ -98,6 +99,7 @@ export const PushChannels = {
   toolEvent: 'tool:event',                                // 阶段 6 批次 B：工具公开事件推送（M2 契约：推送入 PushChannels）
   diagnosticsDevEvent: 'diagnostics:dev-event',           // 阶段 7 批次 A：开发者模式协议事件推送（下行）
   rendererCrash: 'renderer:crash',   // 阶段 7 批次 B：Renderer 崩溃推送占位（不实际发送——Render 已死收不到；实际走 getLastCrash invoke）
+  persistFlushRequest: 'app:persist-flush-request',   // 2026-09-11（H-04）：退出前请求 Renderer flush 防抖持久化（下行；Renderer 完成后经 IpcChannels.persistFlushDone 回 ack）
 } as const
 
 /** IPC 错误体：只含公开信息，不泄漏堆栈/路径；结构化字段跨 contextBridge 经 message 前缀保真 */

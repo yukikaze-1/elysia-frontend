@@ -6,6 +6,7 @@ import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedE
 function makeFake() {
   const stateHandlers: Array<(s: ConnectionState) => void> = []
   const eventHandlers: Array<(e: BackendEvent) => void> = []
+  const persistFlushHandlers: Array<() => void> = []   // H-04
   let resolveSnapshot: ((s: ConnectionState) => void) | undefined
   let rejectSnapshot: ((e: Error) => void) | undefined
   const api = {
@@ -13,10 +14,14 @@ function makeFake() {
     onChatState: vi.fn((h: (s: ConnectionState) => void) => { stateHandlers.push(h); return () => {} }),
     onChatReplay: vi.fn(() => () => {}),
     onChatError: vi.fn(() => () => {}),
+    // H-04（2026-09-11）：退出前持久化 flush 契约——bootstrap.register() 会订阅它
+    onPersistFlushRequest: vi.fn((h: () => void) => { persistFlushHandlers.push(h); return () => {} }),
+    persistFlushDone: vi.fn(async () => {}),
     getConnectionState: vi.fn(() => new Promise<ConnectionState>((res, rej) => { resolveSnapshot = res; rejectSnapshot = rej })),
     hydratePersistence: vi.fn(async () => ({ drafts: [], scrollAnchors: {}, conversations: [], messageSnapshots: {} })), // G2 新增
     fireState: (s: ConnectionState) => stateHandlers.forEach((h) => h(s)),
     fireEvent: (e: BackendEvent) => eventHandlers.forEach((h) => h(e)),
+    firePersistFlush: () => persistFlushHandlers.forEach((h) => h()),   // H-04
     resolveSnapshot: (s: ConnectionState) => resolveSnapshot?.(s),
     rejectSnapshot: (e: Error) => rejectSnapshot?.(e)
   }
@@ -27,10 +32,11 @@ function makeStores() {
     connection: { setState: vi.fn(), setError: vi.fn() },
     message: { applyEvent: vi.fn(), handleConnectionStateChange: vi.fn(), loadReplay: vi.fn() },
     conversation: { onConnected: vi.fn(async () => {}), onActiveConversationAppeared: vi.fn(async () => {}), setOfflineCache: vi.fn(), activateLocal: vi.fn(async () => {}) },
-    draft: { hydrate: vi.fn() },                    // G2 新增
+    draft: { hydrate: vi.fn(), flushAll: vi.fn(async () => {}) },                    // G2 新增；flushAll：H-04
     cache: { hydrate: vi.fn() },                    // G2 新增
     voice: { init: vi.fn(), reset: vi.fn() },       // P4-B Task 13
-    settings: { hydrate: vi.fn() },                 // P4-B Task 13
+    settings: { hydrate: vi.fn(), flush: vi.fn(async () => {}) },                 // P4-B Task 13；flush：H-04
+    layout: { flush: vi.fn() },                     // H-04
     identity: { setConnectionEpoch: vi.fn(), load: vi.fn(async () => {}) },
     characterCatalog: { setConnectionEpoch: vi.fn(), loadList: vi.fn(async () => {}), handleCatalogChanged: vi.fn(() => true) },
     characterEditor: { setConnectionEpoch: vi.fn(), setConnectionState: vi.fn(), handleCharacterArchived: vi.fn(async () => 0) },
@@ -390,5 +396,25 @@ describe('FE-C 角色档案/目录 bootstrap', () => {
     api.fireEvent({ ...event, eventId: 'state-2', sequence: 2, stateVersion: 2 })
     expect(stores.characterRuntime.handleStateChanged).toHaveBeenCalledTimes(1)
     expect(stores.message.applyEvent).not.toHaveBeenCalled()
+  })
+
+  // —— H-04（2026-09-11）：Main 在 before-quit 发 flush 请求 → bootstrap flush 各 store → 回 ack ——
+  it('收到 flush 请求：flush 全部防抖 store 并回 ack', async () => {
+    const api = makeFake(); const stores = makeStores()
+    createRendererBootstrap(api as never, stores as never).register()
+    api.firePersistFlush()
+    await vi.waitFor(() => expect(api.persistFlushDone).toHaveBeenCalledTimes(1))
+    expect(stores.draft.flushAll).toHaveBeenCalledTimes(1)
+    expect(stores.settings.flush).toHaveBeenCalledTimes(1)
+    expect(stores.layout.flush).toHaveBeenCalledTimes(1)
+  })
+
+  it('某个 store flush 失败也照样回 ack（fail-open——否则 Main 只能空等满超时预算）', async () => {
+    const api = makeFake(); const stores = makeStores()
+    stores.draft.flushAll = vi.fn(async () => { throw new Error('persist failed') })
+    createRendererBootstrap(api as never, stores as never).register()
+    api.firePersistFlush()
+    await vi.waitFor(() => expect(api.persistFlushDone).toHaveBeenCalledTimes(1))
+    expect(stores.settings.flush).toHaveBeenCalledTimes(1) // 其余 store 不受影响
   })
 })

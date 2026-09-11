@@ -98,6 +98,16 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
+  /**
+   * 退出前 flush（H-04，2026-09-11）：取消 500ms 防抖并立刻落盘待写 patch。
+   * 背景：此前无任何退出 flush，拨动开关后立刻关窗（≤500ms）的修改静默丢失，重启才发现被还原。
+   * `persist()` 内部已 fail-open（失败写 saveError，不外抛）。
+   */
+  async function flush(): Promise<void> {
+    if (saveTimer !== undefined) { clearTimeout(saveTimer); saveTimer = undefined }
+    await persist()
+  }
+
   function setVoice(patch: Partial<VoiceSettings>): void {
     voice.value = { ...voice.value, ...patch }
     scheduleSave({ voice: patch })
@@ -128,6 +138,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     voice, dictation, live2d, loaded, saveError, saved,
-    hydrate, setVoice, setDictation, setLive2d, applyDictationInsert
+    hydrate, setVoice, setDictation, setLive2d, applyDictationInsert, flush
   }
 })
