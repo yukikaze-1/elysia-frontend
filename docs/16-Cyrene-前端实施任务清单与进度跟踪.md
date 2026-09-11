@@ -28,8 +28,8 @@
 - 该报告是**问题目录**而非工作队列：Medium/Low 多数自陈「今日不可达」或属一致性/整洁度，不应作为勾选清单使用。报告建议的 P0 批次**尚未开始**；已先处置 UI 改版引入的三条回归，见下与 §5。
 - 本轮复核（逐处读码，非采信结论）确认机制成立的条目：H-01（`upload-service.ts:143` 唯一边界是 userData **一个目录**，`isPathBlacklisted` 在附件链 0 次调用）、H-02、H-03、H-04（`flush` 全仓仅 2 个调用点）、H-10（`message.store.ts` 无任何定时器）、H-11b、H-12、M-08、M-20、M-27、M-30、M-35。
 - H-02 复核补充：`onRowResized` 在内容增长时只写 `heights`，不动 `scrollTop`/`atBottom`；且因 `atBottom` 仍为 `true`，`v-if="!atBottom"` 的「回到底部」按钮**也不出现**——用户连手动找回的入口都没有，比报告描述的更严重。
-- **报告 §11 R-09 结论已纠正（2026-09-11）**：该报告称本机 `pnpm test:integration`「22 文件全红（81 failed / 12 passed / 47 skipped）」。本轮独立重跑**不可复现**：单文件 `ipc-security.spec.ts` 18/18 通过，全套 **22 files / 138 passed + 2 skipped，exit 0**（227s），与 2026-09-10 批次数字一致；重跑前本机无残留 Electron 进程、无 `cy-int-ud-*` 目录。
-- R-09 定性（**2026-09-11 补正**）：该次全红是**运行环境态**，非产品缺陷、非门禁失效，「非产品缺陷」的方向判断成立。但原措辞「不可复现」过强——其描述的症状**间歇可复现**：本地单独运行 `audit-lifecycle.spec.ts` 曾 4/4 失败于 `electron.launch: Process failed to launch!`（debugger 连上后 1006 断开）；`ee8f7fa` 那次 CI 红是该文件 `expect.poll(timeout:5000)` 等不到 `credential:set` 落盘，`gh run rerun --failed` 后转绿。故全套可绿（已两次实测），但此类中断会偶发。
+- **报告 §11 R-09 的两组观测（2026-09-11）**：报告称本机 `pnpm test:integration`「22 文件全红（81 failed / 12 passed / 47 skipped）」，而本轮多次重跑得到**全绿**（单文件 `ipc-security.spec.ts` 18/18；全套 **22 files / 138 passed + 2 skipped，exit 0**，227s 与 245s 各一次）。**两组都是真的**，由同一机制决定（`out/` 的构建模式），见下条与 §3.1。
+- R-09 定性（**2026-09-11 二次修正**）：该报告的症状描述**属实**，但**不是环境玄学、也不是 Playwright 握手偶发**——本地那些 `Process failed to launch!` 的根因是 dev/production 构建与 harness 覆盖门冲突，已定位并给出可复现判据，见 §3.1「集成测试「全红」的真正机制」。简言之：`pnpm dev`（或 `pnpm build`）会重写 `out/`，而集成套件跑的正是 `out/` 产物，`CYRENE_TEST_APP_DATA` 被 fail-closed 拒绝。先前措辞「不可复现 / 运行环境态」的方向对（非产品缺陷、非门禁失效）但成因错，现予取代。另：报告用于反证该结论的「进程存活 12 秒」推理不成立（模态框会让进程一直活着），见同节方法论陷阱。
 - 报告最值得保留的两条结构性判断（已复核属实）：① **收口点是路由点而非策略点**——`registerHandler` 只校验来源与参数个数、`createIpcHandler` 只校验形状，故 `MAX_IPC_MESSAGE_BYTES` 只在 1 条通道真正执行、`PATH_BLACKLIST_DEFAULTS` 在附件链 0 次调用，H-01 与 M-03 是同一根因的两个实例；
 - ② **测试保护了 bug**——`debounce-trailing.spec.ts:11-13` 把防抖（而非节流）语义钉成了正确行为，这是 H-03 能在 214 个测试文件下长期存活的原因。建议把「这条断言在实现坏掉时会红吗」列入评审清单项，这比修单个缺陷更能防止下一批同类问题。
 - **UI 改版后的复评（2026-09-11）**：用户 UI 批次 `034c110`／`85f2602`／`116d529` 落地后按 HEAD 重核报告 UI 条目。已改善：M-20 部分修复（`CyChatInput` 4 处、`CyNavRail` 1 处的 `--cy-accent` 文本误用已清除）。逐处读码确认**仍在**：H-02（不跟随底部且不可复制）、M-19、M-21、M-22、M-23、M-24。
@@ -120,6 +120,18 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 **全量评审报告落库批次（2026-09-11，仅文档变更，无代码改动）**：`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，227s），用于复核报告 §11 R-09（见 §1）。`pnpm typecheck` / `pnpm lint` / 单元测试本轮**未重跑**——本批不含代码改动，不得把 2026-09-10 的数字读作本批结果。GitHub CI 结果见下方 CI 历史的 `90aee67` 行。
 
 **UI 改版引入的三条回归修复批次（2026-09-11，本批）**：`pnpm typecheck` PASS；`pnpm lint` PASS；`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test` PASS（**215 files / 2690 passed + 6 expected-fail + 21 skipped**，较上批 +3＝背景素材 +2、授权按钮 +1）；`pnpm test:integration` PASS（**22 files / 138 passed + 2 skipped**，exit 0，245s）；`pnpm build` PASS，产物中装饰图由 496,074 B 的 PNG 换成 **106,918 B** 的无损 webp。新增与收紧的 5 条断言均过变异验证（见 §1）。
+
+**集成测试「全红」的真正机制已定位（2026-09-11，重要——影响所有后续集成测试的可信度）**
+
+`pnpm dev` 会以 **development** 模式重写 `out/main/index.js` 与 `out/preload/index.js`，而集成套件启动的是 `out/` 里的构建产物。于是 `applyTestAppDataOverride("development")` 与 harness 传入的 `CYRENE_TEST_APP_DATA` 冲突，`test-app-data.ts:21-22` 按 fail-closed 抛错 → 主进程弹「测试 appData 覆盖仅允许未打包的 test harness」并退出 → Playwright 只看到 `electron.launch: Process failed to launch!`（或 `Timeout 30000ms exceeded`）。
+
+单变量实验（重建 `--mode test` 后同一探针 attempt 1 即成功、`applyTestAppDataOverride("test")` 回读确认）证明因果，非环境玄学。这解释了本地全部观测：`pnpm build`（production）或 `pnpm dev`（development）之后，只要没经 `--mode test` 重建，单文件与全套都会相继全红；而 13:51、20:26 两次全套绿正是因为该脚本入口自带 `--mode test` 构建。**注意与 CI 的偶发要分开**：`ee8f7fa` 那次 CI 红是 `audit-lifecycle.spec.ts` 的 `expect.poll(timeout:5000)` 在 runner 上等不到 `credential:set` 落盘（`gh run rerun --failed` 后转绿），与本节机制无关，是独立的计时余量问题。
+
+**一个方法论陷阱（本轮亲踩，务必记住）**：`fatal()` 用的是**模态对话框**，进程会一直存活直到有人点「确定」。因此「手动启动 `electron.exe`、十几秒后进程仍在运行」**不构成「应用正常」的证据**——框弹着，进程当然活着。本轮我先据此判定「应用健康、系 Playwright 握手偶发」，是错的；报告 §11 R-09 那句「直接启动 electron.exe，12 秒后仍在运行 ⇒ 非产品缺陷」用的是同一个不成立的推理（结论恰好对，论证无效）。**判据应换成**：回读 `applyTestAppDataOverride` 的实参、或断言窗口出现且首帧渲染完成。
+
+**运维结论**：**跑集成测试/依赖 `out/` 产物的验证前，必须先 `pnpm exec electron-vite build --mode test`，且不要同时开着 `pnpm dev`**。`pnpm test:integration` 脚本本身含该构建，因此从脚本入口跑是安全的；直接用 `vitest run --config vitest.integration.config.mts` 单跑某个 spec 则**不会**重建，会踩到这个坑——这正是本轮先误判为「Playwright↔Electron 握手偶发」的原因（报告 §11 R-09 亦同）。用户侧现象是桌面上反复弹出该错误框，属测试副作用而非产品缺陷。
+
+**UI 三处改动的实拍复核（2026-09-11，真实 Electron + 截图）**：授权弹窗「允许一次」实测亮色 `rgb(39,53,127)` on white = **11.04:1**、暗色 **13.07:1**（改前 `--cy-accent` 为 1.17:1）；「允许指定目录」同值；对照「拒绝」14.39:1。主题背景在 `data-theme='dark'` 下由 `cyrene-bg-chat-light` 切到 `cyrene-bg-chat-dark` 且 `color-scheme` 同步翻为 `dark`（`light` 时翻回）——即 (b) 要防的「token 翻了、背景图没翻」错配不成立。装饰图实渲 **280×147**、素材 560×420（正好 2× DPR）。设置体 `scrollHeight 617 > clientHeight 543`，确为内部滚动。
 
 维护规则：
 
