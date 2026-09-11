@@ -41,11 +41,57 @@ describe('handleUnhandledRejection / handleUncaughtException（H-12）', () => {
     expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'main:unhandled-rejection' }))
   })
 
-  it('未捕获异常 → error 日志 + 审计 main:uncaught-exception', () => {
+  it('未捕获异常 → error 日志 + 审计 main:uncaught-exception + **交回 fail-safe**（H-12 修正）', async () => {
     const deps = makeDeps()
-    handleUncaughtException(new Error('boom'), deps)
+    const onFatal = vi.fn()
+    await handleUncaughtException(new Error('boom'), { ...deps, onFatal })
     expect(deps.logger.error).toHaveBeenCalledWith('main:uncaught-exception', { message: 'boom' })
     expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'main:uncaught-exception' }))
+    // 关键：注册监听器会顶掉 Electron 原生弹窗，故必须自己接管终止——不能静默带伤继续运行
+    expect(onFatal).toHaveBeenCalledTimes(1)
+  })
+
+  it('**审计落盘先于 fail-safe**——异步审计未完成前不得退出（实测退出会抢跑丢痕）', async () => {
+    const order: string[] = []
+    let releaseAudit: () => void = () => {}
+    const auditPending = new Promise<void>((r) => { releaseAudit = r })
+    const deps = {
+      logger: { error: vi.fn() },
+      audit: vi.fn(() => { order.push('audit-start'); return auditPending.then(() => { order.push('audit-done') }) }),
+      sanitize: (t: string) => t,
+      onFatal: vi.fn(() => { order.push('fatal') })
+    }
+    const inflight = handleUncaughtException(new Error('boom'), deps)
+    await Promise.resolve()
+    // 审计尚未落盘时，绝不能已经退出
+    expect(order).toEqual(['audit-start'])
+    expect(deps.onFatal).not.toHaveBeenCalled()
+    releaseAudit()
+    await inflight
+    expect(order).toEqual(['audit-start', 'audit-done', 'fatal'])
+  })
+
+  it('审计写入失败也要继续走 fail-safe（留痕尽力，收尾不能让应用悬挂）', async () => {
+    const deps = makeDeps()
+    const onFatal = vi.fn()
+    await handleUncaughtException(new Error('boom'), { ...deps, audit: vi.fn(() => Promise.reject(new Error('disk full'))), onFatal })
+    expect(onFatal).toHaveBeenCalledTimes(1)
+  })
+
+  it('留痕先于 fail-safe——即使 onFatal 抛错，日志与审计也已落盘', async () => {
+    const deps = makeDeps()
+    const onFatal = vi.fn(() => { throw new Error('dialog failed') })
+    await expect(handleUncaughtException(new Error('boom'), { ...deps, onFatal })).resolves.toBeUndefined()
+    expect(deps.logger.error).toHaveBeenCalledTimes(1)
+    expect(deps.audit).toHaveBeenCalledTimes(1)
+  })
+
+  it('未处理拒绝**不**触发 fail-safe（有意偏离 Node 默认，见文件头）', () => {
+    const deps = makeDeps()
+    const onFatal = vi.fn()
+    handleUnhandledRejection(new Error('r'), { ...deps, onFatal })
+    expect(onFatal).not.toHaveBeenCalled()
+    expect(deps.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'main:unhandled-rejection' }))
   })
 
   it('异常文本经脱敏后落盘（不泄漏绝对路径）', () => {
@@ -87,15 +133,15 @@ describe('installProcessErrorGuards（装配）', () => {
     }
   }
 
-  it('装配后两类事件都能到达处理器', () => {
+  it('装配后两类事件都能到达处理器', async () => {
     resetProcessErrorGuardsForTest()
     const deps = makeDeps()
     const proc = makeProcess()
     installProcessErrorGuards(deps, proc)
     proc.fire('unhandledRejection', new Error('r'))
     proc.fire('uncaughtException', new Error('e'))
+    await vi.waitFor(() => expect(deps.logger.error).toHaveBeenCalledWith('main:uncaught-exception', expect.anything()))
     expect(deps.logger.error).toHaveBeenCalledWith('main:unhandled-rejection', expect.anything())
-    expect(deps.logger.error).toHaveBeenCalledWith('main:uncaught-exception', expect.anything())
   })
 
   it('重复装配幂等——同一条异常不得写两份审计', () => {

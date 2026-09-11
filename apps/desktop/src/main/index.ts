@@ -59,6 +59,14 @@ const fatal = createFatalShutdown({
   exit: (c) => app.exit(c)
 })
 
+// 运行期未捕获异常的 fail-safe（H-12）：与启动期 `fatal` 同款收尾，但标题不同——
+// 「无法启动」用于运行期崩溃会误导用户。标题差异是有意的，不是漏改。
+const fatalRuntime = createFatalShutdown({
+  showError: (m) => dialog.showErrorBox('Cyrene 发生错误', m),
+  closeAll: () => (diagnostics ? diagnostics.closeAll() : Promise.resolve()),
+  exit: (c) => app.exit(c)
+})
+
 // —— 阶段 7 批次 B（D7B-08，契约 H-1 解耦）：child-process-gone 抽函数——供 Task 6 gpu-process.spec 单测。
 //    关注 GPU 子进程异常：warn + audit(gpu:crash)（独立 type，勿复用 renderer:crash）。
 //    非 GPU（Utility/Zygote/Sandbox helper 等）有意忽略——renderer 崩溃由 render-process-gone 覆盖，child-process-gone 无 Renderer 子进程。
@@ -158,6 +166,15 @@ async function main(): Promise<void> {
         )
       } catch { /* fail-open 恒成立 */ }
     }
+    // 可 await 的审计（H-12）：未捕获异常路径必须**等它落盘再退出**——实测发现 fire-and-forget 版
+    // 会被 fatalRuntime 的退出抢跑，导致「至少留痕」这个唯一目的落空。语义与 audit 相同（含 fail-open）。
+    const auditAsync = async (event: Omit<AuditEvent, 'ts'>): Promise<void> => {
+      try {
+        await diagnostics?.auditor?.audit({ ts: new Date().toISOString(), ...event })
+      } catch (err) {
+        diagnostics?.logger.error('audit:write-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) })
+      }
+    }
     // —— 阶段 7 批次 B（D7B-05/07/08）：崩溃监听装配——
     // ① child-process-gone：main() 内注册——audit/diagnostics 为 main() 局部（安全 MED-1），经抽函数 handleChildProcessGone
     //    （GPU 分支 gpu:crash 解耦，契约 H-1；无 reload——GPU 不 reload，N2 定案）。
@@ -167,9 +184,8 @@ async function main(): Promise<void> {
     app.on('child-process-gone', (_ev, d) => handleChildProcessGone(d, { logger: diagLogger, audit }))
     setCrashSink({ logger: diagLogger, audit })
     // ③ 2026-09-11（H-12）：主进程未捕获异常兜底——此前 `unhandledRejection`/`uncaughtException`
-    //    全仓 0 注册，浮空 promise 的拒绝既不进日志也不进审计。纯增量：`process.on` 追加监听，
-    //    不覆盖 Electron 自带处理器；存续语义与理由见 process-error-guards.ts 文件头。
-    installProcessErrorGuards({ logger: diagLogger, audit, sanitize })
+    //    全仓 0 注册，浮空 promise 的拒绝既不进日志也不进审计。存续语义见 process-error-guards.ts 文件头。
+    installProcessErrorGuards({ logger: diagLogger, audit: auditAsync, sanitize, onFatal: (m) => fatalRuntime(`主进程发生未捕获异常，应用将退出。\n\n${m}`) })
     // 启动门禁（B2/P0-02）：dev 模式下 ELECTRON_RENDERER_URL 必须指向受信地址（回环或 allowlist）。
     // 在 requestSingleInstanceLock 之后——只有持锁主实例评估（第二实例已在 lock 处 exit(0)）。
     // fatal exit 异步，故 untrusted 后必须 return，否则继续建窗/装配。
