@@ -35,6 +35,8 @@
 - 复评发现该 UI 批次**新引入三条**，本批已修：① `--cy-accent` 被调浅（`#dce8ff`→`#e7edff`），使安全授权按钮文本对比度由 1.23:1 **降到 1.17:1**（暗色 1.31:1）——改用配对文字色 `--cy-accent-text`（11.0:1／13.1:1）并按规则级加守护断言；② 主题背景用 `@media (prefers-color-scheme: dark)` 切换、而全仓其它颜色用 `light-dark()`，应用内主题落地时会出现「token 翻了、背景图没翻」——补根节点 `data-theme` 覆盖路径并与 `color-scheme` 同步；③ 装饰图 `cyrene-deco-voice-wave.png` 为 1024×768／496 KB，而实际渲染宽度 ≤280px——按 2× 出图改**无损** webp（106,918 B，−78%）。
 - 三条修复均过**变异验证**：还原文本色→授权按钮断言红；去掉 `:not([data-theme='light'])`→主题断言红；再单独去掉 `color-scheme: dark`→另一条红；放回 PNG→回退断言红；把 webp 换成 444 KB→尺寸上限断言红。装饰图保真度用客观指标核验（alpha 通道逐位相同；白底／黑底合成后 PSNR 69.1／68.5 dB，差异在 ±1/255 内）。
 - 复评另记两条**治理问题（未处置）**：① `85f2602` 的 check-runs 数为 **0**——该 UI 大改从未被 CI 验证（本轮本地补齐门禁为绿；`116d529` 的 CI 以它为祖先一并覆盖）；② `ui/设计风格.md`（1349 行）落在 `docs/` 治理体系之外，`docs:check` 与 doc 00 均不覆盖，且已在响应式口径上与 doc 03 冲突（其 §35 仅列 1366+ 桌面档）。
+- **门禁判别力批次（2026-09-11，`b51ba49`；报告 P1-2／P2-5／P1-4）**：三项都针对同一类缺陷——「门禁全绿，功能却是坏的」。① IPC **三面对齐**：声明面 `IpcChannels`、装配面 Main 真实注册的 handler（mock 捕获注册调用）、可达面 preload 源码引用；实测三面逐通道一一对应（**88 = 88 = 88**）、三张例外表为空，此前「通道声明了、preload 也在调、Main 却没人注册」可全门禁绿灯。② **dev 形态集成覆盖**首次存在：此前集成套件全部跑 prod 形态，正是用户 Live2D「Failed to fetch」躲过所有测试的原因。③ `check:contract` **首次进入 CI** 并显式标注 NOT VERIFIED。
+- 本批**逐项变异验证**（共 10 次，变异均真正改变代码路径且先重建产物）：A 删注册点→红；B 加孤儿声明通道→红；C preload 指向别通道→红；D 令 preload 扫描器退化→红；**E 关掉 dev IPC 供给→端到端红于 `'Failed to fetch'`（逐字复现用户现象）**；F 移除 `@fs` deny→红并点名目标 URL；G 去掉 CSP 头→红；H 不注入 dev URL→红于 `page.url()=cyrene://renderer/index.html`；I／J 恢复契约段静默跳过→红。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
@@ -164,6 +166,17 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 三次失败的日志均在重跑前取回本地副本（GitHub 不保留被覆盖的 attempt 日志）。教训：**本地门禁全绿不等于 CI 全绿**——视口尺寸/负载差异会暴露本地掩盖的测试健壮性问题；把 CI 红一律当偶发会漏掉真缺陷。
 
+**门禁判别力批次（2026-09-11，`b51ba49`）**
+
+`pnpm typecheck` PASS；`pnpm lint` PASS；`pnpm docs:check` PASS（19 core / 75 review / 40 superpowers / 42 archived）；`pnpm test` PASS（**221 files / 2757 passed + 6 expected-fail + 21 skipped**，较上批 +8 files／+67 passed，其中本批新增 11 条＝三面对齐 5 条 + 契约门禁 6 条）；`pnpm test:integration` PASS（**25 files / 149 passed + 2 skipped**，较上批 +1 file／+6 passed＝dev 形态 spec）；`pnpm -F @cyrene/desktop verify:sensitive` PASS（扫描 786 文件、排除 368、按规则豁免 557 行、allowlist 放行 63 行）。
+
+**跨仓契约门禁本轮双跑（这是 P1-4 的判据，两个方向都要有）**：① 对**真实 Linux 后端**（`192.168.1.18`，HEAD `5f841510`；`contract.schema.json` + `rest.py` + 12 个 `ws-v2-*.jsonl` 经 `scp` 取回本地）→ **exit 0**：`WS v2 36/36`、**88 条真实契约帧**解析后与输入逐字段相等、`REST 16/16`，三段逐条列出已核对内容。② 本机默认路径（无后端）→ **exit 2** 且明写 NOT VERIFIED——这正是 CI 将看到的结果（CI 无后端仓库），故 CI 侧按退出码分流标注而非变红。
+
+**两处本轮实测教训（都已写进代码注释，避免下次重犯）**：
+- **变异"还原"也必须重新构建**：修完变异 F 未重建就跑变异 G，`out/main` 仍带 F，于是 ⑤ 红——看似 G 的影响，实为陈旧产物。我据此先误判过一次，重建后才得到干净的单变量结论。（此前的教训只覆盖"变异前要重建"，这次补上"还原后也要"。）
+- **探测手段本身可能被豁免**：`page.evaluate` 经 CDP `Runtime.evaluate` 下发，等同 DevTools 控制台求值，**不受页面 CSP 约束**——用它探测 CSP 恒得 'allowed'（第一版实测如此）。有效判据必须是**页面自己发起**的动作（改为插入内联 `<script>` 后同步读哨兵）。同类：破坏性导航用例必须排在末位，否则"页面没了"会污染其余用例的失败签名。
+- 另有一条关于**被测脚本自身**的教训：`check-backend-contract.mjs` 的 `parseModelFields` 会跳过 `_` 前缀字段（Python 私有约定），拿 `__probe__` 之类的名字当漂移探针会被静默忽略而得到假绿。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
@@ -194,6 +207,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
 4. 全量评审建议的 P0 批次**已基本完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；仅 P0-7 未动（`EXT-01` 第三方资产授权、`asar` 完整性与 Windows 打包进 CI），它依赖外部授权事实与阶段 8 决策。
+4.1 **建议的门禁判别力三项已完成**（`b51ba49`，报告 P1-2／P2-5／P1-4，见 §1 与 §3.1）。剩余 **H-05～H-10 六条 High 一条未动**，均属 P1：H-05 契约镜像锚点（P1-3）、H-06／H-07 角色域双缓存（P1-10，高风险、需真机复验）、H-08 长会话性能（P1-9）、H-09 写文件大小校验前移＋diff 出主线程（P1-8）、H-10 流式 watchdog／切会话取消（P1-7）、H-11a 写序列化＋唯一临时名（P1-5）。另 P1-1（`registry` 预算默认值）、P1-11（`noImplicitAny`／type-aware lint）、P1-12（renderer 报错进诊断包）亦未动。
 5. **H-01 的取舍已按推荐定案**：采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒——理由是这两个目录的同用户临时文件同样可能含密钥，而附件链是 Renderer 唯一能用字符串指认本地文件的地方；代价明确且**改一处即可放开**。H-12 的两处取舍亦已定案：`uncaughtException` 接管 fail-safe（弹窗 + 退出），`unhandledRejection` 只留痕不终止。
 6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。
 7. H-11b 的降级故障只到「Main 拒绝写入 + 日志/诊断计数 + `getLastError()`」；**renderer 侧仍不会向用户显示持久化故障**（`draft.store` 的持久化失败是 fail-open 吞掉的），属 M-19 一类。
