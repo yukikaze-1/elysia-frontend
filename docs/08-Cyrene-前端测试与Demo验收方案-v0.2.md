@@ -205,6 +205,23 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 - 权限审批历史、授权撤销和安全策略持久化；
 - 开发者模式和前端日志目录。
 
+### 6.5 测试运行期窗口行为（Silent Test Window Mode）
+
+自动化测试**不得干扰宿主桌面**：窗口不显示、不抢焦点、不置顶、不进任务栏、不弹系统对话框与通知，
+但 renderer / preload / IPC / 持久化 / Playwright 自动化能力必须保持原有行为
+（判据与边界模块见[决策记录](review/2026-09-12-测试静默窗口模式-决策记录.md)）。
+
+- 默认（`pnpm test:integration`）：静默模式；并由 `tests/integration/silent-window-mode.spec.ts`
+  断言窗口不可见、未聚焦、未置顶、窗口数恒为 1，且隐藏窗口下 `document.hidden === false`、
+  rAF 帧率未被后台节流压到 ~1 帧/秒、键盘输入与 DOM 焦点正常；
+- 显式（`pnpm test:integration:visible`）：同一套件的可视化调试模式，窗口真的显示；
+- 窗口行为回归由源码门禁 `tests/unit/window-presentation-guard.spec.ts` 兜底：
+  任何新增的建窗、`show()`/`focus()`、`setAlwaysOnTop()`、`dialog.*`、Notification/Tray/DevTools
+  调用点都会使单测变红，必须改走统一边界；
+- 原生对话框在静默模式下不弹出，而是记录调用并返回确定性的「用户取消」，测试仍可断言
+  「是否触发 / 参数是否正确 / 取消是否被正确处理」；需要「用户确实选了某路径」的分支用既有注入缝
+  （`pickFile` / `pickDirectory` / `openPath`）。
+
 ## 7. 端到端场景
 
 ### E2E-01 首次启动

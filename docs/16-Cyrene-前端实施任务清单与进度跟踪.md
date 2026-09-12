@@ -64,6 +64,12 @@
   - ② **dev 与打包产物 userData 分仓**：此前两者共用 `%APPDATA%\Cyrene`，`pnpm dev` 会直接改写用户正式版的凭据、`settings.json`、会话草稿、Live2D 模型目录与日志审计。现开发态为 `%APPDATA%\Cyrene-Dev`；风味判定收敛在 `resolveAppDataFlavor`（仅「未打包 + development」加后缀，`--mode test` 不加——集成 harness 已有更强的 appData 覆写门），且 `setAppDataFlavor` 仍早于 `requestSingleInstanceLock`（单实例锁派生自 userData 路径，顺序颠倒会让 dev 与正式版互相顶掉）。
   - 端口与地址的**唯一来源**收敛到 `src/main/config/dev-ports.ts`（`electron.vite.config.ts` 与主进程共用），不再是散落的字面量；Live2D 装配 CLI 默认装到开发目录，`--user-data default` 才写打包产物目录。调试端口维持 N/A：固定 `--remote-debugging-port`（含 9222/9223）被安全门在绑定前拒绝，不为开发隔离新增号位。
   - 验证：`pnpm dev` 实跑确认 dev server 监听 `http://127.0.0.1:5373`、userData 落到 `Cyrene-Dev`（启动日志 `app:user-data-ready`）、并发第二次启动按 `strictPort` 报错退出；`pnpm typecheck`／`lint`／`test`（239 文件 2927 通过）／`build`／`docs:check` 全绿；新增 `dev-ports.spec.ts`（14）、`app-data-flavor.spec.ts`（9）并把 CLI/集成 harness 的口径同步钉住。集成门禁另补一条 `sessionData` 隔离断言（它不单独 setPath、只跟随 userData；只看 userData 的断言发现不了会话缓存漂到公共目录）。资源登记与新增本地服务的取号规则见 [doc 19](19-Cyrene-前端开发环境隔离与资源登记.md)。
+- **测试静默窗口模式（Silent Test Window Mode）落地（2026-09-12，本机 Windows 取证）**：跑测试不再打扰宿主桌面。
+  - **根因**（逐文件审计）：全仓唯一建窗点 `main-window.ts` 连着三条"必定 show"的路径——`ready-to-show → win.show()`、5s 兜底定时器、`focusOrDefer()` 的 `restore() → show() → focus()`；`show()` 即"显示 + 激活 + 抢前台焦点 + 进任务栏"，而一次集成套件运行有 **55 次 `launchApp`**，等于把这件事重复几十遍。次要来源：原生对话框（目录授权 / 文件选择 / 诊断导出 / 致命错误框）与 detached DevTools（第二个受管窗口）。
+  - **收口**：`config/runtime-environment.ts`（`CYRENE_WINDOW_MODE=silent|visible`；harness 进程缺省 silent，无 harness 时显式 silent 被拒——dev/打包产物绝不隐身）→ `windows/window-presentation.ts`（唯一建窗与呈现入口，silent 下 show/focus/restore/置顶/任务栏/DevTools 全部短路，且**不设** `focusable:false`）→ `native-ui/dialog-service.ts`（silent 下不弹原生框：记录调用 + 返回确定性取消，`showErrorBox` 转 stderr）。源码门禁 `tests/unit/window-presentation-guard.spec.ts` 挡住任何越过边界的新调用点。
+  - **实测发现（本轮最硬的一条）**：隐藏窗口的 rAF 被 Chromium 压到约 1 帧/秒（600ms 内 0 次回调；同窗口 show 后恢复到 ~240 帧/秒），而 Live2D 渲染环/滚动跟随/reduce-motion 都建在 rAF 上。解法是订阅 `webContents.beginFrameSubscription`（134 次/600ms，窗口始终 `isVisible:false`）；**订阅时机承重**——创建期订阅收不到任何帧（导航重建 renderer 视图），必须挂在 `dom-ready` 上并按次重试。
+  - **命令**：`pnpm test:integration`（默认静默）/ `pnpm test:integration:visible`（窗口真的显示，人工调试）/ `pnpm verify`（新增：typecheck → lint → test → test:integration → build）；`verify:artifact --smoke` 与 Stage H runner 同样静默；CI 无需改动（Linux xvfb 与 Windows 运行时 job 直接继承）。
+  - **验证**：`pnpm test:integration` PASS（**29 files / 160 passed + 3 skipped，325.1s**；新增 `silent-window-mode.spec.ts` 4 条）；可视化运行窗口行为 3 文件 PASS（含"窗口真的显示"与"devMode → DevTools 打开"两条只在可见运行下成立的断言）；`pnpm typecheck` / `lint` / `test`（245 files / 2992 passed + 6 expected-fail + 22 skipped）/ `build` / `docs:check` / `verify:sensitive` 全绿；新增单测 4 文件 42 条并过变异验证。门禁记录见 §3.1，根因/设计/残余风险见[决策记录](review/2026-09-12-测试静默窗口模式-决策记录.md)。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
@@ -113,6 +119,24 @@
 | 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **NOT VERIFIED（exit 2）**：本机未挂载后端仓库；该状态不得读作通过 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **NOT VERIFIED（exit 2）**：同上，未重跑 | **PASS（exit 0）**：首次对**真实 Linux 后端**验证——`192.168.1.18:~/elysia-agent`（`200d4b52`）契约 `WS v2 36/36 + REST 16/16`；桌面副本（`ceceabe8`）为 `33/33 + 16/16`，差异来自版本 | **PASS（exit 0）**：真实 Linux 后端 `fdf39898`（经 SSH 取回 `frontend_contract` 后本地校验）→ `WS v2 36/36 + REST 16/16`。本批未触碰后端线协议，此跑为回归确认 |
 | 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 | **未执行**：本轮未触碰打包链 |
 | GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） | **PASS**（`da64667` / [run 34562266876](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34562266876)：5 个 job 全绿，首跑即绿） |
+
+**2026-09-12 测试静默窗口模式批次（本地，未推送）门禁记录**——主表里"单元测试/集成测试"两行的行宽已到
+`docs:check` 的 500 字符上限（该检查逐行生效），故本批**不追加列**，单列于此：
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（exit 0） |
+| Lint | `pnpm lint` | PASS（exit 0） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / 79 review / 40 superpowers / 42 archived） |
+| 敏感信息扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（扫描 836 文件、排除 368、按规则豁免 556 行、allowlist 放行 63 行） |
+| 单元测试 | `pnpm test` | PASS（**245 files / 2992 passed + 6 expected-fail + 22 skipped**；本批新增 4 文件 42 条：`runtime-environment` 11 / `window-presentation` 20 / `dialog-service` 6 / `window-presentation-guard` 5；源码门禁过变异验证） |
+| 集成测试（静默） | `pnpm test:integration` | PASS（**29 files / 160 passed + 3 skipped，325.1s，exit 0**；新增 `silent-window-mode` 4 条。首轮 4 例红＝1 例真实设计变更（`diagnostics-ipc` 的 DevTools 断言属窗口行为，已按运行模式分类修正）+ 3 例页面崩溃族偶发（隔离重跑全绿）） |
+| 集成测试（可视化） | `vitest --config vitest.integration.config.visible.mts`（窗口行为 3 文件） | PASS（9 passed + 1 skipped）：含「窗口真的显示」与「devMode → DevTools 打开」两条只在可见运行下成立的断言 |
+| 一键链路 | `pnpm verify`（本批新增） | PASS（typecheck → lint → test → test:integration → build） |
+| 构建 | `pnpm build` | PASS（三端 built，exit 0） |
+| 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动），不得读作通过 |
+| 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链；`--smoke` 已显式改为静默启动（`CYRENE_WINDOW_MODE=silent`） |
+| GitHub CI | `.github/workflows/ci.yml` | **未推送**：本批仅本机取证；CI 无需改动（集成 job 直接继承静默默认），待下一轮 push 复核 |
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：
 

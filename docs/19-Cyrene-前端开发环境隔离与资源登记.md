@@ -130,9 +130,15 @@ DevTools:               F12 / 诊断设置页 devMode 开关（进程内，不�
 - 需要诊断时用项目 harness：
 
   ```powershell
-  pnpm test:integration        # Playwright Electron，临时 appData 隔离
+  pnpm test:integration        # Playwright Electron，临时 appData 隔离；默认静默窗口（不打扰宿主桌面）
+  pnpm test:integration:visible # 同上，但窗口真的显示——人工观察窗口/焦点/任务栏行为时用
   pnpm verify:artifact --smoke # 产物冒烟 + fuse 读回
   ```
+
+  静默窗口模式的判据、环境变量与边界模块见
+  [测试静默窗口模式决策记录](review/2026-09-12-测试静默窗口模式-决策记录.md)：
+  `CYRENE_WINDOW_MODE=silent|visible`（缺省时 harness 进程为 silent），显式 `silent` 在无
+  `CYRENE_TEST_HARNESS=1` 的进程里会被拒（dev / 打包产物绝不静默启动）。
 
 ## 6. Local Data
 
