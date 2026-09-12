@@ -17,6 +17,7 @@
     "lint": "pnpm --filter @cyrene/desktop lint",
     "test": "pnpm --filter @cyrene/desktop test",
     "test:integration": "pnpm --filter @cyrene/desktop test:integration",
+    "test:integration:live2d": "pnpm --filter @cyrene/desktop test:integration:live2d",
     "integration:stage-h": "pnpm --filter @cyrene/desktop integration:stage-h",
     "test:stage-h-runner": "pnpm --filter @cyrene/desktop test:stage-h-runner",
     "test:e2e": "pnpm --filter @cyrene/desktop test:e2e",

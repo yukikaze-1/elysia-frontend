@@ -91,10 +91,34 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
-  # 集成测试：electron 二进制 + Playwright chromium + xvfb
+  # 集成测试·分片 1/2：其余 26 个文件在托管 runner 上 2 分片（不含 electron-live2d）
+  #
+  # 2026-09-12 分片批次（原为单 job 跑全套件：10.4 分钟 = 整个 CI 的墙钟）。分片依据是**实测逐文件计时**
+  # （三处对照，见 docs/review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md §8.5）：
+  #   electron-live2d：托管 278.8s ／ 自建 yomu-X99（24 线程）**182.3s** ／ 本机 i5 124.7s
+  #   electron-voice ：托管  43.3s ／ 自建 **51.8s**（更慢）      electron-tools：31.2s ／ **38.3s**（更慢）
+  #   ⇒ live2d 吃多线程软渲染，自建机明显更快；其余文件是单线程开销，托管机反而更快（单核强）。
+  # 故分片按**文件特性**切而非均匀切：live2d 独占一个 self-hosted job（见下），其余文件在这里 2 分片。
+  # **机制提醒**：vitest 的 `--shard=N/M` 只按「路径 SHA-1 排序 + 文件数」均分，**不看耗时**——
+  # 重文件必须单独成 job，否则含它的那一片会重新成为墙钟瓶颈。
+  # 墙钟 = 最慢的一侧 = max(live2d 182+60, 最慢分片 158+60) ≈ **4.1 分钟**（原 10.4 分钟）。
+  #
+  # 分片数为什么取 3（本地复刻 vitest 的 shard 算法算过，逐片耗时见下表）：
+  #   分片数 | 各片测试耗时      | 最慢片墙钟 | CI 墙钟
+  #     1    | 290s             | 355s       | 5.9 分钟
+  #     2    | 213 / 78s        | 278s       | 4.6 分钟
+  #     3    | 158 / 106 / 26s  | 223s       | **4.1 分钟** ← 恰好触到 live2d job 形成的地板
+  #     4-5  | ≤181s            | ≤181s      | 4.1 分钟（无收益：被 live2d job 卡住）
+  #   再往下压必须**拆 electron-live2d.spec.ts**（它的 182s 独占一个 job 就是当前地板），属独立批次。
+  #   注意分片数影响计费：托管 job 越多，Linux 计费分钟越多（3 片约 11 分钟/run，与分片前的 10.4 基本持平）。
   integration:
-    name: integration tests
+    name: integration (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      # 一片红不掩盖另一片的结果：所有片都要跑完才给结论
+      fail-fast: false
+      matrix:
+        shard: ['1/3', '2/3', '3/3']
     steps:
       - uses: actions/checkout@v4
 
@@ -126,8 +150,51 @@ jobs:
       - name: Install Playwright (integration)
         run: pnpm --filter @cyrene/desktop exec playwright install --with-deps chromium
 
-      - name: Integration tests (xvfb)
-        run: xvfb-run -a pnpm test:integration
+      # `--` 之后的参数由 pnpm 追加到脚本命令末尾，最终落到 vitest（脚本里 vitest 是最后一条命令）。
+      # 排除 live2d 用 CLI 的 `--exclude` 而不是新增一份 vitest 配置：① 免去两处配置漂移（alias/timeout/
+      #   fileParallelism 只有 vitest.integration.config.mts 一份来源）；② 「排除哪些文件」是**分片关注点**，
+      #   不属于套件定义。
+      # 注意 CLI 的 `--exclude` 会**替换** vitest 的默认 exclude 列表；本套件 include 仅
+      #   `tests/integration/**/*.spec.ts`，故默认列表里唯一可能相关的一条（node_modules）不可能命中，
+      #   替换是安全的（此判断已在引入时核对，不是想当然）。
+      - name: Integration tests (xvfb, shard ${{ matrix.shard }})
+        run: |
+          xvfb-run -a pnpm --filter @cyrene/desktop test:integration \
+            -- --exclude '**/electron-live2d.spec.ts' --shard=${{ matrix.shard }}
+
+  # 集成测试·分片 2/2：electron-live2d 独占一个 self-hosted Linux job
+  #
+  # 为什么这一个文件值得单独一个 job：它是全套件最重的文件（28 用例 / 实测定标 182.3s），且对机器最敏感
+  # （托管 278.8s vs 自建 182.3s）。放在自建 runner 上独享整机 24 线程，是当前性价比最高的一刀。
+  #
+  # **代价与前置（如实记录，不藏）**：
+  #   · 该 job 依赖自建 runner 在线；服务器关机/掉线时它会排队到 timeout-minutes。要临时回退，
+  #     把 runs-on 改回 ubuntu-latest 即可（墙钟回到 ~5.7 分钟，因为托管上该文件 278.8s）。
+  #   · self-hosted 不挂 `cache: pnpm`（服务用户 home 下的 store 跨 run 持久，走 Actions 缓存反而每 run
+  #     多传约 63MB），也不挂 electron 缓存（同理，profile 已持久）。
+  #   · 该文件只用 Electron、不使用 Playwright 浏览器二进制（`trust-boundary` 那类才需要），故不跑
+  #     `playwright install`。
+  integration-live2d:
+    name: integration (live2d, self-hosted)
+    runs-on: [self-hosted, Linux, X64]
+    # self-hosted 掉线时 job 会一直排队（托管 runner 不会），必须有硬上限
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Integration tests (live2d, xvfb)
+        run: xvfb-run -a pnpm --filter @cyrene/desktop test:integration:live2d
 
   # 打包态安全冒烟：clean → package（内含 electron-vite build）→ verify:artifact --smoke（P0-02 验收 A6 持续化）
   artifact:
@@ -211,8 +278,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck + lint + unit + build
-        run: pnpm typecheck && pnpm lint && pnpm test && pnpm build
+      # 2026-09-12：原为一条 `pnpm typecheck && pnpm lint && pnpm test && pnpm build`。托管 windows-latest
+      # 预装 PowerShell 7，`&&` 可用；而本仓的 self-hosted 机器**没有装 pwsh 7**（实测
+      # `C:\Program Files\PowerShell\7\pwsh.exe` 不存在），GitHub 遂回退到 Windows PowerShell 5.1——
+      # `&&` 在该版本是**语法错误**（实测 `The token '&&' is not a valid statement separator in this version`），
+      # 整条 job 在第一步就红，且与 git/代理无关（那是上一轮的问题，已修）。
+      # 改为**四个独立 step**：不依赖任何 pwsh 特性、天然 fail-fast，且失败定位比 `&&` 链更准。
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
 
       # P2-4（2026-09-12）：主目标平台的**打包路径**此前从未在 CI 验证——windows job 只到 build 为止，
       # 而 `package`（electron-builder --dir + electronFuses 写 wire）与静态 `verify:artifact`

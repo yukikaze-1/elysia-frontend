@@ -83,17 +83,19 @@ jobs:
         run: pnpm --filter @cyrene/desktop exec playwright install chromium
 
       # Windows 无 xvfb（也不需要）：直接跑 test:integration（内含 electron-vite build --mode test + vitest）
-      # `exit $LASTEXITCODE` 不可省：PowerShell 管道的退出码取自最后一条命令（Tee-Object 恒为 0），
-      # 少了这行会把失败伪装成通过——正是本 workflow 头部第 ② 条要避免的假绿。
+      # 不写 `shell: pwsh`：本机**没装 PowerShell 7**，写了反而会因找不到 pwsh 而失败（托管 runner 才预装）。
+      # 默认 shell（Windows PowerShell 5.1）下要保住两件事：
+      #   ① `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }` 不可省——PowerShell 管道的退出码取自最后一条
+      #      命令（Tee-Object 恒为 0），少了它会把失败伪装成通过（这正是本 workflow 头部要避免的假绿）；
+      #      用 `if` 而不是 `exit $LASTEXITCODE` 是因为后者在 5.1 下不会被解析成"条件退出"。
+      #   ② Tee-Object 在 5.1 下可用，日志仍会落盘并作为 artifact 上传。
       - name: Integration tests (Windows, no xvfb)
-        shell: pwsh
         run: |
           pnpm --filter @cyrene/desktop test:integration 2>&1 | Tee-Object -FilePath windows-runtime.log
-          exit $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record commit SHA (runtime evidence)
         if: always()
-        shell: pwsh
         run: git rev-parse HEAD > windows-runtime-sha.txt
 
       # 证据留档：失败时也要拿到日志（本 job 的价值有一半在于"红在哪一条"）

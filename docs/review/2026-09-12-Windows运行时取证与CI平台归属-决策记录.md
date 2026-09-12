@@ -193,7 +193,7 @@ FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memor
 | `settings-model-services`（11） | 17.5s | **21.7s** | 12.5s |
 | **全量 Duration** | 558.9s | **509.7s** | 350.7s |
 
-**结论（决定了下一步该做什么）**：单实例在这台服务器上只比托管快 **9%**——Live2D 那类吃多线程软渲染的文件更快（182 vs 279），但其余文件因 **单核性能弱于现代托管机**而更慢（voice 51.8 vs 43.3、tools 38.3 vs 31.2）。**单实例搬家买不到墙钟**；真正的收益来自**同一台 24 线程机器上并发跑 2–3 个分片**（本机峰值 RSS 仅 823MB、残留 electron 进程 0，资源余量充足）。分片本身尚未实施（用户明确暂缓）。
+**结论（决定了下一步该做什么）**：单实例在这台服务器上只比托管快 **9%**——Live2D 那类吃多线程软渲染的文件更快（182 vs 279），但其余文件因 **单核性能弱于现代托管机**而更慢（voice 51.8 vs 43.3、tools 38.3 vs 31.2）。**单实例搬家买不到墙钟**；真正的收益来自「按文件特性分片 + 把最吃多线程的那个文件放到这台机器上」——该方案已于同轮落地，见 §9.3（本机峰值 RSS 仅 823MB、残留 electron 进程 0，资源余量充足）。
 
 ### 8.6 运维现状（**未持久化，需人工补一步**）
 
@@ -205,3 +205,53 @@ FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memor
   cd ~/actions-runner-fe && sudo ./svc.sh install yomu && sudo ./svc.sh start
   ```
 - 与 Windows 侧相反的运维事实：**这台服务器直连 github.com 返回 200**（无需代理），`~/.cache/electron`（120M）、`~/.cache/ms-playwright`（967M，含 `chromium-1234`）、pnpm store（4.1G）均已就位，16 个 Electron/Chromium 系统库齐全，`xvfb-run` 已装 —— 故 `linux-runtime.yml` 里不带 `--with-deps` 的写法成立。
+
+## 9. 第二次推送（run `34687156254` @ `5261a82`）：又两条红，一条是自建机的 shell 坑，一条是环境性 flake
+
+代理修好、服务重启后重推，5 个 job：`check` ✓、`unit` ✓、`artifact` ✓、**`windows` 红**、**`integration` 红**。
+
+### 9.1 `windows` job：自建机没装 PowerShell 7，`&&` 在 5.1 下是语法错误
+
+- 现象：job 在**第一步**就红，报 `The token '&&' is not a valid statement separator in this version.`；日志里的 shell 是 `C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.EXE`。
+- 根因：原 step 是 `pnpm typecheck && pnpm lint && pnpm test && pnpm build`。托管 `windows-latest` **预装 PowerShell 7**，`&&` 可用；本机**没有** pwsh 7（实测 `C:\Program Files\PowerShell\7\pwsh.exe` 不存在），GitHub 回退到 **Windows PowerShell 5.1**，而 5.1 **不支持 `&&`**。
+- **与 §7.1 的 git/代理问题无关**：那轮红在 `actions/checkout`（网络，已修）；这轮 checkout 已过（它自己完成了「无法 clean/reset → 重建仓库」的兜底），红在 `&&`。
+- 修法：拆成**四个独立 step**（`Typecheck` / `Lint` / `Unit tests` / `Build`）——不依赖任何 pwsh 特性、天然 fail-fast、失败定位更准。
+- 顺带修 `windows-runtime.yml`：去掉 `shell: pwsh`（本机没有 pwsh，写了反而更脆），并把 `exit $LASTEXITCODE` 改成 5.1 可解析的 `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`——否则 PowerShell 管道的退出码取自 `Tee-Object`（恒 0），失败会被伪装成通过。
+
+### 9.2 `integration` job：连续两轮红，但**红的不是同一个用例** ⇒ 环境性 flake（非回归）
+
+| 轮次 | 失败用例 | 失败形态 |
+|---|---|---|
+| `0f3b1c3` | `electron-live2d.spec.ts` B6.布局 | `expected 0 to be greater than 0`（画布 6s 内无非透明像素） |
+| `5261a82` | `persist-flush.spec.ts` 关窗前 flush【判别用例】 | `locator.click: Timeout 30000ms`，等的是 `getByRole('button', { name: /REAL\|MOCK/ })`——**渲染进程没在预算内起来** |
+
+- 两轮都是 `1 failed | 155 passed | 1 skipped`，失败点不同、同属「渲染/启动没赶上预算」这一族；且**第二轮里 B6 本身通过**（同一用例前一红后绿 ⇒ 非确定性）。
+- 与隔壁 dev-env 批次无关的三条依据：① 该批次只改「模型装配目录 / userData 风味」，而 `list-models` 与 live2d 其余 27 个用例都过；② `persist-flush` 的失败发生在**点连接按钮**之前，与 flush 语义无关；③ 仓库既有记录把这类现象定性为 xvfb/SwiftShader 环境性 flake（V-08/V-12：「先复现并采集证据，不能直接归因业务代码」），并有放宽 `SLOW_POLL` 的先例。
+- **待办（未实施）**：连续两轮各 1 例，flake 率偏高。建议按仓库既有做法处置——把这类「首次交互/首帧」预算从默认 POLL（8s）提到 `SLOW_POLL`（15s），或给 CI 加一次自动重试。**本轮不动测试预算**：改预算会削弱判别力，属独立批次且须单独论证。
+
+### 9.3 集成套件分片（本轮实施）
+
+原状：单个 `integration` job 串行跑 27 个文件 = 10.4 分钟，**就是整条 CI 的墙钟**。
+
+分片**不是均匀切，而是按文件特性切**（依据 §8.5 的三处实测）：
+
+| 归属 | 内容 | 实测定标 |
+|---|---|---|
+| `integration-live2d`（**self-hosted Linux**） | 只跑 `electron-live2d.spec.ts` | 182.3s + 装载 ≈ **247s** |
+| `integration`（托管，**3 分片**） | 其余 26 个文件，`--shard=N/3` | 最慢片 158s + 装载 ≈ **223s** |
+
+- 机制提醒（决定了 live2d 为何必须独占）：vitest 的 `--shard=N/M` 只按「路径 SHA-1 排序 + **文件数**」均分，**不看耗时**。重文件混进随机分片必然把该片变成新瓶颈。
+- 分片数为什么取 3（本地复刻 vitest 的 `BaseSequencer.shard()` 算出逐片耗时；排序键是 root 之后的路径，**与机器无关**）：
+
+| 分片数 | 各片测试耗时 | 最慢片墙钟 | CI 墙钟 |
+|---|---|---|---|
+| 1 | 290s | 355s | 5.9 分钟 |
+| 2 | 213 / 78s | 278s | 4.6 分钟 |
+| **3** | **158 / 106 / 26s** | **223s** | **4.1 分钟** |
+| 4–5 | ≤181s | ≤181s | 4.1 分钟（无收益：被 live2d job 卡住） |
+
+- 墙钟 = max(247, 223) ≈ **4.1 分钟**（原 10.4）。**再往下压必须拆 `electron-live2d.spec.ts`**（它独占一个 job 的 182s 就是当前地板；拆成 2–3 个文件可到约 3.3–2.8 分钟），属独立批次。
+- 实现细节：排除 live2d 用 CLI `--exclude` 而**不新增 vitest 配置**（免两处配置漂移；且「排除哪些文件」属分片关注点）。注意 CLI `--exclude` 会**替换** vitest 默认 exclude 列表——本套件 `include` 仅 `tests/integration/**/*.spec.ts`，默认列表中唯一可能相关的 `node_modules` 不可能命中，替换安全。
+- 分片正确性：以复刻算法验证「并集 26 / 交集 0 / 每片 13 个文件」；`--exclude` 亦实测（带它 26 个文件、不带 27 个）。**最终确认以首次分片 CI run 的日志为准**——vitest 的 `list` 子命令不套用 `--shard`，无法用它验证运行期划分（本轮踩过这个坑）。
+- 计费影响：托管 job 从 1 个（10.4 分钟）变为 3 个（合计约 11 分钟）——**墙钟减半、计费基本持平**；live2d 那部分因落到自建机而免费。
+- **已知代价（如实记录）**：`integration-live2d` 依赖自建 runner 在线，服务器掉线时它最坏排队到 `timeout-minutes: 45`。要临时回退，把该 job 的 `runs-on` 改回 `ubuntu-latest` 即可（墙钟回到约 5.7 分钟）。
