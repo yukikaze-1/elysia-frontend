@@ -53,11 +53,11 @@ fnm use 22.23.0
 pnpm dev
 ```
 
-等价的 workspace 直启方式：
+等价方式与并行开发约束：
 
-```powershell
-pnpm -F @cyrene/desktop exec electron-vite dev
-```
+- workspace 直启：`pnpm -F @cyrene/desktop exec electron-vite dev`。
+- Renderer 固定 **`http://127.0.0.1:5373`**（`strictPort`，被占用即报错退出，不静默换端口）。同一台机器上并行开发多个 Electron 项目时，端口段、userData 隔离与本地数据落点以 [doc 19](19-Cyrene-前端开发环境隔离与资源登记.md) 为准。
+- 开发态 userData 是 `%APPDATA%\Cyrene-Dev`，与打包产物的 `%APPDATA%\Cyrene` 分仓；`pnpm dev` 不会写入正式版数据。
 
 正常开发和人工联调不要传固定远程调试端口。安全门会拒绝 `--remote-debugging-port=9223`、`--remoteDebuggingPort 9223` 等固定端口。需要自动化时使用现有 Playwright Electron harness；测试专用放行只允许项目定义的随机端口或 pipe 语义。
 
@@ -98,13 +98,13 @@ pnpm live2d:install --model-dir <模型目录> --id <slug> --display-name "<显�
 
 脚本做的事（`apps/desktop/scripts/live2d-install.mjs`）：校验模型结构 → 非 symlink 拷贝 → 注入 `LICENSE.txt` → 生成 `preview.png`（源目录有 `icon.png` 时）→ 写 `manifest.json` → 计算 `integrity.json`（逐文件 SHA-256）→ 输出文件数与哈希数报告。
 
-安装位置为 userData 下的 `models/`：
+安装位置为 userData 下的 `models/`。**CLI 默认装配到开发目录**（与 `pnpm dev` 一致），加 `--user-data default` 才装到打包产物目录：
 
-| 平台 | 路径 |
-|---|---|
-| Windows | `%APPDATA%\Cyrene\models\<id>\` |
-| Linux | `${XDG_CONFIG_HOME:-$HOME/.config}/Cyrene/models/<id>/` |
-| macOS | `~/Library/Application Support/Cyrene/models/<id>/` |
+| 平台 | 开发（缺省） | 打包产物（`--user-data default`） |
+|---|---|---|
+| Windows | `%APPDATA%\Cyrene-Dev\models\<id>\` | `%APPDATA%\Cyrene\models\<id>\` |
+| Linux | `${XDG_CONFIG_HOME:-$HOME/.config}/Cyrene-Dev/models/<id>/` | `${XDG_CONFIG_HOME:-$HOME/.config}/Cyrene/models/<id>/` |
+| macOS | `~/Library/Application Support/Cyrene-Dev/models/<id>/` | `~/Library/Application Support/Cyrene/models/<id>/` |
 
 > **路径口径以本表为准**：[doc 05 §4](05-Cyrene-Live2D前端接入设计-v0.2.md) 里写的 `assets/live2d/<model-id>/` 是早期设计的目录示意，**实际运行时读取的是上表的 userData `models/`**，且模型目录必须由本脚本生成（含 `manifest.json` + `integrity.json`），手工摆放的目录会因缺 manifest 或完整性清单不匹配而被注册表跳过或在列表中标记 `available=false`。
 
@@ -142,13 +142,13 @@ Real 模式启动后，在连接面板设置 Endpoint 和 Token，再发起连�
 
 ### 4.1 打包产物运行（发布形态验证）
 
-`pnpm dev` 的 Renderer 由 Vite dev server 供给（`http://localhost:<port>`），打包产物加载 `cyrene://renderer/index.html`。
+`pnpm dev` 的 Renderer 由 Vite dev server 供给（`http://127.0.0.1:5373`，固定端口），打包产物加载 `cyrene://renderer/index.html`。
 
 两种形态下 Live2D 模型文件都只在 `cyrene://renderer/__cyrene-live2d/{modelId}/{relPath}` 上供给，但**传输方式按是否同源分支**（2026-09-10 修复，见 `docs/review/2026-09-10-dev形态Live2D资源跨源失败修复-决策记录.md`）：
 
 | 形态 | 页面 origin | 模型文件传输 |
 |---|---|---|
-| `pnpm dev` | `http://localhost:<port>` | IPC `live2d:read-model-file` |
+| `pnpm dev` | `http://127.0.0.1:5373` | IPC `live2d:read-model-file` |
 | `pnpm build` + `pnpm start`（或产物直启） | `cyrene://renderer` | 原生 `fetch`（同源） |
 
 原因是 `cyrene` scheme 恒注册为 `corsEnabled:false`（阶段 5 D-4 安全结论：放开后非受信 origin 也能读 `cyrene://` 资源）。dev 页面与 `cyrene://` 跨源，原生 `fetch` 会被 Chromium 直接拒绝并抛 `TypeError: Failed to fetch`；而模型清单走 invoke 通道不受影响，于是界面会**同时**显示「模型加载失败 / 原因：Failed to fetch」和「已发现 N 个模型，其中可用 N 个」——这两句并不矛盾，是同一原因的两面。dev 形态因此改由 Main 经 IPC 回字节，闸门与协议通道共用 `src/main/live2d/serve-gate.ts`，不放开 `corsEnabled`。
@@ -162,7 +162,7 @@ pnpm start
 
 `electron-vite preview` 加载 `cyrene://renderer/index.html`。产物直启的等价方式：`cd apps\desktop` 后运行 `..\..\node_modules\electron\dist\electron.exe .`。
 
-自动化调试需要 CDP 时使用项目测试 harness，或显式传 `--remote-debugging-port=0`（随机端口；固定端口仍被安全门拒绝），实际端口从 `%APPDATA%\Cyrene\DevToolsActivePort` 读取。
+自动化调试需要 CDP 时使用项目测试 harness，或显式传 `--remote-debugging-port=0`（随机端口；固定端口仍被安全门拒绝），实际端口从该次运行所用 userData 的 `DevToolsActivePort` 读取（开发态 `%APPDATA%\Cyrene-Dev\`，打包态 `%APPDATA%\Cyrene\`）。
 
 ## 5. 团队当前真实后端环境
 

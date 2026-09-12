@@ -2,8 +2,10 @@
 // apps/desktop/scripts/live2d-install.mjs
 // 阶段 5 批次 A（A5，spec §3.5）：装配工具 CLI——把原始 Live2D 模型目录转成 userData/models/<id>/ 合规安装包。
 // - strip-types 直 import src/main/live2d/manifest.ts（hashFile / computeIntegrity，零运行时依赖，Task 2 约束）；
-// - userData 解析镜像 Main expectedUserDataBase()（main/app/lifecycle.ts：join(app.getPath('appData'), 'Cyrene')），
+// - userData 解析镜像 Main expectedUserDataBase()（main/app/lifecycle.ts：join(app.getPath('appData'), 应用目录名)），
 //   本脚本无 Electron runtime，自行实现 Linux/Windows/macOS 跨平台公式（resolveModelsDir 纯函数，可单测 env 矩阵）；
+//   开发隔离（docs/19，2026-09-12）：未打包 development 的 userData 是 `<base>/Cyrene-Dev`，CLI 默认装配到
+//   **开发目录**（与 `pnpm dev` 一致，否则装完看不到模型）；`--user-data default` 显式装到打包产物的目录。
 // - 流程顺序（spec §3.5）：校验（model3.json/moc3/≥1 纹理）→ id 校验 → fs.cp 非 symlink 拷贝 → 注入 LICENSE.txt
 //   （先于 manifest/integrity）→ preview（icon.png→preview.png）→ manifest → computeIntegrity(dst) → 报告。
 import { lstat, readdir, cp, mkdir, rm, readFile, writeFile, copyFile } from 'node:fs/promises'
@@ -15,28 +17,46 @@ import { hashFile, computeIntegrity } from '../src/main/live2d/manifest.ts'
 /** id 白名单（与 model-registry manifestSchema 的 `^[A-Za-z0-9._-]+$` 一致），另拒 `.`/`..` */
 const ID_RE = /^[A-Za-z0-9._-]+$/
 
+/** userData 目录名（镜像 main/app/lifecycle.ts）：development 未打包 = `Cyrene-Dev`，其余 = `Cyrene` */
+export const USER_DATA_FLAVORS = ['dev', 'default']
+
+/** CLI 缺省风味 = 开发目录（与 `pnpm dev` 的 userData 对齐，装完即可在开发态看到模型） */
+export const DEFAULT_CLI_USER_DATA_FLAVOR = 'dev'
+
+const USER_DATA_DIR_NAMES = { dev: 'Cyrene-Dev', default: 'Cyrene' }
+
 /**
- * 纯函数：镜像 expectedUserDataBase() 的 userData 解析，再拼 /models。
+ * 纯函数：镜像 expectedUserDataBase() 的 userData 根解析（不含 /models）。
  * env 兼容 process.env（无 platform 键时用 process.platform）；win32 用 path.win32.join（反斜杠），
  * linux/darwin 用 path.posix.join——单测在任意宿主断言平台字面量稳定。
- * - Linux:  XDG_CONFIG_HOME ?? $HOME/.config  → <base>/Cyrene/models
- * - Windows: %APPDATA%                        → <base>/Cyrene/models
- * - macOS:   $HOME/Library/Application Support → <base>/Cyrene/models
+ * - Linux:  XDG_CONFIG_HOME ?? $HOME/.config  → <base>/<应用目录名>
+ * - Windows: %APPDATA%                        → <base>/<应用目录名>
+ * - macOS:   $HOME/Library/Application Support → <base>/<应用目录名>
  */
-export function resolveModelsDir(env) {
+export function resolveUserDataDir(env, flavor = 'default') {
+  const dirName = USER_DATA_DIR_NAMES[flavor]
+  if (!dirName) throw new Error(`resolveUserDataDir: 未知 userData flavor ${JSON.stringify(flavor)}（应为 ${USER_DATA_FLAVORS.join(' / ')}）`)
   const platform = env.platform ?? process.platform
   const P = platform === 'win32' ? win32 : posix
   if (platform === 'win32') {
-    if (!env.APPDATA) throw new Error('resolveModelsDir: APPDATA 未设置（Windows userData 解析失败）')
-    return P.join(env.APPDATA, 'Cyrene', 'models')
+    if (!env.APPDATA) throw new Error('resolveUserDataDir: APPDATA 未设置（Windows userData 解析失败）')
+    return P.join(env.APPDATA, dirName)
   }
   if (platform === 'darwin') {
-    if (!env.HOME) throw new Error('resolveModelsDir: HOME 未设置（macOS userData 解析失败）')
-    return P.join(env.HOME, 'Library', 'Application Support', 'Cyrene', 'models')
+    if (!env.HOME) throw new Error('resolveUserDataDir: HOME 未设置（macOS userData 解析失败）')
+    return P.join(env.HOME, 'Library', 'Application Support', dirName)
   }
-  if (env.XDG_CONFIG_HOME) return P.join(env.XDG_CONFIG_HOME, 'Cyrene', 'models')
-  if (env.HOME) return P.join(env.HOME, '.config', 'Cyrene', 'models')
-  throw new Error('resolveModelsDir: HOME 与 XDG_CONFIG_HOME 均未设置（Linux userData 解析失败）')
+  if (env.XDG_CONFIG_HOME) return P.join(env.XDG_CONFIG_HOME, dirName)
+  if (env.HOME) return P.join(env.HOME, '.config', dirName)
+  throw new Error('resolveUserDataDir: HOME 与 XDG_CONFIG_HOME 均未设置（Linux userData 解析失败）')
+}
+
+/** userData 根 + /models（装配目标目录）。分隔符必须同源用平台实现——`path.join` 恒用宿主分隔符，
+ *  在 Windows 宿主上断言 linux/darwin 公式时会混出反斜杠（本 spec 的平台矩阵正是为捕获这类漂移）。 */
+export function resolveModelsDir(env, flavor = 'default') {
+  const platform = env.platform ?? process.platform
+  const P = platform === 'win32' ? win32 : posix
+  return P.join(resolveUserDataDir(env, flavor), 'models')
 }
 
 function assertValidId(id) {
@@ -168,7 +188,9 @@ export async function installModel({ modelDir, id, displayName, licenseNote, for
 }
 
 function printUsage() {
-  console.log('用法: pnpm -F @cyrene/desktop live2d:install --model-dir <dir> --id <slug> --display-name <name> [--license-note <file>] [--force]')
+  console.log('用法: pnpm -F @cyrene/desktop live2d:install --model-dir <dir> --id <slug> --display-name <name> [--license-note <file>] [--force] [--user-data dev|default]')
+  console.log('  --user-data dev     装配到开发目录 <appData>/Cyrene-Dev/models（缺省；与 `pnpm dev` 一致）')
+  console.log('  --user-data default 装配到打包产物目录 <appData>/Cyrene/models')
 }
 
 async function main() {
@@ -178,7 +200,7 @@ async function main() {
     const a = args[i]
     if (a === '--force') { opts.force = true; continue }
     if (a === '--help' || a === '-h') { printUsage(); return 0 }
-    if (a === '--model-dir' || a === '--id' || a === '--display-name' || a === '--license-note') {
+    if (a === '--model-dir' || a === '--id' || a === '--display-name' || a === '--license-note' || a === '--user-data') {
       const next = args[i + 1]
       if (!next || next.startsWith('--')) throw new Error(`参数 ${a} 缺值`)
       opts[a.slice(2).replace(/-/g, '_')] = next
@@ -187,12 +209,16 @@ async function main() {
     }
     throw new Error(`未知参数: ${a}`)
   }
-  const { model_dir: modelDir, id, display_name: displayName, license_note: licenseNote } = opts
+  const { model_dir: modelDir, id, display_name: displayName, license_note: licenseNote, user_data: userDataFlavor } = opts
   if (!modelDir || !id || !displayName) {
     printUsage()
     throw new Error('缺必填参数: --model-dir / --id / --display-name')
   }
-  const modelsDir = resolveModelsDir(process.env)
+  if (userDataFlavor !== undefined && !USER_DATA_FLAVORS.includes(userDataFlavor)) {
+    printUsage()
+    throw new Error(`--user-data 只接受 ${USER_DATA_FLAVORS.join(' / ')}（收到 ${userDataFlavor}）`)
+  }
+  const modelsDir = resolveModelsDir(process.env, userDataFlavor ?? DEFAULT_CLI_USER_DATA_FLAVOR)
   const report = await installModel({
     modelDir, id, displayName,
     licenseNote, force: opts.force === true, modelsDir

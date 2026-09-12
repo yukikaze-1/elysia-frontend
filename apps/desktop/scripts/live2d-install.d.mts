@@ -18,15 +18,29 @@ export interface Live2dInstallEnv {
   XDG_CONFIG_HOME?: string
 }
 
+/** userData 风味：'dev' = 未打包 development 的 `Cyrene-Dev`，'default' = 打包产物的 `Cyrene` */
+export type UserDataFlavor = 'dev' | 'default'
+
+export const USER_DATA_FLAVORS: readonly UserDataFlavor[]
+
 /**
- * 纯函数：镜像 expectedUserDataBase() 的 userData 解析，再拼 /models。
+ * 纯函数：镜像 expectedUserDataBase() 的 userData 根解析（不含 /models）。
+ * 任一路径缺所需环境变量时抛错（错误文案含具体平台）；flavor 未知时抛错。
+ */
+export function resolveUserDataDir(env: Live2dInstallEnv, flavor?: UserDataFlavor): string
+
+/**
+ * 纯函数：userData 根 + /models（装配目标目录）。
  * 任一路径缺所需环境变量时抛错（错误文案含具体平台）。
  */
-export function resolveModelsDir(env: Live2dInstallEnv): string
+export function resolveModelsDir(env: Live2dInstallEnv, flavor?: UserDataFlavor): string
+
+/** CLI 默认装配风味（与 `pnpm dev` 的 userData 对齐） */
+export const DEFAULT_CLI_USER_DATA_FLAVOR: UserDataFlavor
 
 /**
  * 把原始模型目录装配成 userData/models/<id>/ 合规安装包。
- * 已存在且未传 force 时抛错（拒绝覆盖）。
+ * 已存在且未传 force 时抛错（拒绝覆盖）。返回装配报告（文件数/字节数/哈希数/入口 sha256）。
  */
 export function installModel(input: {
   modelDir: string
@@ -35,4 +49,13 @@ export function installModel(input: {
   licenseNote?: string
   force?: boolean
   modelsDir: string
-}): Promise<void>
+}): Promise<{
+  id: string
+  dst: string
+  files: number
+  bytes: number
+  hashes: number
+  modelFile: string
+  modelFileSha256: string
+  preview: string | null
+}>

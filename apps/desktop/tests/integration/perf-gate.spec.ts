@@ -47,6 +47,9 @@ const MULTI_SEGMENT_N = 100
 // 现按平台解析，公式与 Main 的 userData 解析（main/app/lifecycle.ts expectedUserDataBase()）及装配工具
 // scripts/live2d-install.mjs resolveModelsDir() 保持一致（三处同公式，改动须同步）：
 //   Windows: %APPDATA%\Cyrene\models ｜ Linux: XDG_CONFIG_HOME ?? $HOME/.config → <base>/Cyrene/models
+// 注意这里取的是**打包产物**目录（无 `-Dev` 后缀）：集成 harness 跑 `--mode test`，其 userData 判据是
+// `<tmp>/Cyrene`，dev 后缀只对未打包 development 生效（docs/19 §2）。
+// 开发态已装配的模型在 `Cyrene-Dev\models`——若本机只在 dev 下装过模型，本用例会按 existsSync 跳过（不伪红）。
 const homeBaseDir = process.platform === 'win32'
   ? process.env.APPDATA
   : (process.env.XDG_CONFIG_HOME || (process.env.HOME ? join(process.env.HOME, '.config') : undefined))

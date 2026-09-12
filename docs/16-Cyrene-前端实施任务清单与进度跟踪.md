@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档状态：** 维护中（项目当前状态的唯一事实源）
-**最后核验：** 2026-09-11
+**最后核验：** 2026-09-12
 **适用阶段：** 阶段 0～8
 **权威范围：** 当前阶段、完成状态、阻塞项、最近验证和下一步；任务定义与阶段门槛分别以 doc 10、doc 12 为准
 
@@ -37,6 +37,18 @@
 - 复评另记两条**治理问题（未处置）**：① `85f2602` 的 check-runs 数为 **0**——该 UI 大改从未被 CI 验证（本轮本地补齐门禁为绿；`116d529` 的 CI 以它为祖先一并覆盖）；② `ui/设计风格.md`（1349 行）落在 `docs/` 治理体系之外，`docs:check` 与 doc 00 均不覆盖，且已在响应式口径上与 doc 03 冲突（其 §35 仅列 1366+ 桌面档）。
 - **门禁判别力批次（2026-09-11，`b51ba49`；报告 P1-2／P2-5／P1-4）**：三项都针对同一类缺陷——「门禁全绿，功能却是坏的」。① IPC **三面对齐**：声明面 `IpcChannels`、装配面 Main 真实注册的 handler（mock 捕获注册调用）、可达面 preload 源码引用；实测三面逐通道一一对应（**88 = 88 = 88**）、三张例外表为空，此前「通道声明了、preload 也在调、Main 却没人注册」可全门禁绿灯。② **dev 形态集成覆盖**首次存在：此前集成套件全部跑 prod 形态，正是用户 Live2D「Failed to fetch」躲过所有测试的原因。③ `check:contract` **首次进入 CI** 并显式标注 NOT VERIFIED。
 - 本批**逐项变异验证**（共 10 次，变异均真正改变代码路径且先重建产物）：A 删注册点→红；B 加孤儿声明通道→红；C preload 指向别通道→红；D 令 preload 扫描器退化→红；**E 关掉 dev IPC 供给→端到端红于 `'Failed to fetch'`（逐字复现用户现象）**；F 移除 `@fs` deny→红并点名目标 URL；G 去掉 CSP 头→红；H 不注入 dev URL→红于 `page.url()=cyrene://renderer/index.html`；I／J 恢复契约段静默跳过→红。
+- **Windows 运行时取证与 CI 平台归属（2026-09-12，本机取证；CI 侧未取证）**：本机 full 集成套件 `27 files / 154 passed + 2 skipped`、350.7s，CI Linux 同套件为 558.9s——同一套件在 Windows 上快 1.6×（Live2D 文件 2.24×）。
+  - **平台分支实证**：`ipc-security` 在 Windows 走 `凭据分支 = empty`（safeStorage 可用 ⇒ **真实 DPAPI 加密往返**），CI Linux 至今恒为 `unavailable`、**只走降级**——「凭据真正写入」这条主路径此前从未被 CI 执行。
+  - **覆盖缺口**：`protocol-handler` 两条 symlink 逃逸用例无 symlink 权限时静默跳过 ⇒ **Linux integration job 不得被替换**。
+  - **已落地（未推送）**：`ci.yml` 的 `windows` job 改钉 `[self-hosted, Windows, X64]` + `timeout-minutes: 45`（内容仍是构建级）；新增 `windows-runtime` 与 `linux-runtime` 两个 workflow 作取证面（独立文件、无作业级 `continue-on-error`、`workflow_dispatch` + 周定时）；`ci.yml` 加 `concurrency`（同 ref 只留最新一次，取消被顶掉的重复 push；代价是中间提交不留完整 CI 记录，已写入注释）。
+  - **self-hosted 登记（2026-09-12）**：`yomu-win11`（Windows，标签 `fe-win`）与 `yomu-X99`（Ubuntu，标签 `fe-linux`）。标签刻意按 OS 区分——此前两台共用裸仓库名标签 `elysia-frontend`，写 `runs-on: elysia-frontend` 会同时匹配两台。当前 pin 均用 OS 限定标签。
+  - **NOT VERIFIED**：Session 0（runner 为服务形态、无桌面无 GPU）能否跑全量集成、首次 run 冷启动代价、两个 workflow 是否被 GitHub 接受——待 push 后由 CI 产出。
+  - runner 实测形态：服务账号 `NT AUTHORITY\NETWORK SERVICE` ⇒ **看不到**开发者 profile 的 electron/pnpm/Playwright 缓存，故「搬过来就省下载」不成立，收益实为计费归零。详见[决策记录](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md)。
+- **开发环境隔离审计与整改（2026-09-12，本机取证）**：本机并行开发多套 Electron 项目，逐项核对渲染端口、userData、调试端口、本地数据与运行期版本后修掉两处真实冲突。
+  - ① **渲染端口从裸默认值改为项目固定号**：此前 `renderer.server` 未配置，Vite 走 5173 且 `strictPort` 未开——同机另一套 Electron 项目（`Cyrene-Agent`，同样 5173）谁先启动谁占，后启动者被**静默换到 5174**，而主进程拿到的 `ELECTRON_RENDERER_URL` 随之漂移，文档/现场/CSP 三处口径分叉。现固定 **5373 + `strictPort`**，端口被占用即报错退出（实测 `Error: Port 5373 is already in use`，exit 1），并在主进程启动期回读比对注入的 origin。
+  - ② **dev 与打包产物 userData 分仓**：此前两者共用 `%APPDATA%\Cyrene`，`pnpm dev` 会直接改写用户正式版的凭据、`settings.json`、会话草稿、Live2D 模型目录与日志审计。现开发态为 `%APPDATA%\Cyrene-Dev`；风味判定收敛在 `resolveAppDataFlavor`（仅「未打包 + development」加后缀，`--mode test` 不加——集成 harness 已有更强的 appData 覆写门），且 `setAppDataFlavor` 仍早于 `requestSingleInstanceLock`（单实例锁派生自 userData 路径，顺序颠倒会让 dev 与正式版互相顶掉）。
+  - 端口与地址的**唯一来源**收敛到 `src/main/config/dev-ports.ts`（`electron.vite.config.ts` 与主进程共用），不再是散落的字面量；Live2D 装配 CLI 默认装到开发目录，`--user-data default` 才写打包产物目录。调试端口维持 N/A：固定 `--remote-debugging-port`（含 9222/9223）被安全门在绑定前拒绝，不为开发隔离新增号位。
+  - 验证：`pnpm dev` 实跑确认 dev server 监听 `http://127.0.0.1:5373`、userData 落到 `Cyrene-Dev`（启动日志 `app:user-data-ready`）、并发第二次启动按 `strictPort` 报错退出；`pnpm typecheck`／`lint`／`test`（239 文件 2927 通过）／`build`／`docs:check` 全绿；新增 `dev-ports.spec.ts`（14）、`app-data-flavor.spec.ts`（9）并把 CLI/集成 harness 的口径同步钉住。集成门禁另补一条 `sessionData` 隔离断言（它不单独 setPath、只跟随 userData；只看 userData 的断言发现不了会话缓存漂到公共目录）。资源登记与新增本地服务的取号规则见 [doc 19](19-Cyrene-前端开发环境隔离与资源登记.md)。
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
@@ -336,6 +348,12 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 9. 另：type-aware lint 的全集规则（实测 1171 条，多为风格类）与测试目录接入（85 条）同属独立一轮；当前已接的三条高信号规则只覆盖 `src/**`。
 10. **P2 批次（第 5 轮）的未做项，逐条在此列明，不藏在提交信息里**：① **P2-7 / M-24**——`prefers-reduced-motion` 与自有"减少动态"开关对 CSS 动画的门控**未做**（doc 03 §14 的对应条款因此未满足），需先定实现形态（根类名 vs 仅媒体查询）；② **P2-9 / M-26**——录音 PCM 缓冲（约 38 MB + 数万个小对象）**未做**，评审自标其风险为"触及音频热路径与 `onStop(AudioBuffer)` 契约"；③ **P2-10 / I-06**——`createDesktopApiMock` 共享 helper（约 40 个文件的迁移）**未做**，纯重构、无行为收益。
 11. **本轮的文档同步（2026-09-12）**：行为变更已同步到各自维护文档而非只写本文件——doc 03（§3.1 断点范围修正 + §14 补两条新交互口径）、doc 05（窗口可见性门 + 纹理显式释放）、doc 06（`BREAKPOINTS` 删除后的更正）、doc 07（§6.3 IPC 大小上限的落实状态与运行时撤回理由）、doc 08（新增/变更门禁矩阵 12 行）、doc 09（打包命令变更、生产依赖归类与 16.26 MB 实测）。
+12. **CI 平台归属的后续动作（2026-09-12 起，按序）**：
+    - ① push 后手动 dispatch `windows-runtime` 与 `linux-runtime`，分别取得 Session 0（无桌面）与自建 Ubuntu 下的首次真实结果——**在此之前「Windows 能跑全量集成」只是本机 Session 1 的证据、「自建 Linux 更快」只是推算，均不得当作 CI 事实**。
+    - ② 记录 self-hosted `windows` job 的首次冷启动耗时（服务账号 profile 为空）与转暖后的稳定值。
+    - ③ 若 `windows-runtime` 在观察窗口内持续绿，再决定是否提升为必过门禁；提升前必须先处置 `protocol-handler` 两条 symlink 用例的跳过缺口，否则「少测两条安全边界」会被绿光掩盖。
+    - ④ 与平台无关的 CI 时长优化（integration 分片、`unit`/`windows` 两 job 的 Electron 二进制重复下载、`orphan-apps` 的 `electronCount` 误报）见[决策记录 §6](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md)，**尚未实施**。
+    - ⑤ Linux 侧：`yomu-X99` 已登记（标签 `fe-linux`）但**仍为 offline**（`config.sh` 不自动启动）——需先 `svc.sh install/start`，并手工装一次性系统依赖（xvfb + `playwright install-deps chromium`，`--with-deps` 在 self-hosted 不可用），再由 ① 取基线（对照：托管 558.92s / 278.8s，本机 i5 350.73s / 124.7s），据此定标 integration 分片。
 5.1 **H-06／H-07 侦察已定案（2026-09-11，只读复核）**，两处与评审措辞不符，修前须知：① 评审称公开状态卡片「既不自愈也不报错」**不准确**——实际会显示「读取失败 + 重试」并给出错误码，只是**不会自动恢复**（`loadState` 只有两个调用方，无轮询/重订阅）；② 更严重的是侦察发现的**确定性缺陷**：mock 模式下 `createCharacter`／`cloneCharacter` **从不创建 `states` 条目**，故**每一个用户自建角色**的公开状态卡片在 mock 下永久报 `CHARACTER_INSTANCE_NOT_FOUND`（全仓无 `instance-custom*` 用例，从未被覆盖）。修法方向：让读路径携带 revision（`getCharacterState(instanceId, expectedRevision)`），由 Main 在一个键空间上做唯一栅栏，并删掉组件层第三份重复规则；同时修 mock 的 state 映射。
 5. **H-01 的取舍已按推荐定案**：采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒——理由是这两个目录的同用户临时文件同样可能含密钥，而附件链是 Renderer 唯一能用字符串指认本地文件的地方；代价明确且**改一处即可放开**。H-12 的两处取舍亦已定案：`uncaughtException` 接管 fail-safe（弹窗 + 退出），`unhandledRejection` 只留痕不终止。
 6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。

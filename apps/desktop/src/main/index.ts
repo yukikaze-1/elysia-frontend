@@ -7,13 +7,14 @@ import { release as osRelease, type as osType } from 'node:os'
 import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, PushChannels, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
 import type { Message } from '@shared/contracts/message'
-import { applyTestAppDataOverride, installAppIdentity, expectedUserDataBase } from './app/lifecycle'
+import { applyTestAppDataOverride, installAppIdentity, expectedUserDataBase, resolveAppDataFlavor, setAppDataFlavor } from './app/lifecycle'
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
 import { getMainWindow } from './ipc/registry'
 import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
 import { findForbiddenDebugLaunch } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
+import { assertDevServerOrigin, resolveDevDefaultBackendOrigin } from './config/dev-ports'
 import { evaluateDevRendererUrl } from './config/trusted-renderer-origin'
 import { resolveBackendMode } from './config/backend-mode'
 import { ConnectionConfig } from './connection/connection-config'
@@ -125,6 +126,10 @@ async function main(): Promise<void> {
     // 不保证 APPDATA env 能改写 app.getPath('appData')，故使用显式 test-only setPath 门。
     const mode = typeof __APP_MODE__ === 'string' ? __APP_MODE__ : 'production'
     applyTestAppDataOverride(mode)
+    // 开发隔离（docs/19）：`pnpm dev`（未打包 development）落到 `<appData>/Cyrene-Dev`，与打包产物
+    // 的 `<appData>/Cyrene` 彻底分仓。必须在 installAppIdentity()（进而 requestSingleInstanceLock）
+    // 之前设定：单实例锁派生自 userData 路径，顺序颠倒会让 dev 与正式版互相顶掉。
+    setAppDataFlavor(resolveAppDataFlavor(mode, app.isPackaged))
     registerCyreneScheme() // app ready 前
     ident = installAppIdentity()
   } catch (e) {
@@ -194,6 +199,21 @@ async function main(): Promise<void> {
       if (devEval.status === 'untrusted') {
         fatal(`ELECTRON_RENDERER_URL 指向不受信地址：${devEval.reason}（仅允许回环或 CYRENE_DEV_RENDERER_ORIGINS 白名单 http 地址）`)
         return
+      }
+      // 开发隔离（docs/19）：dev 形态下运行时 origin 必须与唯一端口配置（config/dev-ports.ts）一致。
+      // 与上面「受信」门互补而非重复：受信门判「能不能连」（回环/白名单，任意端口都受信），
+      // 本断言判「是不是本项目规划的那个端口」——端口配置漂移或多项目共用端口时当场炸掉，
+      // 而不是让调试现场静默跑到另一个端口上。
+      // 例外：测试 harness（与调试门同一个显式标记）用 port 0 起自己的 dev server，以免与开发者
+      // 正在跑的 `pnpm dev` 抢 5373——只放宽端口，回环约束仍然生效。
+      if (devEval.status === 'trusted') {
+        const devPortCheck = assertDevServerOrigin(process.env['ELECTRON_RENDERER_URL'], {
+          allowAnyLoopbackPort: process.env['CYRENE_TEST_HARNESS'] === '1'
+        })
+        if (!devPortCheck.ok) {
+          fatal(`开发服务器端口与配置不一致：${devPortCheck.reason}`)
+          return
+        }
       }
     }
     const store = new CredentialStore(join(dirs.config, 'credentials.json'), safeStorage, isKeyAllowed, safeRoot)
@@ -427,14 +447,24 @@ async function main(): Promise<void> {
       (e) => { audit({ type: 'endpoint:set', summary: e.origin }) }
     )
     // UII-QQ 设置页批次：开发模式默认 Endpoint——仅「未打包（dev）+ 真实模式」且会话内未配置 endpoint 时注入
-    // http://127.0.0.1:8765；打包/production 与 mock 演示模式不注入。守卫在 ConnectionConfig.maybeApplyDevDefault：
+    // 开发默认后端地址；打包/production 与 mock 演示模式不注入。地址的**唯一来源**是 config/dev-ports.ts
+    // （可用 CYRENE_DEV_BACKEND_ORIGIN 覆盖，仍受「http 仅回环」校验收口）。守卫在 ConnectionConfig.maybeApplyDevDefault：
     // 无凭据直接应用；已有凭据仅当绑定 origin 与默认地址一致时恢复（重启后 endpoint 内存清空的本机场景），
     // 绑定其他 origin / 仅 Token 无绑定一律不动，绝不清除已存凭据；用户本次会话保存的其他地址也不会被覆盖
     //（启动期 getEndpoint() 为空才尝试）。
     if (!app.isPackaged && !useMock) {
-      await connConfig.maybeApplyDevDefault('http://127.0.0.1:8765').catch((e) => {
-        diagnostics?.logger.warn('endpoint:dev-default-failed', { message: sanitize(e instanceof Error ? e.message : String(e)) })
-      })
+      let devBackendOrigin: string | undefined
+      try {
+        devBackendOrigin = resolveDevDefaultBackendOrigin(process.env)
+      } catch (e) {
+        fatal(e instanceof Error ? e.message : String(e))
+        return
+      }
+      if (devBackendOrigin !== undefined) {
+        await connConfig.maybeApplyDevDefault(devBackendOrigin).catch((e) => {
+          diagnostics?.logger.warn('endpoint:dev-default-failed', { message: sanitize(e instanceof Error ? e.message : String(e)) })
+        })
+      }
     }
     // 阶段 3 G2 SessionStore（Main 持久化边界，docs/06 §14）：必须在 createChatService 之前装配（chat-service 钩子需要它）。
     // getActiveConversationId 闭包引用 chatBridge.svc（此时未赋值，但只在 connect 后的 persistSession 才调用，懒绑定安全）。

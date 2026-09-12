@@ -52,7 +52,10 @@ let wankoInstalled = false
 
 async function installModels(root: string): Promise<{ haru: boolean; lil: boolean; wanko: boolean }> {
   const env = { ...process.env, ...platformEnv(root) }
-  const runCli = (args: string[]) => execFileP(process.execPath, [...CLI_ARGS, ...args], { env })
+  // `--user-data default`：本 spec 的 app 跑 `--mode test`，其 userData 是无后缀的 `Cyrene`（dev 后缀只对
+  // 未打包 development 生效，见 docs/19）；CLI 缺省装到 Cyrene-Dev，故此处必须显式对齐，否则 freshUserData()
+  // 克隆出的目录里没有 app 会读的那一份模型（表现为「已发现 0 个模型」的一整片假红）。
+  const runCli = (args: string[]) => execFileP(process.execPath, [...CLI_ARGS, '--user-data', 'default', ...args], { env })
   await runCli(['--model-dir', HARU_SRC, '--id', 'haru', '--display-name', 'Haru'])
   await runCli(['--model-dir', WANKO_SRC, '--id', WANKO_ID, '--display-name', 'Wanko'])
   let lil = false
@@ -419,11 +422,17 @@ describe('阶段5批次A Live2D Electron 集成（A7）', () => {
     const launched = await launchL2d(ud)
     try {
       const appData = await launched.app.evaluate(({ app }) => app.getPath('appData'))
-      // 以 app 实际 appData 为 env，重算 CLI 装配目标——防装配路径漂移
-      const cliModels = resolveModelsDir({ ...platformEnv(appData), platform: process.platform })
+      // 以 app 实际 appData 为 env，重算 CLI 装配目标——防装配路径漂移。
+      // flavor 传 'default'：集成 harness 跑 `--mode test`，Main 的 userData 也是无后缀的 `Cyrene`
+      // （dev 后缀只对未打包 development 生效，见 docs/19）。
+      const cliModels = resolveModelsDir({ ...platformEnv(appData), platform: process.platform }, 'default')
       expect(cliModels).toBe(join(appData, 'Cyrene', 'models'))
       // 该目录确实装着已装配模型
       expect(existsSync(join(appData, 'Cyrene', 'models', 'haru', 'manifest.json'))).toBe(true)
+      // 开发隔离守卫：dev 风味必须落在**另一个**目录，否则 `pnpm dev` 会读到/写到正式版模型
+      expect(resolveModelsDir({ ...platformEnv(appData), platform: process.platform }, 'dev'))
+        .toBe(join(appData, 'Cyrene-Dev', 'models'))
+      expect(cliModels).not.toBe(resolveModelsDir({ ...platformEnv(appData), platform: process.platform }, 'dev'))
     } finally { await closeApp(launched) }
   })
 

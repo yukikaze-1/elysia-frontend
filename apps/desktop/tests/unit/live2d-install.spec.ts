@@ -1,6 +1,7 @@
 // tests/unit/live2d-install.spec.ts
 // Task 4（A5，spec §3.5 / brief Step 2/4）：装配工具 CLI 单测——
-//  - resolveModelsDir 纯函数跨平台 env 矩阵（镜像 expectedUserDataBase 的平台公式，不 import Electron）；
+//  - resolveModelsDir / resolveUserDataDir 纯函数跨平台 env 矩阵（镜像 expectedUserDataBase 的平台公式 + 开发隔离
+//    风味后缀，见 docs/19；本 spec 不 import Electron）；
 //  - CLI spawn（strip-types 入口，同 package.json live2d:install）走完整装配：文件布局 / manifest 字段 /
 //    integrity 排除自身且含 LICENSE/preview / 缺纹理/非目录/非法 id → 非零退出 / --force 覆盖 / 无 --force 拒绝 /
 //    --license-note 自定义。
@@ -13,7 +14,7 @@ import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { resolveModelsDir } from '../../scripts/live2d-install.mjs'
+import { DEFAULT_CLI_USER_DATA_FLAVOR, resolveModelsDir, resolveUserDataDir } from '../../scripts/live2d-install.mjs'
 
 const execFileP = promisify(execFile)
 
@@ -58,8 +59,31 @@ function entryOf(integrity: IntegrityFile, path: string): IntegrityEntry {
   return found
 }
 
-/** spawn 实际 CLI（同 package.json live2d:install 的 node flags） */
+/**
+ * spawn 实际 CLI（同 package.json live2d:install 的 node flags）。
+ *
+ * 恒显式传 `--user-data default`：isolated 环境里断言的是**打包产物目录**公式，且不依赖 CLI 缺省值。
+ * 缺省值（dev）另有专门用例（`--user-data dev/缺省` 与默认值契约），两者互不遮挡。
+ */
 async function runCli(args: string[], env: Record<string, string>): Promise<CliResult> {
+  try {
+    const { stdout, stderr } = await execFileP(process.execPath, [
+      '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON',
+      '--experimental-strip-types',
+      CLI_SCRIPT,
+      '--user-data', 'default',
+      ...args
+    ], { env: { ...process.env, ...env }, cwd: DESKTOP_ROOT, maxBuffer: 8 * 1024 * 1024 })
+    return { code: 0, stdout, stderr }
+  } catch (err) {
+    const e = err as { code?: unknown; stdout?: string; stderr?: string }
+    const code = typeof e.code === 'number' ? e.code : 1
+    return { code, stdout: e.stdout ?? '', stderr: e.stderr ?? '' }
+  }
+}
+
+/** spawn CLI 且**不**注入 --user-data（用于验证缺省风味 = dev） */
+async function runCliRaw(args: string[], env: Record<string, string>): Promise<CliResult> {
   try {
     const { stdout, stderr } = await execFileP(process.execPath, [
       '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON',
@@ -196,6 +220,32 @@ describe('resolveModelsDir（跨平台 env 矩阵，镜像 expectedUserDataBase�
       : { HOME: '/home/demo', XDG_CONFIG_HOME: '/tmp/xdg' }
     expect(resolveModelsDir(env))
       .toBe(resolveModelsDir({ platform: process.platform, ...env }))
+  })
+
+  // —— 开发隔离（docs/19，2026-09-12）：userData 风味后缀。dev 与 default 必须是两个不同目录，
+  //    否则 `pnpm dev` 会直接改写用户正式版的模型（进而 settings/凭据同仓）。
+  it('flavor=dev → Cyrene-Dev 后缀；default → 无后缀', () => {
+    const env = { platform: 'win32', APPDATA: 'C:\\Users\\demo\\AppData\\Roaming' }
+    expect(resolveUserDataDir(env, 'dev')).toBe('C:\\Users\\demo\\AppData\\Roaming\\Cyrene-Dev')
+    expect(resolveUserDataDir(env, 'default')).toBe('C:\\Users\\demo\\AppData\\Roaming\\Cyrene')
+    expect(resolveModelsDir(env, 'dev')).toBe('C:\\Users\\demo\\AppData\\Roaming\\Cyrene-Dev\\models')
+    // 缺省 = default（既有调用与集成 harness 口径不变）
+    expect(resolveUserDataDir(env)).toBe(resolveUserDataDir(env, 'default'))
+  })
+
+  it('flavor=dev 在 Linux/macOS 同样加后缀（平台公式与后缀正交）', () => {
+    expect(resolveModelsDir({ platform: 'linux', HOME: '/home/demo' }, 'dev'))
+      .toBe('/home/demo/.config/Cyrene-Dev/models')
+    expect(resolveModelsDir({ platform: 'darwin', HOME: '/Users/demo' }, 'dev'))
+      .toBe('/Users/demo/Library/Application Support/Cyrene-Dev/models')
+  })
+
+  it('未知 flavor → 抛错（不静默装配到别的目录）', () => {
+    expect(() => resolveUserDataDir({ platform: 'win32', APPDATA: 'C:\\x' }, 'staging' as never)).toThrow()
+  })
+
+  it('CLI 缺省风味 = dev（与 pnpm dev 的 userData 对齐）', () => {
+    expect(DEFAULT_CLI_USER_DATA_FLAVOR).toBe('dev')
   })
 })
 
@@ -375,5 +425,38 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     // integrity 应含 model3.json（可被 registry/resolve 供给）
     const integrity = await readIntegrity(dst)
     expect(integrity.files.map((f) => f.path)).toContain('model3.json')
+  })
+
+  // —— 开发隔离（docs/19）：CLI 缺省装配到开发目录，`--user-data default` 才落到打包产物目录 ——
+  it('不传 --user-data → 缺省装到 Cyrene-Dev（与 pnpm dev 的 userData 一致）', async () => {
+    const { code, stdout } = await runCliRaw(
+      ['--model-dir', haruNoIconSrc, '--id', 'haru-devdefault', '--display-name', 'Haru DevDefault'],
+      userDataEnv(userDataRoot)
+    )
+    expect(code).toBe(0)
+    expect(stdout).toContain(join('Cyrene-Dev', 'models'))
+    const dst = join(userDataRoot, 'Cyrene-Dev', 'models', 'haru-devdefault')
+    expect((await lstat(join(dst, 'manifest.json'))).isFile()).toBe(true)
+  })
+
+  it('--user-data dev 显式指定 → 同样装到 Cyrene-Dev（与 default 严格分仓）', async () => {
+    const { code } = await runCliRaw(
+      ['--model-dir', haruNoIconSrc, '--id', 'haru-devflag', '--display-name', 'Haru DevFlag', '--user-data', 'dev'],
+      userDataEnv(userDataRoot)
+    )
+    expect(code).toBe(0)
+    const devDst = join(userDataRoot, 'Cyrene-Dev', 'models', 'haru-devflag')
+    expect((await lstat(join(devDst, 'manifest.json'))).isFile()).toBe(true)
+    // 打包产物目录里不得出现同名模型
+    await expect(lstat(join(modelsDirFor(userDataRoot), 'haru-devflag'))).rejects.toThrow()
+  })
+
+  it('--user-data 非法值 → 非零退出（不静默装配到其它目录）', async () => {
+    const { code, stderr } = await runCliRaw(
+      ['--model-dir', haruNoIconSrc, '--id', 'haru-badflavor', '--display-name', 'X', '--user-data', 'staging'],
+      userDataEnv(userDataRoot)
+    )
+    expect(code).toBe(1)
+    expect(stderr).toContain('--user-data')
   })
 })

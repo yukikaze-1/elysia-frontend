@@ -11,8 +11,47 @@ export interface AppIdentity {
   setPathOk: boolean
 }
 
+/**
+ * userData 目录「风味」（2026-09-12 开发环境隔离审计）。
+ *
+ * 此前开发态与打包产物共用 `%APPDATA%\Cyrene`，后果是**开发运行会直接改写正式版数据**：
+ * 连接凭据/Token、`settings.json`、会话与草稿、Live2D 模型安装目录、日志与审计全部同仓。
+ * 本机同时开发多个 Electron 项目时这更危险——任一项目的 dev 进程都可能写到用户真实在用的那份数据上。
+ *
+ * 因此开发态固定加 `-Dev` 后缀，形成：
+ *   - 未打包 development（`pnpm dev`）：`<appData>/Cyrene-Dev`
+ *   - 打包 production：`<appData>/Cyrene`（不变，用户正式数据路径零改动）
+ *   - `--mode test`：`<appData>/Cyrene`（不加后缀）——集成 harness 已由 `CYRENE_TEST_APP_DATA`
+ *     显式覆写 appData 到 mkdtemp 临时目录（test + harness + 未打包三重门，见 test-app-data.ts），
+ *     其隔离强度高于后缀，且 tests/integration/helpers/app.ts 逐用例断言 `<tmp>/Cyrene`；
+ *     再加一层后缀只会让两处口径分叉而无收益。
+ */
+export type AppDataFlavor = 'default' | 'dev'
+
+/** 非打包 development 恒 dev 风味；test/production 一律 default（判据收敛在此，调用方不得自行推导） */
+export function resolveAppDataFlavor(mode: string, isPackaged: boolean): AppDataFlavor {
+  return !isPackaged && mode === 'development' ? 'dev' : 'default'
+}
+
+let appDataFlavor: AppDataFlavor = 'default'
+
+/**
+ * 设定本次进程的 userData 风味。**必须在 expectedUserDataBase() / installAppIdentity() 之前调用**
+ * （main() 在 applyTestAppDataOverride 旁统一调用）。默认 'default' 使未显式设定的环境
+ * （单测、脚本）落到生产同名路径，不会意外读到 `-Dev` 目录。
+ */
+export function setAppDataFlavor(flavor: AppDataFlavor): void {
+  appDataFlavor = flavor
+}
+
+/** 仅测试用：把模块级风味复位，避免同一 vitest worker 内跨用例串味 */
+export function resetAppDataFlavorForTest(): void {
+  appDataFlavor = 'default'
+}
+
 export function expectedUserDataBase(): string {
-  return join(app.getPath('appData'), 'Cyrene')
+  const base = join(app.getPath('appData'), 'Cyrene')
+  return appDataFlavor === 'dev' ? `${base}-Dev` : base
 }
 
 function samePath(a: string, b: string): boolean {
@@ -63,6 +102,14 @@ export function applyTestAppDataOverride(mode: string, env: NodeJS.ProcessEnv = 
   return testAppData
 }
 
+/**
+ * 应用身份安装：目录准备 + `app.setName` + `app.setPath('userData')`。
+ *
+ * **调用顺序是安全不变式**：必须在 `app.requestSingleInstanceLock()` 之前完成（main() 即如此）。
+ * Electron 的单实例锁派生自 `userData` 路径，先锁后 setPath 会让两套身份（如 dev 与打包产物、
+ * 或本机另一套 Electron 项目）互相认成同一实例而直接 exit(0)。本项目 `setName` 后的名字是
+ * 全局共享的 "Cyrene"（诊断导出与窗口标题口径依赖它），身份唯一性因此由 userData 路径承担。
+ */
 export function installAppIdentity(): AppIdentity {
   let baseCreated = false
   let setPathOk = true

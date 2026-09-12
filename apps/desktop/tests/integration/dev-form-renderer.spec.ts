@@ -77,7 +77,9 @@ beforeAll(async () => {
   masterDir = mkdtempSync(join(tmpdir(), 'cy-devform-master-'))
   await execFileP(
     process.execPath,
-    [...CLI_ARGS, '--model-dir', WANKO_SRC, '--id', WANKO_ID, '--display-name', 'Wanko'],
+    // `--user-data default`：本 spec 的 app 跑 `--mode test`，userData 是 `<tmp>/Cyrene`（dev 后缀只对未打包
+    // development 生效，见 docs/19）；CLI 缺省装到 Cyrene-Dev，不显式对齐就会克隆出一份 app 读不到的模型。
+    [...CLI_ARGS, '--user-data', 'default', '--model-dir', WANKO_SRC, '--id', WANKO_ID, '--display-name', 'Wanko'],
     { env: { ...process.env, ...platformEnv(masterDir) } }
   )
 

@@ -36,7 +36,10 @@ export async function startRendererDevServer(): Promise<RendererDevServer> {
     ...(cfg as ViteInlineConfig),
     // 配置已由 electron-vite 解析完毕：禁止 Vite 再去 cwd 找一遍配置文件（会二次求值并且 root 语义不同）
     configFile: false,
-    server: { ...(cfg.server ?? {}), host: '127.0.0.1', port: 0 }   // port 0 = 内核分配空闲端口，避免与 pnpm dev 撞 5173
+    // port 0 = 内核分配空闲端口：测试进程不得与开发者正在跑的 `pnpm dev` 抢 5373（固定端口，strictPort）。
+    // Main 侧的端口一致性断言（config/dev-ports.ts assertDevServerOrigin）对 harness 显式放行任意回环端口，
+    // 否则本形态会被判成「端口漂移」——放行只针对端口，回环约束不放宽（见 docs/19）。
+    server: { ...(cfg.server ?? {}), host: '127.0.0.1', port: 0 }
   })
   await server.listen()
 

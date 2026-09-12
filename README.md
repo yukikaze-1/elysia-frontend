@@ -38,7 +38,11 @@ fnm use 22.23.0         # 新开的终端需要重新激活 Node 版本
 pnpm dev
 ```
 
-`pnpm dev` 会构建主进程/preload 并在 `http://localhost:5173` 起 Renderer，然后拉起 Electron 窗口（标题 `Cyrene`）。开发态 CI 之外的启动只需这一条命令。
+`pnpm dev` 会构建主进程/preload 并在 **`http://127.0.0.1:5373`** 起 Renderer，然后拉起 Electron 窗口（标题 `Cyrene`）。开发态 CI 之外的启动只需这一条命令。
+
+端口是**固定**的（`strictPort`）：5373 被占用时 Vite 直接报错退出，不会静默换到 5174。同机并行开发多个 Electron 项目时按 [doc 19](docs/19-Cyrene-前端开发环境隔离与资源登记.md) 的项目号段取号。
+
+开发态的 userData 是 `%APPDATA%\Cyrene-Dev`，与打包产物的 `%APPDATA%\Cyrene` 分仓——`pnpm dev` 不会写入正式版的凭据、设置、会话或模型目录。
 
 Linux 把 `winget install Schniz.fnm` 换成 `curl -fsSL https://fnm.vercel.app/install | bash`，其余命令相同。
 
@@ -52,7 +56,7 @@ Linux 把 `winget install Schniz.fnm` 换成 `curl -fsSL https://fnm.vercel.app/
 pnpm live2d:install --model-dir <模型目录> --id <slug> --display-name "<显示名>"
 ```
 
-模型目录需含 `model3.json`、`.moc3` 与至少一张贴图（可选 `icon.png` 作为预览图；可选 `--license-note <file>` 注入许可说明）。脚本会计算 SHA-256 完整性清单并安装到 userData 的 `models/`（Windows：`%APPDATA%\Cyrene\models`）。详见 [doc 17 §2.1](docs/17-Cyrene-前端开发环境与依赖安装记录.md)。
+模型目录需含 `model3.json`、`.moc3` 与至少一张贴图（可选 `icon.png` 作为预览图；可选 `--license-note <file>` 注入许可说明）。脚本会计算 SHA-256 完整性清单并安装到 userData 的 `models/`（Windows 开发态：`%APPDATA%\Cyrene-Dev\models`；加 `--user-data default` 则装到打包产物目录 `%APPDATA%\Cyrene\models`）。详见 [doc 17 §3.1](docs/17-Cyrene-前端开发环境与依赖安装记录.md) 与 [doc 19 §6](docs/19-Cyrene-前端开发环境隔离与资源登记.md)。
 
 模型授权见 `EXT-01`（doc 16 §4.1）：**只装配来源与授权明确的模型**。
 
@@ -97,6 +101,7 @@ pnpm start
 - [doc 00：文档索引与阅读顺序](docs/00-Cyrene-前端文档索引与阅读顺序.md)——文档地图、职责和维护规则。
 - [doc 16：当前实施状态](docs/16-Cyrene-前端实施任务清单与进度跟踪.md)——当前阶段、阻塞项、最近验证和下一步。
 - [doc 17：环境基线](docs/17-Cyrene-前端开发环境与依赖安装记录.md)——Windows/Linux 安装、启动与联调环境。
+- [doc 19：开发环境隔离与资源登记](docs/19-Cyrene-前端开发环境隔离与资源登记.md)——开发端口段、应用身份、userData 与本地数据隔离，多项目并行开发规则。
 - [Review 与验收索引](docs/review/README.md)——按日期检索决策、整改、联调和验收证据。
 - [Spec、Plan 与 Final Report 索引](docs/superpowers/README.md)——历史设计和实施计划。
 - [UI 精修整改清单](docs/2026-08-29-UI精修整改清单.md)——阶段 8 前 UI/布局/风格改动的规则与限制。

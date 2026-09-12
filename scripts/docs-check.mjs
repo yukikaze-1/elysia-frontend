@@ -178,13 +178,15 @@ const coreDocs = readdirSync(DOCS)
   .filter((name) => /^\d{2}-.*\.md$/.test(name))
   .sort()
 
-const expectedPrefixes = Array.from({ length: 19 }, (_, index) =>
+// 00～19：19 是 2026-09-12 新增的开发环境隔离与资源登记（多项目并行开发的端口/userData 口径）。
+// 新增核心编号文档时必须同步这里的长度（否则「文档总数不符」会静默放过缺失编号）。
+const expectedPrefixes = Array.from({ length: 20 }, (_, index) =>
   String(index).padStart(2, '0')
 )
 
 if (coreDocs.length !== expectedPrefixes.length) {
   fail(
-    `Expected ${expectedPrefixes.length} core documents (00–18), found ${coreDocs.length}`
+    `Expected ${expectedPrefixes.length} core documents (00–19), found ${coreDocs.length}`
   )
 }
 

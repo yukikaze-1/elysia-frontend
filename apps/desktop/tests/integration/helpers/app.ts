@@ -88,9 +88,16 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
   try {
     // 第二道 fail-closed：主进程已成功启动后，在任何测试动作前核对 Electron 实际 appData/userData。
     // 若未来 Main 覆盖门被重构坏，助手直接失败，绝不让用例继续操作真实凭据/缓存。
-    const actual = await app.evaluate(({ app }) => ({ appData: app.getPath('appData'), userData: app.getPath('userData') }))
+    // sessionData 一并核对：HTTP 缓存/Cookies/Service Worker 等会话态落在它下面，若它漂到 appData 之外
+    // （Electron 默认在 userData 下，但不保证），多项目并行开发就会共用同一份会话缓存（docs/19 §6）。
+    const actual = await app.evaluate(({ app }) => ({
+      appData: app.getPath('appData'),
+      userData: app.getPath('userData'),
+      sessionData: app.getPath('sessionData')
+    }))
     const isolated = comparablePath(actual.appData) === comparablePath(userData)
       && comparablePath(actual.userData) === comparablePath(join(userData, 'Cyrene'))
+      && comparablePath(actual.sessionData).startsWith(comparablePath(join(userData, 'Cyrene')))
     if (!isolated) throw new Error('Electron 集成测试 appData/userData 未指向临时隔离目录')
 
     const page = await app.firstWindow()
