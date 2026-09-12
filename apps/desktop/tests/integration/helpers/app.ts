@@ -9,6 +9,21 @@ import { OWNER_SWITCH } from './orphan-apps'
 
 export interface LaunchedApp { app: ElectronApplication; page: Page; userData: string }
 
+/**
+ * 套件级窗口呈现模式（Silent Test Window Mode，2026-09-12）。
+ *
+ * 默认为 **silent**：自动化运行不得在宿主桌面上弹窗/抢焦点/进任务栏（见
+ * `src/main/config/runtime-environment.ts` 头注）。取值优先级：
+ *   ① `launchApp(..., { windowMode })` 单次显式指定（窗口行为用例用）
+ *   ② 套件 env `CYRENE_WINDOW_MODE`（`pnpm test:integration:visible` 经 vitest 配置注入 visible）
+ *   ③ 缺省 silent
+ */
+export type WindowMode = 'silent' | 'visible'
+
+export function suiteWindowMode(): WindowMode {
+  return process.env['CYRENE_WINDOW_MODE'] === 'visible' ? 'visible' : 'silent'
+}
+
 export interface LaunchOptions {
   env?: Record<string, string>
   /** 复用既有 userData（Task 15 重启持久化）：传则沿用该路径（仍 mkdir + seedFiles），不传维持 mkdtemp 现状 */
@@ -16,6 +31,11 @@ export interface LaunchOptions {
   /** 追加 Electron/Chromium 命令行开关（Task 15 语音：--use-fake-device-for-media-stream 等，无头环境确定性采集）；
    *  附于 args 末尾，向后兼容——既有调用方省略即可 */
   extraArgs?: string[]
+  /**
+   * 单次启动的窗口呈现模式（缺省跟随 `suiteWindowMode()`）。
+   * 只有**窗口行为**用例才需要显式指定：其余用例保持默认，静默是套件级不变量而不是每个文件的选择。
+   */
+  windowMode?: WindowMode
   /**
    * dev 形态（M-29/P2-5）：让页面由 **Vite dev server** 供给（`http://127.0.0.1:<port>`）而非 `cyrene://renderer`。
    *
@@ -111,6 +131,9 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
     CYRENE_TEST_APP_DATA: userData,
     CYRENE_TEST_HARNESS: '1',
     CYRENE_BACKEND: 'mock',        // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
+    // 窗口呈现模式：**在测试侧也显式写死**（不依赖 Main 的 harness 默认值）——三层防线，任一层被
+    // 重构坏掉时，桌面都不会被测试弹窗打扰；需要人工观察窗口时用 `pnpm test:integration:visible`。
+    CYRENE_WINDOW_MODE: opts.windowMode ?? suiteWindowMode(),
   }
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
   // 清掉继承值之后才允许显式注入 dev 形态（见 LaunchOptions.rendererUrl 注释）

@@ -1,5 +1,5 @@
 // apps/desktop/src/main/index.ts
-import { app, dialog, Menu, safeStorage, BrowserWindow } from 'electron'
+import { app, Menu, safeStorage, BrowserWindow } from 'electron'
 import { join } from 'path'
 import { readFileSync } from 'fs'
 import { realpath } from 'fs/promises'
@@ -12,6 +12,11 @@ import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-di
 import { registerHandlers } from './ipc/handlers'
 import { getMainWindow } from './ipc/registry'
 import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
+// Silent Test Window Mode（2026-09-12）：窗口呈现 / DevTools / 原生对话框三类「会打扰宿主桌面」
+// 的动作统一走边界模块（判据集中在 config/runtime-environment.ts，见其头注）。
+import { closeWindowDevTools, lastWindowPresentation, openWindowDevTools } from './windows/window-presentation'
+import { createDialogService, dialogInvocations } from './native-ui/dialog-service'
+import { runtimeEnvironment } from './config/runtime-environment'
 import { findForbiddenDebugLaunch } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
 import { assertDevServerOrigin, resolveDevDefaultBackendOrigin } from './config/dev-ports'
@@ -54,8 +59,12 @@ import { MOCK_THUMBNAIL_DATA_URL, parseMockCaptureSourcesEnv, parseMockGrantDire
 
 let diagnostics: Diagnostics | undefined
 
+// 原生对话框统一入口：silent 测试模式下不弹任何系统窗口（记录调用 + 返回确定性取消），
+// 生产/dev/可见测试模式行为逐字不变（见 native-ui/dialog-service.ts 头注）。
+const dialogs = createDialogService()
+
 const fatal = createFatalShutdown({
-  showError: (m) => dialog.showErrorBox('Cyrene 无法启动', m),
+  showError: (m) => dialogs.showErrorBox('Cyrene 无法启动', m),
   closeAll: () => (diagnostics ? diagnostics.closeAll() : Promise.resolve()),
   exit: (c) => app.exit(c)
 })
@@ -63,7 +72,7 @@ const fatal = createFatalShutdown({
 // 运行期未捕获异常的 fail-safe（H-12）：与启动期 `fatal` 同款收尾，但标题不同——
 // 「无法启动」用于运行期崩溃会误导用户。标题差异是有意的，不是漏改。
 const fatalRuntime = createFatalShutdown({
-  showError: (m) => dialog.showErrorBox('Cyrene 发生错误', m),
+  showError: (m) => dialogs.showErrorBox('Cyrene 发生错误', m),
   closeAll: () => (diagnostics ? diagnostics.closeAll() : Promise.resolve()),
   exit: (c) => app.exit(c)
 })
@@ -342,8 +351,9 @@ async function main(): Promise<void> {
       onDevModeChange: (enabled) => {
         const win = getMainWindow()
         if (!win || win.isDestroyed()) return
-        if (enabled) win.webContents.openDevTools({ mode: 'detach' })
-        else win.webContents.closeDevTools()
+        // silent 测试模式：不创建 detached DevTools 窗口（第二个受管窗口会抢焦点且无观察者）；见 window-presentation.ts
+        if (enabled) openWindowDevTools(win, { mode: 'detach' })
+        else closeWindowDevTools(win)
       },
       appInfo: () => ({
         appName: 'Cyrene',
@@ -411,7 +421,7 @@ async function main(): Promise<void> {
       pickDirectory: grantDirectoryPath !== undefined
         ? async () => ({ canceled: false, path: grantDirectoryPath })   // mock：固定授权目录（F-9）
         : async (opts) => {
-            const r = await dialog.showOpenDialog({ properties: ['openDirectory'], title: opts.title })   // Main 默认：原生目录选择器
+            const r = await dialogs.showOpenDialog(undefined, { properties: ['openDirectory'], title: opts.title })   // Main 默认：原生目录选择器（silent 测试模式不弹窗，返回取消）
             return { canceled: r.canceled, path: r.filePaths[0] }
           },
       queryStatus: useMock ? undefined : (callId) => adapter.getToolCallStatus(callId),   // D6C-11（LOW-2 承接）：real 才注入——reconnect 三分支闭环；mock 不注入 → 不查（F-20）
@@ -424,11 +434,20 @@ async function main(): Promise<void> {
       adapter.onToolRequest = (req) => { void toolSvc.handleRequest(req) }
     }
     // Main 侧测试探针（M10：集成测试断言 wire lastToolStatus 需要；仅测试 harness 装配）
+    // 2026-09-12 追加窗口呈现证据：skipTaskbar 在 Electron 无 getter，故由统一建窗层留痕供集成断言；
+    // 对话框调用记录使「是否触发 dialog / 参数是否正确」在 silent 下仍可验证（不再弹原生窗口）。
     if (process.env.CYRENE_TEST_HARNESS === '1') {
-      const probe = globalThis as unknown as { __cyreneMainProbe: { getLastToolStatus: () => unknown; getToolRecords: () => unknown[] } }
+      const probe = globalThis as unknown as { __cyreneMainProbe: {
+        getLastToolStatus: () => unknown
+        getToolRecords: () => unknown[]
+        getWindowPresentation: () => ReturnType<typeof lastWindowPresentation>
+        getDialogInvocations: () => ReturnType<typeof dialogInvocations>
+      } }
       probe.__cyreneMainProbe = {
         getLastToolStatus: () => (adapter as MockBackend).lastToolStatus ?? null,
         getToolRecords: () => [...toolSvc.listRecent(50)],
+        getWindowPresentation: () => lastWindowPresentation(),
+        getDialogInvocations: () => dialogInvocations(),
       }
     }
     app.on('before-quit', () => toolSvc.shutdown())
@@ -551,6 +570,13 @@ async function main(): Promise<void> {
     })
     diagnostics.logger.info('protocol:registered')
     diagnostics.logger.info('app:started', { mode: config.mode, packaged: app.isPackaged })
+    // 窗口呈现模式落日志（每次启动一条）：自动化运行是否静默、由哪个来源决定，现场可查、无需推断。
+    const windowEnv = runtimeEnvironment()
+    diagnostics.logger.info('window:runtime-mode', {
+      mode: windowEnv.windowMode,
+      source: windowEnv.windowModeSource,
+      harness: windowEnv.isTestHarness,
+    })
     markAppStarted()
     ensureMainWindow(
       (err) => diagnostics?.logger.error('window:load-failed', { message: sanitize(err instanceof Error ? err.message : String(err)) }),

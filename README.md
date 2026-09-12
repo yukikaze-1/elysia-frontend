@@ -145,14 +145,16 @@ third_party/         经审计的第三方资源
 | `pnpm typecheck` | TypeScript 类型检查 |
 | `pnpm lint` | ESLint |
 | `pnpm test` | 单元测试 |
-| `pnpm test:integration` | Electron 集成测试 |
+| `pnpm test:integration` | Electron 集成测试（默认 **Silent Test Window Mode**：窗口不显示、不抢焦点、不进任务栏） |
+| `pnpm test:integration:visible` | 同一个集成套件的**可视化调试模式**：Electron 窗口真的显示，便于人工观察窗口/焦点/任务栏行为 |
+| `pnpm verify` | 一次跑完静态 + 单测 + 集成 + 构建（集成部分同为静默模式） |
 | `pnpm package` | 生成当前平台的未分发目录产物 |
 | `pnpm verify:artifact` | 检查产物内容与 Electron Fuses |
 | `pnpm docs:check` | 检查核心文档元数据、索引和链接 |
 | `pnpm docs:index` | 重新生成 review/superpowers 目录索引 |
 | `pnpm -F @cyrene/desktop check:contract` | 后端契约在本机可用时执行跨仓检查 |
 | `pnpm -F @cyrene/desktop verify:sensitive` | 扫描已跟踪文件中的敏感信息 |
-| `pnpm test:e2e` / `pnpm make` | 阶段 8 前仍为防假绿占位命令，会以非零状态退出 |
+| `pnpm test:e2e` / `pnpm make` | 阶段 8 前仍为防假绿占位命令，会以非零状态退出（`test:e2e` 的提示会指向 `pnpm test:integration`） |
 
 ## 真实模式联调
 

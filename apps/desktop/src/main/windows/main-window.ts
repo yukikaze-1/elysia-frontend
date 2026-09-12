@@ -1,5 +1,5 @@
 // apps/desktop/src/main/windows/main-window.ts
-import { app, BrowserWindow, session, shell } from 'electron'
+import { app, session, shell } from 'electron'
 import { join } from 'path'
 import { getMainWindow, setMainWindow } from '../ipc/registry'
 import { getAppConfig, shouldUseViteDevServer } from '../config'
@@ -8,6 +8,9 @@ import { PROTOCOL_SCHEME, RENDERER_HOST } from '../protocol'
 import { classifyNavigation } from './navigation'
 import { registerMicrophonePermission } from './mic-permission'
 import { createRendererConsoleSink } from './renderer-console'
+// Silent Test Window Mode（2026-09-12）：一切窗口呈现动作经统一边界——本文件不再直接
+// new BrowserWindow / show() / focus() / restore() / toggleDevTools（见 window-presentation.ts 头注）。
+import { createAppWindow, focusWindow, showWindow, toggleWindowDevTools } from './window-presentation'
 import type { AuditEvent } from '../diagnostics/audit'
 import type { Logger } from '../diagnostics/logger'
 
@@ -77,7 +80,7 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   const usingDevServer = shouldUseViteDevServer(app.isPackaged, process.env)
   const devEval = evaluateDevRendererUrl(devUrl, process.env)
   const devOrigin = usingDevServer && devEval.status === 'trusted' ? devEval.url : undefined
-  const win = new BrowserWindow({
+  const win = createAppWindow({
     width: 1200,
     height: 760,
     minWidth: 1100, // 阶段 3 G1（决策 D9）：与 renderer layout/constants.ts MIN_WINDOW_WIDTH 一致
@@ -105,11 +108,14 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   })
   setMainWindow(win)
 
+  // 首帧就绪后显示一次（silent 测试模式下 showWindow 是 no-op——窗口保持隐藏但 renderer 照常运行）。
+  // 5s 兜底定时器保留原语义：ready-to-show 未在预算内到达时也把窗口交出去（silent 下同样被门短路），
+  // 避免"窗口永远不出现"这类只在异常路径暴露的回归。
   let shown = false
   const showOnce = (): void => {
     if (shown || win.isDestroyed()) return
     shown = true
-    win.show()
+    showWindow(win)
   }
   win.on('ready-to-show', () => { showOnce() })
   win.on('closed', () => { if (getMainWindow() === win) setMainWindow(null) })
@@ -157,7 +163,7 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   //  经设置页开启；运行期判定保持「非 dev 构建且非 devMode 时 F12 无效果」语义不变）
   win.webContents.on('before-input-event', (_ev, input) => {
     if (input.type === 'keyDown' && input.key === 'F12' && (config.devToolsAllowed || isDevMode())) {
-      win.webContents.toggleDevTools()
+      toggleWindowDevTools(win)
     }
   })
 
@@ -186,7 +192,7 @@ export function ensureMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   const win = getMainWindow()
   if (!win || win.isDestroyed()) {
     createMainWindow(loadErrorSink, opts)
-    if (consumePendingFocus()) { const w = getMainWindow(); if (w) { if (w.isMinimized()) w.restore(); if (!w.isVisible()) w.show(); w.focus() } }
+    if (consumePendingFocus()) focusWindow(getMainWindow())
     return
   }
 }
@@ -202,10 +208,11 @@ export function focusOrDefer(opts?: MainWindowOpts): void {
   raiseWindow()
 }
 
+/**
+ * 把主窗口提到前台（second-instance / activate / 待决聚焦）。
+ * silent 测试模式下 focusWindow 是 no-op——「第二个实例」与托盘/激活类路径都不能抢焦点，
+ * 但生产语义（restore → show → focus）逐字不变。
+ */
 function raiseWindow(): void {
-  const win = getMainWindow()
-  if (!win || win.isDestroyed()) return
-  if (win.isMinimized()) win.restore()
-  if (!win.isVisible()) win.show()
-  win.focus()
+  focusWindow(getMainWindow())
 }

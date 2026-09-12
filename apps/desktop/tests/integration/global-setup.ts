@@ -17,6 +17,11 @@ import { reclaimTestTempDirs, userDataDirsFromCommandLines } from '../helpers/te
 const ROOT = join(__dirname, '../..') // apps/desktop（global-setup.ts → tests → apps/desktop）
 
 export default function setup(): void {
+  // 窗口呈现模式提示（每次套件一行，2026-09-12）：silent = 本次运行不会在宿主桌面弹窗；
+  // visible = `pnpm test:integration:visible` 的可视化调试模式（窗口真的显示）。判据见
+  // src/main/config/runtime-environment.ts 与 docs/review/2026-09-12-测试静默窗口模式-决策记录.md。
+  const windowMode = process.env['CYRENE_WINDOW_MODE'] === 'visible' ? 'visible' : 'silent'
+  console.log(`[window-mode] ${windowMode}（${windowMode === 'silent' ? '窗口不显示 / 不抢焦点 / 不进任务栏' : '窗口会显示在桌面上——人工调试模式'}）`)
   // 进程表只读一次，两个回收器共用：目录回收需要它来算出「哪些目录正被活进程引用」
   const table = readProcessTable()
   const result = reclaimOrphanTestApps(ROOT, table)

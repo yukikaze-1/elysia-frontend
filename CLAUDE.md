@@ -95,6 +95,7 @@ Do not write session assertions into repository docs.
 - Detect backend reachability and record the exact backend SHA for real integration.
 - Use the repository-pinned Node and pnpm versions.
 - Fixed remote-debugging ports are rejected by the application security policy. Use the project test harness or Playwright Electron flow when automation needs a debugging transport.
+- Automated test runs must not disturb the host desktop. Window presentation, DevTools windows, and native dialogs go through `src/main/windows/window-presentation.ts` and `src/main/native-ui/dialog-service.ts`; the mode is resolved once in `src/main/config/runtime-environment.ts` from `CYRENE_WINDOW_MODE` (`silent` by default under `CYRENE_TEST_HARNESS=1`). Do not add window creation, `show()`/`focus()`, `setAlwaysOnTop()`, `dialog.*`, Notification, Tray, or `openDevTools()` calls elsewhere — `tests/unit/window-presentation-guard.spec.ts` reds on any new call site.
 
 ## Commands
 
@@ -107,6 +108,8 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm test:integration
+pnpm test:integration:visible
+pnpm verify
 pnpm package
 pnpm verify:artifact
 pnpm docs:check
@@ -114,6 +117,8 @@ pnpm docs:index
 pnpm -F @cyrene/desktop check:contract
 pnpm -F @cyrene/desktop verify:sensitive
 ```
+
+`pnpm test:integration` runs silent (no Electron window appears on the desktop); `pnpm test:integration:visible` is the same suite with real windows for manual debugging.
 
 `test:e2e` and `make` are deliberate non-zero placeholders until their phase-8 work is implemented. Do not report them as passing or implemented.
 

@@ -10,9 +10,25 @@ pnpm --filter @cyrene/desktop test:integration
 
 # 或 cd apps/desktop 后
 pnpm test:integration
+
+# 可视化调试模式：同一个套件，但 Electron 窗口真的显示（人工观察窗口/焦点/任务栏行为）
+pnpm test:integration:visible
 ```
 
 `test:integration` 脚本 = `electron-vite build --mode test`（产出 `apps/desktop/out/` 测试构建）+ `vitest run --config vitest.integration.config.mts`（`tests/integration/**/*.spec.ts`）。集成配置 `testTimeout`/`hookTimeout` 60s（Electron 冷启动 8–20s）、`fileParallelism: false`。
+
+## Silent Test Window Mode（默认）
+
+自动化运行**不得干扰宿主桌面**：套件默认以静默窗口模式启动 Electron（窗口不显示、不抢焦点、
+不置顶、不进任务栏、不弹原生对话框与通知），而 renderer / preload / IPC / 持久化 / Playwright
+自动化能力与可见运行时逐字一致。判据、边界模块与实测数据见
+[决策记录](../../../../docs/review/2026-09-12-测试静默窗口模式-决策记录.md)：
+
+- `launchApp(..., { windowMode })` 可单次指定；缺省取套件 env（`test:integration:visible` 经
+  `vitest.integration.config.visible.mts` 注入 `CYRENE_WINDOW_MODE=visible`），再缺省为 `silent`；
+- 窗口行为本身由 `silent-window-mode.spec.ts` 断言（不可见/未聚焦/未置顶/窗口数 1/隐藏窗口下
+  `document.hidden === false`、rAF 未被压到后台档、键盘输入与 DOM 焦点正常）；
+- 新增越过统一边界的建窗或呈现调用会被单测门禁 `tests/unit/window-presentation-guard.spec.ts` 拦下。
 
 ## 平台差异
 

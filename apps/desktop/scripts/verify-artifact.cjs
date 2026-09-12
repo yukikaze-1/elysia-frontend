@@ -141,6 +141,10 @@ async function smoke() {
     delete env.ELECTRON_RENDERER_URL // 残留 dev env 会把 out/ 回退冒烟劫持到 http；冒烟必须测 cyrene:// 路径
     delete env.NODE_OPTIONS // 开发者 shell 残留的 --inspect* 会误触发打包调试门；冒烟测的是产物不是 shell 环境
     env.CYRENE_TEST_HARNESS = '1' // 显式标记测试 harness：让调试门放行 Playwright 注入的 --remote-debugging-port=0/--inspect=0（生产默认拒绝）
+    // Silent Test Window Mode（2026-09-12）：冒烟是自动化运行，窗口不得出现在宿主桌面（打包产物默认
+    // 同样走 silent，这里显式写死以免将来默认值变化时冒烟偷偷开始弹窗）。断言面不受影响：隐藏窗口
+    // 的 renderer 照常加载、协议/CSP/Vue 挂载断言照常成立（实测见 tests/integration/silent-window-mode.spec.ts）。
+    env.CYRENE_WINDOW_MODE = 'silent'
     let app
     if (packagedExe) {
       // spec §7.2（可行 R2-1）：Playwright `_electron.launch` 硬依赖 `--inspect=0` 的「Debugger listening on」行

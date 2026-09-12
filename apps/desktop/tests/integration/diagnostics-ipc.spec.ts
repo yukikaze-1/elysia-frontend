@@ -2,7 +2,9 @@
 // spec §6.2/§9：开发与诊断设置页的 IPC 全链 wire 断言——
 // ① state（displayDir 脱敏形态——绝对路径不上行，安全复核 M-2）
 // ② dev-mode-set（§9 明列：app.evaluate 读 BrowserWindow webContents.isDevToolsOpened() 轮询 true→false——
-//    符合性 M-4：恢复断言而非静默降级；detach 窗口 xvfb 可创建）+ 审计 dev:mode-changed
+//    符合性 M-4：恢复断言而非静默降级；detach 窗口 xvfb 可创建；**2026-09-12 分类修正**：该断言属"窗口行为"，
+//    仅在可视化调试运行 `pnpm test:integration:visible` 下成立；静默运行改为断言"不创建第二个窗口"
+//    （Silent Test Window Mode，见 docs/review/2026-09-12-测试静默窗口模式-决策记录.md））+ 审计 dev:mode-changed
 // ③ clear-logs（state.lastCleanup 回显 + 审计 diagnostics:logs-cleared——计划 review MED-3 后半布线要求）
 // ④ export（harness 落 dirs.temp 固定名 + manifest F-C1 五字段（exportedAt / appName / appVersion /
 //    packaged / mode）+ 黑名单核心 0 命中（复用 verify:sensitive 黑名单核心——第 8 条类别级规则排除，结构哈希非秘密命中面）
@@ -34,6 +36,13 @@ const isDevToolsOpened = (): Promise<boolean> =>
     const w = BrowserWindow.getAllWindows().find((x) => !x.isDestroyed() && x.webContents.getURL().startsWith('cyrene://renderer'))
     return w ? w.webContents.isDevToolsOpened() : false
   })
+
+/** 受管窗口总数（静默运行下 DevTools detach 若不创建，该值应恒为 1） */
+const windowCount = (): Promise<number> =>
+  app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter((x) => !x.isDestroyed()).length)
+
+/** 本套件运行是否为可视化调试模式（`pnpm test:integration:visible`）——窗口行为断言的分类依据 */
+const VISIBLE_RUN = process.env['CYRENE_WINDOW_MODE'] === 'visible'
 
 /** harness 导出文件路径（CYRENE_TEST_HARNESS=1 → dirs.temp 固定名，spec D7A-10） */
 const exportFile = (): string => join(userData, 'Cyrene', 'temp', 'cyrene-diagnose-test.json')
@@ -69,11 +78,21 @@ describe('诊断设置 IPC（spec §6.2/§9）', () => {
     expect(typeof st.eventDropped).toBe('number')
   })
 
-  it('dev-mode-set：webContents.isDevToolsOpened() 轮询 true → false（spec §9 明列）+ 审计 dev:mode-changed', async () => {
+  it('dev-mode-set：会话态翻转 + 审计；DevTools 窗口行为按运行模式断言（静默下不得创建第二个窗口）', async () => {
     // 开启：二次确认在 pane 层（UI 防误触）——wire 层唯一开启路径为 Main `diagnostics:dev-mode-set`
     await page.evaluate(() => window.desktopApi.diagnosticsDevModeSet(true))
-    // 轮询（openDevTools detach 为异步窗口创建——xvfb 下可创建）
-    await expect.poll(isDevToolsOpened, { timeout: 10_000, interval: 200 }).toBe(true)
+    if (VISIBLE_RUN) {
+      // 可视化调试运行（`pnpm test:integration:visible`）：spec §9 原断言——真实 openDevTools detach
+      // （detach 为异步窗口创建，xvfb 下也可创建）。该断言属"窗口行为"，静默运行下**不成立**：
+      await expect.poll(isDevToolsOpened, { timeout: 10_000, interval: 200 }).toBe(true)
+    } else {
+      // 静默运行：Silent Test Window Mode 下不创建 detached DevTools 窗口（第二个受管窗口会抢焦点、
+      // 自动化里没有观察者）——窗口数必须保持 1。判据与边界见
+      // src/main/windows/window-presentation.ts 与 docs/review/2026-09-12-测试静默窗口模式-决策记录.md。
+      // 会话态与审计**照常**（静默只改变 OS 呈现，不改业务/服务状态），故此处不做条件跳过。
+      expect(await isDevToolsOpened()).toBe(false)
+      expect(await windowCount()).toBe(1)
+    }
     const stOn = await page.evaluate(() => window.desktopApi.diagnosticsState())
     expect(stOn.devMode).toBe(true)
     // 关闭（幂等集回 false——窗口关闭 + 会话态复位）
@@ -81,6 +100,7 @@ describe('诊断设置 IPC（spec §6.2/§9）', () => {
     await expect.poll(isDevToolsOpened, { timeout: 10_000, interval: 200 }).toBe(false)
     const stOff = await page.evaluate(() => window.desktopApi.diagnosticsState())
     expect(stOff.devMode).toBe(false)
+    expect(await windowCount()).toBe(1) // 全程不得多出窗口（含可视化运行的 DevTools 关闭后）
     // 审计（audit writer sync 写——直读 poll）
     await expect.poll(() => readAudit(), { timeout: 5000, interval: 200 }).toContain('"type":"dev:mode-changed"')
   })

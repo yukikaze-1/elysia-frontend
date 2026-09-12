@@ -7,8 +7,9 @@
 import { readdirSync, statSync } from 'fs'
 import { readdir, readFile, realpath, stat } from 'fs/promises'
 import { dirname, join } from 'path'
-import { dialog, shell } from 'electron'
+import { shell } from 'electron'
 import type { BrowserWindow } from 'electron'
+import { defaultDialogService, type DialogPort } from '../native-ui/dialog-service'   // 原生保存对话框统一入口（silent 测试模式不弹窗；harness 下另有固定临时路径分支）
 import { atomicWriteFile } from '../credentials/atomic-write'
 import { auditFilesToDelete } from './audit'
 import { buildExportPayload, readTailLines, tailLinesAligned } from './export-payload'
@@ -166,6 +167,7 @@ export function createDiagnosticsService(deps: {
   sanitize: MessageSanitizer
   adapter: BackendAdapter            // 事件源（spec §6.3 deps 注入式——装配时序：index.ts 先 adapter 后 service；无 attachAdapter 方法——符合性 F-08 定案）
   openPath?: (dir: string) => Promise<string>   // 默认 shell.openPath；测试注入（openLogDir 消费）
+  dialogs?: DialogPort                           // 原生保存对话框（诊断包导出）；缺省取统一入口单例
   getMainWindow?: () => BrowserWindow | undefined  // 导出保存对话框父窗（Task 5 接线；缺省/undefined → 无父对话框）
   getConnectionSummary: () => { origin?: string; status?: string; protocolVersion?: string }
   onDevEvent?: (ev: DiagnosticsDevEvent) => void        // push 出口（Task 5 接线 webContents.send）
@@ -311,7 +313,7 @@ export function createDiagnosticsService(deps: {
             defaultPath: `cyrene-diagnose-${stampFileName(new Date(now()))}.json`,
             filters: [{ name: 'JSON', extensions: ['json'] }],
           }
-          const r = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+          const r = await (deps.dialogs ?? defaultDialogService()).showSaveDialog(win, opts)
           if (r.canceled || !r.filePath) return { cancelled: true }
           targetPath = r.filePath
         }

@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { dialog } from 'electron'
+import { defaultDialogService } from '../native-ui/dialog-service'   // 原生选择器统一入口（silent 测试模式不弹窗，见其头注）
 import { atomicWriteFile } from '../credentials/atomic-write'      // A-13：原子写复用（fsync + 安全写）
 import { computeTextDiff, detectTextFormat, normalizeToFormat } from './text-diff'
 import { normalizeToolPath, isPathBlacklisted, isPathWithinRoot } from './tool-policy'
@@ -22,7 +22,7 @@ function isWaylandEnv(): boolean {
 export function createExecutors(deps: ToolServiceDeps): { execute(rec: ToolRecord, realPath?: string): Promise<ExecResult> } {
   async function select(rec: ToolRecord): Promise<ExecResult> {
     const picker = deps.pickFile ?? (async (o) => {
-      const r = await dialog.showOpenDialog({ title: o.title, filters: o.filters, properties: ['openFile'] })
+      const r = await defaultDialogService().showOpenDialog(undefined, { title: o.title, filters: o.filters, properties: ['openFile'] })
       return r.canceled || r.filePaths.length === 0 ? { canceled: true } : { canceled: false, path: r.filePaths[0] }
     })
     const r = await picker({ title: rec.title, filters: [TEXT_FILE_FILTERS] })
