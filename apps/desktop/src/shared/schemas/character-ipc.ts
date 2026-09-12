@@ -64,22 +64,3 @@ export const CharacterDraftSaveRequestSchema = PersistedCharacterDraftSchema
 export const CharacterDraftSaveResponseSchema = z.undefined()
 export const CharacterDraftDeleteRequestSchema = z.object({ key: CharacterDraftKeySchema }).strict()
 export const CharacterDraftDeleteResponseSchema = z.undefined()
-
-// 复数命名别名与通道名保持一致，避免调用方因为历史单复数约定复制 schema。
-export const CharacterDraftsListRequestSchema = CharacterDraftListRequestSchema
-export const CharacterDraftsListResponseSchema = CharacterDraftListResponseSchema
-export const CharacterDraftsGetRequestSchema = CharacterDraftGetRequestSchema
-export const CharacterDraftsGetResponseSchema = CharacterDraftGetResponseSchema
-export const CharacterDraftsSaveRequestSchema = CharacterDraftSaveRequestSchema
-export const CharacterDraftsSaveResponseSchema = CharacterDraftSaveResponseSchema
-export const CharacterDraftsDeleteRequestSchema = CharacterDraftDeleteRequestSchema
-export const CharacterDraftsDeleteResponseSchema = CharacterDraftDeleteResponseSchema
-
-// 兼容调用方使用“Input/Result”命名的显式别名；不复制 schema。
-export const GetMeRequestSchema = CharacterGetMeRequestSchema
-export const UpdateMeRequestSchema = CharacterUpdateMeRequestSchema
-export const CharacterListInputSchema = CharacterListRequestSchema
-export const CharacterGetInputSchema = CharacterGetRequestSchema
-export const CharacterRevisionListInputSchema = CharacterListRevisionsRequestSchema
-export const CharacterStateInputSchema = CharacterStateRequestSchema
-export const CharacterResetEvolutionInputSchema = CharacterResetEvolutionRequestSchema

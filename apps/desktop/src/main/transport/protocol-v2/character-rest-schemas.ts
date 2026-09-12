@@ -388,49 +388,9 @@ export const RestResetEvolutionResultSchema: z.ZodType<RestResetEvolutionResult>
   resetFields: resetFields()
 }).strict()
 
-export const RestCharacterProtocolErrorSchema = z.object({
-  code: z.string().min(1),
-  message: z.string(),
-  retryable: z.boolean(),
-  requestId: z.string().min(1),
-  error: z.string(),
-  details: z.record(z.string(), z.unknown()),
-  retryAfterMs: z.number().int().min(0).optional()
-}).strict()
-
 // parse 助手（rest-schemas.ts 同款判别返回；FE-B 的 CharacterBackendPort 实现消费）
 export function parseRestMe(input: unknown): { success: true; data: RestUserIdentityProfile } | { success: false; error: z.ZodError } {
   return RestUserIdentityProfileSchema.safeParse(input)
-}
-export function parseRestUpdateMeBody(input: unknown): { success: true; data: RestUpdateMeBody } | { success: false; error: z.ZodError } {
-  return RestUpdateMeBodySchema.safeParse(input)
-}
-export function parseRestCharacterListQuery(input: unknown): { success: true; data: RestCharacterListQuery } | { success: false; error: z.ZodError } {
-  return RestCharacterListQuerySchema.safeParse(input)
-}
-export function parseRestCharacterRevisionQuery(input: unknown): { success: true; data: RestCharacterRevisionQuery } | { success: false; error: z.ZodError } {
-  return RestCharacterRevisionQuerySchema.safeParse(input)
-}
-export function parseRestCreateCharacterBody(input: unknown): { success: true; data: RestCreateCharacterBody } | { success: false; error: z.ZodError } {
-  return RestCreateCharacterBodySchema.safeParse(input)
-}
-export function parseRestUpdateCharacterBody(input: unknown): { success: true; data: RestUpdateCharacterBody } | { success: false; error: z.ZodError } {
-  return RestUpdateCharacterBodySchema.safeParse(input)
-}
-export function parseRestCloneCharacterBody(input: unknown): { success: true; data: RestCloneCharacterBody } | { success: false; error: z.ZodError } {
-  return RestCloneCharacterBodySchema.safeParse(input)
-}
-export function parseRestRollbackCharacterBody(input: unknown): { success: true; data: RestRollbackCharacterBody } | { success: false; error: z.ZodError } {
-  return RestRollbackCharacterBodySchema.safeParse(input)
-}
-export function parseRestValidateCharacterBody(input: unknown): { success: true; data: RestValidateCharacterBody } | { success: false; error: z.ZodError } {
-  return RestValidateCharacterBodySchema.safeParse(input)
-}
-export function parseRestPreviewCharacterBody(input: unknown): { success: true; data: RestPreviewCharacterBody } | { success: false; error: z.ZodError } {
-  return RestPreviewCharacterBodySchema.safeParse(input)
-}
-export function parseRestResetEvolutionBody(input: unknown): { success: true; data: RestResetEvolutionBody } | { success: false; error: z.ZodError } {
-  return RestResetEvolutionBodySchema.safeParse(input)
 }
 export function parseRestCharacterList(input: unknown): { success: true; data: RestCharacterListResponse } | { success: false; error: z.ZodError } {
   return RestCharacterListResponseSchema.safeParse(input)

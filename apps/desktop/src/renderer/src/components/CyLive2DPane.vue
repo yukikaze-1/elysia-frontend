@@ -13,7 +13,7 @@
 //  - 恢复默认 → live2d.restoreDefaults()（置 DEFAULT_LIVE2D；modelId 非 null 且已加载 ≠ 首个可用 → 切回首个可用，Task5 M2）。
 // 保存失败回退（M-4）：沿用 settingsStore 既有持久化失败语义——保留内存态（即时预览已反映），重启后读回保存态。
 import { computed } from 'vue'
-import type { Live2DModelSummary, PerformanceMode } from '@shared/contracts'
+import { LIVE2D_PATH_PREFIX, type Live2DModelSummary, type PerformanceMode } from '@shared/contracts'
 import { useSettingsStore } from '../stores/settings.store'
 import { useLive2dStore } from '../stores/live2d.store'
 import CySwitch from './CySwitch.vue'
@@ -21,9 +21,9 @@ import CySwitch from './CySwitch.vue'
 const settings = useSettingsStore()
 const live2d = useLive2dStore()
 
-/** cyrene:// live2d 供给前缀（与 adapter.ts LIVE2D_BASE / main protocol/live2d-path.ts 同一协议分支；
- *  预览图为模型目录内相对路径，经该协议供给）。 */
-const LIVE2D_BASE = 'cyrene://renderer/__cyrene-live2d/'
+/** cyrene:// live2d 供给前缀（LIVE2D_PATH_PREFIX 单一来源，与 adapter.ts LIVE2D_BASE / main protocol/live2d-path.ts
+ *  同一协议分支；预览图为模型目录内相对路径，经该协议供给）。 */
+const LIVE2D_BASE = `cyrene://renderer${LIVE2D_PATH_PREFIX}`
 const PERFORMANCE_OPTIONS: Array<{ value: PerformanceMode; label: string; hint: string }> = [
   { value: 'auto', label: '自动', hint: '动态' },
   { value: 'quality', label: '高质量', hint: '~60 帧' },

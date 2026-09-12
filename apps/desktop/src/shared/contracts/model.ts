@@ -74,11 +74,3 @@ export interface ActiveModelSelection {
   ttsProfileId?: string
   dictationSttProfileId?: string    // P4-B 消费；P4-A 仅类型占位
 }
-
-/** 模型 Profile 凭据元数据（阶段 4 模型密钥 UI 消费）：Renderer 只见状态,永远看不到明文。 */
-export interface ModelCredentialInfo {
-  configured: boolean
-  originLabel?: string
-  expiresAt?: string
-  accountLabel?: string
-}

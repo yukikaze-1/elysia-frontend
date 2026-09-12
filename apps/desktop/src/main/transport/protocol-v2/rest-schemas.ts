@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { RestCreateSessionBody, RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestPendingQueryResponse, RestSearchMessagesResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult, RestStickerListResponse } from './rest-types'
+import type { RestCreateSessionBody, RestMessage, RestMessageContextResponse, RestMessagesPageResponse, RestSearchMessagesResponse, RestSessionDetail, RestSessionListResult, RestSessionActivateResult, RestStickerListResponse } from './rest-types'
 
 // —— 多角色 FE-A：会话/消息内嵌角色绑定快照 wire schema——
 // check:contract 以 Node ESM 直接加载本文件（DesktopCallStatusSchema 同款约束）→ 运行时值导入只允许 zod，
@@ -57,9 +57,6 @@ export const RestCreateSessionBodySchema: z.ZodType<RestCreateSessionBody> = z.o
   title: z.string().optional(),
   characterId: z.string().min(1).refine((v) => v.trim().length > 0).optional()
 }).strict()
-export function parseRestCreateSessionBody(input: unknown): { success: true; data: RestCreateSessionBody } | { success: false; error: z.ZodError } {
-  return RestCreateSessionBodySchema.safeParse(input)
-}
 
 export const RestSessionSummarySchema = z.object({
   conversationId: z.string().min(1),
@@ -138,9 +135,6 @@ export function parseRestSessionDetail(input: unknown): { success: true; data: R
 }
 export function parseRestActivateResult(input: unknown): { success: true; data: RestSessionActivateResult } | { success: false; error: z.ZodError } {
   return RestSessionActivateResultSchema.safeParse(input)
-}
-export function parseRestPendingQuery(input: unknown): { success: true; data: RestPendingQueryResponse } | { success: false; error: z.ZodError } {
-  return RestPendingQueryResponseSchema.safeParse(input)
 }
 
 // —— 阶段 3 G3 附件上传/签发响应 schema（请求不建 zod；multipart 由 RealBackend 构造）——

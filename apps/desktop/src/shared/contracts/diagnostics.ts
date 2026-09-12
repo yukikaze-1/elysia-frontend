@@ -26,12 +26,6 @@ export type DiagnosticsExportResult =
   | { cancelled: false; displayPath: string; sizeBytes: number; truncatedLog: boolean; truncatedAudit: boolean }
   | { cancelled: true }
 
-/** 清理日志结果（契约类型；响应经 diagnostics:state 的 lastCleanup 回显，不造独立响应形状） */
-export interface DiagnosticsClearedLogs {
-  removedFiles: number
-  freedBytes: number
-}
-
 /** dev-event preview 截断上界（含尾标「…」——先截 199 再补尾标，D7A-15/契约 R2-2） */
 export const DIAGNOSTICS_PREVIEW_MAX = 200
 /** dev-event type（领域事件名）上界 */

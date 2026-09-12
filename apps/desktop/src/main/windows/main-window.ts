@@ -32,12 +32,11 @@ export function getCrashMarker(): { reason: string; exitCode: number } | null {
 }
 
 // —— 阶段 7 批次 B（D7B-05/06/07）：render-process-gone 抽函数——单一可测入口（对齐 handleChildProcessGone 模式）——
-//    注入 deps（logger/audit 可选 + marker/setMarker/reload）；clean-exit 正常关窗退出不处理；
+//    注入 deps（logger/audit 可选 + setMarker/reload）；clean-exit 正常关窗退出不处理；
 //    非 clean-exit → warn + audit(renderer:crash) + 写 crashMarker（renderer 已死收不到 push，marker 供 reload 后 getLastCrash 读）+ reload。
 export function handleRendererGone(details: { reason: string; exitCode: number }, deps: {
   logger?: Logger
   audit?: (e: Omit<AuditEvent, 'ts'>) => void
-  marker: { reason: string; exitCode: number; ts: number } | null
   setMarker: (m: { reason: string; exitCode: number; ts: number }) => void
   reload: () => void
 }): void {
@@ -170,7 +169,6 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
     handleRendererGone(details, {
       logger: crashSink.logger,
       audit: crashSink.audit,
-      marker: crashMarker,
       setMarker: (m) => { crashMarker = m },
       reload: () => { if (!win.isDestroyed() && win.webContents) win.webContents.reload() },
     })

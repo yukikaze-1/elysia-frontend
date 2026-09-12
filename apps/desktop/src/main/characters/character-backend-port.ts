@@ -1,15 +1,4 @@
-import type {
-  CharacterBackendPort,
-  CharacterDetail,
-  CharacterId,
-  CharacterListQuery,
-  CharacterRevisionQuery,
-  CharacterRevisionSummary,
-  CharacterPublicState,
-  CharacterSummary,
-  UserIdentityProfile
-} from '@shared/contracts'
-import type { Page } from '@shared/contracts/conversation'
+import type { CharacterBackendPort } from '@shared/contracts'
 
 /**
  * 角色读端口。
@@ -22,9 +11,6 @@ export type ReadonlyCharacterBackendPort = Pick<
   CharacterBackendPort,
   'getMe' | 'listCharacters' | 'getCharacter' | 'listCharacterRevisions' | 'getCharacterState'
 >
-
-/** 别名用于调用方表达“角色读端口”，不复制第二套 DTO。 */
-export type CharacterReadPort = ReadonlyCharacterBackendPort
 
 /** 用户身份写入端口；角色 CRUD 由下方 FE-D1 端口负责。 */
 export type CharacterIdentityWritePort = Pick<CharacterBackendPort, 'updateMe'>
@@ -40,12 +26,3 @@ export type CharacterEvolutionPort = Pick<CharacterBackendPort, 'resetCharacterE
 
 /** CharacterService 当前阶段所需最窄组合端口。 */
 export type CharacterServiceBackendPort = ReadonlyCharacterBackendPort & CharacterIdentityWritePort & CharacterMutationPort & CharacterEvolutionPort
-
-/** 便于 fake/Mock 以最窄的返回类型实现端口，仍然引用 shared 领域契约。 */
-export type CharacterReadMethods = {
-  getMe: () => Promise<UserIdentityProfile>
-  listCharacters: (input: CharacterListQuery) => Promise<Page<CharacterSummary>>
-  getCharacter: (characterId: CharacterId) => Promise<CharacterDetail>
-  listCharacterRevisions: (input: CharacterRevisionQuery) => Promise<Page<CharacterRevisionSummary>>
-  getCharacterState: (instanceId: string) => Promise<CharacterPublicState>
-}

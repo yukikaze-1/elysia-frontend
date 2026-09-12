@@ -1,7 +1,7 @@
 // tests/unit/renderer-crash-handler.spec.ts（node）
 // Task 2（阶段 7 批次 B，D7B-05/06/07/08）：主进程崩溃监听——
 // ① handleRendererGone 抽函数（main-window.ts 导出；单一可测入口——不依赖 BrowserWindow，
-//    注入 fake deps { logger?, audit?, marker, setMarker, reload }）；
+//    注入 fake deps { logger?, audit?, setMarker, reload }）；
 // ② handleChildProcessGone 抽函数（index.ts 导出；child-process-gone 的 GPU 分支审计解耦 gpu:crash，契约 H-1）；
 // ③ render-process-gone 3 参监听接线（经 setCrashSink/setMarker/createMainWindow 装配，读第 3 参 details）+ getCrashMarker 一次性读后清。
 // electron mock 先例：diagnostics-handlers.spec / 注册表 registry-trust.spec（捕获 ipcMain.handle / webContents.on 的 listener 后直调）。
@@ -112,7 +112,6 @@ describe('handleRendererGone（抽函数——注入 fake deps，不依赖 Brows
     const base: Parameters<typeof handleRendererGone>[1] = {
       logger: makeLogger(),
       audit: vi.fn(),
-      marker: null,
       setMarker: vi.fn(),
       reload: vi.fn(),
     }

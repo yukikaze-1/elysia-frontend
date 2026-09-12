@@ -391,29 +391,3 @@ export class CharacterService {
 export function createCharacterService(options: CharacterServiceOptions): CharacterService {
   return new CharacterService(options)
 }
-
-/** Real 模式的显式不可用端口：不添加任何角色 REST URL，也不伪装成功。 */
-export class UnavailableCharacterBackend implements CharacterServiceBackendPort {
-  private fail(): CyreneError {
-    return new CyreneError(
-      CyreneErrorCode.NOT_IMPLEMENTED,
-      '当前运行模式尚未接入角色后端',
-      { backendCode: CHARACTER_SERVICE_BACKEND_CODES.backendUnavailable }
-    )
-  }
-
-  getMe(): Promise<UserIdentityProfile> { return Promise.reject(this.fail()) }
-  updateMe(_input: UpdateUserIdentityCommand): Promise<UserIdentityProfile> { return Promise.reject(this.fail()) }
-  createCharacter(_input: CreateCharacterCommand): Promise<CharacterDetail> { return Promise.reject(this.fail()) }
-  updateCharacter(_input: UpdateCharacterCommand): Promise<CharacterMutationResult> { return Promise.reject(this.fail()) }
-  cloneCharacter(_input: CloneCharacterCommand): Promise<CharacterDetail> { return Promise.reject(this.fail()) }
-  archiveCharacter(_characterId: string): Promise<CharacterArchiveResult> { return Promise.reject(this.fail()) }
-  rollbackCharacter(_input: RollbackCharacterCommand): Promise<CharacterMutationResult> { return Promise.reject(this.fail()) }
-  validateCharacter(_draft: CharacterDraft): Promise<CharacterValidationResult> { return Promise.reject(this.fail()) }
-  previewCharacter(_input: CharacterPreviewCommand): Promise<CharacterPreviewResult> { return Promise.reject(this.fail()) }
-  listCharacters(_input: CharacterListQuery): Promise<Page<CharacterSummary>> { return Promise.reject(this.fail()) }
-  getCharacter(_characterId: string): Promise<CharacterDetail> { return Promise.reject(this.fail()) }
-  listCharacterRevisions(_input: CharacterRevisionQuery): Promise<Page<CharacterRevisionSummary>> { return Promise.reject(this.fail()) }
-  getCharacterState(_instanceId: string): Promise<CharacterPublicState> { return Promise.reject(this.fail()) }
-  resetCharacterEvolution(_input: ResetCharacterEvolutionCommand): Promise<ResetCharacterEvolutionResult> { return Promise.reject(this.fail()) }
-}

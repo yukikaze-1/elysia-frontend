@@ -60,15 +60,6 @@ export function setActiveCharacterBinding(next: CharacterBindingSnapshot | undef
   activeCharacter.value = next
 }
 
-/**
- * 当前已知会话列表的**只读镜像**（同一数组引用，非拷贝——内存开销为常数）。
- * `message.store` 需要按 conversationId 反查角色绑定；若直接读 conversation store
- * 则 `conversation ↔ message` 成环。镜像后读方只见快照，写方仍唯一。
- */
-export function getConversationsSnapshot(): readonly Conversation[] {
-  return conversations.value
-}
-
 /** 按 id 反查会话（message 侧角色绑定查询的收口）。 */
 export function findConversation(conversationId: string): Conversation | undefined {
   return conversations.value.find((item) => item.id === conversationId)
@@ -78,11 +69,4 @@ export function findConversation(conversationId: string): Conversation | undefin
 export function setConversationsSnapshot(next: readonly Conversation[]): void {
   if (conversations.value === next) return
   conversations.value = next
-}
-
-/** 仅供测试：重置为「无会话」。 */
-export function resetCurrentConversationId(): void {
-  currentId.value = undefined
-  activeCharacter.value = undefined
-  conversations.value = []
 }

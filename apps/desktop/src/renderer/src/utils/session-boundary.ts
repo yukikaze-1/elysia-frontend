@@ -47,8 +47,3 @@ export function emitSessionBoundary(detail: SessionBoundaryDetail): void {
     }
   }
 }
-
-/** 仅供测试：清空订阅表，避免跨用例泄漏。 */
-export function resetSessionBoundarySubscribers(): void {
-  subscribers.clear()
-}

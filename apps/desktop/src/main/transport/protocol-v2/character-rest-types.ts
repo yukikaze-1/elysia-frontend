@@ -256,14 +256,3 @@ export interface RestResetEvolutionResult {
   state: RestCharacterPublicState
   resetFields: RestResetField[]
 }
-
-/** 错误 raw 复用后端 ProtocolError（CHAR-FE-12；error 为兼容别名恒等于 message） */
-export interface RestCharacterProtocolError {
-  code: string
-  message: string
-  retryable: boolean
-  requestId: string
-  error: string
-  details: Record<string, unknown>
-  retryAfterMs?: number
-}

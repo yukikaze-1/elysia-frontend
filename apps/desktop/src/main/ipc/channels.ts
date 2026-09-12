@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { isKeyAllowed, type ActivateModelProfileCommand, type CredentialStatus, type ModelProfileTestCommand, type SetTtsVoiceCommand, type TtsPreviewCommand, type UpsertModelProfileCommand } from '@shared/contracts'
-import { EndpointResponseSchema, RuntimeInfoSchema, CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, PersistSessionResultSchema, SessionPersistenceStateSchema, SettingsPatchSchema, CharacterDraftListRequestSchema, CharacterDraftGetRequestSchema, CharacterDraftSaveRequestSchema, CharacterDraftDeleteRequestSchema, CreateConversationInputSchema } from '@shared/schemas'
+import { CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, SettingsPatchSchema, CreateConversationInputSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
   name: z.string(),
@@ -25,9 +25,6 @@ export const chatConnectSchema = z.undefined()   // 无参:endpoint/token 由 co
 export const chatSetEndpointSchema = z.object({ serverUrl: z.string().min(1).max(4096) })
 export const chatGetEndpointSchema = z.undefined()
 export const chatGetRuntimeInfoSchema = z.undefined()
-// 响应 schema:共享定义在 shared/schemas/ipc-response,此处别名保持 chat-handlers 引用兼容(M3)
-export const endpointResponseSchema = EndpointResponseSchema
-export const runtimeInfoResponseSchema = RuntimeInfoSchema
 export const chatSendSchema = z.object({
   conversationId: z.string().min(1),
   text: z.string().max(65_536),      // D7A-13：消息正文 64KiB 上界（无界字段补值；MAX_IPC_MESSAGE_BYTES 预算内）
@@ -65,20 +62,11 @@ export const chatDeleteSchema = z.object({
 })
 export const chatGetStateSchema = z.undefined()
 
-// —— 阶段 3 G2 持久化四通道 request schema（响应 schema 别名引用共享定义，与既有 chat* 模式一致）——
+// —— 阶段 3 G2 持久化四通道 request schema ——
 export const chatHydratePersistenceSchema = z.undefined()
 export const chatPersistSessionSchema = PersistSessionInputSchema
 export const chatCacheMessagesSchema = CacheMessagesInputSchema
 export const chatOpenExternalSchema = OpenExternalInputSchema
-// 响应 schema：共享定义在 shared/schemas/ipc-response，别名保持引用兼容
-export const sessionPersistenceStateResponseSchema = SessionPersistenceStateSchema
-export const persistSessionResultResponseSchema = PersistSessionResultSchema
-
-// —— FE-D2 未提交角色草稿 request schema（response 由 character-draft-handlers 使用共享 schema）——
-export const characterDraftsListSchema = CharacterDraftListRequestSchema
-export const characterDraftsGetSchema = CharacterDraftGetRequestSchema
-export const characterDraftsSaveSchema = CharacterDraftSaveRequestSchema
-export const characterDraftsDeleteSchema = CharacterDraftDeleteRequestSchema
 
 // —— attachments 命令 request schema（spec §4.2/§4.5；响应 schema 在 shared/schemas/ipc-response）——
 export const UploadFileDescriptorSchema = z.object({

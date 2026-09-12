@@ -1,7 +1,7 @@
 // FE-D2：未提交角色编辑草稿的 Main 持久化边界。
 // 草稿只存于 app-cache，不进入 SessionStore、消息缓存、日志或诊断正文。
 // 读取逐条校验、写入原子替换；所有文件路径都来自 user-data-dirs + safeRoot。
-import { join, basename, relative, isAbsolute, sep } from 'node:path'
+import { join, relative, isAbsolute, sep } from 'node:path'
 import { unlink, realpath } from 'node:fs/promises'
 import { z } from 'zod'
 import type { CharacterDraftSummary, PersistedCharacterDraft } from '@shared/contracts'
@@ -287,9 +287,4 @@ export class CharacterDraftStore {
     this.writeTail = run.catch(() => {})
     return run
   }
-}
-
-export function characterDraftFilePath(appCache: string): string {
-  // 供测试/诊断断言使用；只返回派生 basename，不改变仓库的路径事实源。
-  return join(appCache, basename(CHARACTER_DRAFT_FILE_NAME))
 }
