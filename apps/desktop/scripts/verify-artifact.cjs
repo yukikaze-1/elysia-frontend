@@ -10,6 +10,14 @@ let failed = false
 const ok = (m) => console.log(`✓ ${m}`)
 const fail = (m) => { console.error(`✗ ${m}`); failed = true }
 
+// Linux 冒烟启动参数（2026-09-12，与 tests/integration/helpers/app.ts 的 defaultGlArgs 同源同理由）：
+// X99 上 Electron 的 GPU 进程**必然**在 Mesa 软件光栅器里段错误（内核侧 `segfault ... in swrast_dri.so`，
+// 每次启动 3 次），Chromium 重试耗尽后会 `FATAL: GPU process isn't usable. Goodbye.` **主动杀掉整个
+// 浏览器进程**。本脚本在 Linux 上只在 CI（xvfb）用到；冒烟断言的是 CSP / 协议 / Vue 挂载 / 计算样式，
+// **不涉及任何 GPU 或 canvas 能力**，故显式关掉 GPU 进程——观测面不变，同时消掉该类崩溃。
+// Windows 本机冒烟保持原样（不同渲染路径，无可复现证据，不动）。
+const GL_ARGS = process.platform === 'linux' ? ['--disable-gpu'] : []
+
 // 1. 三件产物存在
 for (const rel of ['main/index.js', 'preload/index.js', 'renderer/index.html']) {
   const p = path.join(out, rel)
@@ -166,7 +174,7 @@ async function smoke() {
         fail(`flip-back 失败：${e.message}——冒烟拒绝启动（fail-closed，产物 fuse 位保持关闭态；可能副本损坏/只读）`)
         return
       }
-      app = await _electron.launch({ executablePath: flipExe, args: [], cwd: root, env, timeout: 30000 })
+      app = await _electron.launch({ executablePath: flipExe, args: [...GL_ARGS], cwd: root, env, timeout: 30000 })
     } else {
       console.log('（冒烟目标：out/ 未打包直启——未找到未分发包产物）')
       // ELECTRON_RUN_AS_NODE 下 require('electron') 返回 cli 函数而非路径（本仓沙箱注入该 env，docs/17 P-2）；
@@ -175,7 +183,7 @@ async function smoke() {
       const binRel = fs.readFileSync(path.join(electronDir, 'path.txt'), 'utf8').trim()
       // path.txt 仅含二进制名（linux→electron），真实二进制在 dist/ 下（electron 自身 index.js 亦 join dist）；已按 .playwright-mcp/smoke-electron.cjs 已验证形态核对
       const electronPath = path.join(electronDir, 'dist', binRel)
-      app = await _electron.launch({ executablePath: electronPath, args: [root], cwd: root, env, timeout: 30000 })
+      app = await _electron.launch({ executablePath: electronPath, args: [root, ...GL_ARGS], cwd: root, env, timeout: 30000 })
     }
     try {
       // 在 firstWindow 前挂 app 级 console 监听——首载阶段的 CSP 拒绝错误也能捕获

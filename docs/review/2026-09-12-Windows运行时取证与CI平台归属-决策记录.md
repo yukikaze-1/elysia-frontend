@@ -442,3 +442,69 @@ X Something went wrong, self-installer exits with code 1     ← integration (sh
 
 **结论的边界（不得过度解读）**：这一轮绿**不能证明 flake 已被消除** —— 前四轮各红 1 例、且每次是不同用例
 （§10.8 表），本轮只是其中一次观测。**判据是后续若干轮的 flake 率**；若再现，按 §10.8 末尾的既有做法处理。
+
+### 10.10 第六轮观测：Linux 侧 GPU 进程**必然**崩溃 → 已定位并修复（run `34695059951` @ `257f66d`）
+
+**现象**：§10.9 的文档提交触发的这一轮，8 个 job 里 `integration (shard 1/3)` 红，且是**此前没出现过的新形态**——
+`trust-boundary.spec.ts:33`（`launchApp` 之后**第一次** `page.evaluate`）报
+`Error: page.evaluate: Target page, context or browser has been closed`。
+`gh run rerun 34695059951 --failed` 只重跑该 job **绿**（3m19s，未改任何提交）⇒ 偶发。
+
+**根因（内核日志实证，不是推断）**：Chromium 的 GPU 进程在 Mesa 的软件光栅器里段错误，重试耗尽后
+Chromium **主动杀掉整个浏览器进程**——所以失败点在「第一次 evaluate」，与用例逻辑无关：
+
+```
+electron[858681]: segfault at 15bc00000010 ip 00007cfbff50f82b error 4 in swrast_dri.so[...]
+                 likely on CPU 11 (core 13, socket 0)
+[FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:416] GPU process isn't usable. Goodbye.
+```
+
+`/var/log/kern.log` 当天累计 **2207 条**同类记录（进程名 `electron` 2170 / `Cyrene` 21 / `Xvfb` 0），
+**同一条指令偏移**（`ip …f82b`、`error 4`）跨任意多个 PID ⇒ 确定性崩溃，不是随机内存损坏。
+崩溃点 CPU 与亲和设置吻合：`CPU 10~13` = 实例 1 的 `4-13`，`CPU 0/3` = 实例 3 的 `0-3`。
+
+**最小复现（同一台机、最小 Electron 窗口、`xvfb-run -a`，每档 3 次重复，结果 3/3 一致）**：
+
+| 启动参数 | GPU 进程 SIGSEGV | `getContext('webgl')` |
+|---|---|---|
+| **默认（普通集成用例的现状）** | **3 次 / 每次启动** | `null` |
+| `--use-angle=swiftshader --enable-unsafe-swiftshader` | **0** | 可用（`WebKit WebGL`） |
+| `--disable-gpu` | **0** | `null` |
+| `--no-sandbox` | 3 | `null` |
+| `GALLIUM_DRIVER=llvmpipe` / `softpipe` / `LIBGL_ALWAYS_SOFTWARE=1` | 3 | `null` |
+| `--in-process-gpu` | 3 且 **Electron 自身 139 退出** | — |
+
+**两个必须说清楚的事实**：
+
+1. **普通集成用例此前跑在一个「GPU 进程连崩 3 次后彻底不可用、WebGL 恒 null」的环境里**。仓库里只有
+   `electron-live2d` / `perf-gate` / `dev-form-renderer` 三个 spec 自己传了 SwiftShader 参数
+   （正是 V-08 取证里记的「普通集成不传」）。于是每次 `launchApp()` 都白付约 1.2s 的崩溃-重启重试，
+   而且**每一次启动都是一次「会不会升级成 FATAL 杀掉浏览器」的抽签**——这与「每轮只红 1 例、且每次
+   红的用例都不同」（§10.8）的观测形态吻合。
+2. **修法不是放宽断言**：显式传 `--disable-gpu`，把「先崩 3 次再降级」变成「一开始就不启用」，
+   **用例观测面逐字不变**（本来就没有 WebGL）。需要真实软渲染的用例仍走各自的 SwiftShader 显式开关。
+
+**落地（两处同源，理由写在代码注释里）**：
+
+- `tests/integration/helpers/app.ts` 新增 `defaultGlArgs()`：**仅 linux** 注入 `--disable-gpu`；
+  调用方已显式给 GL 后端（`--use-angle`/`--use-gl`）时跳过——否则会把 SwiftShader 那个开关盖掉。
+  `extraArgs` 仍附在其后，既有调用方语义不变。
+- `scripts/verify-artifact.cjs` 的两处 `_electron.launch` 同源处理：Linux 冒烟断言的是
+  CSP / 协议 / Vue 挂载 / 计算样式，**不涉及 GPU 或 canvas**；Windows 本机冒烟不动。
+- **Windows 侧不动**：i5-13600KF 无核显，但走的是另一条非 Mesa 路径，当前全绿且无可复现证据。
+
+**验证（X99，runner 真实工作区直跑，跑完 `git checkout` 还原、工作区干净）**：
+非 live2d 集成套件 `26 files / 129 tests` **全绿**、267s，整轮 **swrast 段错误增量为 0**
+（修复前同一台机每个 run 数百条）；CI 里红过的 `trust-boundary.spec.ts` 该用例 1207ms 通过。
+对照：修复前非 live2d 部分约 327s（= 全套 509.72s − live2d 182.3s）⇒ **顺带快约 60s**，
+与「每次启动省掉约 1.2s 崩溃重试」的量级一致。
+
+**边界（不得过度解读）**：
+
+- 这**只**解释「启动期 GPU 崩溃」这一族。§10.8 表里那些**运行中途**的失败（30s 点击超时 / 距底缺口
+  中位数 / FILE_CONFLICT）不在此列，**不能宣布 flake 已清零**——判据仍是后续若干轮的 flake 率。
+- 普通集成用例现在**依然没有 WebGL**（与修复前逐字一致）。要不要把 SwiftShader 提升为**全套件默认**
+  （让普通用例也有真实软渲染、更接近真机）是**另一个判断**：本轮不做，因为那会改变 26 个文件里被测应用的
+  实际渲染能力，须单独验证；若要，把 `defaultGlArgs()` 的返回值换成那两个开关即可，一行的事。
+- 300 秒级观察：截至本轮，Linux 侧「每次启动必崩 3 次」已消除，但**尚无修复后的 CI run 数据**——
+  下一次推送才产生。

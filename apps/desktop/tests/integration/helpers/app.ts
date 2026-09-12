@@ -29,6 +29,36 @@ const ROOT = join(__dirname, '../../..')        // apps/desktop（helpers → in
 const RENDERER_OUT = join(ROOT, 'out/renderer') // apps/desktop/out/renderer
 const PRELOAD_OUT = join(ROOT, 'out/preload/index.js')
 
+/**
+ * Linux 上 Electron 的 GPU 进程**必然**在 Mesa 的软件光栅器里段错误（2026-09-12 在 X99 实测）。
+ *
+ * 证据（同一台机、最小 Electron 窗口、`xvfb-run -a`，3 次重复全一致）：
+ * - 默认参数：每次启动 `GPU process exited unexpectedly: exit_code=139` × 3（内核侧
+ *   `segfault ... in swrast_dri.so`，同一条指令偏移），且 `getContext('webgl')` 恒为 null；
+ * - `--no-sandbox` 无效（仍 × 3）；`--in-process-gpu` 更糟（Electron 自身 139 退出）；
+ * - `--disable-gpu` 与 `--use-angle=swiftshader --enable-unsafe-swiftshader` 均为 0 次。
+ *
+ * 危害不止是噪音：Chromium 重试耗尽后会打印
+ * `FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc: GPU process isn't usable. Goodbye.`
+ * 并**主动杀掉整个浏览器进程** —— 观测到的形态是某用例在首个 `page.evaluate` 上
+ * `Target page, context or browser has been closed`（`34695059951` 的 shard 1/3，`trust-boundary.spec.ts:33`），
+ * 而无任何代码改动重跑即绿。
+ *
+ * 该环境下 GPU 本就是死的（WebGL 恒 null），故显式传 `--disable-gpu`：把"先崩 3 次再降级"
+ * 变成"一开始就不启用"，**用例观测面逐字不变**（仍然无 WebGL），同时省掉每次启动约 1.2s
+ * 的崩溃-重启重试。需要真实软渲染的用例（Live2D / perf-gate / dev-form-renderer）自行经
+ * `extraArgs` 传 `--use-angle=swiftshader --enable-unsafe-swiftshader`——该后端实测 0 崩溃，
+ * 与本默认值互斥：**传了 GL 后端的调用方不再注入 `--disable-gpu`**，否则会把它盖掉。
+ *
+ * 只在 linux 生效：Windows 目标机（i5-13600KF，无核显）走的是另一条非 Mesa 路径，当前全绿，
+ * 无可复现证据，不动。
+ */
+function defaultGlArgs(extraArgs: readonly string[]): string[] {
+  if (process.platform !== 'linux') return []
+  const hasExplicitGlBackend = extraArgs.some((a) => a.startsWith('--use-angle') || a.startsWith('--use-gl'))
+  return hasExplicitGlBackend ? [] : ['--disable-gpu']
+}
+
 // 进程退出兜底：用例忘记 closeApp（或 beforeAll 启动后断言先失败）时，应用不应活过测试进程。
 // 中断（Ctrl-C / kill）时进程来不及走 'exit'，那是 setup/orphan-apps.setup.ts 下次运行回收的场景。
 const liveApps = new Set<ElectronApplication>()
@@ -84,7 +114,8 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
   delete env['ELECTRON_RUN_AS_NODE']; delete env['ELECTRON_ENABLE_LOGGING']; delete env['ELECTRON_RENDERER_URL']; delete env['NODE_OPTIONS']
   // 清掉继承值之后才允许显式注入 dev 形态（见 LaunchOptions.rendererUrl 注释）
   if (opts.rendererUrl) env['ELECTRON_RENDERER_URL'] = opts.rendererUrl
-  const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...(opts.extraArgs ?? [])], cwd: ROOT, env, timeout: 30000 })
+  const extraArgs = opts.extraArgs ?? []
+  const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...defaultGlArgs(extraArgs), ...extraArgs], cwd: ROOT, env, timeout: 30000 })
   try {
     // 第二道 fail-closed：主进程已成功启动后，在任何测试动作前核对 Electron 实际 appData/userData。
     // 若未来 Main 覆盖门被重构坏，助手直接失败，绝不让用例继续操作真实凭据/缓存。
