@@ -4,6 +4,7 @@ import { isProxy, isReactive } from 'vue'
 import type { CharacterCatalogChangedEvent, CharacterDraft, CharacterStateChangedEvent, UpdateUserIdentityCommand, UserIdentityProfile } from '@shared/contracts'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 import { useCharacterCatalogStore } from '../../src/renderer/src/stores/character-catalog.store'
 import { useCharacterRuntimeStore } from '../../src/renderer/src/stores/character-runtime.store'
@@ -59,7 +60,7 @@ function characterDraft(name: string): CharacterDraft {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
-  setDesktopApi(baseApi as never)
+  setDesktopApi(createDesktopApiMock(baseApi))   // I-06 / P2-10：原为 `baseApi` 加 never 铸型
 })
 
 describe('identityStore FE-B', () => {
@@ -202,7 +203,7 @@ describe('identityStore FE-B', () => {
     const initial = await backend.getMe()
     const delayed = deferred<UserIdentityProfile>()
     const updateMe = vi.fn(() => delayed.promise)
-    setDesktopApi({ getMe: vi.fn(async () => ({ ...initial, revision: 1 })), updateMe } as never)
+    setDesktopApi(createDesktopApiMock({ getMe: vi.fn(async () => ({ ...initial, revision: 1 })), updateMe }))
     const store = useIdentityStore()
     await store.load()
     store.updateDraft({ displayName: '不能丢的草稿' })
@@ -237,7 +238,7 @@ describe('characterCatalogStore FE-B', () => {
       validateCharacter: vi.fn((draft) => d1Backend.validateCharacter(draft)),
       previewCharacter: vi.fn((input) => d1Backend.previewCharacter(input))
     }
-    setDesktopApi(d1Api as never)
+    setDesktopApi(createDesktopApiMock(d1Api))
     const store = useCharacterCatalogStore()
     const identity = useIdentityStore()
     await Promise.all([store.loadList({}), identity.load()])
@@ -280,7 +281,7 @@ describe('characterCatalogStore FE-B', () => {
       updateCharacter: vi.fn((input) => local.updateCharacter(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({ status: 'active' })
     await Promise.all([store.loadDetail(created.summary.characterId), store.loadRevisions({ characterId: created.summary.characterId })])
@@ -324,7 +325,7 @@ describe('characterCatalogStore FE-B', () => {
       createCharacter: vi.fn((input) => local.createCharacter(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
 
     const defaultItem = await store.createCharacter({ draft: characterDraft('default-active') })
@@ -356,7 +357,7 @@ describe('characterCatalogStore FE-B', () => {
       getCharacter: vi.fn((id: string) => local.getCharacter(id)),
       listCharacterRevisions: vi.fn((input) => local.listCharacterRevisions(input))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
     await Promise.all([store.loadDetail(created.summary.characterId), store.loadRevisions({ characterId: created.summary.characterId })])
@@ -401,7 +402,7 @@ describe('characterCatalogStore FE-B', () => {
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id)),
       previewCharacter: vi.fn((input) => local.previewCharacter(input))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({ status: 'active', search: 'match-me' })
     store.handleCatalogChanged({ event: 'character.catalog.changed', eventId: 'd1-fence', sequence: 10, characterId: created.summary.characterId, currentRevision: 3, status: 'active', updatedAt: '2026-08-31T03:00:00.000Z' })
@@ -436,7 +437,7 @@ describe('characterCatalogStore FE-B', () => {
   it('FE-D1 低版本摘要不能把不匹配当前 query 的旧状态带回', async () => {
     const local = new MockCharacterBackend()
     const apiMock = { listCharacters: vi.fn((input = {}) => local.listCharacters(input)) }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
     const current = {
@@ -470,7 +471,7 @@ describe('characterCatalogStore FE-B', () => {
       updateCharacter: vi.fn((input) => local.updateCharacter(input)),
       archiveCharacter: vi.fn(() => staleArchive.promise)
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
     await store.loadDetail(created.summary.characterId)
@@ -506,7 +507,7 @@ describe('characterCatalogStore FE-B', () => {
       listCharacters: vi.fn(() => Promise.resolve({ items: [], hasMore: false })),
       getCharacter: vi.fn(() => Promise.resolve(detail))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
     await store.loadDetail(detail.summary.characterId)
@@ -541,7 +542,7 @@ describe('characterCatalogStore FE-B', () => {
       listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
       getCharacter: vi.fn(() => staleDetail.promise)
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
     store.handleCatalogChanged({
@@ -574,10 +575,12 @@ describe('characterCatalogStore FE-B', () => {
       listCharacters: vi.fn(() => Promise.resolve({ items: [], hasMore: false })),
       getCharacter: vi.fn(() => Promise.resolve(detail)),
       archiveCharacter: vi.fn(() => Promise.resolve({
-        character: { ...detail.summary, currentRevision: 3, status: 'archived', updatedAt: '2026-08-31T11:00:00.000Z' }
+        // I-06：`status` 必须收窄——无上下文类型的对象字面量会把 'archived' 拓宽成 string，
+        // 于是不满足 CharacterArchiveResult。原先的 `as never` 掩盖了这处真实漂移。
+        character: { ...detail.summary, currentRevision: 3, status: 'archived' as const, updatedAt: '2026-08-31T11:00:00.000Z' }
       }))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
     await store.loadDetail(detail.summary.characterId)
@@ -600,7 +603,7 @@ describe('characterCatalogStore FE-B', () => {
         : local.listCharacterRevisions(input)),
       updateCharacter: vi.fn((input) => local.updateCharacter(input))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     const revisionRequest = store.loadRevisions({ characterId: other.summary.characterId, cursor: target.summary.characterId })
     expect(Object.values(store.revisionStatus)).toContain('loading')
@@ -806,7 +809,7 @@ describe('characterCatalogStore FE-B', () => {
       listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id))
     }
-    setDesktopApi(apiMock as never)
+    setDesktopApi(createDesktopApiMock(apiMock))
     const editor = useCharacterEditorStore()
     const cleanup = vi.spyOn(editor, 'handleCharacterArchived').mockResolvedValue(1)
     const store = useCharacterCatalogStore()

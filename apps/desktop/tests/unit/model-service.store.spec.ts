@@ -4,31 +4,11 @@ import { useModelServiceStore } from '../../src/renderer/src/stores/model-servic
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
+import type { ModelProfile } from '@shared/contracts'
 
-const mockApi = {
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
-  attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  // P4-A 新增
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(),
-  testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  // P4-B 语音/设置面
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。
+const mockApi = createDesktopApiMock()
 
 beforeEach(() => {
   setActivePinia(createPinia()); setDesktopApi(mockApi); vi.clearAllMocks()
@@ -36,7 +16,9 @@ beforeEach(() => {
   mockApi.getActiveModelSelection.mockResolvedValue({})
 })
 
-const PROFILES = [
+// I-06：加真实类型标注——原先裸 mock 的 `any` 掩盖了 fixture 与契约的漂移
+// （`type: string` 而非 `ModelServiceType` 这类字面量窄化缺失，迁移后立刻被 tsc 抓到）。
+const PROFILES: ModelProfile[] = [
   { id: 'deepseek/deepseek-v4-flash', type: 'llm', displayName: 'deepseek', source: 'built_in', provider: 'deepseek', model: 'deepseek-v4-flash', models: ['deepseek-v4-flash'], executionLocation: 'backend', credentialStatus: 'configured', enabled: true, capabilities: [], builtIn: true },
   { id: 'custom/my-llm', type: 'llm', displayName: 'my-llm', source: 'custom', provider: 'custom', model: 'my-llm', models: [], executionLocation: 'backend', credentialStatus: 'missing', enabled: true, capabilities: [], builtIn: false }
 ]

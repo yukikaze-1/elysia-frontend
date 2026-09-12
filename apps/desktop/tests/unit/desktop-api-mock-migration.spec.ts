@@ -23,8 +23,6 @@ const UNIT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
 /** 尚未迁移到 `createDesktopApiMock` 的 spec（迁移一个就删一行；新增裸 mock 会红） */
 const PENDING = [
-  'character-editor.store.spec.ts',
-  'character-stores.spec.ts',
   'cy-attachment-media.spec.ts',
   'cy-attachment-placeholder.spec.ts',
   'cy-character-catalog.spec.ts',
@@ -47,12 +45,7 @@ const PENDING = [
   'cy-voice-pane.spec.ts',
   'live2d.spec.ts',
   'live2d-pane.spec.ts',
-  'live2d-panel.spec.ts',
-  'message.store.spec.ts',
-  'message-character-identity.spec.ts',
-  'message-store-generation-exit.spec.ts',
-  'model-service.store.spec.ts',
-  'voice.store.spec.ts'
+  'live2d-panel.spec.ts'
 ] as const
 
 function specFiles(dir: string): string[] {
@@ -102,6 +95,8 @@ describe('I-06 mock 工厂迁移进度门禁', () => {
   })
 
   it('已迁移的文件里不得残留 `as never` 铸 desktopApi（否则等于没迁）', () => {
+    // 注意：本扫描器是**纯文本**匹配（`setDesktopApi(` 后 400 字符内出现该 cast 即命中），
+    // 因此迁移说明里不要照抄这几个字——已三次命中自己写的注释。改写措辞即可，勿放宽扫描。
     const { strayCast } = scan()
     expect(strayCast, `以下文件已引入工厂却仍保留 cast：${JSON.stringify(strayCast)}`).toEqual([])
   })

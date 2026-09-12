@@ -18,29 +18,10 @@ import { useConnectionStore } from '../../src/renderer/src/stores/connection.sto
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
-const mockApi = {
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
-  onChatEvent: vi.fn((_h: (e: BackendEvent) => void) => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
-  attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  // P4-B 语音/设置面
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。
+const mockApi = createDesktopApiMock()
 
 /** fake PcmCapture（PcmCaptureLike 形状；start 捕获 options 供测试驱动 onChunk/onStop） */
 interface FakeCapture extends PcmCaptureLike {
@@ -58,14 +39,6 @@ function makeFakeCapture(): FakeCapture {
   }
 }
 let fake: FakeCapture
-
-function state() {
-  return {
-    version: 1 as const,
-    voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: true },
-    dictation: { insertMode: 'append' as const }
-  }
-}
 
 /** 事件外壳：BackendEvent 判别字段 + envelope 最小集 */
 function ev<T extends { event: string }>(partial: T): BackendEvent {
@@ -105,10 +78,10 @@ describe('voiceStore', () => {
     mockApi.voiceStopDictation.mockResolvedValue(undefined)
     mockApi.voiceCancelDictation.mockResolvedValue(undefined)
     mockApi.audioCancel.mockResolvedValue(undefined)
-    mockApi.settingsSave.mockImplementation(async (patch: unknown) => {
-      // 仅测试需回包一致；voiceStore 不读 settingsSave 返回值
-      return { ...state(), voice: { ...state().voice, ...(patch as { voice?: object }).voice } }
-    })
+    // I-06：此处原有 `settingsSave.mockImplementation(async (patch: unknown) => …)`——窄化的 `unknown`
+    // 参数在类型化 mock 下不可赋值，而它回包的合并态**没人读**（voiceStore 不读 settingsSave 返回值）。
+    // 实测直接删掉：工厂默认实现返回完整的 settingsState，比这个只含 version/voice/dictation 的
+    // 半截对象更贴近契约。保留 `mockApi.settingsSave` 的调用断言不受影响。
     useConnectionStore().state = { status: 'connected', connectionId: 'cid-1' }
     useConversationStore().$patch({ currentId: 'conv-1' })
     const settings = useSettingsStore()

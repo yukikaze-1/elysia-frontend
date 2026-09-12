@@ -8,30 +8,11 @@ import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { BackendEvent, GenerationDeltaEvent, GenerationStartedEvent, Message } from '@shared/contracts'
+import { createDesktopApiMock } from './helpers/desktop-api'
+import type { BackendEvent, GenerationDeltaEvent, GenerationStartedEvent, Message, MessagePage } from '@shared/contracts'
 
-// mock desktopApi(store 依赖注入)——通过 stores/desktop-api.types.ts 的 DesktopApiLike
-const mockApi = {
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(), attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  // P4-B 语音/设置面
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`），改用受检工厂。
+const mockApi = createDesktopApiMock()
 // 注入机制定死(P1-3):stores/desktop-api.ts export let api + setDesktopApi;store 惰性 import { api };
 // main.ts 调 setDesktopApi(window.desktopApi);测试 beforeEach 里 setDesktopApi(mockApi)(node env 无 window,不触全局)
 
@@ -450,7 +431,7 @@ describe('messageStore 流式应用', () => {
   })
 
   it('failed 在 cancel IPC resolve 前到达（交错时序）→ 最终仍 interrupted + 无 lastError', async () => {
-    let resolveCancel!: (v?: unknown) => void
+    let resolveCancel!: () => void   // I-06：原为 `(v?: unknown) => void`，类型化 mock 下不可由 Promise resolve 赋值
     mockApi.cancel.mockImplementationOnce(() => new Promise((res) => { resolveCancel = res }))
     const store = useMessageStore()
     store.applyEvent(started())
@@ -603,8 +584,8 @@ describe('G2 历史懒加载：有序插入 / loadOlder / loadSnapshot（spec §
     mockApi.getMessages.mockClear()
     store.loadPage({ items: [pageMsg('old-current', 't2')], hasMore: true, nextCursor: 'old-cursor' })
     store.setPageMeta({ items: [pageMsg('old-current', 't2')], hasMore: true, nextCursor: 'old-cursor' })
-    let resolveOld!: (page: unknown) => void
-    let resolveNew!: (page: unknown) => void
+    let resolveOld!: (page: MessagePage) => void   // I-06：原为 `(page: unknown) => void`
+    let resolveNew!: (page: MessagePage) => void
     mockApi.getMessages
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
@@ -634,8 +615,8 @@ describe('G2 历史懒加载：有序插入 / loadOlder / loadSnapshot（spec §
     const conversations = useConversationStore()
     mockApi.getMessages.mockClear()
     store.$patch({ nextCursor: 'old-earlier' })
-    let resolveOld!: (page: unknown) => void
-    let resolveNew!: (page: unknown) => void
+    let resolveOld!: (page: MessagePage) => void   // I-06：原为 `(page: unknown) => void`
+    let resolveNew!: (page: MessagePage) => void
     mockApi.getMessages
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
       .mockImplementationOnce(() => new Promise((resolve) => { resolveNew = resolve }))
@@ -714,16 +695,18 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     expect(store.highlightMessageId).toBeUndefined()
   })
   it('loadContextWindow：getMessageContext 窗口 + 首页游标初始化 + 去重合并', async () => {
-    setDesktopApi({
-      getMessageContext: async () => ({ items: [
+    setDesktopApi(createDesktopApiMock({
+      // I-06：箭头必须写 `Promise<MessagePage>` 返回类型——否则 items 里的 `role`/`status` 字面量
+      // 被拓宽成 string，不满足 Message；这正是原先 never 铸型掩盖的漂移。
+      getMessageContext: async (): Promise<MessagePage> => ({ items: [
         { messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T02:00:00.000Z', content: '命中' },
         { messageId: 'm2', conversationId: 'c1', role: 'assistant', status: 'completed', createdAt: '2026-08-14T02:00:10.000Z' }
       ], hasMore: false }),
-      getMessages: async () => ({ items: [
+      getMessages: async (): Promise<MessagePage> => ({ items: [
         { messageId: 'm1', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T02:00:00.000Z', content: '命中' },
         { messageId: 'm0', conversationId: 'c1', role: 'user', status: 'completed', createdAt: '2026-08-14T01:00:00.000Z', content: '更早' }
       ], hasMore: true, nextCursor: 'cur-1' })
-    } as never)
+    }))
     const conversationStore = useConversationStore()
     conversationStore.$patch({ currentId: 'c1' })
     const store = useMessageStore()
@@ -739,8 +722,8 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     expect(store.byId.m1).toBeDefined()
   })
   it('P1-4：loadContextWindow 中途切会话 → 上下文页不污染新会话列表（await 后 currentId 守卫）', async () => {
-    let resolveCtx!: (v: unknown) => void
-    setDesktopApi({ getMessageContext: () => new Promise((r) => { resolveCtx = r }) } as never)
+    let resolveCtx!: (v: MessagePage) => void
+    setDesktopApi(createDesktopApiMock({ getMessageContext: () => new Promise<MessagePage>((r) => { resolveCtx = r }) }))
     const conversationStore = useConversationStore()
     conversationStore.$patch({ currentId: 'c1' })
     const store = useMessageStore()
@@ -758,15 +741,17 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     expect(store.order).toHaveLength(0)
   })
   it('FE-E2：同会话同连接的上下文请求 latest-wins，A 不得覆盖 B 的消息或 cursor', async () => {
-    let resolveCtxA!: (value: unknown) => void
-    let resolveCtxB!: (value: unknown) => void
-    let resolveFirstB!: (value: unknown) => void
-    const getMessageContext = vi.fn()
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveCtxA = resolve }))
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveCtxB = resolve }))
-    const getMessages = vi.fn()
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirstB = resolve }))
-    setDesktopApi({ getMessageContext, getMessages } as never)
+    let resolveCtxA!: (value: MessagePage) => void
+    let resolveCtxB!: (value: MessagePage) => void
+    let resolveFirstB!: (value: MessagePage) => void
+    // I-06：原为 `vi.fn()`（裸 mock ⇒ 不可赋值给真实签名）。给一个返回 MessagePage 的默认实现，
+    // 类型即 `Mock<() => Promise<MessagePage>>`，两个 mockImplementationOnce 照旧按序生效。
+    const getMessageContext = vi.fn(async (): Promise<MessagePage> => ({ items: [], hasMore: false }))
+      .mockImplementationOnce(() => new Promise<MessagePage>((resolve) => { resolveCtxA = resolve }))
+      .mockImplementationOnce(() => new Promise<MessagePage>((resolve) => { resolveCtxB = resolve }))
+    const getMessages = vi.fn(async (): Promise<MessagePage> => ({ items: [], hasMore: false }))
+      .mockImplementationOnce(() => new Promise<MessagePage>((resolve) => { resolveFirstB = resolve }))
+    setDesktopApi(createDesktopApiMock({ getMessageContext, getMessages }))
     const conversationStore = useConversationStore()
     conversationStore.$patch({ currentId: 'c1' })
     const store = useMessageStore()
@@ -811,7 +796,7 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
   })
   it('P1-2：loadEarlier 成功后同步 hasMoreBefore/beforeCursor（哨兵两路径状态一致，防 nextCursor 耗尽后回退 loadOlder 用陈旧游标）', async () => {
     let called = 0
-    setDesktopApi({ getMessages: async () => { called++; return { items: [], hasMore: false, nextCursor: undefined } } } as never)
+    setDesktopApi(createDesktopApiMock({ getMessages: async (): Promise<MessagePage> => { called++; return { items: [], hasMore: false, nextCursor: undefined } } }))
     const conversationStore = useConversationStore()
     conversationStore.$patch({ currentId: 'c1' })
     const store = useMessageStore()
@@ -825,7 +810,7 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
   })
   it('loadEarlier：!nextCursor 早退（镜像 getMore）；成功后更新游标', async () => {
     let called = 0
-    setDesktopApi({ getMessages: async () => { called++; return { items: [], hasMore: false, nextCursor: undefined } } } as never)
+    setDesktopApi(createDesktopApiMock({ getMessages: async (): Promise<MessagePage> => { called++; return { items: [], hasMore: false, nextCursor: undefined } } }))
     const conversationStore = useConversationStore()
     conversationStore.$patch({ currentId: 'c1' })
     const store = useMessageStore()
@@ -838,7 +823,7 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
   })
   it('send 携带 stickerId 透传 + 乐观消息标记', async () => {
     const sent: unknown[] = []
-    setDesktopApi({ send: async (input: unknown) => { sent.push(input); return { clientRequestId: 'cr1', serverMessageId: 'sm1' } } } as never)
+    setDesktopApi(createDesktopApiMock({ send: async (input: unknown) => { sent.push(input); return { clientRequestId: 'cr1', serverMessageId: 'sm1' } } }))
     const conversationStore = useConversationStore()
     conversationStore.$patch({ currentId: 'c1' })
     const store = useMessageStore()

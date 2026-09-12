@@ -10,6 +10,7 @@ import type {
   CharacterDraftSummary
 } from '@shared/contracts'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS, useCharacterEditorStore } from '../../src/renderer/src/stores/character-editor.store'
 
 function draft(name = '测试角色'): CharacterDraft {
@@ -61,14 +62,15 @@ async function flushMicrotasks(): Promise<void> {
 
 describe('characterEditorStore FE-D2', () => {
   let saved: PersistedCharacterDraft[]
-  let api: Record<string, ReturnType<typeof vi.fn>>
+  let api: ReturnType<typeof buildApi>
 
-  beforeEach(() => {
-    vi.useFakeTimers()
-    setActivePinia(createPinia())
-    saved = []
-    const original = detail()
-    api = {
+  /**
+   * I-06 / P2-10：把 mock 字面量收进工厂函数，`api` 的类型因此由字面量**推断**——每个键保留真实签名，
+   * 本文件 67 处 `api.x` 的 `toHaveBeenCalledWith` 实参检查得以保留。原先声明为
+   * `Record<string, ReturnType<typeof vi.fn>>`：键被擦成 `string`，工厂的键/值校验无从进行。
+   */
+  function buildApi(original: CharacterDetail) {
+    return {
       listCharacterDrafts: vi.fn(async () => saved.map(({ draft: _draft, ...summary }) => summary)),
       getCharacterDraft: vi.fn(async (key: string) => saved.find((item) => item.key === key)),
       saveCharacterDraft: vi.fn(async (entry: PersistedCharacterDraft) => {
@@ -80,7 +82,14 @@ describe('characterEditorStore FE-D2', () => {
       createCharacter: vi.fn(async (input: { draft: CharacterDraft }) => ({ ...original, summary: { ...original.summary, displayName: input.draft.displayName }, current: { ...original.current, ...input.draft, revision: 1 } })),
       updateCharacter: vi.fn(async (input: { draft: CharacterDraft }) => mutation({ ...original, summary: { ...original.summary, displayName: input.draft.displayName, currentRevision: 4 }, current: { ...original.current, ...input.draft, revision: 4 } }))
     }
-    setDesktopApi(api as never)
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    setActivePinia(createPinia())
+    saved = []
+    api = buildApi(detail())
+    setDesktopApi(createDesktopApiMock(api))
     // The production store fails closed until bootstrap observes a connected
     // state; unit tests that exercise remote operations explicitly opt in.
     useCharacterEditorStore().setOnline(true)

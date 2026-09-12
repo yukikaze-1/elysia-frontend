@@ -1,11 +1,12 @@
 // FE-E2：消息生成/回放的角色身份不可变快照。
 // 这些测试只消费 Renderer domain contract；raw→domain 的形状另由 frame/rest mapper 测试覆盖。
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import type {
   BackendEvent,
   CharacterBindingSnapshot,
@@ -15,9 +16,8 @@ import type {
   Message
 } from '@shared/contracts'
 
-const mockApi = {
-  cacheMessages: vi.fn().mockResolvedValue(undefined),
-} as never
+// I-06 / P2-10：原为 `{ cacheMessages: vi.fn().mockResolvedValue(undefined) } as never` 的单键 mock。
+const mockApi = createDesktopApiMock()
 
 const binding: CharacterBindingSnapshot = {
   characterId: 'custom/elysia',
