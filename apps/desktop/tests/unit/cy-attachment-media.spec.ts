@@ -8,13 +8,23 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { AttachmentCheckResult } from '@shared/contracts'
 import CyAttachmentMedia from '../../src/renderer/src/components/CyAttachmentMedia.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { MEDIA_URL_BASE } from '../../src/renderer/src/utils/media-url'
 
-let attachmentsCheck: ReturnType<typeof vi.fn>
+let attachmentsCheck: ReturnType<typeof makeAttachmentsCheck>
+
+/**
+ * I-06 / P2-10：mock 必须带**真实签名**。原声明是 `ReturnType<typeof vi.fn>`
+ * （裸 `Mock<Procedure | Constructable>`）：既不能赋给 `DesktopApiLike['attachmentsCheck']`，
+ * 也会让下面 `toHaveBeenCalledWith('att_1')` 的实参检查消失（形参列表为空 ⇒ 期望值不受检）。
+ */
+function makeAttachmentsCheck() {
+  return vi.fn(async (_attachmentId: string): Promise<AttachmentCheckResult> => ({ status: 'ok' }))
+}
 
 beforeEach(() => {
-  attachmentsCheck = vi.fn(async (): Promise<AttachmentCheckResult> => ({ status: 'ok' }))
-  setDesktopApi({ attachmentsCheck } as never)
+  attachmentsCheck = makeAttachmentsCheck()
+  setDesktopApi(createDesktopApiMock({ attachmentsCheck }))
 })
 
 // tsconfig.node 下 .vue 为 ambient shim（DefineComponent<object, object, unknown>），`$props` 解析为 {}

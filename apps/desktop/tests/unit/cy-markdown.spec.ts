@@ -10,10 +10,12 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CyMarkdown from '../../src/renderer/src/components/CyMarkdown.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 beforeEach(() => {
-  setDesktopApi({ openExternal: vi.fn() } as unknown as DesktopApiLike)
+  // I-06 / P2-10：原为 `{ openExternal: vi.fn() } as unknown as DesktopApiLike`——裸 mock + 双重 cast。
+  // 本文件从不消费 openExternal（连断言都没有），工厂默认值（已 resolved 的 no-op）语义等价。
+  setDesktopApi(createDesktopApiMock())
 })
 
 describe('CyMarkdown 流式渲染（H-03：真节流，非防抖）', () => {

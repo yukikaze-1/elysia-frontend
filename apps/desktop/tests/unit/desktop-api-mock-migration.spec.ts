@@ -23,29 +23,20 @@ const UNIT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
 /** 尚未迁移到 `createDesktopApiMock` 的 spec（迁移一个就删一行；新增裸 mock 会红） */
 const PENDING = [
-  'cy-attachment-media.spec.ts',
-  'cy-attachment-placeholder.spec.ts',
   'cy-character-catalog.spec.ts',
   'cy-character-detail.spec.ts',
   'cy-character-editor.spec.ts',
   'cy-character-management.spec.ts',
   'cy-character-pane.spec.ts',
   'cy-character-preview.spec.ts',
-  'cy-chat-input.spec.ts',
   'cy-connection-panel.spec.ts',
   'cy-conversation-list.spec.ts',
   'cy-diagnostics-pane.spec.ts',
   'cy-identity-pane.spec.ts',
-  'cy-markdown.spec.ts',
-  'cy-renderer-crash-banner.spec.ts',
   'cy-security-pane.spec.ts',
   'cy-tool-approval.spec.ts',
   'cy-tool-card.spec.ts',
-  'cy-voice-consent-dialog.spec.ts',
-  'cy-voice-pane.spec.ts',
-  'live2d.spec.ts',
-  'live2d-pane.spec.ts',
-  'live2d-panel.spec.ts'
+  'cy-voice-consent-dialog.spec.ts'
 ] as const
 
 function specFiles(dir: string): string[] {
@@ -56,6 +47,32 @@ function specFiles(dir: string): string[] {
     else if (entry.name.endsWith('.spec.ts')) out.push(full)
   }
   return out
+}
+
+/**
+ * 截出每个 `setDesktopApi(...)` 调用的**实参文本**（按括号配平，逐字符扫）。
+ *
+ * 为什么不直接用 `setDesktopApi\([\s\S]{0,400}?as never`：那个 400 字符滑窗会把调用**之后**的无关
+ * cast 也算进来——实测踩到 4 次误报（3 次是自己写的迁移说明、1 次是同文件里 `.vue` shim 既有的
+ * `mount(..., { props: props as never })`）。只检查实参内部既消除误报，也不漏掉
+ * `setDesktopApi({ x } as never)` 这类真目标（该判别力由本文件的变异验证覆盖）。
+ *
+ * 已知局限：不解析字符串字面量——实参里若出现含括号的字符串可能配平错位。本仓库的实参是
+ * 对象字面量或标识符，不触发该局限。
+ */
+function desktopApiCallArgs(text: string): string[] {
+  const marker = 'setDesktopApi('
+  const args: string[] = []
+  for (let start = text.indexOf(marker); start !== -1; start = text.indexOf(marker, start + 1)) {
+    let depth = 0
+    let end = start + marker.length - 1 // 指向 '('
+    for (; end < text.length; end++) {
+      if (text[end] === '(') depth++
+      else if (text[end] === ')') { depth--; if (depth === 0) break }
+    }
+    args.push(text.slice(start + marker.length, end))
+  }
+  return args
 }
 
 /** 相对 tests/unit 的文件名（本门禁自身不参与统计） */
@@ -72,7 +89,7 @@ function scan(): { all: string[]; migrated: string[]; strayCast: string[] } {
     if (text.includes('createDesktopApiMock')) {
       migrated.push(name)
       // 已迁移的文件不得再对 desktopApi 用 as never（否则等于没迁）
-      if (/setDesktopApi\([\s\S]{0,400}?as never/.test(text)) strayCast.push(name)
+      if (desktopApiCallArgs(text).some((args) => args.includes('as never'))) strayCast.push(name)
     }
   }
   return { all, migrated, strayCast }
@@ -95,8 +112,9 @@ describe('I-06 mock 工厂迁移进度门禁', () => {
   })
 
   it('已迁移的文件里不得残留 `as never` 铸 desktopApi（否则等于没迁）', () => {
-    // 注意：本扫描器是**纯文本**匹配（`setDesktopApi(` 后 400 字符内出现该 cast 即命中），
-    // 因此迁移说明里不要照抄这几个字——已三次命中自己写的注释。改写措辞即可，勿放宽扫描。
+    // 只检查 `setDesktopApi(...)` 的**实参文本**（见 desktopApiCallArgs）。因此：
+    //   · 迁移说明里若把 cast 原样抄进实参注释，仍会命中——改写措辞即可，勿放宽扫描；
+    //   · 调用之后（实参之外）的无关 cast 不再误报。
     const { strayCast } = scan()
     expect(strayCast, `以下文件已引入工厂却仍保留 cast：${JSON.stringify(strayCast)}`).toEqual([])
   })

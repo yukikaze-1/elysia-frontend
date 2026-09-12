@@ -8,10 +8,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CyRendererCrashBanner from '../../src/renderer/src/components/CyRendererCrashBanner.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
+import type { RendererCrashEvent } from '@shared/contracts'
 
-// 注入 mock api.getLastCrash——先例 cy-diagnostics-pane.spec.ts:11/80（setDesktopApi 注入 + cast）
-function setupApi(lastCrash: { reason: string; exitCode: number } | null): void {
-  setDesktopApi({ getLastCrash: vi.fn(async () => lastCrash) } as unknown as Parameters<typeof setDesktopApi>[0])
+// I-06 / P2-10：原为 `{ getLastCrash: vi.fn(...) } as unknown as Parameters<typeof setDesktopApi>[0]`。
+// 参数类型改用真实契约 `RendererCrashEvent`——原先手写的 `{ reason: string; exitCode: number }`
+// 让 `reason` 拓宽成 string，那正是 cast 掩盖的漂移。
+function setupApi(lastCrash: RendererCrashEvent | null): void {
+  setDesktopApi(createDesktopApiMock({ getLastCrash: vi.fn(async () => lastCrash) }))
 }
 beforeEach(() => { vi.resetModules() })
 afterEach(() => { vi.unstubAllGlobals() })

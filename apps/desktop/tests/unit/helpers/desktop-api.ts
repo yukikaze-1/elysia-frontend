@@ -56,14 +56,19 @@ export type DesktopApiMock = {
  *   - **值**：交叉 `Partial<DesktopApiLike>` 让「真实键 + 错误签名」也编译失败
  *     （实测：`vi.fn(async () => 12345)` 报 TS2322 并**把真实签名写进报错里**）。
  *
- * **实测更正（2026-09-12，迁移时被证伪的两条初版注释）**：
- *   ① 「裸 `vi.fn()` 与任何签名交叉都不坍缩」**不成立**——`Mock<Procedure | Constructable>` 在 strict
- *      模式下不可赋值给具体签名，于是 `setDesktopApi({ attachmentsCheck: vi.fn() } as never)` 这种
- *      最常见的写法**全部编译失败**（这是全量迁移的真实阻塞点，不是个例）。
- *   ② 试图用 `| ReturnType<typeof vi.fn>` 显式放行裸 mock **也不成立**：那会让每个键推断成联合类型，
+ * **实测更正（2026-09-12，迁移时被证伪的初版注释）**：
+ *   ① 初版曾断言「裸 `vi.fn()` 不可赋值给具体签名，是全量迁移的真实阻塞点」——**该诊断已被后续实测
+ *      推翻**。`Mock<Procedure | Constructable>` 的调用签名是 `(...args: any[]) => any`，对具体签名
+ *      **是可赋值的**：`createDesktopApiMock({ settingsLoad: vi.fn(), settingsSave: vi.fn(),
+ *      listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn() })`（live2d-pane / live2d-panel）与
+ *      `{ setTtsVoice: vi.fn() }`（cy-tts-voices，迁移前就在仓库里）都通过了约束。
+ *      当初那 11 个文件「迁不过去」的真因是**返回类型坍缩**（`createDesktopApiMock()` 的返回类型里
+ *      mock 方法消失，`.mockResolvedValue` 报 TS2339），与 override 的值无关——见函数末尾的注释。
+ *      推论：裸 mock 的 spec **可以直接**迁进来（键仍受检）；但裸 mock 会让
+ *      `toHaveBeenCalledWith(...)` 的实参检查静默失效（形参列表为空 ⇒ 期望值不受检），
+ *      故迁移时仍应尽量给探针型 mock 写真实签名（`vi.fn<NonNullable<DesktopApiLike['x']>>()`）。
+ *   ② 试图用 `| ReturnType<typeof vi.fn>` 显式放行裸 mock 会适得其反：那会让每个键推断成联合类型，
  *      参数约束 `O extends DesktopApiOverrides<O>` 随之失败，错误数反而从 32 涨到 42（实测）。
- *   故本工厂**只接受带类型参数的 mock**（`vi.fn<(a: string) => Promise<X>>()`）或等价的具体函数；
- *   裸 mock 的 spec 要么写类型参数，要么留在 `desktop-api-mock-migration.spec.ts` 的 PENDING 里。
  */
 type DesktopApiOverrides<O> = Partial<{
   [K in keyof O]: K extends keyof DesktopApiLike ? DesktopApiLike[K] : never

@@ -23,9 +23,11 @@ import CyLive2DPane from '../../src/renderer/src/components/CyLive2DPane.vue'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useLive2dStore } from '../../src/renderer/src/stores/live2d.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
 import type { Live2DModelSummary } from '@shared/contracts'
 
+// I-06 / P2-10：原为 4 键部分 mock 加双重 cast（`as unknown as Parameters<typeof setDesktopApi>[0]`）。
 const mockApi = {
   settingsLoad: vi.fn(), settingsSave: vi.fn(), listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn()
 }
@@ -45,7 +47,7 @@ const MODEL_BROKEN: Live2DModelSummary = {
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  setDesktopApi(mockApi as unknown as Parameters<typeof setDesktopApi>[0])
+  setDesktopApi(createDesktopApiMock(mockApi))
   vi.clearAllMocks()
 })
 

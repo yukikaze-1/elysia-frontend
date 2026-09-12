@@ -8,12 +8,18 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { AttachmentCheckResult, AttachmentMediaStatus } from '@shared/contracts'
 import CyAttachmentPlaceholder from '../../src/renderer/src/components/CyAttachmentPlaceholder.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
-let attachmentsCheck: ReturnType<typeof vi.fn>
+let attachmentsCheck: ReturnType<typeof makeAttachmentsCheck>
+
+/** I-06 / P2-10：mock 必须带真实签名（原为裸 `ReturnType<typeof vi.fn>`，不可赋给真实契约）。 */
+function makeAttachmentsCheck() {
+  return vi.fn(async (_attachmentId: string): Promise<AttachmentCheckResult> => ({ status: 'ok' }))
+}
 
 beforeEach(() => {
-  attachmentsCheck = vi.fn(async (): Promise<AttachmentCheckResult> => ({ status: 'ok' }))
-  setDesktopApi({ attachmentsCheck } as never)
+  attachmentsCheck = makeAttachmentsCheck()
+  setDesktopApi(createDesktopApiMock({ attachmentsCheck }))
 })
 
 function mountPlaceholder(props: { status?: AttachmentMediaStatus; attachmentId?: string; message?: string }) {

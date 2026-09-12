@@ -21,7 +21,9 @@ import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { useLayoutStore } from '../../src/renderer/src/stores/layout.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { Live2DDirectiveEvent, Live2DModelSummary, RuntimeInfo } from '@shared/contracts'
+import type { Live2DDirectiveEvent, Live2DModelSummary, RuntimeInfo, SettingsState } from '@shared/contracts'
+import { DEFAULT_SETTINGS } from '@shared/schemas'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 // —— Core 全局桩 ——
 // 已提升为全局 setup（tests/unit/setup/live2dcubismcore.ts，见 vitest.config.mts），
@@ -100,29 +102,13 @@ function asAdapter(a: FakeAdapterLike): Live2DAdapter {
 
 const fakeCanvas = { width: 340, height: 680 } as HTMLCanvasElement
 
-// —— desktopApi mock（store 消费 settingsLoad/settingsSave/listLive2dModels；缺省 undefined 返回） ——
-const mockApi = {
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(async (): Promise<RuntimeInfo> => ({ mode: 'mock', packaged: false })),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
-  attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(),
-  settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// —— desktopApi mock（store 消费 settingsLoad/settingsSave/listLive2dModels） ——
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像。这里**刻意保留**原镜像的 `getRuntimeInfo` 返回
+// `mode:'mock'`——工厂默认是 `mode:'real'`，而 live2dStore 的合成口型（step/sine）路径依赖 mock 模式，
+// 换默认值就是行为改动（见下方 651/658 行对 mockMouthLevel 的用例）。
+const mockApi = createDesktopApiMock({
+  getRuntimeInfo: vi.fn(async (): Promise<RuntimeInfo> => ({ mode: 'mock', packaged: false }))
+})
 
 /** 装载 fake 控制器工厂（store 经 setLive2dControllerFactory 注入；adapter/list 均为 fake）。
  *  预创建 ctrl 并返回（device_lost 重建测试可 spy reset/settings 转发）。 */
@@ -384,9 +370,12 @@ describe('live2dStore：settings 契约面（enabled/modelId 接入 settingsStor
 
   it('setLive2d（store.switchModel 触发）经 settingsStore 防抖持久化 live2d 子树', async () => {
     installFakes({ models: [MODEL_HARU, MODEL_LIL] })
-    mockApi.settingsSave.mockImplementation(async (patch: { live2d?: Partial<{ modelId: string | null }> }) => {
-      return { version: 1, voice: {}, dictation: { insertMode: 'append' }, live2d: { enabled: true, modelId: patch.live2d?.modelId ?? null } }
-    })
+    // I-06：原为手写的窄 patch 类型 + 半截返回态（缺 tools、voice 为空对象）——类型化 mock 下不可赋值。
+    // 改为真实契约：`patch` 由上下文推断为 SettingsPatch，返回完整的 SettingsState（沿用 DEFAULT_SETTINGS）。
+    mockApi.settingsSave.mockImplementation(async (patch): Promise<SettingsState> => ({
+      ...DEFAULT_SETTINGS,
+      live2d: { ...DEFAULT_SETTINGS.live2d, enabled: true, modelId: patch.live2d?.modelId ?? null }
+    }))
     vi.useFakeTimers()
     const { store, settings } = freshStore()
     await store.init(fakeCanvas)

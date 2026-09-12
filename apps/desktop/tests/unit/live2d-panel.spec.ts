@@ -30,9 +30,11 @@ import { setLive2dControllerFactory, useLive2dStore } from '../../src/renderer/s
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useLayoutStore } from '../../src/renderer/src/stores/layout.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import type { Live2DController, Live2DControllerStatus } from '../../src/renderer/src/live2d/controller'
 import type { Live2DModelSummary } from '@shared/contracts'
 
+// I-06 / P2-10：原为 4 键部分 mock 加双重 cast（`as unknown as Parameters<typeof setDesktopApi>[0]`）。
 const mockApi = {
   settingsLoad: vi.fn(), settingsSave: vi.fn(), listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn()
 }
@@ -65,7 +67,7 @@ let fake: ReturnType<typeof makeFakeController>
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  setDesktopApi(mockApi as unknown as Parameters<typeof setDesktopApi>[0])
+  setDesktopApi(createDesktopApiMock(mockApi))
   vi.clearAllMocks()
   fake = makeFakeController()
   setLive2dControllerFactory(() => fake.ctrl)

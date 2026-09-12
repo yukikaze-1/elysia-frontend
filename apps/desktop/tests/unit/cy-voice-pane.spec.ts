@@ -17,28 +17,10 @@ import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useModelServiceStore } from '../../src/renderer/src/stores/model-service.store'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
-const mockApi = {
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(),
-  attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`），改用受检工厂。
+const mockApi = createDesktopApiMock()
 
 function sttProfile(id: string, over: Partial<ModelProfile> = {}): ModelProfile {
   return {
