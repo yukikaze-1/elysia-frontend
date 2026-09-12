@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { join, extname, resolve, sep, dirname } from 'path'
 import { createRequire } from 'node:module'
 import { type AddressInfo } from 'node:net'
+import { OWNER_SWITCH } from './orphan-apps'
 
 export interface LaunchedApp { app: ElectronApplication; page: Page; userData: string }
 
@@ -115,7 +116,11 @@ export async function launchApp(seedFiles?: Array<{ relPath: string; content: st
   // 清掉继承值之后才允许显式注入 dev 形态（见 LaunchOptions.rendererUrl 注释）
   if (opts.rendererUrl) env['ELECTRON_RENDERER_URL'] = opts.rendererUrl
   const extraArgs = opts.extraArgs ?? []
-  const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...defaultGlArgs(extraArgs), ...extraArgs], cwd: ROOT, env, timeout: 30000 })
+  // 所有者标记（见 helpers/orphan-apps.ts 的 OWNER_SWITCH）：globalSetup 的回收器据此区分
+  // 「上次运行遗留的孤儿」与「另一个并发集成 job 正在用的应用」——自建 runner 上多个 job 共用
+  // 同一台机器的进程表，缺了它后启动的 job 会杀掉先启动 job 正在跑的应用（2026-09-12 实测）。
+  const ownerArg = `${OWNER_SWITCH}${process.pid}`
+  const app = await _electron.launch({ executablePath: electronPath, args: [ROOT, ...defaultGlArgs(extraArgs), ownerArg, ...extraArgs], cwd: ROOT, env, timeout: 30000 })
   try {
     // 第二道 fail-closed：主进程已成功启动后，在任何测试动作前核对 Electron 实际 appData/userData。
     // 若未来 Main 覆盖门被重构坏，助手直接失败，绝不让用例继续操作真实凭据/缓存。

@@ -5,7 +5,11 @@
 // 它会带着 `--user-data-dir=<tmp>/cy-int-ud-XXXX` 长期驻留，并占住整套子进程（main + gpu + utility +
 // renderer，实测一个实例约 375MB）。这些孤儿跨运行累积，与后续运行争抢 CPU/GPU，使 electron-live2d
 // 这类「启动/连接后首次交互」的重型 spec 在每个 8s 等待预算上偶发超时——而每个文件单独跑都是绿的。
-// CI 用一次性 runner，因此该机制只在开发者本机出现。
+//
+// 前提修正（2026-09-12）：本文件原先写着「CI 用一次性 runner，因此该机制只在开发者本机出现」——
+// **迁到自建 runner 后该前提失效**：3 个 runner 实例跑在**同一台机器、同一个进程表**上，集成 job 并发时
+// 后启动的 job 会把先启动 job **正在使用的**应用当成孤儿杀掉。故本轮加了 `OWNER_SWITCH` 所有者门
+// （判据见该常量的注释），并保留全部原有越权纪律。
 //
 // 纪律（越权即事故）：
 //  1. 只认「本套件自己造出来的」进程签名——user-data-dir 前缀 `cy-int-ud-` 来自 launchApp 的
@@ -22,6 +26,19 @@ import { join } from 'node:path'
 export const ORPHAN_USER_DATA_PREFIX = 'cy-int-ud-'
 /** Playwright _electron.launch 注入的调试开关，测试应用必带 */
 const DEBUG_SWITCHES = ['--inspect=0', '--remote-debugging-port=0']
+/**
+ * launchApp 注入的**所有者标记**，值为拉起该应用的 vitest 进程 pid。
+ *
+ * 为什么必须有它（2026-09-12 实测事故，自建 runner 引入）：识别判据（`cy-int-ud-` 临时 userData /
+ * 仓库路径 + 调试开关）描述的是「本套件造出来的进程」，而**不区分是哪一次运行**。开发者本机同一时刻
+ * 只跑一份套件，所以过去够用；但 CI 迁到自建 runner 后，**同一台机器上有 3 个 runner 实例**，
+ * 集成 job 并发时后启动的那个会把先启动 job **正在使用的**应用当成「上次运行遗留」杀掉：
+ *   shard 2/3 的 globalSetup 13:37:34.518 回收 main=943529（6 进程）
+ *   shard 1/3 同一 pid 的 `generation-stall-recovery` beforeAll 13:37:34.680 报
+ *   `locator.click: Target page, context or browser has been closed`（相隔 160ms，只有 1 例）。
+ * 有了所有者标记，回收器就能区分「孤儿」与「别的 job 正在用的应用」：**所有者进程还活着 ⇒ 跳过**。
+ */
+export const OWNER_SWITCH = '--cyrene-test-owner-pid='
 
 /** 进程表的一行（只保留识别所需字段） */
 export interface ProcessEntry {
@@ -45,6 +62,30 @@ export interface ScanResult {
 export function userDataDirOf(commandLine: string): string | undefined {
   const match = /--user-data-dir=(?:"([^"]*)"|(\S*))/i.exec(commandLine)
   return match ? (match[1] ?? match[2]) : undefined
+}
+
+/** 从命令行提取所有者标记里的 pid（见 OWNER_SWITCH；没有标记时返回 undefined） */
+export function ownerPidOf(commandLine: string): number | undefined {
+  const match = /--cyrene-test-owner-pid=(\d+)/.exec(commandLine)
+  if (!match) return undefined
+  const pid = Number(match[1])
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined
+}
+
+/** 所有者存活判定（可注入以便单测；默认用 signal 0 探测） */
+export type IsProcessAlive = (pid: number) => boolean
+
+/** 默认存活判定：`kill(pid, 0)` 不抛即活着。
+ *  EPERM 说明进程存在但不属于当前用户——**算活着**（宁可漏收孤儿，也不误杀别人正在用的应用）。
+ *  旧进程被 kill 后若尚未被父进程 wait 掉会是 zombie，signal 0 仍返回成功 ⇒ 同样算活着：
+ *  这份保守方向是对的，真正的孤儿下一轮（所有者已彻底消失）仍会被回收。 */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
 }
 
 /**
@@ -214,6 +255,8 @@ export interface OrphanScan {
   orphans: OrphanApp[]
   /** 进程表里所有 electron 进程数量（诊断用：区分「没有孤儿」与「根本读不到」） */
   electronCount: number
+  /** 因「所有者进程仍存活」而**主动跳过**的应用数（并发运行的另一个集成 job 正在用它，2026-09-12） */
+  liveOwned: number
 }
 
 /**
@@ -222,15 +265,34 @@ export interface OrphanScan {
  * 聚合方式：先找带签名的进程，再沿 ppid 回到 main 进程，最后把该 main 的后代一并纳入——
  * 因为 app.close() 只终止 main，子进程由 Electron 自行清理；直接杀子进程会触发
  * Chromium 的崩溃恢复重建，反而留下更多进程。
+ *
+ * **所有者门（2026-09-12）**：回到 main 后读它的 `--cyrene-test-owner-pid=`（见 OWNER_SWITCH）。
+ * 所有者进程仍存活 ⇒ 这是**另一个正在运行的套件**的应用，**不计入孤儿**。没有标记（老进程/别的来源）
+ * 时按原有语义处理（视为孤儿）——判据不比以前更宽。
  */
-export function scanOrphanTestApps(root: string, table: ScanResult = readProcessTable()): OrphanScan {
+export function scanOrphanTestApps(
+  root: string,
+  table: ScanResult = readProcessTable(),
+  isAlive: IsProcessAlive = processAlive
+): OrphanScan {
   if (!table.readable) {
-    return { canReclaim: false, reason: table.unavailableReason ?? '进程表不可读', orphans: [], electronCount: 0 }
+    return { canReclaim: false, reason: table.unavailableReason ?? '进程表不可读', orphans: [], electronCount: 0, liveOwned: 0 }
   }
+  const byPid = new Map(table.entries.map((candidate) => [candidate.pid, candidate]))
   const byMainPid = new Map<number, OrphanApp>()
+  let liveOwned = 0
+  const liveOwnedMains = new Set<number>()
   for (const entry of table.entries) {
     if (!carriesTestAppSignature(entry, root)) continue
     const mainPid = resolveMainPid(entry, table.entries)
+    const mainEntry = byPid.get(mainPid)
+    const ownerPid = mainEntry ? ownerPidOf(mainEntry.commandLine) : undefined
+    if (ownerPid !== undefined && isAlive(ownerPid)) {
+      // 同一个实例的多个签名进程只计一次
+      if (!liveOwnedMains.has(mainPid)) { liveOwnedMains.add(mainPid); liveOwned += 1 }
+      byMainPid.delete(mainPid)
+      continue
+    }
     const existing = byMainPid.get(mainPid)
     if (existing) {
       // 同一实例的多个签名进程：并集它们的进程树
@@ -247,7 +309,8 @@ export function scanOrphanTestApps(root: string, table: ScanResult = readProcess
   return {
     canReclaim: true,
     orphans: [...byMainPid.values()].sort((left, right) => left.pid - right.pid),
-    electronCount: table.entries.length
+    electronCount: table.entries.length,
+    liveOwned
   }
 }
 
@@ -260,13 +323,15 @@ export interface ReclaimResult extends OrphanScan {
 export type KillProcess = (pid: number) => void
 
 /** 回收遗留应用：只杀识别出的实例进程树，main 优先。
- *  只读扫描 + 只对匹配项下手；任何单个进程失败都只记录，不中断其余回收。 */
+ *  只读扫描 + 只对匹配项下手；任何单个进程失败都只记录，不中断其余回收。
+ *  `isAlive` 透传给扫描阶段的所有者门（并发运行的应用不算孤儿）。 */
 export function reclaimOrphanTestApps(
   root: string,
   table: ScanResult = readProcessTable(),
-  kill: KillProcess = (pid) => process.kill(pid, 'SIGTERM')
+  kill: KillProcess = (pid) => process.kill(pid, 'SIGTERM'),
+  isAlive: IsProcessAlive = processAlive
 ): ReclaimResult {
-  const scan = scanOrphanTestApps(root, table)
+  const scan = scanOrphanTestApps(root, table, isAlive)
   const killed: number[] = []
   const failed: Array<{ pid: number; error: string }> = []
   if (!scan.canReclaim) return { ...scan, killed, failed }

@@ -513,3 +513,57 @@ electron[858681]: segfault at 15bc00000010 ip 00007cfbff50f82b error 4 in swrast
   对照 §10.9 的 412s ⇒ 本轮 348s（**单轮数据，不作趋势结论**；但 shard 各片普遍缩短与
   「省掉每次启动约 1.2s 崩溃重试」方向一致）。
 - 300 秒级观察：截至本轮，「每次启动必崩 3 次」在 CI 上已确认为 0。**flake 率判据仍需后续若干轮**。
+
+### 10.11 第七轮观测：**并发 job 互相误杀**——自建 runner 把「单机假设」变成「多租户」（run `34696875971` @ `729417e`）
+
+§10.10 的文档提交触发的这一轮，`integration (shard 1/3)` 又红，但 **swrast 段错误增量仍是 0**（修复有效），
+红的是另一族：`generation-stall-recovery.spec.ts` 报 `FAIL … Failed Suites`，错误为
+`locator.click: Target page, context or browser has been closed`，失败点是 `beforeAll` 的第一步
+`page.getByRole('button', { name: /REAL|MOCK/ }).click()`（该文件唯一的用例是 skip，故表现为「整个 suite 失败」）。
+
+**根因（两份日志的 pid 直接对上，不是推断）**：
+
+```
+shard 2/3 globalSetup  13:37:34.518  [orphan-apps] 回收 1 个上次运行遗留的测试应用：main=943529（6 进程）
+shard 1/3 同 pid 的 app 日志        [pid=943529][err] …（该 app 即 shard 1 正在用的实例）
+shard 1/3 用例失败      13:37:34.680  locator.click: Target page, context or browser has been closed
+```
+
+**相隔 160ms**。即：后启动的 `shard 2/3`（13:37:15 起）在 globalSetup 里把 `shard 1/3`（13:36:06 起）
+**正在使用的**测试应用当作「上次运行遗留的孤儿」用 SIGTERM 杀掉了，shard 1 的用例随即在一个正在进行的
+点击上报「浏览器已关闭」。
+
+- **为什么现在才出现**：`helpers/orphan-apps.ts` 头部原本写着「CI 用一次性 runner，因此该机制只在开发者
+  本机出现」——**这条前提被自建 runner 推翻**。三个 runner 实例跑在**同一台机器、同一个进程表**上，
+  集成 job 并发时（本例 4 个）识别判据（`cy-int-ud-` 临时 userData / 仓库路径 + 调试开关）无法区分
+  「哪一次运行」。而每个 job 同一时刻只跑一个 app，所以每次只杀 1 个 ⇒ 表现恰好是
+  **「每轮只红 1 例、且每次红的用例都不同」**（与 §10.8 表的形态一致）。
+- **与 §10.10 的关系**：两者都能产出「Target page … has been closed」，但成因不同——§10.10 是 GPU 崩溃
+  升级为杀浏览器，本节是**另一个 job 主动杀**。§10.10 修好后本节的形态才**干净地暴露出来**（不再被
+  GPU 崩溃的噪音掩盖）。
+- **这是自建 runner 的第二个同类陷阱**：把「独占一台机器」的假设带进「多 job 共用一台机器」。
+  第一个是 §10.4 的 pnpm store / `~/setup-pnpm` 共享（两个 job 互相踩），同属一类。
+
+**修法（与仓库既有做法同构，不放宽任何判据）**：
+
+- `launchApp` 给每个应用带上 `--cyrene-test-owner-pid=<拉起它的 vitest 进程 pid>`（`OWNER_SWITCH`）。
+- 回收器回到 main 进程后读该标记：**所有者进程仍存活 ⇒ 跳过**（`liveOwned` 计数并打印），
+  没有标记的老进程/别的来源仍按原语义当孤儿回收 ⇒ **判据不比以前更宽**。
+- 保守方向明确：`EPERM`（进程存在但不属于当前用户）与 zombie 都算「活着」——宁可漏收一轮孤儿
+  （所有者彻底消失后下一轮仍会回收），也不误杀别人正在用的应用。
+- 与 `temp-dirs` 回收器**早已采用的做法同构**：那边的 `inUsePaths` 本来就是「跳过被活进程引用的目录」，
+  本轮只是把同一个原则补到进程侧。
+
+**验证**：`tests/unit/orphan-apps.spec.ts` 新增 6 条（含一对**判别力对照**：同一份进程表，
+只翻转「所有者是否存活」必须得到相反结论——活 ⇒ `killed=[]`，死 ⇒ 三个 pid 全收）。
+`pnpm typecheck` / `lint` / 该单测文件全绿。**CI 侧证据（4 个集成 job 并发）由下一次推送产生**：
+预期日志出现「跳过 N 个属于正在运行的套件的测试应用」，且不再有该类红。
+
+**边界（不得过度解读）**：
+
+- 这条解释的是**「浏览器已关闭」一族**（最近两轮各 1 例）。§10.8 表里那些**运行中途**的超时/缺口/断言
+  未达（`persist-flush` 30s、`message-list-follow-bottom` 缺口、`electron-tools` FILE_CONFLICT）
+  **不在此列**，需另行取证。
+- 理论残留：所有者 pid 被复用（前一次运行已死、新进程恰好拿到同一 pid）时，真孤儿会漏收一轮。
+  Linux 上 pid 复用需要绕完 pid 空间，代价极低且下一轮即回收，故不额外做 start-time 校验。
+- 仍有 280 个「非本套件的 Electron 进程」常驻该机（`elysia-agent` 的 runner 等），本轮未处理。

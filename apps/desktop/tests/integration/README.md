@@ -35,7 +35,7 @@ pnpm test:integration
 
 - `helpers/app.ts`：`launchApp`/`closeApp`/`serveRenderer`（临时 userData、harness 标记、静态渲染源，供信任边界测试）+ 进程退出兜底（用例忘记 `closeApp` 时应用不活过测试进程）
 - `helpers/app.spec.ts`：启动助手自检
-- `helpers/orphan-apps.ts`：遗留测试应用（孤儿 Electron 进程）识别与回收判据；由 `global-setup.ts` 在套件启动时调用一次
-- `global-setup.ts`：vitest `globalSetup`——回收上次中断运行留下的测试应用（避免跨运行争抢 CPU/GPU 造成偶发超时）
+- `helpers/orphan-apps.ts`：遗留测试应用（孤儿 Electron 进程）识别与回收判据；由 `global-setup.ts` 在套件启动时调用一次。**所有者门**（`--cyrene-test-owner-pid=`）：所有者进程仍存活的应用一律跳过——自建 runner 上多个 job 共用一台机器的进程表，缺了它后启动的 job 会杀掉先启动 job 正在跑的应用（2026-09-12 实测）
+- `global-setup.ts`：vitest `globalSetup`——回收上次中断运行留下的测试应用（避免跨运行争抢 CPU/GPU 造成偶发超时）；顺序固定为先进程后目录
 - `Window.desktopApi` 类型：唯一一份声明在 `src/preload/window.d.ts`（渲染侧与集成侧共用；此前集成测试内的独立副本已删除）
 - `protocol-handler.spec.ts` / `ipc-security.spec.ts` / `navigation.spec.ts` / `trust-boundary.spec.ts`：四组套件

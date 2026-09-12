@@ -24,13 +24,20 @@ export default function setup(): void {
   if (!result.canReclaim) {
     // 平台不支持 / 进程表不可读：明确报告「未执行」，绝不静默当作通过
     console.warn(`[orphan-apps] 未执行遗留进程回收（${result.reason}）；若集成测试偶发超时请手工确认无残留 electron 进程`)
-  } else if (result.orphans.length > 0) {
-    const detail = result.orphans.map((orphan) => `main=${orphan.pid}（${orphan.pids.length} 进程）`).join(', ')
-    console.warn(`[orphan-apps] 回收 ${result.orphans.length} 个上次运行遗留的测试应用：${detail}`)
-    for (const failure of result.failed) console.warn(`[orphan-apps] pid=${failure.pid} 回收失败：${failure.error}`)
-  } else if (result.electronCount > 0) {
-    // 有 Electron 在跑但不是测试应用（例如 pnpm dev）：只报告，不动手
-    console.warn(`[orphan-apps] 检测到 ${result.electronCount} 个非本套件的 Electron 进程，未做处理`)
+  } else {
+    if (result.orphans.length > 0) {
+      const detail = result.orphans.map((orphan) => `main=${orphan.pid}（${orphan.pids.length} 进程）`).join(', ')
+      console.warn(`[orphan-apps] 回收 ${result.orphans.length} 个上次运行遗留的测试应用：${detail}`)
+      for (const failure of result.failed) console.warn(`[orphan-apps] pid=${failure.pid} 回收失败：${failure.error}`)
+    } else if (result.electronCount > 0 && result.liveOwned === 0) {
+      // 有 Electron 在跑但不是测试应用（例如 pnpm dev）：只报告，不动手
+      console.warn(`[orphan-apps] 检测到 ${result.electronCount} 个非本套件的 Electron 进程，未做处理`)
+    }
+    if (result.liveOwned > 0) {
+      // 并发运行的**另一个**集成 job 正在用这些应用（自建 runner 上多个 job 共用一台机器的进程表；
+      // 2026-09-12 之前这里会误杀它们，表现为「某个用例在首个动作上报 Target page … has been closed」）。
+      console.warn(`[orphan-apps] 跳过 ${result.liveOwned} 个属于正在运行的套件的测试应用（所有者进程仍存活）`)
+    }
   }
 
   // ② 临时目录回收：把「活进程引用的路径」传进去，正在跑的应用目录绝不删

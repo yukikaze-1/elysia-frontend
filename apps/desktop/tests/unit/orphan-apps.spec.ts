@@ -15,6 +15,7 @@ import {
   ORPHAN_USER_DATA_PREFIX,
   carriesTestAppSignature,
   descendantsOf,
+  ownerPidOf,
   readProcessTable,
   reclaimOrphanTestApps,
   resolveMainPid,
@@ -201,6 +202,79 @@ describe('遗留测试应用回收', () => {
     expect(attempted).toEqual([3000])
     expect(result.orphans).toHaveLength(1)
     expect(result.orphans[0].pids).toEqual([3000])
+  })
+})
+
+// —— 所有者门（2026-09-12 自建 runner 并发误杀事故回归）——
+//
+// 事故链（自建 runner 上稳定复现，托管 runner 与开发者本机均不复现）：
+//   集成 job 并发时（3 个 runner 实例 = **同一台机器的同一个进程表**），后启动的那个 job 的
+//   globalSetup 把先启动 job **正在使用的**应用当成「上次运行遗留」杀掉：
+//     shard 2/3 globalSetup 13:37:34.518 `回收 1 个…main=943529（6 进程）`
+//     shard 1/3 同一 pid 的 generation-stall-recovery beforeAll 13:37:34.680
+//       `locator.click: Target page, context or browser has been closed`（相隔 160ms）
+//   识别判据本身没错（那些确实是本套件造出来的进程），错在**不区分是哪一次运行**。
+//   修法：launchApp 给应用带上 `--cyrene-test-owner-pid=<vitest pid>`，回收器遇到「所有者仍存活」
+//   就跳过。判据不比以前更宽——没有标记的进程仍按原语义当孤儿回收。
+describe('所有者门（并发运行的应用不算孤儿）', () => {
+  const OWNED_MAIN = `"${EXE}" --inspect=0 --remote-debugging-port=0 "${ROOT}" --cyrene-test-owner-pid=4242`
+  const ownedInstance: ProcessEntry[] = [
+    entry({ pid: 943529, ppid: 7088, commandLine: OWNED_MAIN }),
+    entry({ pid: 943530, ppid: 943529, commandLine: `"${EXE}" --type=renderer --user-data-dir="${UD}\\Cyrene"` }),
+    entry({ pid: 943531, ppid: 943529, commandLine: `"${EXE}" --type=gpu-process --user-data-dir="${UD}\\Cyrene"` })
+  ]
+
+  it('ownerPidOf 解析标记；无标记 / 非法值返回 undefined', () => {
+    expect(ownerPidOf(OWNED_MAIN)).toBe(4242)
+    expect(ownerPidOf(`"${EXE}" ${ROOT} --inspect=0`)).toBeUndefined()
+    expect(ownerPidOf(`"${EXE}" ${ROOT} --cyrene-test-owner-pid=0`)).toBeUndefined()
+    expect(ownerPidOf(`"${EXE}" ${ROOT} --cyrene-test-owner-pid=abc`)).toBeUndefined()
+  })
+
+  it('所有者存活 ⇒ 不回收、不计入孤儿，但如实报告跳过数', () => {
+    const scan = scanOrphanTestApps(ROOT, table(ownedInstance), () => true)
+    expect(scan.canReclaim).toBe(true)
+    expect(scan.orphans).toEqual([])
+    expect(scan.liveOwned).toBe(1)
+    // 同一实例有 2 个签名进程（main + renderer），只应计一次
+    expect(scan.liveOwned).toBe(1)
+  })
+
+  it('所有者已退出 ⇒ 仍按孤儿回收（跨运行遗留照收不误）', () => {
+    const attempted: number[] = []
+    const result = reclaimOrphanTestApps(ROOT, table(ownedInstance), (pid) => attempted.push(pid), () => false)
+    expect(result.liveOwned).toBe(0)
+    expect(result.orphans.map((orphan) => orphan.pid)).toEqual([943529])
+    expect(attempted).toEqual([943529, 943530, 943531])
+  })
+
+  it('判别力：同一份进程表，只翻转「所有者是否存活」就得到相反结论', () => {
+    const alive = reclaimOrphanTestApps(ROOT, table(ownedInstance), () => { throw new Error('不应被杀') }, () => true)
+    const dead = reclaimOrphanTestApps(ROOT, table(ownedInstance), () => { /* 记录即可 */ }, () => false)
+    expect(alive.killed).toEqual([])
+    expect(dead.killed).toEqual([943529, 943530, 943531])
+  })
+
+  it('没有所有者标记的进程不受影响（判据不比以前更宽）', () => {
+    const result = reclaimOrphanTestApps(ROOT, table(INSTANCE), () => { /* 记录即可 */ }, () => true)
+    expect(result.orphans.map((orphan) => orphan.pid)).toEqual([83404])
+    expect(result.liveOwned).toBe(0)
+  })
+
+  it('并发下两类实例并存：属于活套件的跳过，遗留的回收', () => {
+    const attempted: number[] = []
+    const scan = scanOrphanTestApps(ROOT, table([...INSTANCE, ...ownedInstance]), (pid) => pid === 4242)
+    expect(scan.orphans.map((orphan) => orphan.pid)).toEqual([83404])
+    expect(scan.liveOwned).toBe(1)
+    reclaimOrphanTestApps(ROOT, table([...INSTANCE, ...ownedInstance]), (pid) => attempted.push(pid), (pid) => pid === 4242)
+    expect(attempted).toEqual([83404, 81208, 81528, 83432])
+  })
+
+  it('进程表不可读时 liveOwned 归零且不做任何事', () => {
+    const unreadable: ScanResult = { readable: false, unavailableReason: '不支持的平台 aix', entries: [] }
+    const scan = scanOrphanTestApps(ROOT, unreadable, () => true)
+    expect(scan.liveOwned).toBe(0)
+    expect(scan.orphans).toEqual([])
   })
 })
 
