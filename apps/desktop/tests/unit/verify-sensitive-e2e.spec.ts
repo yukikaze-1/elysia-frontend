@@ -234,7 +234,15 @@ describe('verify-sensitive 脚本端到端（M-34：真实 spawn，夹具 git �
   })
 
   it('植入秘密 → 退出码 1，且 stderr 指名该文件与规则（检出腿可判别）', async () => {
-    writeFileSync(join(FIXTURE, 'planted-secret.txt'), 'AGENT_ACCESS_TOKEN=cyrene-planted-secret-value\n')
+    // 自指陷阱：本文件是**扫描器自己的测试**，而扫描器会把本文件当普通跟踪文件扫。
+    // 故植入用的令牌**不能在源码里写成完整字面量**——第一版就把「标识符 + 等号 + 值」整串写进了
+    // 源码，结果 `pnpm verify:sensitive` 把本文件判成违规（rule `agent-access-token-assign`），
+    // CI 的敏感信息门禁整体变红。**连解释这条规则的注释也不能复现该形态**：
+    // 我第一次修完代码后，注释里仍写着标识符加等号加省略号，而省略号是非空白字符 ⇒ 照样命中。
+    // 规则是**逐行**匹配的（scanSecretsInText 按行 test），所以把标识符拆成两段在运行时拼接：
+    // 夹具里仍是完整令牌形态（检出腿照旧被测），源码任何一行都不构成匹配。
+    const plantedName = 'AGENT_ACCESS' + '_TOKEN'
+    writeFileSync(join(FIXTURE, 'planted-secret.txt'), `${plantedName}=cyrene-planted-secret-value\n`)
     git(['add', '-A'])
     const r = await runScript(SCRIPT)
     // 先还原夹具（本用例是唯一弄脏夹具的用例）
