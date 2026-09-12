@@ -277,6 +277,12 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     awaitingQueue.length = 0
     for (const t of timers.values()) clearTimeout(t)
     timers.clear()
+    // L-25（P2-9）：`captureTimers`（停留态 TTL，CAPTURE_SESSION_TTL_MS）此前**没有**在退出路径清理。
+    // 它由 M1 引入，与 `timers` 是两张独立的表——退出时只清了 `timers`，于是进程退出期仍可能
+    // 由这些定时器触发一次状态变更/推送（与随后 adapter.disconnect() 关 socket 竞态）。
+    // 有界（TTL 120s）但属退出路径未收口资源；这里与 `timers` 同等对待。
+    for (const t of captureTimers.values()) clearTimeout(t)
+    captureTimers.clear()
   }
   /** 最近公开记录（tool:list，F-2 includeNonTerminalAlways：非终态全量 + 终态补足到 limit——L-2 水合数据源；
    * L2 取舍注记：diff/captureSources/capturePreview 不进 listRecent——tool:list 仅作 hydration 用，capture/diff 交互态由 tool:event 实时推送） */

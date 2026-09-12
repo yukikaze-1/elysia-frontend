@@ -15,6 +15,7 @@ import { LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH } from '../layout/constants'
 import type { CharacterState } from '../live2d/state-machine'
 import type { PerformanceMode } from '@shared/contracts'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
+import { documentVisible } from '../utils/document-visibility'
 import CyCharacterPublicState from './CyCharacterPublicState.vue'
 
 const layout = useLayoutStore()
@@ -51,16 +52,23 @@ const badgeClass = computed(() => {
 })
 
 // 渲染循环 gate：chat 视图（7D：settings 打开时面板常驻挂载但 v-show 隐藏，必须停 rAF 防后台空转）
-// + 布局级可见（v-show 折叠/窄窗）+ 设置级启用 + 已 ready（仅 ready 有可绘制帧；loading/failed/fallback 静态态不跑空循环）。
+// + 布局级可见（v-show 折叠/窄窗）+ **窗口可见**（M-37：最小化/隐藏时停 rAF）+ 设置级启用 + 已 ready
+// （仅 ready 有可绘制帧；loading/failed/fallback 静态态不跑空循环）。
+//
+// M-37（P2-9）：窗口那一项此前**缺失**——`main-window.ts` 明确把"窗口隐藏时暂停"委托给本 gate，
+// 而本 gate 只看视图/布局/设置/状态；`backgroundThrottling: false` 又关掉了浏览器自身的节流，
+// 于是最小化后 rAF 仍全速跑（GPU 持续唤醒，而画面上没人看）。
+const windowVisible = documentVisible()
 const active = computed(
-  () => app.currentView === 'chat' && layout.effective.live2dShown && settings.live2d.enabled && store.status === 'ready'
+  () => windowVisible.value && app.currentView === 'chat' && layout.effective.live2dShown && settings.live2d.enabled && store.status === 'ready'
 )
 
 // 可见性告知（多套 UI 基础，2026-09-10）：功能层不再自己去读 layout store——
 // 「面板是否可见」是本组件的布局知识，由本组件组合条件后显式告知 store，store 只据此决定是否暂停绘制。
 // 上门的 `active` 仍覆盖 rAF 启停；这里额外上报「布局可见」（不含 ready 前置），
 // 使 controller 侧可见性在 loading/fallback 等静态态下与折叠状态保持一致。
-const surfaceVisible = computed(() => app.currentView === 'chat' && layout.effective.live2dShown)
+// M-37：窗口可见也是"没人看"的一种，故同样并入上报——否则最小化时 controller 侧仍认为可见。
+const surfaceVisible = computed(() => windowVisible.value && app.currentView === 'chat' && layout.effective.live2dShown)
 watch(surfaceVisible, (visible) => { store.setSurfaceVisible(visible) }, { immediate: true })
 
 const statusText = computed(() => {

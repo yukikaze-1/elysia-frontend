@@ -453,6 +453,16 @@ export class Live2DAdapter {
   // adapter 实例跨 reset 复用，destroy 不清这两个字段；仅在新 context 能取到扩展时覆盖（否则保留旧引用）。
   private loseContextExt: WEBGL_lose_context | null = null
   private loseContextExtCanvas: HTMLCanvasElement | null = null
+  /**
+   * M-25（P2-9）：本 glue 自己创建的 GL 纹理（`loadTexture` 里 `gl.createTexture`）。
+   *
+   * 此前 `destroy()` 只置 `this.gl = null; this.canvas = null`，**从不 `deleteTexture`**——
+   * 而纹理是本项目 glue 创建的（vendored framework 只管理它自己的离屏渲染目标），
+   * 于是每次换模型都让上一模型的纹理由 GC 兜底：2048² 模型实测约 **33 MB VRAM** 滞留。
+   * 现在按实例记账、`destroy()` 时显式释放；context 丢失时一并清账（GPU 侧资源已随 context 消失，
+   * 保留旧 name 之后对它调用 deleteTexture 只会打到无效名字）。
+   */
+  private readonly createdTextures = new Set<WebGLTexture>()
 
   constructor(deps: Live2DAdapterDeps) {
     this.engine = deps.engine
@@ -493,6 +503,10 @@ export class Live2DAdapter {
       // 再次 initialize 重建，不因 this.gl 残留而误判已初始化。
       this.unregisterContextLost = this.engine.onContextLost(canvas, () => {
         this.gpuLost = true // 事件置位；渲染 tick 抛 Live2DGpuLostError
+        // M-25：context 一丢，GPU 侧纹理即随之消失；记账里的旧 name 对后续（可能被 restore 的）context
+        // 已无意义，故在此清账——留下的后果是 destroy 时对无效 name 调 deleteTexture（无害但属噪声），
+        // 更糟的是**账目失真**，让"我该释放哪些纹理"这个问题无法回答。
+        this.createdTextures.clear()
       })
       const option = new Option()
       option.loggingLevel = LogLevel.LogLevel_Off
@@ -668,6 +682,7 @@ export class Live2DAdapter {
       this.handle.destroy()
       this.handle = null
     }
+    this.releaseTextures()
     if (this.unregisterContextLost) {
       this.unregisterContextLost()
       this.unregisterContextLost = null
@@ -703,6 +718,27 @@ export class Live2DAdapter {
     return res.arrayBuffer()
   }
 
+  /**
+   * M-25：释放本 glue 创建的全部 GL 纹理并清账。
+   *
+   * 三种情形都要安全：`gl` 已为 null（重复 destroy）、context 已丢失（deleteTexture 对丢失的 context 是
+   * no-op，不会抛）、以及正常释放。**无论哪种情形都清空记账**——记账的意义是"当前 context 上还有哪些
+   * 我该删的纹理"，context 一换（丢失/重建）旧 name 就无意义了。
+   */
+  private releaseTextures(): void {
+    const gl = this.gl
+    if (gl) {
+      for (const texture of this.createdTextures) {
+        try {
+          gl.deleteTexture(texture)
+        } catch {
+          // 驱动/丢失 context 下 deleteTexture 可能抛（非规范要求）——释放失败不应阻断 destroy 的其余步骤
+        }
+      }
+    }
+    this.createdTextures.clear()
+  }
+
   /** 抓取纹理图片 → 解码（createImageBitmap）→ 校验尺寸上限 → 上传 GL 纹理。失败抛 Live2DTextureError */
   private async loadTexture(
     gl: WebGLRenderingContext,
@@ -728,13 +764,22 @@ export class Live2DAdapter {
       }
       const texture = gl.createTexture()
       if (!texture) throw new Live2DTextureError(`gl.createTexture() failed for Live2D texture: ${url}`)
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1)
-      gl.bindTexture(gl.TEXTURE_2D, texture)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
-      gl.generateMipmap(gl.TEXTURE_2D)
-      gl.bindTexture(gl.TEXTURE_2D, null)
+      let uploaded = false
+      try {
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1)
+        gl.bindTexture(gl.TEXTURE_2D, texture)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bitmap)
+        gl.generateMipmap(gl.TEXTURE_2D)
+        uploaded = true
+      } finally {
+        gl.bindTexture(gl.TEXTURE_2D, null)
+        // M-25：上传中途失败（如 texImage2D 因尺寸/驱动限制抛错）时**不留半成品纹理**在 GPU 上——
+        // 否则它既不在 createdTextures 里（无法被 destroy 释放）、又已被 createTexture 占用显存。
+        if (!uploaded) gl.deleteTexture(texture)
+      }
+      this.createdTextures.add(texture)
       return texture
     } finally {
       bitmap.close()
