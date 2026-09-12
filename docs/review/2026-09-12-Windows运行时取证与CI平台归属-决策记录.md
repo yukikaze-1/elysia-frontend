@@ -255,3 +255,58 @@ FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memor
 - 分片正确性：以复刻算法验证「并集 26 / 交集 0 / 每片 13 个文件」；`--exclude` 亦实测（带它 26 个文件、不带 27 个）。**最终确认以首次分片 CI run 的日志为准**——vitest 的 `list` 子命令不套用 `--shard`，无法用它验证运行期划分（本轮踩过这个坑）。
 - 计费影响：托管 job 从 1 个（10.4 分钟）变为 3 个（合计约 11 分钟）——**墙钟减半、计费基本持平**；live2d 那部分因落到自建机而免费。
 - **已知代价（如实记录）**：`integration-live2d` 依赖自建 runner 在线，服务器掉线时它最坏排队到 `timeout-minutes: 45`。要临时回退，把该 job 的 `runs-on` 改回 `ubuntu-latest` 即可（墙钟回到约 5.7 分钟）。
+
+## 10. 第三次推送（run `34688140376` @ `d8e1a2a`）：**GitHub Actions 额度耗尽 → 全部 job 迁到自建**
+
+### 10.1 现象：6 个托管 job「未能启动」，自建的 2 个正常
+
+那次推送的 8 个 job 里：`integration (live2d, self-hosted)` ✓ 3m37s、`windows build-level` ✓ 2m37s，其余 6 个
+（`check` / `unit` / `artifact` / 三个分片）**0～3 秒即失败**，注解原文：
+
+```
+The job was not started because recent account payments have failed or
+your spending limit needs to be increased. Please check the 'Billing & plans' section in your settings
+```
+
+即**账号额度/账单被卡**，托管 runner 上的 job 根本不会被分发（自建 runner 不受影响）。用量侧的佐证：run 历史里
+**2026-09-12 当天 40 次 run**、09-11 26 次、09-10 11 次 —— 按迁移前的 ~28.6 计费分钟/run，单日即上千分钟。
+（账单明细 API 需 `user` scope，本轮取不到；具体数字以 `Settings → Billing and plans` 为准。）
+
+**这一条把「自建」从优化变成了唯一可行路径**，也顺带证实了 §9 那轮的成本判断。
+
+### 10.2 决定与做法：Linux 侧全部迁到 X99（三个 runner 实例）
+
+- **实例数**：一个 runner 实例同时只能跑一个 job，而 Linux 侧现在有 7 个 job（check / unit / artifact /
+  3 个分片 / live2d）。单实例会串行成 20 分钟以上——**比迁移前更慢**。故在 X99 上起**三个实例**
+  （`yomu-X99` / `-2` / `-3`，同一标签 `fe-linux`，job 自动分配到空闲实例）。
+  新建实例用的是「复制已有 runner 目录 → 删 `.runner`/`.credentials` → 重新 config」的省流量做法，
+  没有重复下载 200MB 包。
+- **三个机械改动**（每个都有理由，不是顺手改）：① 去掉 `cache: pnpm`（服务用户 home 下的 store 跨 run 持久，
+  走 Actions 缓存反而每 run 多传约 63MB）；② 去掉 electron 的 `actions/cache`（同理，`~/.cache/electron` 已持久）；
+  ③ `playwright install` 去掉 `--with-deps`（apt 需 root；16 个系统库与 `xvfb-run` 已在服务器上装好并核对过）。
+  每个 self-hosted job 都补了 `timeout-minutes`（掉线时 job 会一直排队）。
+- **回退路径**：账单恢复后把各 job 的 `runs-on` 改回 `ubuntu-latest` 并恢复上面三处即可，差异都集中在这些行
+  （文件头有说明）。
+
+### 10.3 已知风险（**未解决，如实记录**）
+
+| 风险 | 说明 | 缓解 |
+|---|---|---|
+| **单机依赖** | 全部 Linux job 依赖 X99 在线；机器重启/掉线则 Linux 侧 CI 停摆 | 用户声明 24 小时开机；job 有 `timeout-minutes` 兜底；回退路径一行可切 |
+| **并发争抢** | 3 个实例 = 最多 3 个 Electron+SwiftShader 任务同时跑在 24 线程上（单任务实测负载约 8） | 若 flake 率上升，减到 2 个实例即可（`git rm` 一个实例的注册即可）——这需要观察数据，不能凭猜 |
+| **实例未持久化** | 三个实例目前都是 `nohup ./run.sh` 起来的，**机器重启即失效**（服务器 sudo 需要密码，我无法执行 `svc.sh install`） | 见 §8.6：需要用户 `sudo ./svc.sh install yomu && sudo ./svc.sh start`，三个实例各一次 |
+| **首次冷启动** | 两个新实例的 profile 是空的，首次 job 会有 Electron 二进制等冷下载 | 一次性代价，之后跨 run 持久 |
+
+### 10.4 迁移后的墙钟预期（含各 job 在 X99 上的定标）
+
+| job | X99 估算/实测 |
+|---|---|
+| `check`（typecheck+lint+docs+sensitive+contract） | ~2.5 分钟（估） |
+| `unit`（2927 用例） | ~1.5–2 分钟（估，无 70s 冷下载后比托管快） |
+| `integration` 三分片 | 158 / 106 / 26s + 装载 ≈ 3.4 / 2.5 / 1.2 分钟 |
+| `integration-live2d` | **实测 3m37s** |
+| `artifact` | ~1.8 分钟（估） |
+| `windows`（Windows 本机） | **实测 2m37s** |
+
+7 个 job 总工作量约 17 job-分钟，3 实例下理论下限 ≈ 6 分钟；实际墙钟取决于调度（矩阵 job 同时入队，
+谁先拿到实例不由我控制）。**这些数字是估算，不是实测结论**——首次全自建 run 的实测值以下一轮记录为准。

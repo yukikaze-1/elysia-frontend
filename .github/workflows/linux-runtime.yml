@@ -3,7 +3,8 @@ name: Linux runtime (observation)
 # Linux 真实运行时取证面（self-hosted Ubuntu `yomu-X99`，标签 `fe-linux`）——**取证面，不是门禁**。
 #
 # 为什么需要它（2026-09-12）：
-#   `ci.yml` 的 integration job 跑在 GitHub 托管 ubuntu-latest（4 vCPU），是**整条 CI 的墙钟瓶颈**
+#   `ci.yml` 的 integration job（2026-09-12 起也已迁到自建 runner）此前跑在 GitHub 托管 ubuntu-latest
+#   （4 vCPU）上，是**整条 CI 的墙钟瓶颈**
 #   （实测 10.4 分钟里它占 10.4 分钟；27 文件严格串行、103 次 Electron 冷启动）。同日本机 Windows 实测
 #   同一套件 350.7s（vs 托管 558.9s，1.6×），说明该套件对 CPU 敏感；自建 Ubuntu（E5-2690v3，12C/24T）
 #   的用途是：① 取一条**同 OS 家族**的真实基线（xvfb + SwiftShader 的既有 flake 标定不至于失效）；
