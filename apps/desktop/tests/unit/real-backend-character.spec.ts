@@ -227,7 +227,18 @@ describe('RealBackend 角色 REST 适配器', () => {
     await backend.disconnect()
   })
 
-  it('同一 source 的 socket reconnect 也会让旧角色 REST 响应失效', async () => {
+  /**
+   * H-11c（P1-6，2026-09-11 修复）：**同一 source 的 socket 重连不再作废已完成的 REST 响应**。
+   *
+   * 本条用例原先名称为「同一 source 的 socket reconnect 也会让旧角色 REST 响应失效」并把旧行为锁死。
+   * 那是**过宽**的：栅栏的职责是阻止**另一个后端**的数据进入领域，而重连只是换了条 WS 连接。
+   * 原行为的实际后果是——fetch 未被 abort、服务端副作用已提交，客户端却报"连接来源已切换，请重试"，
+   * 对非幂等写（上传/建会话/保存）会诱导用户重试并产生**重复副作用**。
+   *
+   * 前提（用户确认的产品事实）：本项目**只面向一个后端**（服务端唯一），
+   * 故"同一 source 的重连"与"换源"必须区分对待。
+   */
+  it('同一 source 的 socket reconnect **不再**作废已完成的 REST 响应（H-11c）', async () => {
     const socket = new FakeWs()
     let resolveResponse!: (response: Response) => void
     const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => { resolveResponse = resolve }))
@@ -240,10 +251,38 @@ describe('RealBackend 角色 REST 适配器', () => {
     socket.handshake({ character_profiles: true })
     await connected
 
-    const oldRequest = backend.getMe()
-    socket.trigger('close')
+    const inFlight = backend.getMe()
+    socket.trigger('close')          // 同一 source 的 socket 重连（source scope 未变）
     resolveResponse(jsonResponse(profile))
-    await expect(oldRequest).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
+
+    // 已完成的 200 必须被接受——丢弃它等于把已提交的服务端副作用报成失败
+    await expect(inFlight).resolves.toMatchObject({ displayName: profile.displayName ?? expect.anything() })
+    await backend.disconnect()
+  })
+
+  it('**换源**（connect 到另一个 serverUrl）仍作废在途 REST 响应——栅栏职责未被削弱', async () => {
+    const socketA = new FakeWs()
+    let resolveResponse!: (response: Response) => void
+    const fetchImpl = vi.fn(() => new Promise<Response>((resolve) => { resolveResponse = resolve }))
+    const backend = new RealBackend({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      wsFactory: () => socketA,
+      reconnectBaseDelayMs: 60_000
+    })
+    const connected = backend.connect({ serverUrl: 'https://backend.example', token: 'token-a' })
+    socketA.handshake({ character_profiles: true })
+    await connected
+
+    const inFlight = backend.getMe()
+    // 换到另一个后端：这才是栅栏要拦的情形
+    const second = new FakeWs()
+    ;(backend as unknown as { options: { wsFactory: () => unknown } }).options.wsFactory = () => second
+    const reconnected = backend.connect({ serverUrl: 'https://other-backend.example', token: 'token-b' })
+    second.handshake({ character_profiles: true })
+    await reconnected.catch(() => { /* 换源实现细节不属本用例断言面 */ })
+    resolveResponse(jsonResponse(profile))
+
+    await expect(inFlight).rejects.toMatchObject({ code: CyreneErrorCode.GENERATION_CONFLICT })
     await backend.disconnect()
   })
 

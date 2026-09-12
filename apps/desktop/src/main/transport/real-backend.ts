@@ -1106,9 +1106,23 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
     }
     const sourceGeneration = this.sourceGeneration
-    // A reconnect keeps the user-facing source scope, but it is a new
-    // transport incarnation. REST responses that outlive that socket must not
-    // be accepted by the character adapter (or any other REST caller).
+    /**
+     * H-11c（P1-6，2026-09-11 修复）：REST 响应的栅栏**只按 source scope 判定**，
+     * 不再因「transport incarnation 变了」作废**已经拿到**的响应。
+     *
+     * 原实现（评审指出、本次核实）：在**检查状态码之前**先套 incarnation 栅栏 ⇒ 任何 WS 重连
+     * （含自动重连）都会把已到达的正常 `200` 丢掉、替换为"连接来源已切换，请重试"。
+     * 而 fetch **没有被 abort**、服务端副作用已提交 ⇒ 对非幂等写（上传、建会话、保存）
+     * 用户看到失败并被诱导重试，造成**重复副作用**。该行为还被 `real-backend-character.spec.ts`
+     * 的用例锁死（那条用例把"同一 source 的 socket 重连"与"来源已切换"混为一谈）。
+     *
+     * 为什么可以只按 source 判定：incarnation 的语义是"换了一条 WS 连接"，source scope 的语义是
+     * "换了后端/配置"——栅栏的目的是阻止**另一个后端**的数据进入领域。本项目**只面向一个后端**，
+     * 同一 source 的 socket 重连不该作废已完成的 REST 响应。真正的换源仍由 sourceGeneration 拦下。
+     *
+     * incarnation 仍用于它本职之处：WS 事件门（旧 socket 的事件必须丢）、连接/断开生命周期、
+     * 语音 pending 作废——那些问的是"流还活着吗"，与"这个已完成的 REST 结果属于哪个后端"是两件事。
+     */
     const requestTransportIncarnation = this.transportIncarnation
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.restTimeoutMs)
@@ -1120,11 +1134,11 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
         signal: controller.signal,
         headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
       })
+      // 换源（另一个后端/配置）→ 丢弃。这是栅栏的唯一职责。
       if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
-      if (requestTransportIncarnation !== this.transportIncarnation) {
-        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
-        throw this.sourceBoundaryError()
-      }
+      // 连接已断 → 结果不应再被应用（保守语义保持不变）。注意：**重连不算断开**
+      // （disconnected 仍为 false），故重连不再走到这里——这正是本次修复的差别。
+      if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
