@@ -27,7 +27,18 @@ name: Windows runtime (observation)
 #     运行时探测决定是否 skip；服务账号（本机实测为 NT AUTHORITY\NETWORK SERVICE）通常无 symlink 权限
 #     → 会**静默跳过**。故 Windows 上这两条安全边界无覆盖：**Linux integration job 必须保留，不得用本 job 替换**。
 #   - self-hosted 服务账号有自己的 profile（本机实测 `C:\Windows\ServiceProfiles\NetworkService`），
-#     看不到开发者 profile 下的缓存；Playwright 浏览器因此持久化到 `${{ runner.tool_cache }}`，避免每次重下。
+#     看不到开发者 profile 下的缓存；但该 profile **跨 run 持久**，故 Playwright 浏览器走其默认路径
+#     （`%LOCALAPPDATA%\ms-playwright`）即可，**不需要** `actions/cache`（走缓存服务反而每 run 多传约 150MB）。
+#     同理 `--with-deps` 是 Linux（apt）专用，Windows 不需要也不接受。
+#
+# 2026-09-12 修复记录——**这个文件曾经让 main 上出现一次失败 run，根因值得记住**：
+#   原先在 `jobs.<job_id>.env` 里写了 `PLAYWRIGHT_BROWSERS_PATH: ${{ runner.tool_cache }}/ms-playwright`。
+#   **`runner` 上下文在 job 级 env 不可用**（GitHub 上下文可用性表：job 级 `env` 只有
+#   github/needs/strategy/matrix/vars/secrets/inputs；`runner` 要到 step 级 `env` 才可用）。
+#   后果不是"值取不到"，而是整份 workflow 被判为 **invalid workflow file**，push 时产生一次失败 run
+#   ——症状是 run 名显示为 `.github/workflows/<文件名>` 而不是 workflow 的 `name:`。
+#   教训：本地 `js-yaml` 只能证明"是合法 YAML"，证明不了"是合法 workflow"；这类错误需要
+#   actionlint 一类的语义校验器。现改为依赖 profile 默认路径，不再使用该表达式。
 
 on:
   workflow_dispatch:
@@ -47,10 +58,6 @@ jobs:
     # 服务形态 runner（Session 0、无桌面、无 GPU）实测取证用；self-hosted 掉线会无限排队，必须有硬上限。
     # 全量集成在托管 4 vCPU 上约 9.4 分钟，本机核数更多但走软件渲染，留足余量。
     timeout-minutes: 60
-    env:
-      # 浏览器二进制落在 runner 的 tool_cache（工作区之外、跨 run 持久）——否则每个 run 重下约 150MB。
-      # 注意 `--with-deps` 是 Linux（apt）专用，Windows 不需要也不接受。
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.tool_cache }}/ms-playwright
     steps:
       - uses: actions/checkout@v4
 

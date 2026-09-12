@@ -79,7 +79,7 @@
    - 触发：`workflow_dispatch` + 每周定时；独立文件而非塞进 `ci.yml`——本仓只有**一台** runner 实例，job 会串行排队，塞进主 workflow 会把构建级门禁拖到运行时验证后面；
    - **不设作业级 `continue-on-error`**：那会让失败的 job 不改变 workflow 结论，正是仓库明令禁止的「把未核对伪装成通过」。它该红就红，只是暂不挂 main 的必过检查；
    - 阶梯里 `exit $LASTEXITCODE` 不可省：PowerShell 管道退出码取自最后一条命令（`Tee-Object` 恒为 0），少了它会把失败伪装成通过；
-   - Playwright 浏览器经 `PLAYWRIGHT_BROWSERS_PATH=${{ runner.tool_cache }}/ms-playwright` 持久化到工作区之外。
+   - Playwright 浏览器走服务账号 profile 的默认路径（`%LOCALAPPDATA%\ms-playwright`，跨 run 持久）。**不是** `PLAYWRIGHT_BROWSERS_PATH=${{ runner.tool_cache }}/...`——该表达式写在 job 级 `env` 会让整份 workflow 被判 invalid，见 §7.2。
 3. **新增 `.github/workflows/linux-runtime.yml`**（Linux 真实运行时，取证面）：跑在 2026-09-12 新登记的 Ubuntu self-hosted runner（`yomu-X99`，标签 `fe-linux`）上。用途是取一条**同 OS 家族**的真实基线（为后续 integration 分片定标），并给「integration 搬上多实例」提供实测依据。**不替换**托管 integration job——Linux 是两条 symlink 逃逸断言的唯一覆盖点。与托管 job 的差异均为 self-hosted 硬约束，已写在文件头：不带 `playwright install --with-deps`（apt 需 root，系统库须在 runner 上手工装一次）、不挂 `cache: pnpm`（服务用户 home 下的 store 跨 run 持久，走 Actions 缓存反而每 run 多传约 63MB）。
 4. **`ci.yml` 加 `concurrency`（同 ref 只保留最新一次运行，`cancel-in-progress: true`）**：依据是 34 天 143 次 run、**近 3 天 24 次/天**，其中大量为同一批改动的反复推送；这是当前「省计费分钟最多且零风险」的一条。**代价已写进 workflow 注释**：同一分支连续推送时中间提交不留完整 CI 记录，需要逐提交证据时须临时关闭。
 5. **标签按 OS 区分（2026-09-12，预防性收口）**：`yomu-win11` → `fe-win`、`yomu-X99` → `fe-linux`。此前两台共用裸仓库名标签 `elysia-frontend`，一旦有人写 `runs-on: elysia-frontend`（很自然的写法）会**同时匹配两台**，把 job 派到错误平台。当前所有 pin 都用 OS 限定标签（`[self-hosted, Windows, X64]` / `[self-hosted, Linux, X64]`），故今日不构成事故。
@@ -88,9 +88,9 @@
 
 | 项 | 状态 | 解除条件 |
 |---|---|---|
-| Session 0（无桌面）下全量集成能否跑 | **未取证** | push 后 dispatch `windows-runtime`，看真实结果 |
-| 两个 workflow 的 YAML 在 GitHub 侧是否被接受 | **未取证** | push 后观察首次 run |
-| self-hosted `windows` job 的实际耗时与冷启动代价 | **未取证** | 同上（预期首次冷、后续暖） |
+| Session 0（无桌面）下全量集成能否跑 | **未取证**——首个 job 未跑到测试步骤（死在 checkout，见 §7.1） | 修好代理后 dispatch `windows-runtime` |
+| 两个 workflow 的 YAML 在 GitHub 侧是否被接受 | **已取证**：`linux-runtime` 被接受；`windows-runtime` **被拒**（invalid workflow file）→ 已修，待推送复核 | 推送后确认不再出现「run 名=文件路径」的失败 run |
+| self-hosted `windows` job 的实际耗时与冷启动代价 | **未取证**——首次 run 死在 `actions/checkout`（网络代理，见 §7.1），未能反映耗时 | 修好代理后 `gh run rerun --failed` |
 | Windows 运行时能否转必过门禁 | **未取证** | 观察窗口内持续绿 + 已定性地处置 symlink 覆盖缺口 |
 | 集成套件分片（Linux 侧墙钟优化） | **未做** | 独立批次；见 §6 |
 
@@ -101,3 +101,33 @@
 1. **integration job 是墙钟唯一瓶颈**（10.4 分钟中的 10.4 分钟；27 文件严格串行，103 次 Electron 冷启动）。
 2. **`unit` 与 `windows` 两个 job 每次都在重新下载 Electron 二进制**：`tests/unit/tool-service.spec.ts` 经 `src/main/tools/tool-executors.ts:5` 的 `import { dialog } from 'electron'` 触发懒下载（`electron@43.3.0` 无 postinstall），而这两个 job 没有 `~/.cache/electron` 缓存（评审 M-40/P2-4 早已记「应一并加」，未落地）；Windows 侧日志显示下载后约 96 秒空档。
 3. `tests/integration/helpers/orphan-apps.ts:239` 的 `electronCount` 取自**全部 `/proc` 条目**而非 Electron 进程，故 Linux CI 每轮打印「检测到 N 个非本套件的 Electron 进程」（实测 43）是**误报**；Windows 侧因 CIM 查询按进程名过滤而正确。无行为影响，但会稀释真实孤儿场景的可信度。
+
+## 7. 首次推送后的实测（run `34684926682` @ `0f3b1c3`）
+
+5 个 job 的实际结果：`check` / `unit` / `artifact` 绿；**`windows` 红**、**`integration` 红**。两条红根因各自独立，均已定位。
+
+### 7.1 `windows` job：self-hosted runner 没有代理，`actions/checkout` 连不上 github.com
+
+- 症状：首个 self-hosted job 死在 `actions/checkout@v4`，job 内其余步骤全部 skipped。
+- 证据（runner 本机 `G:\actions-runner\_diag\Worker_20260912-090528-utc.log`）：
+  `unable to access 'https://github.com/yukikaze-1/elysia-frontend/': Recv failure: Connection was reset`、
+  `Failed to connect to github.com port 443 after 21132 ms`。
+- 根因是**网络路径差异，不是 runner 配置错误**：实测本机直连 `https://github.com` 20 秒超时（只传了约 314KB 即卡死），经 `http://127.0.0.1:7897`（`verge-mihomo`）返回 200。开发者会话能正常 push，是因为 `C:\Users\yomu\.gitconfig` 与 `%USERPROFILE%\.npmrc` 都设了该代理；runner 服务跑在 `NT AUTHORITY\NETWORK SERVICE` 下**看不到这两份配置**，系统代理又是 `Direct access`。runner 自身能收到 job，是因为它连的是 `pipelines.actions.githubusercontent.com` 一类端点、恰好可达 —— 所以现象是「能收到 job，却死在 checkout」。
+- 修法：写 `G:\actions-runner\.env`（runner 的环境注入点，**仅在启动时读取，故需以管理员重启服务**）：`http(s)_proxy` 与 `HTTP(S)_PROXY` = `http://127.0.0.1:7897`；`no_proxy`/`NO_PROXY` = `localhost,127.0.0.1`（**集成套件会起本地 HTTP 服务——Vite dev server 5373、`serveRenderer` 静态服务等——绝不能被送进代理**）。
+  另加 `ELECTRON_GET_USE_PROXY=true`：Electron 二进制（约 120MB，来自 github.com releases）走**另一套**代理机制——`@electron/get` v5 只在 `ELECTRON_GET_USE_PROXY` 存在时才启用 undici 的 `EnvHttpProxyAgent`，而它读**大写** `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`（依据：`node_modules/@electron/get/dist/index.js:17` 与 `dist/proxy.js` 文档注释）。
+- **长期运维前置**：本机 Clash Verge（`verge-mihomo`，7897）必须在运行，否则 self-hosted job 会停在 checkout。这是自建 runner 的固有代价（托管 runner 无此问题）。
+
+### 7.2 `windows-runtime.yml`：整份 workflow 被判 invalid
+
+- 症状：push 时它自动产生一次失败 run，**run 名显示为 `.github/workflows/windows-runtime.yml` 而非 workflow 的 `name:`** —— 这是 GitHub 解析失败的标志。
+- 根因：`PLAYWRIGHT_BROWSERS_PATH: ${{ runner.tool_cache }}/ms-playwright` 被我写在 `jobs.<id>.env`。**`runner` 上下文在 job 级 `env` 不可用**（可用性表：job 级 `env` 仅 github/inputs/matrix/needs/secrets/strategy/vars；`runner` 要到 step 级才可用）。
+- 用工具而非记忆确认：`actionlint` v1.7.12 对该写法报 `context "runner" is not allowed here. available contexts are ...`（最小复现 `tmp/repro-invalid-context.yml`；同一表达式放 step 级 `env` 则 exit 0）。三个 workflow 现在 actionlint 全绿。
+- **教训（建议进 CI）**：本地 `js-yaml` 通过**只证明「是合法 YAML」**，不证明「是合法 workflow」——这次两条红线都是从「YAML 绿」下面漏过去的。建议后续把 actionlint 加进 `check` job（本次未做）。
+- 修法：去掉该表达式，改依赖服务账号 profile 的默认路径（跨 run 持久，无需 `actions/cache`）。
+
+### 7.3 `integration` job：`electron-live2d.spec.ts` B6 单例失败（疑似环境性 flake，待重跑判别）
+
+- 结果：`1 failed | 155 passed | 1 skipped (157)`，`Duration 548.58s`；失败点 `electron-live2d.spec.ts:794:88`，`AssertionError: expected 0 to be greater than 0`。
+- 位置判读：794 行是 B6 里**切模型之前**的第一个像素断言（默认 haru 画布）。`countNonTransparentPx` 的 `-1` 是「采样失败」、`0` 是「画布真空白」，报 `0` ⇒ 画布存在但没画出来。B6 与 test 2 / C2.x 不同，**不对「静态回退」分支做处理**，故该次启动若 WebGL 失败即必红。
+- **倾向 flake 而非回归**的四条依据：① 隔壁批次只改「模型装配到哪个目录」并要求显式 `--user-data default`，而 CI 里 **test 1（`list-models` 含 haru 且 `available: true`）通过** ⇒ 模型在 app 会读的位置；② 同批其它同类像素断言（B3 / F-1 / B7）在同一 run 中通过 ⇒ 渲染在别的实例里正常；③ 同一用例在前一次 run（`34680938308`，07:31）与开发者本机（其提交信息记「集成 27 文件 153 通过 + 2 skipped」）均通过；④ 仓库既有记录把这类现象定性为 xvfb/SwiftShader 环境性 flake（V-08/V-12：「先复现并采集证据，不能直接归因业务代码」）。
+- **判别动作**：`gh run rerun 34684926682 --failed`（与 7.1 的代理验证共用同一次重跑）。重跑绿 ⇒ 记为环境性 flake；再红于同一点 ⇒ 转确定性缺陷，须按「B6 缺回退分支」单独处理。
