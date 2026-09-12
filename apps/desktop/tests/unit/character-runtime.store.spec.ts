@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import type { CharacterBindingSnapshot, CharacterPublicState, CharacterStateChangedEvent } from '@shared/contracts'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { useCharacterRuntimeStore } from '../../src/renderer/src/stores/character-runtime.store'
 
 function deferred<T>() {
@@ -55,7 +56,10 @@ describe('characterRuntimeStore FE-F1a', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     getCharacterState.mockReset()
-    setDesktopApi({ getCharacterState } as never)
+    // I-06：改经受检工厂——原来这里是 `{ getCharacterState } as never`，cast 抹掉了「mock 与
+    // DesktopApiLike 漂移」的检出能力（方法被重命名/改签名时 mock 会静默继续提供旧形状）。
+    // 本 spec 只关心这一条方法，所以给出这一条 override、其余由工厂填无害默认值。
+    setDesktopApi(createDesktopApiMock({ getCharacterState }))
   })
 
   it('同 instance 的不同 revision pending 独立拥有 GET；A 迟到不得改写 B 的 loading/error/view', async () => {
