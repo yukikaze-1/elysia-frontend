@@ -47,6 +47,9 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.20.0
+          # 按 runner 分开：默认 `~/setup-pnpm` 在同一用户的多个实例之间共享，并发 job 的自安装器会互相踩
+          # （实测 `Something went wrong, self-installer exits with code 1`，见 ci.yml 同处注释）
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - uses: actions/setup-node@v4
         with:

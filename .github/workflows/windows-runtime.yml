@@ -64,6 +64,8 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 11.20.0
+          # 按 runner 分开（默认 `~/setup-pnpm`；本机只有一个实例，但保持一致以免将来加实例时踩坑）
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - uses: actions/setup-node@v4
         with:

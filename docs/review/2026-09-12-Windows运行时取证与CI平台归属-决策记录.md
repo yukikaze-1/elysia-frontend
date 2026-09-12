@@ -364,3 +364,22 @@ AssertionError: 流式期间距底缺口中位数 2506px（max 5011px）: expect
   工作量上两侧正好匹配（重型约 10.7 分钟 / 2 实例 ≈ 5.4 分钟；轻型约 5.5 分钟 / 1 实例）。
 - **注意这不等于问题已消失**：并发争抢只是被限制到 2 个重型任务，仍需观察后续 run 的 flake 率。若再现同类
   失败，下一步是减到「1 个重型实例 + 其余轻型」，代价是墙钟回到 ~10 分钟。
+
+### 10.7 第三处共享状态竞争：`~/setup-pnpm`（pnpm 自安装目录）
+
+修完 store 之后的下一次 run（`34693129447`）又出现同类红：
+
+```
+X Something went wrong, self-installer exits with code 1     ← integration (shard 1/3)
+```
+
+- 机制：`pnpm/action-setup@v4` 的默认安装目录是 **`~/setup-pnpm`**，而三个实例跑在**同一个用户**下 →
+  并发 job 的自安装器同时写同一目录。这与 §10.6 的 store 竞争是**同一类问题的两个实例**：
+  **多实例共用 `$HOME` ⇒ `$HOME` 下的任何共享写路径都是竞争点。**
+- 修法：给所有 job 的 `pnpm/action-setup` 加 `dest: ${{ runner.temp }}/setup-pnpm`（`runner.temp` 是各
+  runner 自己的 `_work/_temp`，天然隔离）。**但 store 不能放进 `_work/_temp`**：runner 每个 job 开始时会
+  清空该目录（日志 `Cleaning runner temp folder`），store 放那里等于每次重下——故 store 仍用
+  `--store-dir "$HOME/.pnpm-store-${{ runner.name }}"`（稳定且按实例分开）。
+- **教训（可推广）**：自建多实例 = 共享 `$HOME`；凡是写进 `$HOME` 的工具（包管理器安装目录、包缓存、
+  各种 store）都要么按实例分开、要么确认其并发安全。目前已识别并处理三处：pnpm store、pnpm 自安装目录、
+  （electron/playwright 缓存为只读性质且已预热，风险低但未逐一验证）。
