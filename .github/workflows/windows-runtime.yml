@@ -1,0 +1,100 @@
+name: Windows runtime (observation)
+
+# Windows 真实运行时验证——**取证面，不是门禁**。
+#
+# 为什么需要它（2026-09-12）：
+#   `ci.yml` 的 `windows` job 是**构建级**门禁（C3：不启动 Electron，用户拍板于
+#   docs/archive/specs/2026-08-12-phase01-recheck-batchC-design.md），因此全部真实 Electron 运行时行为
+#   （IPC 契约 / 协议 handler 逃逸 / Live2D / 语音 / 桌面工具授权 / 崩溃恢复，27 files / 156 用例）
+#   此前**只在 Linux + xvfb 上跑过**——而 Windows 是主目标平台（见 ci.yml 的 windows job 注释、
+#   docs/08 §门禁表）。缺口由仓库自己的评审记录在案：
+#     - docs/review/2026-09-11-full-frontend-review.md M-39「Windows 打包路径从未在 CI 验证……
+#       而主目标平台恰恰是 Windows」（P2-4 只补了**打包**，运行时仍未补）；
+#     - doc 16 历史归档反复出现的「Windows 联调仍阻塞（真 Windows 上启动 Electron + Token 冒烟仍留后续）」
+#   self-hosted runner 落地后，补这半截证据的边际成本接近零（不计费、无需第二套环境）。
+#
+# 为什么独立成文件、而不是加进 ci.yml：
+#   ① **单实例串行**：本仓只有一台 self-hosted runner 实例，job 会互相排队。把它塞进 ci.yml 会让构建级
+#      门禁排在运行时验证后面（4.6 分钟 → 15 分钟量级），用延迟换覆盖不划算；
+#   ② **门禁语义**：不设作业级 `continue-on-error`——那会让失败的 job 不改变 workflow 结论，正是仓库
+#      明令禁止的「把未核对伪装成通过」（同 ci.yml 中 check:contract 退出码分档的既有理由）。这里让它
+#      **该红就红**，只是暂不挂到 main 的必过检查上；证据稳定转绿后再把 job 提升进 ci.yml 成为必过门禁。
+#
+# 触发：手动 dispatch（验证改动/回归）+ 每周定时（防平台漂移）。
+#
+# 已知平台差异（**如实记录，不得当作通过**）：
+#   - `tests/integration/protocol-handler.spec.ts` 的两条「symlink 逃逸 → 403」由 `canCreateSymlink()`
+#     运行时探测决定是否 skip；服务账号（本机实测为 NT AUTHORITY\NETWORK SERVICE）通常无 symlink 权限
+#     → 会**静默跳过**。故 Windows 上这两条安全边界无覆盖：**Linux integration job 必须保留，不得用本 job 替换**。
+#   - self-hosted 服务账号有自己的 profile（本机实测 `C:\Windows\ServiceProfiles\NetworkService`），
+#     看不到开发者 profile 下的缓存；Playwright 浏览器因此持久化到 `${{ runner.tool_cache }}`，避免每次重下。
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每周日 20:00 UTC（北京时间周一 04:00）——机器空闲时段，避免与人工 push 的 CI 抢同一台 runner
+    - cron: '0 20 * * 0'
+
+# 定时与手动触发可能叠加：同一时刻只保留一次，新的顶掉排队中的旧的（不打断正在跑的）
+concurrency:
+  group: windows-runtime
+  cancel-in-progress: false
+
+jobs:
+  windows-runtime:
+    name: windows runtime (full integration suite)
+    runs-on: [self-hosted, Windows, X64]
+    # 服务形态 runner（Session 0、无桌面、无 GPU）实测取证用；self-hosted 掉线会无限排队，必须有硬上限。
+    # 全量集成在托管 4 vCPU 上约 9.4 分钟，本机核数更多但走软件渲染，留足余量。
+    timeout-minutes: 60
+    env:
+      # 浏览器二进制落在 runner 的 tool_cache（工作区之外、跨 run 持久）——否则每个 run 重下约 150MB。
+      # 注意 `--with-deps` 是 Linux（apt）专用，Windows 不需要也不接受。
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.tool_cache }}/ms-playwright
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # electron 43 无 postinstall，二进制靠 require('electron') 懒下载；显式 ensure 让它发生在可观测的步骤里，
+      # 且落进服务账号 profile（跨 run 持久），后续 run 秒过
+      - name: Ensure Electron binary
+        run: pnpm --filter @cyrene/desktop ensure:electron
+
+      # trust-boundary.spec.ts 用普通 chromium（非 Electron）——需要 Playwright 浏览器
+      - name: Install Playwright chromium
+        run: pnpm --filter @cyrene/desktop exec playwright install chromium
+
+      # Windows 无 xvfb（也不需要）：直接跑 test:integration（内含 electron-vite build --mode test + vitest）
+      # `exit $LASTEXITCODE` 不可省：PowerShell 管道的退出码取自最后一条命令（Tee-Object 恒为 0），
+      # 少了这行会把失败伪装成通过——正是本 workflow 头部第 ② 条要避免的假绿。
+      - name: Integration tests (Windows, no xvfb)
+        shell: pwsh
+        run: |
+          pnpm --filter @cyrene/desktop test:integration 2>&1 | Tee-Object -FilePath windows-runtime.log
+          exit $LASTEXITCODE
+
+      - name: Record commit SHA (runtime evidence)
+        if: always()
+        shell: pwsh
+        run: git rev-parse HEAD > windows-runtime-sha.txt
+
+      # 证据留档：失败时也要拿到日志（本 job 的价值有一半在于"红在哪一条"）
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-runtime-evidence
+          path: |
+            windows-runtime.log
+            windows-runtime-sha.txt

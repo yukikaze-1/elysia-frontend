@@ -1,0 +1,86 @@
+name: Linux runtime (observation)
+
+# Linux 真实运行时取证面（self-hosted Ubuntu `yomu-X99`，标签 `fe-linux`）——**取证面，不是门禁**。
+#
+# 为什么需要它（2026-09-12）：
+#   `ci.yml` 的 integration job 跑在 GitHub 托管 ubuntu-latest（4 vCPU），是**整条 CI 的墙钟瓶颈**
+#   （实测 10.4 分钟里它占 10.4 分钟；27 文件严格串行、103 次 Electron 冷启动）。同日本机 Windows 实测
+#   同一套件 350.7s（vs 托管 558.9s，1.6×），说明该套件对 CPU 敏感；自建 Ubuntu（E5-2690v3，12C/24T）
+#   的用途是：① 取一条**同 OS 家族**的真实基线（xvfb + SwiftShader 的既有 flake 标定不至于失效）；
+#   ② 后续把 integration 分片到本机多实例时，用它定标单片成本。
+#   注意本 workflow **不替换** 托管 integration job：Linux 是两条 symlink 逃逸断言的唯一覆盖点
+#   （Windows 上 `canCreateSymlink()` 探测失败会静默跳过，见 2026-09-12 决策记录）。
+#
+# 与 CI 托管 job 的差异（都是 self-hosted 的硬约束，不是偷懒）：
+#   ① **不带 `playwright install --with-deps`**：`--with-deps` 内部跑 apt（需要 root），self-hosted 的
+#      runner 用户没有免密 sudo。系统库必须在 runner 上**一次性手工装好**：
+#        sudo apt-get update && sudo apt-get install -y xvfb
+#        cd <任一 clone> && pnpm install --frozen-lockfile
+#        sudo pnpm --filter @cyrene/desktop exec playwright install-deps chromium
+#        pnpm --filter @cyrene/desktop exec playwright install chromium
+#      缺 xvfb 时本 job 会以 `xvfb-run: command not found` 直接红——按设计如此，不静默降级。
+#   ② **不挂 `cache: pnpm`**：self-hosted 的 pnpm store 在服务用户 home 下、跨 run 持久，走 Actions 缓存
+#      服务反而每个 run 多传约 63MB。electron 二进制同理（不用 `actions/cache`，本地 profile 已持久）。
+#
+# 触发：手动 dispatch（取基线/复验）+ 每周定时（防平台漂移）。
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每周日 21:00 UTC（北京时间周一 05:00）——与 windows-runtime 错开一小时，避免同一台机器上抢资源
+    - cron: '0 21 * * 0'
+
+concurrency:
+  group: linux-runtime
+  cancel-in-progress: false
+
+jobs:
+  linux-runtime:
+    name: linux runtime (full integration suite)
+    runs-on: [self-hosted, Linux, X64]
+    # self-hosted 掉线时 job 会一直排队，必须有硬上限；托管 4 vCPU 上全量约 9.4 分钟，留足余量
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # electron 43 无 postinstall，二进制靠 require('electron') 懒下载；显式 ensure 让它发生在可观测步骤里
+      - name: Ensure Electron binary
+        run: pnpm --filter @cyrene/desktop ensure:electron
+
+      # trust-boundary.spec.ts 用普通 chromium（非 Electron）——需要 Playwright 浏览器本体（无 --with-deps，见文件头）
+      - name: Install Playwright chromium
+        run: pnpm --filter @cyrene/desktop exec playwright install chromium
+
+      # Linux 无显示器，Electron 必须经 xvfb（README 排障 #2 同款）
+      # `set -o pipefail` 不可省：bash 管道默认返回最后一个命令的退出码（tee 恒为 0），
+      # 少了它会把失败伪装成通过——正是本 workflow 头部要避免的假绿。
+      - name: Integration tests (xvfb)
+        shell: bash
+        run: |
+          set -o pipefail
+          xvfb-run -a pnpm --filter @cyrene/desktop test:integration 2>&1 | tee linux-runtime.log
+
+      - name: Record commit SHA (runtime evidence)
+        if: always()
+        run: git rev-parse HEAD > linux-runtime-sha.txt
+
+      # 证据留档：失败时也要拿到日志（本 job 的价值有一半在于"红在哪一条"）
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-runtime-evidence
+          path: |
+            linux-runtime.log
+            linux-runtime-sha.txt

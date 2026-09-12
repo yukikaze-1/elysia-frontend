@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+# 同一 ref 只保留最新一次运行（2026-09-12）。
+# 依据（实测）：本仓为单人直推 main，run 历史里 34 天 143 次、**近 3 天 24 次/天**，其中大量是同一批改动的反复推送；
+# 每次 run 约 16.2 计费分钟（Linux ×1）+ Windows 已改 self-hosted，故取消被顶掉的旧 push 是当前**省分钟最多且零风险**的一条。
+# 代价（明确记录，不含糊）：同一分支连续推送时，**中间提交不会留下完整 CI 记录**——只有最后一次跑完。
+# 因此：需要「每个提交都有门禁证据」时（doc 16 §3.1 的门禁记录纪律），把 cancel-in-progress 临时改 false 再推送。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 # 独立 job 拆分：静态检查 / 单测 / 集成测试互不杂糅，失败各自定位、可并行。
 # typecheck 与 lint 同属快速静态检查（无运行时依赖），合并为一个 job 省一次 install。
 jobs:
@@ -168,9 +177,25 @@ jobs:
         run: xvfb-run -a pnpm --filter @cyrene/desktop verify:artifact -- --smoke
 
   # Windows 构建级门禁（C3：不启动 Electron）——unit 是 node 环境 + build 是打包器，均不需 electron 二进制
+  #
+  # 2026-09-12：从 GitHub 托管 `windows-latest` 改钉到本仓 self-hosted runner（`yomu-win11`，标签 `fe-win`）。
+  # 依据（本机实测，非推断）：
+  #   ① 计费：私有仓库托管 Windows runner 按 **2× 计费**，本 job 约占 12.4 计费分钟/run；self-hosted 不计费。
+  #   ② 形态匹配：本 job 全程**不启动 Electron GUI**（typecheck / lint / unit / build / electron-builder --dir /
+  #      静态 verify:artifact 都是 node），因此 runner 的服务形态（服务账号 NT AUTHORITY\NETWORK SERVICE、
+  #      **Session 0 无桌面无 GPU**）不影响它——GUI 运行时验证另见 windows-runtime.yml。
+  #   ③ 工作目录：runner 装在 `G:\actions-runner`，`_work` 不在开发检出目录内，
+  #      故 `actions/checkout` 默认的 `git clean -ffdx` 不会波及开发者的未跟踪文件。
+  # 已知代价（首次运行的冷启动，如实记录）：
+  #   - 服务账号有自己的 profile（`C:\Windows\ServiceProfiles\NetworkService`），**看不到** `C:\Users\<user>`
+  #     下的 electron dist / pnpm store / ms-playwright。故首次运行需冷下载（Electron 二进制约 120MB 等）。
+  #   - 该 profile 落在工作区之外、跨 run 持久，所以**不要**给本 job 加 `actions/cache` 的 electron 缓存：
+  #     本地已持久，走 GitHub 缓存服务反而每次多传 120MB（integration/artifact 两个托管 job 的缓存保持原样）。
+  # timeout-minutes：self-hosted 掉线时 job 会一直排队（托管 runner 不会），必须有硬上限。
   windows:
     name: windows build-level
-    runs-on: windows-latest
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
