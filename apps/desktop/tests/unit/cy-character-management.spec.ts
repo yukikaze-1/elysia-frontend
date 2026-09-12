@@ -7,6 +7,8 @@ import { MockCharacterBackend } from '../../src/main/characters/mock-character-b
 import CyCharacterPane from '../../src/renderer/src/components/characters/CyCharacterPane.vue'
 import CyCharacterRevisionList from '../../src/renderer/src/components/characters/CyCharacterRevisionList.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock, typedMock } from './helpers/desktop-api'
+import type { DesktopApiMock } from './helpers/desktop-api'
 import { useCharacterEditorStore } from '../../src/renderer/src/stores/character-editor.store'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 
@@ -36,35 +38,37 @@ function draft(displayName: string): CharacterDraft {
 
 let pinia: ReturnType<typeof createPinia>
 let backend: MockCharacterBackend
-let createCharacter: ReturnType<typeof vi.fn>
-let cloneCharacter: ReturnType<typeof vi.fn>
-let updateCharacter: ReturnType<typeof vi.fn>
-let updateMe: ReturnType<typeof vi.fn>
-let archiveCharacter: ReturnType<typeof vi.fn>
-let rollbackCharacter: ReturnType<typeof vi.fn>
-let listCharacterRevisions: ReturnType<typeof vi.fn>
-let validateCharacter: ReturnType<typeof vi.fn>
-let previewCharacter: ReturnType<typeof vi.fn>
+// I-06：这些都是 `DesktopApiLike` 的可选方法 ⇒ 裸 `vi.fn()` 不可赋值（`F | undefined` 联合）。
+// 用工厂导出的带签名 Mock 类型标注 + typedMock 构造。
+let createCharacter: DesktopApiMock['createCharacter']
+let cloneCharacter: DesktopApiMock['cloneCharacter']
+let updateCharacter: DesktopApiMock['updateCharacter']
+let updateMe: DesktopApiMock['updateMe']
+let archiveCharacter: DesktopApiMock['archiveCharacter']
+let rollbackCharacter: DesktopApiMock['rollbackCharacter']
+let listCharacterRevisions: DesktopApiMock['listCharacterRevisions']
+let validateCharacter: DesktopApiMock['validateCharacter']
+let previewCharacter: DesktopApiMock['previewCharacter']
 let originalConfirm: typeof window.confirm
 
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
   backend = new MockCharacterBackend()
-  createCharacter = vi.fn((input) => backend.createCharacter(input))
-  cloneCharacter = vi.fn((input) => backend.cloneCharacter(input))
-  updateCharacter = vi.fn((input) => backend.updateCharacter(input))
-  updateMe = vi.fn((input) => backend.updateMe(input))
-  archiveCharacter = vi.fn((id: string) => backend.archiveCharacter(id))
-  rollbackCharacter = vi.fn((input) => backend.rollbackCharacter(input))
-  listCharacterRevisions = vi.fn((input) => backend.listCharacterRevisions(input))
+  createCharacter = typedMock<'createCharacter'>((input) => backend.createCharacter(input))
+  cloneCharacter = typedMock<'cloneCharacter'>((input) => backend.cloneCharacter(input))
+  updateCharacter = typedMock<'updateCharacter'>((input) => backend.updateCharacter(input))
+  updateMe = typedMock<'updateMe'>((input) => backend.updateMe(input))
+  archiveCharacter = typedMock<'archiveCharacter'>((id) => backend.archiveCharacter(id))
+  rollbackCharacter = typedMock<'rollbackCharacter'>((input) => backend.rollbackCharacter(input))
+  listCharacterRevisions = typedMock<'listCharacterRevisions'>((input) => backend.listCharacterRevisions(input))
   validateCharacter = vi.fn((input) => backend.validateCharacter(input))
   previewCharacter = vi.fn((input) => backend.previewCharacter(input))
-  setDesktopApi({
-    getMe: vi.fn(() => backend.getMe()),
+  setDesktopApi(createDesktopApiMock({
+    getMe: typedMock<'getMe'>(() => backend.getMe()),
     updateMe,
-    listCharacters: vi.fn((input) => backend.listCharacters(input)),
-    getCharacter: vi.fn((id: string) => backend.getCharacter(id)),
+    listCharacters: typedMock<'listCharacters'>((input) => backend.listCharacters(input)),
+    getCharacter: typedMock<'getCharacter'>((id) => backend.getCharacter(id)),
     createCharacter,
     updateCharacter,
     cloneCharacter,
@@ -73,11 +77,11 @@ beforeEach(() => {
     rollbackCharacter,
     validateCharacter,
     previewCharacter,
-    listCharacterDrafts: vi.fn(async () => []),
-    getCharacterDraft: vi.fn(async () => undefined),
-    saveCharacterDraft: vi.fn(async () => {}),
-    deleteCharacterDraft: vi.fn(async () => {})
-  } as never)
+    listCharacterDrafts: typedMock<'listCharacterDrafts'>(async () => []),
+    getCharacterDraft: typedMock<'getCharacterDraft'>(async () => undefined),
+    saveCharacterDraft: typedMock<'saveCharacterDraft'>(async () => {}),
+    deleteCharacterDraft: typedMock<'deleteCharacterDraft'>(async () => {})
+  }))
   useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
   originalConfirm = window.confirm
 })
@@ -156,15 +160,15 @@ describe('角色管理 UI FE-D3', () => {
       draft: draft('恢复草稿'),
       statePolicy: 'preserve'
     }
-    const listDrafts = vi.fn(async () => [{ key: record.key, mode: record.mode, displayName: record.displayName, updatedAt: record.updatedAt }])
-    const getDraft = vi.fn(async () => record)
-    setDesktopApi({
-      listCharacters: vi.fn((input) => backend.listCharacters(input)),
-      getCharacter: vi.fn((id: string) => backend.getCharacter(id)),
+    const listDrafts = typedMock<'listCharacterDrafts'>(async () => [{ key: record.key, mode: record.mode, displayName: record.displayName, updatedAt: record.updatedAt }])
+    const getDraft = typedMock<'getCharacterDraft'>(async () => record)
+    setDesktopApi(createDesktopApiMock({
+      listCharacters: typedMock<'listCharacters'>((input) => backend.listCharacters(input)),
+      getCharacter: typedMock<'getCharacter'>((id) => backend.getCharacter(id)),
       listCharacterDrafts: listDrafts,
       getCharacterDraft: getDraft,
-      deleteCharacterDraft: vi.fn(async () => {})
-    } as never)
+      deleteCharacterDraft: typedMock<'deleteCharacterDraft'>(async () => {})
+    }))
     const wrapper = mountPane()
     await flushPromises()
     expect(wrapper.text()).toContain('本地未提交草稿')
@@ -374,7 +378,7 @@ describe('角色管理 UI FE-D3', () => {
   })
 
   it('离线时禁用已缓存 revision 的回滚与继续分页入口', async () => {
-    const listRevisions = vi.fn(async (input: { cursor?: string }) => input.cursor
+    const listRevisions = typedMock<'listCharacterRevisions'>(async (input) => input.cursor
       ? { items: [], hasMore: false }
       : {
           items: [
@@ -384,7 +388,7 @@ describe('角色管理 UI FE-D3', () => {
           hasMore: true,
           nextCursor: 'cursor-1'
         })
-    setDesktopApi({ listCharacterRevisions: listRevisions } as never)
+    setDesktopApi(createDesktopApiMock({ listCharacterRevisions: listRevisions }))
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(CyCharacterRevisionList, {
@@ -448,14 +452,14 @@ describe('角色管理 UI FE-D3', () => {
     const retry = deferred<Page<CharacterRevisionSummary>>()
     const refreshed = deferred<Page<CharacterRevisionSummary>>()
     let rootCalls = 0
-    const listRevisions = vi.fn((input: { characterId: string; limit?: number; cursor?: string }) => {
+    const listRevisions: DesktopApiMock['listCharacterRevisions'] = typedMock<'listCharacterRevisions'>((input) => {
       if (input.cursor === undefined) {
         rootCalls++
         return rootCalls === 1 ? first.promise : refreshed.promise
       }
       return listRevisions.mock.calls.length === 2 ? second.promise : retry.promise
     })
-    setDesktopApi({ listCharacterRevisions: listRevisions } as never)
+    setDesktopApi(createDesktopApiMock({ listCharacterRevisions: listRevisions }))
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(CyCharacterRevisionList, {

@@ -9,6 +9,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { CharacterDraft, CharacterSummary, PersistedCharacterDraft } from '@shared/contracts'
 import CyCharacterCatalog from '../../src/renderer/src/components/characters/CyCharacterCatalog.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock, typedMock } from './helpers/desktop-api'
+import type { DesktopApiMock } from './helpers/desktop-api'
 import { useCharacterCatalogStore } from '../../src/renderer/src/stores/character-catalog.store'
 import { useCharacterEditorStore } from '../../src/renderer/src/stores/character-editor.store'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
@@ -54,26 +56,28 @@ function deferred<T>() {
 }
 
 let pinia: ReturnType<typeof createPinia>
-let listCharacters: ReturnType<typeof vi.fn>
-let listCharacterDrafts: ReturnType<typeof vi.fn>
-let getCharacterDraft: ReturnType<typeof vi.fn>
-let deleteCharacterDraft: ReturnType<typeof vi.fn>
+// I-06：这几个都是 `DesktopApiLike` 里的**可选**方法，裸 `vi.fn()`（`Mock<Constructable | Procedure>`）
+// 不能赋给 `F | undefined` 联合 ⇒ 用工厂导出的 `DesktopApiMock['x']`（带真实签名的 Mock）标注 + typedMock 构造。
+let listCharacters: DesktopApiMock['listCharacters']
+let listCharacterDrafts: DesktopApiMock['listCharacterDrafts']
+let getCharacterDraft: DesktopApiMock['getCharacterDraft']
+let deleteCharacterDraft: DesktopApiMock['deleteCharacterDraft']
 let originalConfirm: typeof window.confirm
 
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
-  listCharacters = vi.fn(async () => ({ items: [], hasMore: false }))
-  listCharacterDrafts = vi.fn(async () => [])
-  getCharacterDraft = vi.fn(async () => undefined)
-  deleteCharacterDraft = vi.fn(async () => {})
-  setDesktopApi({
+  listCharacters = typedMock<'listCharacters'>(async () => ({ items: [], hasMore: false }))
+  listCharacterDrafts = typedMock<'listCharacterDrafts'>(async () => [])
+  getCharacterDraft = typedMock<'getCharacterDraft'>(async () => undefined)
+  deleteCharacterDraft = typedMock<'deleteCharacterDraft'>(async () => {})
+  setDesktopApi(createDesktopApiMock({
     listCharacters,
     listCharacterDrafts,
     getCharacterDraft,
     deleteCharacterDraft,
-    saveCharacterDraft: vi.fn(async () => {})
-  } as never)
+    saveCharacterDraft: typedMock<'saveCharacterDraft'>(async () => {})
+  }))
   originalConfirm = window.confirm
   useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
 })

@@ -21,23 +21,14 @@ import { createDesktopApiMock } from './helpers/desktop-api'
 
 const UNIT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
-/** 尚未迁移到 `createDesktopApiMock` 的 spec（迁移一个就删一行；新增裸 mock 会红） */
-const PENDING = [
-  'cy-character-catalog.spec.ts',
-  'cy-character-detail.spec.ts',
-  'cy-character-editor.spec.ts',
-  'cy-character-management.spec.ts',
-  'cy-character-pane.spec.ts',
-  'cy-character-preview.spec.ts',
-  'cy-connection-panel.spec.ts',
-  'cy-conversation-list.spec.ts',
-  'cy-diagnostics-pane.spec.ts',
-  'cy-identity-pane.spec.ts',
-  'cy-security-pane.spec.ts',
-  'cy-tool-approval.spec.ts',
-  'cy-tool-card.spec.ts',
-  'cy-voice-consent-dialog.spec.ts'
-] as const
+/**
+ * 尚未迁移到 `createDesktopApiMock` 的 spec —— **2026-09-12 已清零**。
+ *
+ * 清空后本门禁的角色从"欠账台账"变成**防回退闸门**：任何新 spec（或改动过的旧 spec）只要再手搓
+ * `setDesktopApi({...} as never)`，就会出现在 `pendingNow` 里而与空清单不符 → 红。
+ * 迁移完成的文件请把这一行留空，不要为了让它变绿而往清单里加行。
+ */
+const PENDING = [] as const
 
 function specFiles(dir: string): string[] {
   const out: string[] = []

@@ -9,6 +9,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { CharacterDetail, CharacterDraft, CharacterMutationResult, CharacterValidationResult } from '@shared/contracts'
 import CyCharacterEditor from '../../src/renderer/src/components/characters/CyCharacterEditor.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock, typedMock } from './helpers/desktop-api'
+import type { DesktopApiMock } from './helpers/desktop-api'
 import { useCharacterEditorStore } from '../../src/renderer/src/stores/character-editor.store'
 
 function draftFixture(displayName = '测试角色'): CharacterDraft {
@@ -65,29 +67,32 @@ function mutationResult(draft: CharacterDraft, revision: number): CharacterMutat
 }
 
 let pinia: ReturnType<typeof createPinia>
-let createCharacter: ReturnType<typeof vi.fn>
-let updateCharacter: ReturnType<typeof vi.fn>
-let validateCharacter: ReturnType<typeof vi.fn>
-let deleteCharacterDraft: ReturnType<typeof vi.fn>
+// I-06：这几个都是可选方法 ⇒ 裸 `vi.fn()` 不可赋值（目标类型是 `F | undefined` 联合）。
+let createCharacter: DesktopApiMock['createCharacter']
+let updateCharacter: DesktopApiMock['updateCharacter']
+let validateCharacter: DesktopApiMock['validateCharacter']
+let deleteCharacterDraft: DesktopApiMock['deleteCharacterDraft']
 let originalConfirm: typeof window.confirm
 
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
-  createCharacter = vi.fn(async (input: { draft: CharacterDraft }) => mutationResult(input.draft, 1))
-  updateCharacter = vi.fn(async (input: { draft: CharacterDraft; expectedRevision: number }) => mutationResult(input.draft, input.expectedRevision + 1))
-  validateCharacter = vi.fn(async (): Promise<CharacterValidationResult> => ({ valid: true, issues: [] }))
-  deleteCharacterDraft = vi.fn(async () => {})
-  setDesktopApi({
+  // 契约：createCharacter 返回 CharacterDetail（不是 mutation 结果）——旧 stub 返回 mutationResult 整体，
+  // 那处漂移原先被 `as never` 掩盖。
+  createCharacter = typedMock<'createCharacter'>(async (input) => mutationResult(input.draft, 1).character)
+  updateCharacter = typedMock<'updateCharacter'>(async (input) => mutationResult(input.draft, (input.expectedRevision ?? 0) + 1))
+  validateCharacter = typedMock<'validateCharacter'>(async () => ({ valid: true, issues: [] }))
+  deleteCharacterDraft = typedMock<'deleteCharacterDraft'>(async () => {})
+  setDesktopApi(createDesktopApiMock({
     createCharacter,
     updateCharacter,
     validateCharacter,
-    previewCharacter: vi.fn(async () => ({ ephemeral: true, reply: '预览' })),
-    listCharacterDrafts: vi.fn(async () => []),
-    getCharacterDraft: vi.fn(async () => undefined),
-    saveCharacterDraft: vi.fn(async () => {}),
+    previewCharacter: typedMock<'previewCharacter'>(async () => ({ ephemeral: true, reply: '预览' })),
+    listCharacterDrafts: typedMock<'listCharacterDrafts'>(async () => []),
+    getCharacterDraft: typedMock<'getCharacterDraft'>(async () => undefined),
+    saveCharacterDraft: typedMock<'saveCharacterDraft'>(async () => {}),
     deleteCharacterDraft
-  } as never)
+  }))
   originalConfirm = window.confirm
   useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
 })

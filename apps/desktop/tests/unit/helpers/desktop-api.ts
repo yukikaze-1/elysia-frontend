@@ -77,6 +77,26 @@ type DesktopApiOverrides<O> = Partial<{
 /** 空订阅：组件 unmount 时调用的 unsubscribe 不能炸 */
 const noopUnsubscribe = (): (() => void) => () => {}
 
+/**
+ * 带**真实签名**的单个 mock：`typedMock<'listCharacters'>(async () => …)`。
+ *
+ * 为什么需要它（2026-09-12 迁移组件域时实测）：`DesktopApiLike` 里有一批**可选**方法
+ * （`listCharacters?` / `getCharacterDraft?` / `updateMe?` …），其类型是 `F | undefined` 联合。
+ * 裸 `vi.fn()`（`Mock<Constructable | Procedure>`）**不能**赋给这类联合（但对**必填**方法可以——
+ * 所以 `{ settingsLoad: vi.fn() }` 能过而 `{ listCharacters: vi.fn() }` 不能，这条差异是实测出来的，
+ * 不是推测）。另外显式给出参数/返回类型还能顺带消除字面量拓宽：
+ *     vi.fn(async () => ({ ephemeral: true, reply: '预览' }))   // 推断成 { ephemeral: boolean } ⇒ 不满足契约
+ *     typedMock<'previewCharacter'>(async () => ({ ephemeral: true, reply: '预览' }))   // 上下文类型 ⇒ 保持 true
+ *
+ * 实现里那一处 `as` 是刻意的：`vi.fn(impl)` 无法被 TS 证明等于 `Mock<NonNullable<DesktopApiLike[K]>>`
+ * （泛型条件类型），而**调用方**的类型仍由参数与返回标注钉死，判别力不受影响。
+ */
+export function typedMock<K extends keyof DesktopApiLike>(
+  impl?: NonNullable<DesktopApiLike[K]>
+): Mock<NonNullable<DesktopApiLike[K]>> {
+  return vi.fn(impl) as Mock<NonNullable<DesktopApiLike[K]>>
+}
+
 // —— 少量「结构较深」实体的一次性空值（默认值只能有一个来源，否则又变成各处手搓）——
 /** 中性的用户档案：identity 面 spec 需要数据时必须自己 override */
 export const desktopApiUserIdentity = {

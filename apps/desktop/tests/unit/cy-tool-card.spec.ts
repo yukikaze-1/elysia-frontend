@@ -11,6 +11,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { reactive } from 'vue'
 import CyToolCard from '../../src/renderer/src/components/CyToolCard.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import type { ToolCallRecord } from '@shared/contracts/tool'
 
 vi.mock('../../src/renderer/src/utils/clipboard', () => ({ copyText: vi.fn(async () => true) }))
@@ -25,7 +26,7 @@ let pinia: ReturnType<typeof createPinia>
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
-  setDesktopApi(mockApi as unknown as Parameters<typeof setDesktopApi>[0])
+  setDesktopApi(createDesktopApiMock(mockApi))   // I-06 / P2-10：原为部分 mock + `as unknown as Parameters<…>`
   vi.clearAllMocks()
 })
 

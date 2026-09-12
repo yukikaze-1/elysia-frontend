@@ -11,6 +11,7 @@ import { join } from 'path'
 import type { BackendEvent } from '@shared/contracts'
 import CyConnectionPanel from '../../src/renderer/src/components/CyConnectionPanel.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 
 function makeApi() {
@@ -68,7 +69,7 @@ describe('CyConnectionPanel 两级结构（UII-QQ 设置页批次）', () => {
 
   it('摘要态：状态文字 + 地址摘要 + 版本 + 连接设置入口（无 Endpoint/Token 输入）', async () => {
     const api = makeApi()
-    setDesktopApi(api)
+    setDesktopApi(createDesktopApiMock(api))
     useConnectionStore().state = { status: 'connected', connectionId: 'c1', serverVersion: '0.1.0+abc', protocolVersion: '2.0' }
     const w = mountPanel()
     await openPopover(w)
@@ -83,7 +84,7 @@ describe('CyConnectionPanel 两级结构（UII-QQ 设置页批次）', () => {
 
   it('修复#2：已连接 + 同 origin 只换 Token → 保存并重新连接 = disconnect → setBackendToken → connect', async () => {
     const api = makeApi()
-    setDesktopApi(api)
+    setDesktopApi(createDesktopApiMock(api))
     const store = useConnectionStore()
     store.state = { status: 'connected', connectionId: 'c1' }
     const w = mountPanel()
@@ -104,7 +105,7 @@ describe('CyConnectionPanel 两级结构（UII-QQ 设置页批次）', () => {
 
   it('修复#3：connect 失败归档 store.error → 编辑态错误框展示消息（store 不 rethrow 也有提示）', async () => {
     const api = makeApi()
-    setDesktopApi(api)
+    setDesktopApi(createDesktopApiMock(api))
     const store = useConnectionStore()
     store.state = { status: 'connected', connectionId: 'c1' }
     api.disconnect.mockImplementation(async () => { store.state = { status: 'disconnected' } })
@@ -125,7 +126,7 @@ describe('CyConnectionPanel 两级结构（UII-QQ 设置页批次）', () => {
 
   it('摘要态已连接时提供次要「断开」；点击调用断开', async () => {
     const api = makeApi()
-    setDesktopApi(api)
+    setDesktopApi(createDesktopApiMock(api))
     const store = useConnectionStore()
     store.state = { status: 'connected', connectionId: 'c1' }
     api.disconnect.mockImplementation(async () => { store.state = { status: 'disconnected' } })

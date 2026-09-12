@@ -9,22 +9,25 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { CharacterPreviewResult } from '@shared/contracts'
 import CyCharacterPreview from '../../src/renderer/src/components/characters/CyCharacterPreview.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
+import type { DesktopApiMock } from './helpers/desktop-api'
 import { useCharacterEditorStore } from '../../src/renderer/src/stores/character-editor.store'
 
 const markdownStub = { props: ['source'], template: '<div class="cy-markdown">{{ source }}</div>' }
 
 let pinia: ReturnType<typeof createPinia>
-let previewCharacter: ReturnType<typeof vi.fn>
+// I-06：`previewCharacter` 是可选方法 ⇒ 裸 `ReturnType<typeof vi.fn>` 不可赋值。
+let previewCharacter: DesktopApiMock['previewCharacter']
 
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
   previewCharacter = vi.fn(async (): Promise<CharacterPreviewResult> => ({ ephemeral: true, reply: '**安全预览**' }))
-  setDesktopApi({
+  setDesktopApi(createDesktopApiMock({
     previewCharacter,
     saveCharacterDraft: vi.fn(async () => {}),
     deleteCharacterDraft: vi.fn(async () => {})
-  } as never)
+  }))
 })
 
 function mountPreview() {

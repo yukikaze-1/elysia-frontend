@@ -10,6 +10,7 @@ import { useConversationStore } from '../../src/renderer/src/stores/conversation
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 import { useAppStore } from '../../src/renderer/src/stores/app.store'
 import { useCharacterCatalogStore } from '../../src/renderer/src/stores/character-catalog.store'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 const elysia = {
   characterId: 'builtin/elysia',
@@ -60,7 +61,7 @@ function prepare(options: { profiles?: boolean; initialized?: boolean; defaultCh
   pinia = createPinia()
   setActivePinia(pinia)
   vi.resetAllMocks()
-  setDesktopApi(mockApi as never)
+  setDesktopApi(createDesktopApiMock(mockApi))
   const connection = useConnectionStore()
   connection.setState({
     status: 'connected',

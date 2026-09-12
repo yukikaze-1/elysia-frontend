@@ -6,22 +6,25 @@ import type { UpdateUserIdentityCommand } from '@shared/contracts'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import CyIdentityPane from '../../src/renderer/src/components/characters/CyIdentityPane.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 import { useCharacterCatalogStore } from '../../src/renderer/src/stores/character-catalog.store'
+import type { DesktopApiMock } from './helpers/desktop-api'
 
 let backend: MockCharacterBackend
-let updateMe: ReturnType<typeof vi.fn>
+// I-06：`updateMe` 是可选方法 ⇒ 裸 `ReturnType<typeof vi.fn>` 不可赋值。
+let updateMe: DesktopApiMock['updateMe']
 
 beforeEach(() => {
   const pinia = createPinia()
   setActivePinia(pinia)
   backend = new MockCharacterBackend({ initialProfile: { initialized: false } })
   updateMe = vi.fn((input: UpdateUserIdentityCommand) => backend.updateMe(input))
-  setDesktopApi({
+  setDesktopApi(createDesktopApiMock({
     getMe: vi.fn(() => backend.getMe()),
     updateMe,
     listCharacters: vi.fn((input = {}) => backend.listCharacters(input))
-  } as never)
+  }))
 })
 
 function mountPane() {
@@ -72,10 +75,10 @@ describe('CyIdentityPane FE-C', () => {
   })
 
   it('IPC/能力不可用时显示可理解错误与重试，不影响组件挂载', async () => {
-    setDesktopApi({
+    setDesktopApi(createDesktopApiMock({
       getMe: vi.fn(() => Promise.reject(new Error('[NOT_IMPLEMENTED] [backendCode=CHARACTER_PROFILES_UNAVAILABLE] 当前后端未启用角色档案能力'))),
       listCharacters: vi.fn(() => Promise.reject(new Error('unavailable')))
-    } as never)
+    }))
     const wrapper = mountPane()
     await flushPromises()
     expect(wrapper.text()).toContain('当前无法使用角色档案')
@@ -93,11 +96,11 @@ describe('CyIdentityPane FE-C', () => {
       if (input.cursor === 'active-next') return { items: [all[1]], hasMore: false }
       return { items: [all[0]], hasMore: true, nextCursor: 'active-next' }
     })
-    setDesktopApi({
+    setDesktopApi(createDesktopApiMock({
       getMe: vi.fn(() => backend.getMe()),
       updateMe,
       listCharacters
-    } as never)
+    }))
     const catalog = useCharacterCatalogStore()
     await catalog.loadList({ status: 'archived', source: 'custom', search: '旧查询', limit: 20 })
 
@@ -120,7 +123,7 @@ describe('CyIdentityPane FE-C', () => {
     setActivePinia(pinia)
     const canonical = { status: 'active' as const, limit: 100 }
     const listCharacters = vi.fn((input = {}) => backend.listCharacters(input))
-    setDesktopApi({ getMe: vi.fn(() => backend.getMe()), updateMe, listCharacters } as never)
+    setDesktopApi(createDesktopApiMock({ getMe: vi.fn(() => backend.getMe()), updateMe, listCharacters }))   // I-06 / P2-10：原为 `as never`
     const catalog = useCharacterCatalogStore()
     await catalog.loadList(canonical)
     catalog.markStale()

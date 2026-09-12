@@ -9,10 +9,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import CyDiagnosticsPane from '../../src/renderer/src/components/CyDiagnosticsPane.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
-import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
 import type { DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState } from '@shared/contracts'
 import type { PublicToolEvent } from '@shared/contracts/tool'
 
@@ -97,7 +97,7 @@ beforeEach(() => {
   api.diagnosticsClearLogs.mockImplementation(async () => { stateObj.lastCleanup = { removedFiles: 3, freedBytes: 20480 } })
   api.diagnosticsExport.mockResolvedValue({ cancelled: false, displayPath: '~/diagnose.json', sizeBytes: 100, truncatedLog: false, truncatedAudit: false } satisfies DiagnosticsExportResult)
   api.toolList.mockResolvedValue([toolFixture()])
-  setDesktopApi(api as unknown as DesktopApiLike)
+  setDesktopApi(createDesktopApiMock(api))   // I-06 / P2-10：原为 `api as unknown as DesktopApiLike`
 })
 
 afterEach(() => {

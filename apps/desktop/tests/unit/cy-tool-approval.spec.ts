@@ -10,7 +10,7 @@ import { nextTick } from 'vue'
 import CyToolApproval from '../../src/renderer/src/components/CyToolApproval.vue'
 import { useToolStore } from '../../src/renderer/src/stores/tool.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import type { PublicToolEvent } from '@shared/contracts/tool'
 import { GRANT_DEFAULT_TTL_MS } from '@shared/contracts/tool'
 import { readFileSync } from 'fs'
@@ -19,9 +19,10 @@ import { join } from 'path'
 const mockApi = {
   onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(),
   toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn()
-} as unknown as DesktopApiLike
+}
 
-beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi) })
+// I-06 / P2-10：原为 `as unknown as DesktopApiLike` 的部分 mock。
+beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(createDesktopApiMock(mockApi)) })
 
 function awaiting(id = 'tc_1'): PublicToolEvent {
   return { id, toolName: 'desktop.file.write', title: '写入文件', runtime: 'desktop', status: 'awaiting_permission',

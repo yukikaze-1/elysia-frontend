@@ -9,6 +9,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import type { CharacterDetail, UserIdentityProfile } from '@shared/contracts'
 import CyCharacterDetail from '../../src/renderer/src/components/characters/CyCharacterDetail.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock, typedMock } from './helpers/desktop-api'
+import type { DesktopApiMock } from './helpers/desktop-api'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 
 function detailFixture(overrides: {
@@ -79,13 +81,14 @@ const revisionListStub = {
 }
 
 let pinia: ReturnType<typeof createPinia>
-let updateMe: ReturnType<typeof vi.fn>
+// I-06：`updateMe` 是可选方法 ⇒ 裸 `vi.fn()` 不可赋值，用工厂导出的带签名 Mock 类型 + typedMock 构造。
+let updateMe: DesktopApiMock['updateMe']
 
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
-  updateMe = vi.fn(async (input: { defaultCharacterId?: string }) => profileFixture({ revision: 2, ...input }))
-  setDesktopApi({ updateMe, getMe: vi.fn(async () => profileFixture()) } as never)
+  updateMe = typedMock<'updateMe'>(async (input) => profileFixture({ revision: 2, ...input }))
+  setDesktopApi(createDesktopApiMock({ updateMe, getMe: vi.fn(async () => profileFixture()) }))   // I-06 / P2-10：原为 `as never`
 })
 
 function mountDetail(props: Record<string, unknown>) {

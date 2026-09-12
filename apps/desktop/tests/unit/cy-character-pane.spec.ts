@@ -6,13 +6,16 @@ import type { CharacterDetail, CharacterListQuery, CharacterSummary, CloneCharac
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import CyCharacterPane from '../../src/renderer/src/components/characters/CyCharacterPane.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock, typedMock } from './helpers/desktop-api'
+import type { DesktopApiMock } from './helpers/desktop-api'
 import { useCharacterCatalogStore } from '../../src/renderer/src/stores/character-catalog.store'
 import { useCharacterEditorStore } from '../../src/renderer/src/stores/character-editor.store'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 
 let details: CharacterDetail[]
-let listCharacters: ReturnType<typeof vi.fn>
-let cloneCharacter: ReturnType<typeof vi.fn>
+// I-06：可选方法 ⇒ 裸 `ReturnType<typeof vi.fn>` 不可赋值；改用工厂导出的带签名 Mock 类型。
+let listCharacters: DesktopApiMock['listCharacters']
+let cloneCharacter: DesktopApiMock['cloneCharacter']
 let backend: MockCharacterBackend
 let pinia: ReturnType<typeof createPinia>
 
@@ -56,13 +59,13 @@ beforeEach(async () => {
     details.push(cloned)
     return clone(cloned)
   })
-  setDesktopApi({
-    getMe: vi.fn(() => backend.getMe()),
-    updateMe: vi.fn((input) => backend.updateMe(input)),
+  setDesktopApi(createDesktopApiMock({
+    getMe: typedMock<'getMe'>(() => backend.getMe()),
+    updateMe: typedMock<'updateMe'>((input) => backend.updateMe(input)),
     listCharacters,
-    getCharacter: vi.fn(async (id: string) => clone(details.find((item) => item.summary.characterId === id)!)),
+    getCharacter: typedMock<'getCharacter'>(async (id) => clone(details.find((item) => item.summary.characterId === id)!)),
     cloneCharacter
-  } as never)
+  }))
   useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
 })
 
@@ -233,16 +236,16 @@ describe('CyCharacterPane FE-C', () => {
     setActivePinia(successPinia)
     useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
     const nextProfile = await backend.getMe()
-    setDesktopApi({
-      getMe: vi.fn(() => backend.getMe()),
+    setDesktopApi(createDesktopApiMock({
+      getMe: typedMock<'getMe'>(() => backend.getMe()),
       listCharacters,
-      getCharacter: vi.fn(async (id: string) => clone(details.find((item) => item.summary.characterId === id)!)),
-      updateMe: vi.fn(async (input: { defaultCharacterId?: string }) => ({
+      getCharacter: typedMock<'getCharacter'>(async (id) => clone(details.find((item) => item.summary.characterId === id)!)),
+      updateMe: typedMock<'updateMe'>(async (input) => ({
         ...nextProfile,
         revision: nextProfile.revision + 1,
         defaultCharacterId: input.defaultCharacterId
       }))
-    } as never)
+    }))
     await useIdentityStore().load()
     const success = mount(CyCharacterPane, { global: { plugins: [successPinia] } })
     await flushPromises()
@@ -259,12 +262,12 @@ describe('CyCharacterPane FE-C', () => {
     const conflictPinia = createPinia()
     setActivePinia(conflictPinia)
     useCharacterEditorStore().setConnectionState('connected', { characterProfiles: true })
-    setDesktopApi({
-      getMe: vi.fn(() => backend.getMe()),
+    setDesktopApi(createDesktopApiMock({
+      getMe: typedMock<'getMe'>(() => backend.getMe()),
       listCharacters,
-      getCharacter: vi.fn(async (id: string) => clone(details.find((item) => item.summary.characterId === id)!)),
-      updateMe: vi.fn(() => Promise.reject(new Error('[BACKEND_REJECTED] [backendCode=USER_PROFILE_REVISION_CONFLICT] 冲突')))
-    } as never)
+      getCharacter: typedMock<'getCharacter'>(async (id) => clone(details.find((item) => item.summary.characterId === id)!)),
+      updateMe: typedMock<'updateMe'>(() => Promise.reject(new Error('[BACKEND_REJECTED] [backendCode=USER_PROFILE_REVISION_CONFLICT] 冲突')))
+    }))
     await useIdentityStore().load()
     const conflict = mount(CyCharacterPane, { global: { plugins: [conflictPinia] } })
     await flushPromises()

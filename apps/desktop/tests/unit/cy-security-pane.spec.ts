@@ -7,6 +7,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CySecurityPane from '../../src/renderer/src/components/CySecurityPane.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import type { HistoryEntry, PermissionGrant } from '@shared/contracts/tool'
 
 const GRANT_ACTIVE: PermissionGrant = {
@@ -27,7 +28,7 @@ let pinia: ReturnType<typeof createPinia>
 beforeEach(() => {
   pinia = createPinia()
   setActivePinia(pinia)
-  setDesktopApi(api as never)
+  setDesktopApi(createDesktopApiMock(api))   // I-06 / P2-10：原为 `api as never`
   vi.clearAllMocks()
   api.toolListGrants.mockResolvedValue([GRANT_ACTIVE])
   api.toolListHistory.mockResolvedValue([HIST_ENTRY])

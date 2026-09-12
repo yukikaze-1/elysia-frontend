@@ -14,24 +14,26 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import CyVoiceConsentDialog from '../../src/renderer/src/components/CyVoiceConsentDialog.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
-import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
 import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 /** 挂起动作永不 settle：confirmConsent 会 `await action()`，永不 settle 才能稳定观察
- *  `confirmDispatching` 在途窗口（settle 后 try/finally 立即复位）。 */
-let neverSettles: Promise<void>
+ *  `confirmDispatching` 在途窗口（settle 后 try/finally 立即复位）。
+ *  I-06：类型须与真实契约一致（`Promise<{ recordingId: string }>`）——原先 `Promise<void>` 是被
+ *  `as unknown as DesktopApiLike` 掩盖的签名漂移；"永不 settle" 的语义不变。 */
+let neverSettles: Promise<{ recordingId: string }>
 const mockApi = {
   onChatEvent: vi.fn(() => () => {}),
   voiceStartRecord: vi.fn(() => neverSettles),
   voiceDiscard: vi.fn(async () => {})
-} as unknown as DesktopApiLike
+}
 
 beforeEach(() => {
-  neverSettles = new Promise<void>(() => { /* 有意永不 settle，见上 */ })
+  neverSettles = new Promise<{ recordingId: string }>(() => { /* 有意永不 settle，见上 */ })
   setActivePinia(createPinia())
-  setDesktopApi(mockApi)
+  setDesktopApi(createDesktopApiMock(mockApi))
   vi.clearAllMocks()
   useConnectionStore().state = { status: 'connected', connectionId: 'cid-1' }
   useSettingsStore().voice.enabled = true
