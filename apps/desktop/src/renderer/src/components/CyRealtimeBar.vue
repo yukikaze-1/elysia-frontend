@@ -50,7 +50,7 @@ function onStop(): void { void voiceStore.stopRealtime() }
   display: inline-flex;
   align-items: center;
   gap: var(--cy-space-3-5);
-  color: var(--cy-accent);
+  color: var(--cy-accent-text);
   font-size: var(--cy-font-lg);
   white-space: nowrap;
 }

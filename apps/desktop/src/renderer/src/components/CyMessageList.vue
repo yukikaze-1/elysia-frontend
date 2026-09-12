@@ -494,7 +494,7 @@ onMounted(() => {
 .cy-empty strong { color: var(--cy-text); font-size: var(--cy-font-xl); font-weight: 600; }
 .cy-empty span { max-width: 34em; font-size: var(--cy-font-md); line-height: 1.65; }
 .cy-back-bottom { position: sticky; bottom: 12px; align-self: center; z-index: 2; padding: var(--cy-space-3) var(--cy-space-6-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); cursor: pointer; box-shadow: 0 4px 12px rgb(0 0 0 / 0.12); }
-.cy-back-bottom:hover { color: var(--cy-accent); background: var(--cy-surface-hover); }
+.cy-back-bottom:hover { color: var(--cy-accent-text); background: var(--cy-surface-hover); }
 .cy-streaming-placeholder { display: inline-flex; align-items: center; align-self: stretch; width: min(100%, 940px); margin-inline: auto; padding: var(--cy-space-4-5) var(--cy-space-6-5) var(--cy-space-4-5) 41px; margin-top: var(--cy-space-3); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-typing-dot { width: 7px; height: 7px; border-radius: var(--cy-radius-circle); background: var(--cy-accent-strong); animation: cy-pulse 1s ease-in-out infinite; }
 @keyframes cy-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }

@@ -309,7 +309,7 @@ const editError = computed(() => connectErr.value ?? (connection.error ? errorMe
 }
 
 .cy-conn-badge:hover {
-  color: var(--cy-accent);
+  color: var(--cy-accent-text);
   background: var(--cy-surface-hover);
 }
 
@@ -527,7 +527,7 @@ const editError = computed(() => connectErr.value ?? (connection.error ? errorMe
 }
 
 .cy-token-eye:hover {
-  color: var(--cy-accent);
+  color: var(--cy-accent-text);
   background: var(--cy-surface-hover);
 }
 

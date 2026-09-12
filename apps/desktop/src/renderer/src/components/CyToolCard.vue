@@ -415,7 +415,7 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
 }
 
 .cy-tool-copy:hover {
-  color: var(--cy-accent);
+  color: var(--cy-accent-text);
   background: var(--cy-surface-hover);
 }
 

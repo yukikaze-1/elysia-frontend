@@ -14,6 +14,6 @@ function isWeb(u?: string): boolean { return !!u && (u.startsWith('http:') || u.
 
 <style scoped>
 .cy-link-card { display: grid; gap: var(--cy-space-1-5); padding: var(--cy-space-4-5) var(--cy-space-6); border-radius: var(--cy-radius-6); border: 1px solid var(--cy-border); background: var(--cy-surface-soft); max-width: 100%; }
-.cy-link-label { color: var(--cy-accent); font-size: var(--cy-font-lg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cy-link-label { color: var(--cy-accent-text); font-size: var(--cy-font-lg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cy-link-url { color: var(--cy-muted); font-size: var(--cy-font-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
