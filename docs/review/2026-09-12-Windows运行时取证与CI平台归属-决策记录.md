@@ -383,3 +383,29 @@ X Something went wrong, self-installer exits with code 1     ← integration (sh
 - **教训（可推广）**：自建多实例 = 共享 `$HOME`；凡是写进 `$HOME` 的工具（包管理器安装目录、包缓存、
   各种 store）都要么按实例分开、要么确认其并发安全。目前已识别并处理三处：pnpm store、pnpm 自安装目录、
   （electron/playwright 缓存为只读性质且已预热，风险低但未逐一验证）。
+
+### 10.8 第四轮（`34693414832` @ `53d733e`）：分片修复已验证，墙钟 429s，但仍有 1 例 flake ⇒ 用 **CPU 亲和**收口
+
+- 结果：**7/8 绿，墙钟 429s（7.2 分钟）**。分片修复**已被日志证实**：失败那片报
+  `Test Files 1 failed | 8 passed (9)` —— 片内 **9 个文件**（不再是把 27 个都跑一遍）。
+  store 竞争与自安装器竞争两类红均未再出现。
+- 剩下的唯一一红是 `electron-tools.spec.ts > 写冲突 → FILE_CONFLICT`。**注意这是第三轮里第三次不同用例的红**：
+
+| 轮次 | 失败用例 | 形态 |
+|---|---|---|
+| `0f3b1c3` | `electron-live2d` B6 | 画布 6s 内无非透明像素 |
+| `5261a82` | `persist-flush` 关窗前 flush | 点连接按钮 30s 超时 |
+| `34692644842` | `message-list-follow-bottom ④` | 距底缺口中位数 2506px |
+| `34693414832` | `electron-tools` 写冲突 | FILE_CONFLICT 断言未达 |
+
+  四次红的**用例各不相同**、且每次都只有 1 例 ⇒ 进一步支持「环境性争抢」而非「产品回归」的判定
+  （若是回归，红的会固定在同一点）。
+- 修法（这一处**不在 workflow 里**，而在实例启动方式上）：**给每个 runner 实例固定 CPU 亲和**——
+  `setsid nohup taskset -c <区间> ./run.sh`。24 线程切成互不重叠的三份：
+  实例 1 → `4-13`（重型）、实例 2 → `14-23`（重型）、实例 3 → `0-3`（轻型）。
+  亲和由 fork/exec **继承**，故该实例跑的所有 job（含 Electron 与 SwiftShader 的线程）都被限制在自己的核上，
+  两个重型 job 不再互相抢核。实测已核对每个 `Runner.Listener` 的亲和列表。
+- **这仍是缓解而非根治**：每个重型 job 现在拿到固定的 10 个线程（托管 runner 是 4 个 vCPU，所以不亏），
+  但 Haswell 单核更慢这一条改不了。若仍出现 1 例级 flake，下一步按仓库既有做法处置
+  （V-08/V-12 的先例：把「首次交互/首帧」的 POLL 预算从 8s 提到 `SLOW_POLL` 15s，或加一次 CI retry）——
+  那属于改测试判据，须单独论证，不在本轮范围。
