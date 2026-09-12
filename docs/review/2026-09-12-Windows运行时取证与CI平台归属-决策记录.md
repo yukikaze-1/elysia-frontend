@@ -310,3 +310,25 @@ your spending limit needs to be increased. Please check the 'Billing & plans' se
 
 7 个 job 总工作量约 17 job-分钟，3 实例下理论下限 ≈ 6 分钟；实际墙钟取决于调度（矩阵 job 同时入队，
 谁先拿到实例不由我控制）。**这些数字是估算，不是实测结论**——首次全自建 run 的实测值以下一轮记录为准。
+
+### 10.5 首次全自建 run（`34691783602` @ `6e6265d`）：8/8 绿，但 **951s** —— 分片参数根本没传到 vitest
+
+- 结果：**8 个 job 全部 success**（本项目第一次在不依赖托管 runner 的情况下拿到全绿），但**墙钟 951s
+  （15.9 分钟）**，比托管的 10.4 分钟**更慢**。
+- 根因（实测）：三个 `integration (shard N/3)` 的日志里都是 **`Test Files 27 passed (27)`**、
+  Duration 507～557s —— 分片参数没生效，**每一片都把整套 27 个文件跑了一遍**。
+- 机制：`pnpm --filter @cyrene/desktop test:integration -- --exclude … --shard=3/3` 里的 `--` 参数
+  **不会**被追加到脚本内最后那条 `vitest` 上（`test:integration` 是 `ensure && build && vitest run …`
+  的复合命令）。对照实验：`pnpm exec vitest run --config … --shard=1/3` 直连则正确切分
+  （unit 套件 239 文件 → 80 / 80 / 79）。
+- 修法：`electron-vite build` 拆为独立 step，测试步骤改为 `exec vitest run` 直传
+  `--config` / `--exclude` / `--shard`。
+- **live2d 那个 job 不受影响**（过滤条件写在脚本内部）：实测 `Test Files 1 passed (1)`、
+  Duration **211.56s** ✓。
+- **教训（与 §7.2 的 invalid workflow 同类）**：「参数是否真的到位」不能用「YAML 能解析 / 命令能跑通」
+  来证明——判据必须是**运行日志里的 `Test Files N passed` 等于预期的片内文件数**。本轮三片各自跑满
+  27 个文件却**全程绿灯**，正是「绿，但没在测该测的东西」的又一例；仓库此前为 `check:contract` 吃过
+  同样的亏。
+- 该轮各 job 实测耗时（含上述错误）：`check` 2m57s／`unit` 1m23s／`artifact` 1m1s／`live2d` 4m46s／
+  三片 10m12s·9m56s·9m21s／`windows` 3m3s。**修复后的预期**：三片约 3.4 / 2.4 / 1.2 分钟，墙钟由调度
+  决定（估 6～7 分钟）——**以下一轮实测为准，不作为结论**。
