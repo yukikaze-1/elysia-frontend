@@ -126,6 +126,15 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
        *   · 多数采样在容差内 —— 挡住"始终远离底部"；
        *   · 最终收敛到 ≤40px —— 缺陷下永不收敛（最强信号）。
        * 判别力由变异保证：把守卫改回瞬时位置 → 中位数与占比双双爆掉。
+       *
+       * **自诊断（2026-09-12）**：前两条断言原本是硬断言，于是失败时立刻抛出，最后那句
+       * 「收敛后必须严格贴底」在历次 CI 失败里**从未被执行过**——而它恰好是唯一能区分两种成因的
+       * 信号：机器慢跟不上（窗口结束后仍会收敛）vs 缺陷（永不收敛）。故前两条改为 `expect.soft`
+       * （**判据一字不放宽**：三条里任何一条不过整例仍红，只是三条都会跑、都会出现在报告里），
+       * 并在 finally 里取一次窗口结束后的实测缺口打印出来。这样下一次 CI 红自带结论：
+       * `settledGap ≤ 40` ⇒ 只是跟不上；`settledGap 仍大` ⇒ 永不收敛，是缺陷。
+       * 起因见 doc 16：`34692644842` 与 `34681240933` 两次红在**缺陷量级**（中位数 2506／2961px，
+       * 而变异实测 2274px、噪声带仅 ~84px），却因该断言从未执行而无法定性。
        */
       const samples: number[] = []
       for (let i = 0; i < 25; i++) {
@@ -136,17 +145,31 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       const median = sorted[Math.floor(sorted.length / 2)]
       const max = sorted[sorted.length - 1]
       const withinTolerance = samples.filter((gap) => gap <= 200).length
-      expect(
+      console.log(
+        `[follow-bottom ④] median=${median}px max=${max}px within=${withinTolerance}/${samples.length}`
+      )
+      expect.soft(
         median,
         `流式期间距底缺口中位数 ${median}px（max ${max}px）——「持续累积」才是缺陷形态，瞬时抖动不是`
       ).toBeLessThanOrEqual(200)
-      expect(
+      expect.soft(
         withinTolerance,
         `仅 ${withinTolerance}/${samples.length} 个采样在容差内（缺陷下几乎为 0；max ${max}px）`
       ).toBeGreaterThanOrEqual(Math.ceil(samples.length * 0.6))
 
       // 收敛后必须严格贴底（缺陷下永不收敛——这是最强信号）
-      await expect.poll(() => bottomGap(page), POLL).toBeLessThanOrEqual(40)
+      try {
+        await expect.poll(() => bottomGap(page), POLL).toBeLessThanOrEqual(40)
+      } finally {
+        // 诊断取值：无论上面收敛断言过没过都打一行，使失败日志能直接判「慢」还是「缺陷」。
+        // 取值自身失败（页面已关）不得覆盖或掩盖原断言结果，故单独兜住。
+        try {
+          const settledGap = await bottomGap(page)
+          console.log(
+            `[follow-bottom ④] settledGap=${settledGap}px（≤40 ⇒ 窗口内已收敛=只是跟不上；仍大 ⇒ 永不收敛=缺陷）`
+          )
+        } catch { /* 页面已关闭：无诊断值可打，不影响断言结论 */ }
+      }
     } finally { await closeApp(launched) }
   })
 })
