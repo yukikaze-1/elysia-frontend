@@ -2,12 +2,14 @@
 // Task 15:historyViewerStore（spec §4.1/§4.5/§4.8，D4/D10/D11/D12）——open 预置、submitQuery 成功/失败保留旧结果、
 // loadMore 游标 + busy 防重入、无结果空态、jumpTo 编排、不阻塞聊天（P2-5：打开查看器期间 messageStore 事件继续应用，D10）。
 // env=node：setDesktopApi 注入 mock；pinia 用 createPinia + setActivePinia（P1-2：node 无全局 pinia，缺则每用例抛「No active Pinia」）。
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { useHistoryViewerStore } from '../../src/renderer/src/stores/historyViewer.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useMessageStore } from '../../src/renderer/src/stores/message.store'
+import type { ChatHistoryQuery } from '@shared/contracts'
 
 function item(messageId: string, createdAt: string): import('@shared/contracts').ChatHistoryItem {
   return { hitId: `c1:${messageId}:`, conversationId: 'c1', messageId, senderLabel: 'user', createdAt, sortKey: `${createdAt}|${messageId}` }
@@ -15,7 +17,8 @@ function item(messageId: string, createdAt: string): import('@shared/contracts')
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  setDesktopApi({ queryChatHistory: vi.fn() } as never)
+  // I-06 / P2-10：原为裸 mock 只给 queryChatHistory 一个键、再用 never 铸型送进去。
+  setDesktopApi(createDesktopApiMock())
 })
 
 describe('historyViewerStore', () => {
@@ -28,7 +31,7 @@ describe('historyViewerStore', () => {
     expect(s.category).toBe('all')
   })
   it('submitQuery 成功：写 items/hasMore/nextCursor/hasSearched', async () => {
-    setDesktopApi({ queryChatHistory: async () => ({ items: [item('m1', 't1')], hasMore: false, nextCursor: undefined }) } as never)
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => ({ items: [item('m1', 't1')], hasMore: false, nextCursor: undefined }) }))
     const s = useHistoryViewerStore()
     s.openViewer()
     await s.submitQuery()
@@ -37,7 +40,7 @@ describe('historyViewerStore', () => {
     expect(s.error).toBeUndefined()
   })
   it('submitQuery 失败：保留旧结果 + 写 error（不清空聊天内容）', async () => {
-    setDesktopApi({ queryChatHistory: vi.fn(async () => { throw new Error('[HTTP_500] 服务端错误') }) } as never)
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => { throw new Error('[HTTP_500] 服务端错误') } }))
     const s = useHistoryViewerStore()
     s.openViewer()
     s.$patch({ items: [item('mOld', 'tOld')] })
@@ -47,13 +50,15 @@ describe('historyViewerStore', () => {
     expect(s.hasSearched).toBe(false)        // 阶段3 整改 C1：失败不置 hasSearched（防「没有找到相关聊天记录」伪空态）
   })
   it('loadMore：带 cursor 去重合并 + busy 防重入', async () => {
-    const calls: Array<Record<string, unknown>> = []
-    setDesktopApi({
-      queryChatHistory: async (input: Record<string, unknown>) => {
+    const calls: ChatHistoryQuery[] = []
+    setDesktopApi(createDesktopApiMock({
+      // 参数**必须显式注解**：否则 `O` 的推断要依赖上下文类型、而上下文类型又依赖 `O`（循环），
+      // TS 会退回约束并报「missing the following properties from type 'DesktopApiLike'」。
+      queryChatHistory: async (input: ChatHistoryQuery) => {
         calls.push(input)
         return { items: [item('m2', 't2')], hasMore: false, nextCursor: undefined }
       }
-    } as never)
+    }))
     const s = useHistoryViewerStore()
     s.openViewer()
     s.$patch({ items: [item('m1', 't1')], hasMore: true, nextCursor: 'cur-1' })
@@ -65,12 +70,12 @@ describe('historyViewerStore', () => {
     expect(s.items.map((i) => i.messageId)).toEqual(['m1', 'm2'])
   })
   it('loadMore 收到 DESC 更旧页（含与首屏重叠项）→ 合并后仍全局升序、去重、不整表翻转（P1-01 §6.4）', async () => {
-    setDesktopApi({
+    setDesktopApi(createDesktopApiMock({
       queryChatHistory: async () => ({
         items: [item('m1', 't1'), item('m0', 't0')],   // 更旧页后端 DESC：[m1 较新在前, m0 更旧在后]，m1 与首屏重叠
         hasMore: false, nextCursor: undefined
       })
-    } as never)
+    }))
     const s = useHistoryViewerStore()
     s.openViewer()
     s.$patch({ items: [item('m1', 't1'), item('m2', 't2')], hasMore: true, nextCursor: 'cur-2' })   // 首屏已升序
@@ -78,7 +83,7 @@ describe('historyViewerStore', () => {
     expect(s.items.map((i) => i.messageId)).toEqual(['m0', 'm1', 'm2'])   // 全局升序、m1 去重、无翻转
   })
   it('无结果空态：hasSearched=true 且 items 空', async () => {
-    setDesktopApi({ queryChatHistory: async () => ({ items: [], hasMore: false }) } as never)
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => ({ items: [], hasMore: false }) }))
     const s = useHistoryViewerStore()
     s.openViewer()
     await s.submitQuery()

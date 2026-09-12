@@ -1,32 +1,14 @@
 // tests/unit/cache.store.spec.ts —— spec §4.1/§4.5：离线水合、分片推送、快照查询、列表同步。
-import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useCacheStore, chunkMessages } from '../../src/renderer/src/stores/cache.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import { MAX_IPC_MESSAGE_BYTES } from '@shared/contracts'
 import type { Message, SessionPersistenceState } from '@shared/contracts'
 
-const mockApi = {
-  cacheMessages: vi.fn(), persistSession: vi.fn(), hydratePersistence: vi.fn(), openExternal: vi.fn(), attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  // P4-B 语音/设置面
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。
+const mockApi = createDesktopApiMock()
 
 function m(id: string, t: string): Message {
   return { messageId: id, conversationId: 'c1', role: 'user', content: 'x', status: 'completed', createdAt: t }
@@ -74,7 +56,10 @@ describe('cacheStore（spec §4.5）', () => {
     resolveCache()
     await task
 
-    const sent = mockApi.cacheMessages.mock.calls.at(-1)?.[0]
+    // I-06：mock 变类型化后 `calls.at(-1)?.[0]` 的类型是 `CacheMessagesInput | undefined`（原先裸 mock
+    // 给的是 any）。本用例是一次 pushMessages 触发**两次**写（await 前的乐观写 + 成功后的终态写），
+    // `.at(-1)` 取的是成功后那次；这里用 `!` 断言「确实写过」，与原来的任何隐式假设等价、不放宽。
+    const sent = mockApi.cacheMessages.mock.calls.at(-1)![0]
     expect(sent.messages[0]).toMatchObject({
       content: '原始正文',
       assistantSegments: [{ text: '原始分段' }],

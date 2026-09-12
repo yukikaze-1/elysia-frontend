@@ -23,8 +23,6 @@ const UNIT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
 /** 尚未迁移到 `createDesktopApiMock` 的 spec（迁移一个就删一行；新增裸 mock 会红） */
 const PENDING = [
-  'attachment.store.spec.ts',
-  'cache.store.spec.ts',
   'character-editor.store.spec.ts',
   'character-stores.spec.ts',
   'cy-attachment-media.spec.ts',
@@ -47,8 +45,6 @@ const PENDING = [
   'cy-tool-card.spec.ts',
   'cy-voice-consent-dialog.spec.ts',
   'cy-voice-pane.spec.ts',
-  'draft-persist.spec.ts',
-  'history-viewer.store.spec.ts',
   'live2d.spec.ts',
   'live2d-pane.spec.ts',
   'live2d-panel.spec.ts',
