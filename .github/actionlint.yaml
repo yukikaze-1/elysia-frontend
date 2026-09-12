@@ -1,0 +1,16 @@
+# actionlint 配置（2026-09-12）
+#
+# 为什么需要它：本仓的 job 跑在**自建 runner** 上，用的是自定义标签（`fe-linux` / `fe-light` / `fe-win`）。
+# actionlint 默认只认识 GitHub 托管 runner 的标签，遇到自定义标签会报 `label "..." is unknown` —— 那是
+# 误报，不是 workflow 有问题。这里显式登记，让 actionlint 能继续当门禁用（它抓的是**真问题**：例如
+# `jobs.<id>.env` 里用 `runner` 上下文这类只在 push 后才暴露的 invalid workflow，见决策记录 §7.2）。
+#
+# 标签语义（与 ci.yml 文件头的说明一致）：
+#   fe-linux —— X99 实例 1、2：只接重型 job（integration 三分片 + integration-live2d）
+#   fe-light —— X99 实例 3：只接轻型 job（check / unit / artifact）
+#   fe-win   —— Windows 本机：windows build-level
+self-hosted-runner:
+  labels:
+    - fe-linux
+    - fe-light
+    - fe-win

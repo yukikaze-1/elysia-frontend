@@ -332,3 +332,35 @@ your spending limit needs to be increased. Please check the 'Billing & plans' se
 - 该轮各 job 实测耗时（含上述错误）：`check` 2m57s／`unit` 1m23s／`artifact` 1m1s／`live2d` 4m46s／
   三片 10m12s·9m56s·9m21s／`windows` 3m3s。**修复后的预期**：三片约 3.4 / 2.4 / 1.2 分钟，墙钟由调度
   决定（估 6～7 分钟）——**以下一轮实测为准，不作为结论**。
+
+### 10.6 分片修好后的第二轮（`34692644842` @ `e89d08a`）：**墙钟降到 346s**，但两条红暴露了三实例方案的两处代价
+
+墙钟 **346s（5.8 分钟）**（上一轮 951s、托管基线 10.4 分钟），8 个 job 里 6 绿 2 红，两条红根因不同：
+
+**① `integration (shard 1/3)`：三个实例共用同一个 pnpm store，并发 install 把它弄坏**
+
+```
+[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']
+```
+
+- 机制：三个实例跑在同一个用户下、`pnpm/action-setup` 给每个 job 设的是**同一个 `PNPM_HOME`**，而 pnpm 11
+  的默认 store 是 `$PNPM_HOME/store/v11` —— 于是三个 job 的 `pnpm install` 同时写同一个 store。实测复现了这一点。
+- 修法：`pnpm install --store-dir "$HOME/.pnpm-store-${{ runner.name }}"`（按实例分开）。**环境变量改不动它**：
+  `npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` / `XDG_DATA_HOME` 实测**全部被忽略**，
+  PNPM_HOME 优先；只有 CLI `--store-dir` 有效。三个新 store 已从旧 store **硬链接预热**（各 272MB，不重复下载）。
+
+**② `integration (shard 2/3)`：三个 Electron+SwiftShader 任务并发 → 渲染饥饿，用例真的红了**
+
+```
+FAIL message-list-follow-bottom.spec.ts ④ 流式回复持续增长时缺口不累积且能收敛
+AssertionError: 流式期间距底缺口中位数 2506px（max 5011px）: expected 2506 to be less than or equal to 200
+```
+
+- 这正是 §10.3 里列的风险变成了事实：三片同时跑（各自一个 Electron + SwiftShader），24 线程被摊薄，
+  rAF 驱动的「跟随底部」跑不动，列表持续落后。
+- 修法：**按 job 轻重分标签**，让重型侧最多 2 并发——
+  `fe-linux`（实例 1、2）只接 `integration` 三分片 + `integration-live2d`；
+  `fe-light`（实例 3）只接 `check` / `unit` / `artifact`。
+  工作量上两侧正好匹配（重型约 10.7 分钟 / 2 实例 ≈ 5.4 分钟；轻型约 5.5 分钟 / 1 实例）。
+- **注意这不等于问题已消失**：并发争抢只是被限制到 2 个重型任务，仍需观察后续 run 的 flake 率。若再现同类
+  失败，下一步是减到「1 个重型实例 + 其余轻型」，代价是墙钟回到 ~10 分钟。

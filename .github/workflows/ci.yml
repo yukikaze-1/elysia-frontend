@@ -24,9 +24,14 @@ concurrency:
 #   "The job was not started because recent account payments have failed or your spending limit needs
 #    to be increased" 告终（实测 run `34688140376`：6 个托管 job 全部 0 秒失败，只有自建的两个跑起来）。
 #   详见 docs/review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md §10。
-# 承载方式：X99（Ubuntu，24 线程，24 小时开机）上同时跑**三个 runner 实例**
-#   （`yomu-X99` / `yomu-X99-2` / `yomu-X99-3`，同一标签 `fe-linux`）——单实例会把 7 个 Linux job
-#   串行成 20 分钟以上；三实例下墙钟由最长的单个 job 决定。
+# 承载方式：X99（Ubuntu，24 线程，24 小时开机）上同时跑**三个 runner 实例**，但**按 job 轻重分标签**
+#   （见 §10.6 的实测依据）：
+#     · `fe-linux`（实例 1、2）→ 只接**重型** job：integration 三分片 + integration-live2d
+#     · `fe-light`（实例 3）  → 只接**轻型** job：check / unit / artifact
+#   为什么不让三个实例都接重型 job：三个 Electron+SwiftShader 任务并发会把这台机器的渲染饿死——
+#   实测（run `34692644842`）`message-list-follow-bottom ④` 因渲染跟不上滚动而红（中位数 2506px）。
+#   拆开后重型侧最多 2 并发，与「2 实例跑 10.7 分钟重型活 + 1 实例跑 5.5 分钟轻型活」的工作量正好匹配。
+#   单实例（不分标签）会把 7 个 Linux job 串行成 20 分钟以上，那是另一个极端。
 # 迁移带来的三处机械改动（逐条都有理由，不是顺手改的）：
 #   ① 去掉 `cache: pnpm`——服务用户 home 下的 pnpm store 跨 run 持久，走 Actions 缓存反而每 run 多传约 63MB；
 #   ② 去掉 electron 的 `actions/cache`——同理，`~/.cache/electron` 已持久（120MB 不再往返）；
@@ -37,7 +42,7 @@ jobs:
   # 静态检查：typecheck + lint（纯 node，不需要 electron 二进制 / Playwright）
   check:
     name: typecheck + lint
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, fe-light]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -49,8 +54,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      # `--store-dir` 必须按 runner 分开：三个 Linux 实例**共用同一个 PNPM_HOME**，而 pnpm 11 的默认
+      # store 是 `$PNPM_HOME/store/v11`——并发 install 会争抢同一个 store，实测让 job 直接红：
+      #   `[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']`
+      # 环境变量改不动它（`npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` /
+      # `XDG_DATA_HOME` 实测**全部被忽略**，PNPM_HOME 优先），只有 CLI `--store-dir` 有效（实测）。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
       - name: Typecheck
         run: pnpm typecheck
@@ -88,7 +98,7 @@ jobs:
   # 单元测试（node 环境，纯逻辑）
   unit:
     name: unit tests
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, fe-light]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -100,8 +110,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+      # `--store-dir` 必须按 runner 分开：三个 Linux 实例**共用同一个 PNPM_HOME**，而 pnpm 11 的默认
+      # store 是 `$PNPM_HOME/store/v11`——并发 install 会争抢同一个 store，实测让 job 直接红：
+      #   `[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']`
+      # 环境变量改不动它（`npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` /
+      # `XDG_DATA_HOME` 实测**全部被忽略**，PNPM_HOME 优先），只有 CLI `--store-dir` 有效（实测）。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
       - name: Unit tests
         run: pnpm test
@@ -127,7 +142,7 @@ jobs:
   #   再往下压必须**拆 electron-live2d.spec.ts**（它的 182s 独占一个 job 就是当前地板），属独立批次。
   integration:
     name: integration (shard ${{ matrix.shard }})
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, fe-linux]
     timeout-minutes: 45
     strategy:
       # 一片红不掩盖另一片的结果：所有片都要跑完才给结论
@@ -145,8 +160,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # `--store-dir` 必须按 runner 分开：三个 Linux 实例**共用同一个 PNPM_HOME**，而 pnpm 11 的默认
+      # store 是 `$PNPM_HOME/store/v11`——并发 install 会争抢同一个 store，实测让 job 直接红：
+      #   `[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']`
+      # 环境变量改不动它（`npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` /
+      # `XDG_DATA_HOME` 实测**全部被忽略**，PNPM_HOME 优先），只有 CLI `--store-dir` 有效（实测）。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
       - name: Ensure Electron binary
         run: pnpm --filter @cyrene/desktop ensure:electron
@@ -185,7 +205,7 @@ jobs:
   #     `playwright install`。
   integration-live2d:
     name: integration (live2d, self-hosted)
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, fe-linux]
     # self-hosted 掉线时 job 会一直排队（托管 runner 不会），必须有硬上限
     timeout-minutes: 45
     steps:
@@ -199,8 +219,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # `--store-dir` 必须按 runner 分开：三个 Linux 实例**共用同一个 PNPM_HOME**，而 pnpm 11 的默认
+      # store 是 `$PNPM_HOME/store/v11`——并发 install 会争抢同一个 store，实测让 job 直接红：
+      #   `[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']`
+      # 环境变量改不动它（`npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` /
+      # `XDG_DATA_HOME` 实测**全部被忽略**，PNPM_HOME 优先），只有 CLI `--store-dir` 有效（实测）。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
       - name: Integration tests (live2d, xvfb)
         run: xvfb-run -a pnpm --filter @cyrene/desktop test:integration:live2d
@@ -208,7 +233,7 @@ jobs:
   # 打包态安全冒烟：clean → package（内含 electron-vite build）→ verify:artifact --smoke（P0-02 验收 A6 持续化）
   artifact:
     name: packaged artifact smoke
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, fe-light]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -221,8 +246,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # `--store-dir` 必须按 runner 分开：三个 Linux 实例**共用同一个 PNPM_HOME**，而 pnpm 11 的默认
+      # store 是 `$PNPM_HOME/store/v11`——并发 install 会争抢同一个 store，实测让 job 直接红：
+      #   `[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']`
+      # 环境变量改不动它（`npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` /
+      # `XDG_DATA_HOME` 实测**全部被忽略**，PNPM_HOME 优先），只有 CLI `--store-dir` 有效（实测）。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
       - name: Ensure Electron binary
         run: pnpm --filter @cyrene/desktop ensure:electron
@@ -277,8 +307,13 @@ jobs:
         with:
           node-version-file: .nvmrc
 
+      # `--store-dir` 必须按 runner 分开：三个 Linux 实例**共用同一个 PNPM_HOME**，而 pnpm 11 的默认
+      # store 是 `$PNPM_HOME/store/v11`——并发 install 会争抢同一个 store，实测让 job 直接红：
+      #   `[Error: ENOTEMPTY: directory not empty, rmdir '/home/yomu/setup-pnpm/node_modules/.bin/store/v11/files/74']`
+      # 环境变量改不动它（`npm_config_store_dir` / `NPM_CONFIG_STORE_DIR` / `PNPM_STORE_DIR` /
+      # `XDG_DATA_HOME` 实测**全部被忽略**，PNPM_HOME 优先），只有 CLI `--store-dir` 有效（实测）。
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
       # 2026-09-12：原为一条 `pnpm typecheck && pnpm lint && pnpm test && pnpm build`。托管 windows-latest
       # 预装 PowerShell 7，`&&` 可用；而本仓的 self-hosted 机器**没有装 pwsh 7**（实测
