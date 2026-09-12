@@ -189,6 +189,16 @@ jobs:
       - name: Typecheck + lint + unit + build
         run: pnpm typecheck && pnpm lint && pnpm test && pnpm build
 
+      # P2-4（2026-09-12）：主目标平台的**打包路径**此前从未在 CI 验证——windows job 只到 build 为止，
+      # 而 `package`（electron-builder --dir + electronFuses 写 wire）与静态 `verify:artifact`
+      # （读回 fuse wire、产物存在性、CSP、秘密正则）在 Windows 上一次都没跑过。
+      # 这里补上；`verify:artifact` 不传 --smoke（Windows runner 属无头环境，启动冒烟由 Linux job 承担）。
+      - name: Package (electron-builder --dir)
+        run: pnpm --filter @cyrene/desktop package
+
+      - name: Static artifact verification (fuse wire / CSP / secrets)
+        run: pnpm --filter @cyrene/desktop verify:artifact
+
       - name: Record commit SHA (Windows evidence)
         run: git rev-parse HEAD > app-sha-win.txt
 
