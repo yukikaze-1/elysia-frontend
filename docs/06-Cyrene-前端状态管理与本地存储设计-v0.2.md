@@ -154,7 +154,11 @@
 
 ### 3.13 `layoutStore`
 
-- 有效布局计算（断点 1200/736/520/320，`layout/effective-layout.ts` 纯函数 + `layout/constants.ts`）；
+- 有效布局计算（按**窗口宽度**推导：`layout/effective-layout.ts` 纯函数 + `layout/constants.ts` 的区宽常量与 `MIN_WINDOW_WIDTH`）；
+  > **2026-09-12 更正（全评 M-23）**：原表述写"断点 1200/736/520/320"，而 `BREAKPOINTS` 常量已删除——
+  > 实测窗口硬最小宽度为 1100，故 736/520/320 三档在实现层面**从未可达**，配套 CSS 媒体查询也已移除。
+  > **本 store 的有效布局计算不受影响**（它按宽度推导折叠/关闭，一直在生效）；删掉的只是那个死常量与死媒体查询。
+  > 详见 docs/03 §3.1 的范围修正注。
 - 会话栏折叠态、Live2D 栏可见/折叠/宽度；
 - 布局记忆经 Renderer localStorage（键 `cyrene.layout.v1`，`layout/layout-storage.ts`）读写（§8.5）；不进入 Main 配置。
 
@@ -376,8 +380,8 @@ Inner Voice 与 Public Reply 可以作为后端历史的一部分在当前会话
 布局相关 UI 状态（窗口位置/大小、会话栏折叠、Live2D 栏可见/折叠/宽度）属**非敏感展示偏好**，走 Renderer localStorage（键 `cyrene.layout.v1`），**不进入 Main 配置**（2026-08-14 阶段 3 G1 定案；`PersistedSettingsV2.layout` 字段已移除，旧配置忽略，见 §8.1 迁移注记）：
 
 - 由 `layoutStore` 读写（`layout/layout-storage.ts`），组件只消费 store，不直接触碰 localStorage；
-- 数据形状含窗口尺寸、当前断点下的有效布局（`effective-layout.ts`）、会话栏折叠态、Live2D 栏可见/折叠/宽度；
-- 首帧用 `window.innerWidth` 播种；窗口 resize 后重算断点；toggle 按目标态设置并置 override；
+- 数据形状含窗口尺寸、当前宽度下的有效布局（`effective-layout.ts`）、会话栏折叠态、Live2D 栏可见/折叠/宽度；
+- 首帧用 `window.innerWidth` 播种；窗口 resize 后重算有效布局；toggle 按目标态设置并置 override；
 - 不做跨会话同步；清除 localStorage 即恢复默认布局；
 - 权限对话框、敏感预览等状态一律不持久化。
 

@@ -168,8 +168,23 @@ unloaded → loading → ready
 > 不随窗口遮挡/失焦被 Chromium 全局节流。原因：① 无 WM 的 headless CI（xvfb）下窗口被判为遮挡 → 默认节流
 > （timer~1/秒 + rAF 暂停）会让 Live2D 渲染环停摆（口型/画布断言失败）；② 生产上全渲染进程 timer 节流会拖慢
 > 流式回复/语音/TTS 实时链路。**「窗口隐藏暂停高频更新」改由 app 自有机制负责**：`live2dShown ∧ enabled`
-> 门（布局折叠/关闭时 Panel `startStop` 停 rAF，D5C-05 可见性收口）不再依赖 Chromium 全局节流；「窗口最小化时
-> 暂停渲染」为后续可选项（当前最小化仍渲染，成本可控）。
+> 门（布局折叠/关闭时 Panel `startStop` 停 rAF，D5C-05 可见性收口）不再依赖 Chromium 全局节流。
+
+> **已补齐（2026-09-12，全量评审 M-37）：上面最后半句"「窗口最小化时暂停渲染」为后续可选项（当前最小化仍渲染）"
+> 已不再是可选项，现已落地。** 实测该缺口是真的：`backgroundThrottling:false` 关掉了浏览器自身节流，而应用自有的
+> `active` 门当时只含 `currentView ∧ live2dShown ∧ enabled ∧ status==='ready'`——**没有窗口状态项**，
+> 全仓 `visibilitychange` / `document.hidden` / `IntersectionObserver` 0 命中。于是窗口最小化/切走后仍在做
+> 每帧完整模型更新+绘制（`quality` 模式下 `perf.ts` 不设上限）。
+>
+> 现规定：窗口可见性是渲染 gate 的**组成部分**，由 `renderer/src/utils/document-visibility.ts` 提供
+> （读 `document.hidden` 并订阅 `visibilitychange`；单例，整棵 renderer 只挂一个监听），并**同时**并入两处：
+> ① `CyLive2DPanel` 的 `active`（rAF 启停）；② 同组件的 `surfaceVisible`（上报 store，驱动 controller 侧暂停）——
+> 只接一处会让另一条路径继续跑，故两处都接，并有源码级断言钉住（`tests/unit/document-visibility.spec.ts`）。
+>
+> **覆盖范围如实说明**：`visibilitychange` 覆盖"最小化 / 切到别的应用 / 文档隐藏"，**不**覆盖"窗口被另一个窗口
+> 遮挡"（遮挡不触发该事件；`IntersectionObserver` 对 Electron 顶层窗口也不适用）。故本项解决的是"最小化仍全速
+> 渲染"这一半，未声称解决遮挡。
+
 
 ### 5.1 模型切换
 
@@ -326,6 +341,13 @@ P0：
 - 系统低电量模式：切换低功耗配置。
 
 Live2D 资源释放后不得残留计时器、音频分析器或事件监听器。
+
+> **补充：GPU 纹理也属于"不得残留"之列（2026-09-12，全量评审 M-25）。** 实测原状的缺口：纹理由**本项目 glue** 创建（`live2d/adapter.ts` 的 `loadTexture` 调 `gl.createTexture`；vendored framework 只管理它自己的离屏渲染目标），而 teardown 只置 `this.gl = null; this.canvas = null`，**从不 `deleteTexture`** —— `grep deleteTexture` 只命中 vendored framework。后果：2048² 模型每次加载约 **33 MB VRAM** 滞留至 GC，换模型（面板下拉）逐次累积。
+>
+> 现规定：**glue 创建的 GL 资源必须按实例记账、并在 `destroy()` 时显式释放**。三点细化（都不是"加一行 deleteTexture"能覆盖的）：
+> ① 上传中途失败（`texImage2D`/`generateMipmap` 抛错）时**立即删除半成品纹理**——否则它既不在账上又已占显存；
+> ② **context 丢失时清账**——GPU 侧资源已随 context 消失，旧 name 对重建后的 context 无意义，留着会让账目失真；
+> ③ 释放路径必须容忍 `gl` 已为 null / context 已丢失（`deleteTexture` 失败不得阻断 `destroy` 的其余步骤）。
 
 ## 13. 尺寸和定位
 

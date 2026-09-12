@@ -105,9 +105,21 @@ verify:artifact 校验产物内容和安全配置
 
 **已落地（阶段 1 块 A，2026-08-09）：**
 
-- `package` = `electron-vite build && electron-builder --dir` —— **未分发包**（Linux 输出 `dist/linux-unpacked/`，`appId=com.cyrene.desktop`、`productName=Cyrene`、`files:[out/**,package.json]`、`asar:false`、`executableName:Cyrene` 固定 Linux 二进制名）；Forge 全量安装包留阶段 8；
-- `verify:artifact` = `node scripts/verify-artifact.cjs` —— 静态检查（out/ 三产物存在、index.html 保留 CSP meta 且无 `unsafe-eval`、`.env`/Token/`Bearer ` 模式扫描、version 可读）+ `--smoke` Playwright `_electron` 启动冒烟（优先未分发包，缺失回退 out/；断言协议 `cyrene:`、严格 CSP 响应头、Vue 挂载、`getAppInfo`、普通浏览器 `desktopApi` undefined 信任边界、打包调试门负路径）；
+- `package` = `electron-vite build && node scripts/package-app.mjs` —— **未分发包**（Linux 输出 `dist/linux-unpacked/`，`appId=com.cyrene.desktop`、`productName=Cyrene`、`files:[out/**,package.json]`、`asar:false`、`executableName:Cyrene` 固定 Linux 二进制名）；Forge 全量安装包留阶段 8；
+  > **2026-09-12 变更（P2-4）**：原为直接调 `electron-builder --dir`，现经 `scripts/package-app.mjs` 包装。
+  > 唯一原因是评审记录的**已观察偶发**：Windows 上首次打包在 `@electron/fuses` 写 wire 时
+  > `ENOENT … Cyrene.exe`，重跑即过（该步骤由 electron-builder 内部执行）。脚本**只**对"ENOENT 且指向
+  > `.exe`/`win-unpacked`"这一形态重试一次，其它失败立刻原样失败（不做无条件重试——那会把真实失败
+  > 掩盖成"第一次不算"）；发生重试时会显式打印，便于日后核对频率。**注意：本机无法复现该偶发，
+  > 故这是依据记录的防御而非实测失败驱动的修复。**
+- `verify:artifact` = `node scripts/verify-artifact.cjs` —— 静态检查（out/ 三产物存在、index.html 保留 CSP meta 且无 `unsafe-eval`、`.env`/Token/`Bearer ` 模式扫描、version 可读、未分发包存在时**读回 fuse wire 断言三项 DISABLE**）+ `--smoke` Playwright `_electron` 启动冒烟（优先未分发包，缺失回退 out/；断言协议 `cyrene:`、严格 CSP 响应头、Vue 挂载、`getAppInfo`、普通浏览器 `desktopApi` undefined 信任边界、打包调试门负路径）；
 - `make`（Forge 打包）与 `test:e2e` 仍为占位脚本。
+
+**生产依赖归类（2026-09-12，P2-3）：**
+
+- `dependencies` **只保留 main/preload 运行时会 `require` 的包**，当前为 **`diff` / `ws` / `zod`** 三个。依据是实测而非推断：`out/main/index.js` 的裸 require 集合 = `diff, electron, ws, zod`（其余为 Node 内建），`out/preload/index.js` 只 require `electron`（`zod` 按 `externalizeDepsPlugin({ exclude: ['zod'] })` 显式 bundle）。
+- **只被 renderer 使用的包一律放 `devDependencies`**（`vue`/`pinia`/`marked`/`dompurify`）——它们由 Vite 打进 renderer chunk，放进 `dependencies` 只会让 electron-builder 把整棵依赖树**再装一份**进 `resources/app/node_modules`。实测该目录由 **20.87 MB 降到 4.61 MB（−16.26 MB）**，剩余恰为上述三个包；同时核对四个包的代码**仍在 renderer chunk 内**（`createElementBlock`/`createPinia`/`marked`/`DOMPurify` 均命中），故无功能回退。
+- **门禁**：`tests/unit/dependency-classification.spec.ts` 双向断言——① `dependencies` 里每个包都必须真被 main/preload 用到（防死重回潮）；② main/preload 用到的包必须在 `dependencies` 里（防打包缺模块）。依据：`externalizeDepsPlugin()` 只外置 `dependencies`，**devDependency 会被 bundle**（实测：临时把 `semver` import 进 main，产物里没有 `require("semver")` 而是内联）。
 
 ## 6. 版本策略
 

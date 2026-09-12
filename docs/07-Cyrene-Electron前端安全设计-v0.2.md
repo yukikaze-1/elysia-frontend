@@ -132,6 +132,14 @@ Preload 的校验改善边界和错误提示；Main 的校验才是安全控制�
 - 大二进制通过受控临时附件引用；
 - 设置单条 IPC 消息大小上限。
 
+> **落实状态与边界（2026-09-11~12，全量评审 P1-1 处置）——本条此前只有"应当有上限"，没有说清上限在哪、由谁执行、以及"是否真的强制"：**
+>
+> - **上限值**：单条 IPC 消息 ≤ **4 MiB**（`MAX_IPC_MESSAGE_BYTES`，`@shared/contracts`）。另有 `voice:audio-chunk` 的 **1 MiB/块**（单向二进制通道）与工具写路径的 **2 MiB**（`MAX_WRITE_CONTENT_BYTES`）等更紧的局部上限。
+> - **执行点**：各 handler 自行执行（`session-store` 的整批/出参预算、`voice-handlers` 的分块 `byteLength`、工具写路径等）。**`ipc/registry.ts` 的路由点在 arity 之外不查大小**——即"收口点是路由点，但不是策略点"。
+> - **声明表**：`src/main/ipc/channel-budgets.ts` 枚举全部通道的规模上界，分三类（`bytes` 带执行点说明与真实常量引用／`schema` 字段级上界依据／`none` 无载荷），并有 `tests/unit/ipc-budget-declaration.spec.ts` **枚举实际注册通道逐个核对**。
+> - **这层门禁的准确语义**：它让"**遗漏可见**"（新通道未声明即红，上线首次运行即抓到一处），**不等于"已在运行时强制"**。二者不可混为一谈。
+> - **运行时收口经实测后撤回**（理由见 `registry.ts` 头注，四条）：① 它会**遮蔽更具体的诊断**——`chat:cache-messages` 超限时 handler 抛可操作的 `IPC_MESSAGE_TOO_LARGE`，路由点的通用拒绝会把它换成 `SCHEMA_VALIDATION_FAILED`（既有集成用例当场变红）；② **不可能统一**：二进制载荷不能度量，实测 1 MiB `Uint8Array` 经 `JSON.stringify` 需 **114 ms** 且膨胀 **10.9×**，故单向音频通道无论如何只能由 handler 判断；③ **方向不匹配**：部分通道的预算描述的是**响应**大小（出参装箱降级），而路由点只能度量**入参**；④ 边际价值有限——这些 handler 本就在执行预算。**若将来要把它强制到路由点，正确做法是由契约生成声明并保留各通道原有错误码，而不是手抄第二份平行实现。**
+
 ## 7. 网络安全
 
 - 默认只允许 HTTPS/WSS；

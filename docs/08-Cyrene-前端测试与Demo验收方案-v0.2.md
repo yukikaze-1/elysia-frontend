@@ -397,6 +397,25 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 | Fuses | verify:artifact 静态阶段（不启动 Electron）| `getCurrentFuseWire` 读回 RunAsNode/EnableNodeOptionsEnvironmentVariable/EnableNodeCliInspectArguments 三项 = DISABLE（48 字节枚举），失败 exit 1（fail-closed）；`--smoke` 经 flip-back 临时副本启动（产物本体保持 flipped）；OnlyLoadAppFromAsar/EmbeddedAsarIntegrityValidation 保持现状（阶段 8 评估） |
 | 开发者模式 | 集成（diagnostics-ipc.spec.ts）+ 单测（diagnostics-service/cy-diagnostics-pane） | `dev-mode-set(true)` → `webContents.isDevToolsOpened()` 轮询为 true（恢复断言而非静默降级）；set(false) → false；二次确认文案；会话态（重启恢复禁用，无持久化断言）；诊断展示零正文（preview 白名单/Store 摘要仅计数） |
 
+**全量评审批次新增/变更的门禁（2026-09-11 ~ 09-12，P1-1/P1-11/P2-3/P2-6/P2-7/P2-9/P2-10）**
+
+下表只列**新加或改过判据**的门禁——它们的存在方式是"会红"，因此需要知道各自守什么、怎么让它红：
+
+| 门禁 | 位置 | 守什么 / 如何变红 |
+|---|---|---|
+| IPC 通道预算声明 | `tests/unit/ipc-budget-declaration.spec.ts` | 枚举**实际注册**的通道（经 electron mock 捕获），逐个核对是否在 `IPC_CHANNEL_BUDGETS` 声明规模上界；新增通道未登记即红。**上线首次运行即抓到 `credentials:get-status` 未登记**。注意：本门禁让"遗漏可见"，**不等于**"已在运行时强制"——运行时收口经实测后撤回，理由见 `main/ipc/registry.ts` 头注 |
+| 依赖归类 | `tests/unit/dependency-classification.spec.ts` | 双向：`dependencies` 里每个包必须被 main/preload 用到（防死重）；main/preload 用到的必须在 `dependencies` 里（防打包缺模块）。加 `vue` 回 dependencies / main import devDependency 均即红 |
+| 临时目录防漂移 | `tests/unit/temp-dirs.spec.ts` | 扫描全部测试源码的 `mkdtemp` 前缀，未登记到允许表即红并点名；反向查"已无人使用"的条目。**实际已抓到两次**（`credentials:get-status` 类的漏登记、以及 P2-10 新 spec 的 `cyvs-`） |
+| 契约镜像（键集合相等） | `tests/unit/contract-mirror.spec.ts` | `SameKeys<z.infer<schema>, 契约类型>` 双向比较，`keyof` 含可选成员——比 `z.ZodType<T>` 锚点强（后者**协变**，抓不到"漏可选成员"）。删 `ToolCallRecordSchema.diff` 即 `tsc` 红 |
+| 布局断点不可达 | `tests/unit/layout-breakpoints.spec.ts` | 任何 `@media (max-width: N)` 且 `N < MIN_WINDOW_WIDTH` 即红（比较真实常量）；带退化哨兵（内联夹具证明提取器仍可用） |
+| 渲染缓存有界 / 估算器记忆化 | `tests/unit/h08-perf-bounds.spec.ts` | 用**可数**信号（真实计算次数、缓存条目数）而非计时断言；移除记忆化 → `expected 100 to be 20` |
+| renderer 错误进诊断日志 | `tests/integration/renderer-error-diagnostics.spec.ts` | 真机读 Main 日志：`console.error(marker)` 与未捕获异常都必须落盘；移除 `console-message` 转发即红 |
+| 流式贴底"不累积" | `tests/integration/message-list-follow-bottom.spec.ts` ④ | 稳健统计（中位数 ≤200px + ≥60% 采样在容差内）+ 收敛断言（终值 ≤40px）。**刻意不用 `max(samples)`**：那会把瞬时抖动误判成缺陷 |
+| 扫描器端到端 | `tests/unit/verify-sensitive-e2e.spec.ts` | **真 spawn** `verify-sensitive.mjs`：干净树 → 退出码 0（且扫描面来自 `git ls-files` 外调）／植入秘密 → 退出码 1 且 stderr 指名文件与规则；allowlist 宽锚集合被钉死（现存 4 条为**已记录欠账**，新增即红） |
+| 审计断言可判别性 | `tests/integration/audit-lifecycle.spec.ts` | 解析 JSONL 断言 `type` **与** `status`，并与 page 侧观察到的 API 结果对齐。**旧写法 `.toContain('credential:set')` 同时匹配 success/failed**，把"成功路径写成 failed"放行；改后该变异即红 |
+| Windows 打包与产物 | CI job `windows build-level` | 2026-09-12 起该 job 除 typecheck/lint/test/build 外**还跑 `package` + 静态 `verify:artifact`**（含 `dist/win-unpacked/Cyrene.exe` 的 fuse wire 读回）。此前主目标平台的打包路径**从未被 CI 验证** |
+| 退出路径资源收口 | `tools` 单测 | `toolSvc.shutdown()` 必须清 `timers` **与** `captureTimers`（后者由 M1 引入的第二张表） |
+
 ## 9. 性能与稳定性
 
 建议建立基线，不将数值视为尚未实测的承诺：
