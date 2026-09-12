@@ -409,3 +409,36 @@ X Something went wrong, self-installer exits with code 1     ← integration (sh
   但 Haswell 单核更慢这一条改不了。若仍出现 1 例级 flake，下一步按仓库既有做法处置
   （V-08/V-12 的先例：把「首次交互/首帧」的 POLL 预算从 8s 提到 `SLOW_POLL` 15s，或加一次 CI retry）——
   那属于改测试判据，须单独论证，不在本轮范围。
+
+### 10.9 实例转常驻服务 + 首次全绿（run `34693817053` attempt 2）
+
+用户以 `sudo` 完成三件事后（本轮由用户执行、我核对）：
+
+1. **三个实例装成 systemd 服务**（`svc.sh install yomu`；实例 1 的 unit 早已存在、无需重装，`enable --now` 启用即可）。
+2. **CPU 亲和写进服务**：用**非交互**方式写 drop-in（`systemctl edit` 需要编辑器，用户连续三次在"临时文件为空"
+   时被取消 —— 这是本轮踩到的坑，正确做法是直接写
+   `/etc/systemd/system/<unit>.d/override.conf`）：
+   ```ini
+   [Service]
+   CPUAffinity=4-13        # 实例 2 用 14-23，实例 3（fe-light）用 0-3
+   ```
+   随后 `systemctl daemon-reload` + `restart`。实测三个 listener 的亲和列表分别为 `4-13`／`14-23`／`0-3` ✓。
+3. **清掉一个孤儿 listener**：实例 1 重启后出现**两个 listener**（旧的无限重试
+   `TaskAgentSessionConflictException: A session for this runner already exists`）。根因是 runner 的 unit 用
+   **`KillMode=process`**（只杀主进程 `runsvc.sh`），重启时子 listener 会残留成孤儿。本轮直接 `kill` 掉孤儿即恢复。
+   **建议的加固（可选）**：在同一 drop-in 里加 `KillMode=control-group`，让停止/重启连整棵进程树一起收掉。
+
+**验证结果（attempt 2，`gh run rerun` 全量重跑，未改任何提交）：8/8 全绿，墙钟 412s（6.9 分钟）。**
+
+| job | 耗时 | 落点 |
+|---|---|---|
+| `unit` / `check` / `artifact` | 1m37s / 2m37s / 1m19s | `yomu-X99-3`（fe-light，三者串行共用） |
+| `integration shard 1/3` / `2/3` / `3/3` | 3m36s / 2m58s / 1m30s | `yomu-X99`、`yomu-X99`、`yomu-X99-2` |
+| `integration-live2d` | 4m4s | `yomu-X99-2` |
+| `windows build-level` | 3m41s | `yomu-win11` |
+
+关键路径 = 重型侧最长链（实例 1 串行跑 shard2 + shard1 ≈ 6m34s）⇒ 与实测墙钟 6.9 分钟吻合。
+**对比：托管 10.4 分钟且计费；现在 6.9 分钟、0 计费分钟。**
+
+**结论的边界（不得过度解读）**：这一轮绿**不能证明 flake 已被消除** —— 前四轮各红 1 例、且每次是不同用例
+（§10.8 表），本轮只是其中一次观测。**判据是后续若干轮的 flake 率**；若再现，按 §10.8 末尾的既有做法处理。
