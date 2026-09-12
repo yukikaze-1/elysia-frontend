@@ -260,15 +260,34 @@ function defaults(): DesktopApiMock {
  *
  * 写不存在的键或写错签名都是编译错误——这正是本 helper 相对 `setDesktopApi({...} as never)` 的价值。
  *
+ * **实测更正（2026-09-12，迁移 store 域时发现的两条）**：
+ *   ① `O` 原本没有默认类型实参，无参调用会让 `O` 退化成约束 `Partial<DesktopApiLike>`；但**加了
+ *      默认值也没用**——真正的原因是**展开本身**：`{...defaults(), ...overrides}` 对每个键推断出
+ *      联合 `Mock<签名> | 签名`，而 `Mock<签名>` 可赋值给 `签名`，于是联合被**子类型归约**坍缩成
+ *      裸 `签名`，mock 方法随之消失（探针实测：无参、`{}`、带 override 三种调用**全部**如此）：
+ *          createDesktopApiMock().connect.mockResolvedValue(...)
+ *          //  error TS2339: Property 'mockResolvedValue' does not exist on type '() => Promise<BackendSession>'.
+ *      此前 5 个迁移点都只对**自己传入的局部 mock 变量**断言，从未在返回对象上调用 mock 方法，
+ *      所以这条路径一直没被走到。
+ *   ② 修法不能是 `as DesktopApiMock & O`：override 允许传**普通函数**（如 `activate: async () => …`），
+ *      而 `DesktopApiMock & O` 会声称它也有 `mockResolvedValue` —— 那是把编译错误换成运行时陷阱。
+ *      故返回类型如实写成 `Omit<DesktopApiMock, keyof O> & O`：**被 override 的键保持调用者给的类型，
+ *      其余键保持完整的 `Mock<签名>`**。这正是 `{...defaults(), ...overrides}` 的真实语义。
+ *      （`O` 的默认值必须是 `{}` 而非 `Record<string, never>`：后者的 `keyof` 是 `string`，
+ *      会把 `Omit` 削成空对象。）
+ *
  * @example
  * const previewTts = vi.fn(async () => ({ ok: true, audioUrl: 'cyrene://x' }))
  * setDesktopApi(createDesktopApiMock({ previewTts }))
  */
-export function createDesktopApiMock<O extends DesktopApiOverrides<O>>(overrides?: O) {
-  // 刻意**不写返回类型标注**：泛型展开 `{...defaults(), ...overrides}` 的结果无法被 TS 证明
-  // 可赋值给 `DesktopApiMock & O` 或 `DesktopApiMock & DesktopApiOverrides<O>`（两种写法都实测
-  // TS2322），而写 `as` 会把「这最后一步」挪出类型系统。让 TS 自己推断展开类型即可：
-  // **调用处的键/值校验完全由参数约束 `O extends DesktopApiOverrides<O>` 完成**，它先于函数体失败，
-  // 因此判别力一点没少——不存在的键、错签名的值仍在调用处报 TS2322。
+export function createDesktopApiMock(): DesktopApiMock
+export function createDesktopApiMock<O extends DesktopApiOverrides<O>>(
+  overrides: O
+): Omit<DesktopApiMock, keyof O> & O
+export function createDesktopApiMock(overrides?: object): object {
+  // 实现签名（对外不可见）只需自证「返回一个对象」。**返回类型标注必须存在**：不写的话 TS 推断出的
+  // 就是上面①里被归约过的展开类型，mock 方法静默消失；而写成 `DesktopApiMock & O` 又是不诚实的
+  // （见②）。故用重载：调用方看到的返回类型是精确的 `Omit<DesktopApiMock, keyof O> & O`，
+  // 无需任何 `as`。三个重载的判别力与原先完全相同，键/值校验仍在**参数**上（调用处报 TS2322）。
   return { ...defaults(), ...overrides }
 }

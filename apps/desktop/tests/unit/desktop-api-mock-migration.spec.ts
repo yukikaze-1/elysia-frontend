@@ -13,10 +13,11 @@
 //   · 未迁移的文件必须在下面 `PENDING` 里逐个列出；
 //   · 新 spec 若再用裸 mock ⇒ 红（防止欠账增长）；
 //   · 迁移完一个就要从 PENDING 删一行 ⇒ 清单不会静默过期。
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 const UNIT_ROOT = fileURLToPath(new URL('.', import.meta.url))
 
@@ -26,7 +27,6 @@ const PENDING = [
   'cache.store.spec.ts',
   'character-editor.store.spec.ts',
   'character-stores.spec.ts',
-  'connection.store.spec.ts',
   'cy-attachment-media.spec.ts',
   'cy-attachment-placeholder.spec.ts',
   'cy-character-catalog.spec.ts',
@@ -47,7 +47,6 @@ const PENDING = [
   'cy-tool-card.spec.ts',
   'cy-voice-consent-dialog.spec.ts',
   'cy-voice-pane.spec.ts',
-  'draft.store.spec.ts',
   'draft-persist.spec.ts',
   'history-viewer.store.spec.ts',
   'live2d.spec.ts',
@@ -57,8 +56,6 @@ const PENDING = [
   'message-character-identity.spec.ts',
   'message-store-generation-exit.spec.ts',
   'model-service.store.spec.ts',
-  'settings.store.spec.ts',
-  'tool.store.spec.ts',
   'voice.store.spec.ts'
 ] as const
 
@@ -111,5 +108,27 @@ describe('I-06 mock 工厂迁移进度门禁', () => {
   it('已迁移的文件里不得残留 `as never` 铸 desktopApi（否则等于没迁）', () => {
     const { strayCast } = scan()
     expect(strayCast, `以下文件已引入工厂却仍保留 cast：${JSON.stringify(strayCast)}`).toEqual([])
+  })
+
+  // —— 工厂自身的回归守卫（2026-09-12 迁移 store 域时发现的真实回归）——
+  // 工厂的返回类型曾一度丢失 mock 方法：`{...defaults(), ...overrides}` 对每个键推断出
+  // `Mock<签名> | 签名` 联合，因 `Mock<签名>` 可赋值给 `签名` 而被**子类型归约**坍缩成裸签名。
+  // 修法是重载 + 精确返回类型 `Omit<DesktopApiMock, keyof O> & O`（详见 helpers/desktop-api.ts 注释）。
+  // 本用例的 `mockResolvedValue` 那两行是类型层面的哨兵：回归一旦复现，本文件直接编译失败。
+  it('无参调用仍返回完整默认表：各键是 mock，且默认值仍生效', async () => {
+    const api = createDesktopApiMock()
+    expect(vi.isMockFunction(api.connect)).toBe(true)
+    expect(vi.isMockFunction(api.persistFlushDone)).toBe(true)
+    api.getConnectionState.mockResolvedValue({ status: 'connected' }) // ← 类型哨兵，勿删
+    expect(await api.getConnectionState()).toEqual({ status: 'connected' })
+  })
+
+  it('带 override 时，**未**被 override 的键仍是 mock（同样只靠返回类型成立）', async () => {
+    // override 用**如实签名**（带参）；顺带钉住「被 override 的键保持调用者给的类型」——
+    // 所以这里能传实参，而 `createDesktopApiMock()` 的其他键仍旧是完整 Mock。
+    const api = createDesktopApiMock({ activate: async (id: string) => ({ conversationId: `c-${id}` }) })
+    api.connect.mockResolvedValue({ sessionId: 's', protocolVersion: '2.0', serverUrl: 'u' }) // ← 类型哨兵，勿删
+    expect(await api.connect()).toEqual({ sessionId: 's', protocolVersion: '2.0', serverUrl: 'u' })
+    expect(await api.activate('x')).toEqual({ conversationId: 'c-x' }) // override 生效（键名与签名都受检）
   })
 })

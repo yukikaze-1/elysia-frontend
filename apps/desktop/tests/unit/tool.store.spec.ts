@@ -5,6 +5,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useToolStore } from '../../src/renderer/src/stores/tool.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 import type { DesktopApiLike } from '../../src/renderer/src/stores/desktop-api.types'
 import type { PublicToolEvent } from '@shared/contracts/tool'
 import type { BackendEvent } from '@shared/contracts/events'
@@ -117,8 +118,11 @@ describe('toolStore 三来路归一化', () => {
     expect(s.pendingPathSummary).toBeNull()
   })
   it('decide/cancel 调 api（setDesktopApi 注入，代码 H6）', async () => {
-    const decide = vi.fn(); const cancel = vi.fn()
-    setDesktopApi({ toolDecide: decide, toolCancel: cancel } as unknown as DesktopApiLike)
+    // I-06：mock 用 `NonNullable<DesktopApiLike[...]>` 钉住**真实签名**——裸 `vi.fn()` 的 0 参类型
+    // 会让下面 toHaveBeenCalledWith 的实参检查静默失效（形参列表为空 ⇒ 期望值不受检）。
+    const decide = vi.fn<NonNullable<DesktopApiLike['toolDecide']>>(async () => {})
+    const cancel = vi.fn<NonNullable<DesktopApiLike['toolCancel']>>(async () => {})
+    setDesktopApi(createDesktopApiMock({ toolDecide: decide, toolCancel: cancel }))
     const s = useToolStore()
     await s.decide('call_1', 'deny'); await s.cancel('call_1')
     expect(decide).toHaveBeenCalledWith({ callId: 'call_1', decision: 'deny' }); expect(cancel).toHaveBeenCalledWith('call_1')
@@ -194,11 +198,11 @@ describe('toolStore 三来路归一化', () => {
 
 describe('toolStore 批次 C（Task 7：L-2 水合 / F-23 四方法 / F-7 diff 同步）', () => {
   it('L-2 水合：init 先 await toolList 再订阅事件（F-15 定序——MED-2 修复：可控 promise 钉「水合完成前不订阅」）', async () => {
-    const listEv = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.read', title: '读取文件', runtime: 'desktop' as const, status: 'awaiting_permission' as const, occurredAt: 'x' }
-    let resolveList!: (v: typeof listEv[]) => void
-    const listPromise = new Promise<typeof listEv[]>((r) => { resolveList = r })
-    const onEvent = vi.fn().mockReturnValue(() => {})
-    setDesktopApi({ toolList: vi.fn().mockReturnValue(listPromise), onToolEvent: onEvent } as unknown as DesktopApiLike)
+    const listEv: PublicToolEvent = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.read', title: '读取文件', runtime: 'desktop', status: 'awaiting_permission', occurredAt: 'x' }
+    let resolveList!: (v: PublicToolEvent[]) => void
+    const listPromise = new Promise<PublicToolEvent[]>((r) => { resolveList = r })
+    const onEvent = vi.fn<NonNullable<DesktopApiLike['onToolEvent']>>(() => () => {})
+    setDesktopApi(createDesktopApiMock({ toolList: vi.fn(() => listPromise), onToolEvent: onEvent }))
     const store = useToolStore()
     const p = store.init()
     await Promise.resolve()   // 让 init 推进到 toolList await（挂起）
@@ -209,23 +213,26 @@ describe('toolStore 批次 C（Task 7：L-2 水合 / F-23 四方法 / F-7 diff �
     expect(store.records['tc_1']).toMatchObject({ status: 'awaiting_permission' })   // 快照归位
   })
   it('批次 C：grantDirectory/listGrants/revokeGrant/listHistory 调 api（F-23 命名映射）', async () => {
-    const api2 = { toolGrantDirectory: vi.fn().mockResolvedValue({ executed: true }), toolListGrants: vi.fn().mockResolvedValue([]), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn().mockResolvedValue([]) } as unknown as DesktopApiLike
-    setDesktopApi(api2)
+    const grantDirectory = vi.fn<NonNullable<DesktopApiLike['toolGrantDirectory']>>(async () => ({ executed: true }))
+    const listGrants = vi.fn<NonNullable<DesktopApiLike['toolListGrants']>>(async () => [])
+    const revokeGrant = vi.fn<NonNullable<DesktopApiLike['toolRevokeGrant']>>(async () => {})
+    const listHistory = vi.fn<NonNullable<DesktopApiLike['toolListHistory']>>(async () => [])
+    setDesktopApi(createDesktopApiMock({ toolGrantDirectory: grantDirectory, toolListGrants: listGrants, toolRevokeGrant: revokeGrant, toolListHistory: listHistory }))
     const store = useToolStore()
     await store.grantDirectory('call_1', 86_400_000)
-    expect(api2.toolGrantDirectory).toHaveBeenCalledWith({ callId: 'call_1', ttlMs: 86_400_000 })
+    expect(grantDirectory).toHaveBeenCalledWith({ callId: 'call_1', ttlMs: 86_400_000 })
     expect(await store.grantDirectory('call_1', 86_400_000)).toBe(true)   // FINAL-LOW：executed 透传
     await store.listGrants()
-    expect(api2.toolListGrants).toHaveBeenCalled()
+    expect(listGrants).toHaveBeenCalled()
     await store.revokeGrant('g1')
-    expect(api2.toolRevokeGrant).toHaveBeenCalledWith('g1')
+    expect(revokeGrant).toHaveBeenCalledWith('g1')
     await store.listHistory(50)
-    expect(api2.toolListHistory).toHaveBeenCalledWith(50)
+    expect(listHistory).toHaveBeenCalledWith(50)
   })
   it('F-7：upsertLocal 同步写 record.diff（终态不清——grant 命中只读 Diff 数据源）', async () => {
     const ev = { id: 'tc_1', desktopCallId: 'call_1', toolName: 'desktop.file.write', title: '写入', runtime: 'desktop' as const, status: 'completed' as const, diff: { lines: [{ kind: 'added' as const, text: 'x\n' }], added: 1, removed: 0, truncated: false, totalLines: 1, formatNote: 'f', isNewFile: false }, occurredAt: 'x' }
-    // LOW-1（Task 7 review）：mock 镜像全契约——DesktopApiLike 全必填，toolList 补键（init 无 ?. 防御）
-    setDesktopApi({ toolList: vi.fn().mockResolvedValue([]), onToolEvent: vi.fn().mockReturnValue(() => {}) } as unknown as DesktopApiLike)
+    // I-06：原为 `as unknown as DesktopApiLike` 的部分 mock——工厂补齐其余键并保留签名校验
+    setDesktopApi(createDesktopApiMock({ toolList: vi.fn(async () => []), onToolEvent: vi.fn(() => () => {}) }))
     const store = useToolStore()
     await store.init()
     store.upsertLocal(ev)

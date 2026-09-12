@@ -5,34 +5,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useConnectionStore } from '../../src/renderer/src/stores/connection.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
-const mockApi = {
-  connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
-  send: vi.fn(), cancel: vi.fn(), activate: vi.fn(), createConversation: vi.fn(),
-  renameConversation: vi.fn(), deleteConversation: vi.fn(), getConnectionState: vi.fn(),
-  getCredentialStatus: vi.fn(), setBackendToken: vi.fn(), clearBackendToken: vi.fn(),
-  setEndpoint: vi.fn(), getEndpoint: vi.fn(), getRuntimeInfo: vi.fn(),
-  onChatEvent: vi.fn(() => () => {}), onChatState: vi.fn(() => () => {}), onChatReplay: vi.fn(() => () => {}), onChatError: vi.fn(() => () => {}),
-  hydratePersistence: vi.fn(), persistSession: vi.fn(), cacheMessages: vi.fn(), openExternal: vi.fn(), attachmentsValidate: vi.fn(), attachmentsUpload: vi.fn(), attachmentsCancel: vi.fn(), attachmentsCheck: vi.fn(),
-  queryChatHistory: vi.fn(), getMessageContext: vi.fn(), listStickers: vi.fn(),
-  listModelProfiles: vi.fn(), saveModelProfile: vi.fn(), deleteModelProfile: vi.fn(), testModelProfile: vi.fn(), activateModelProfile: vi.fn(), getActiveModelSelection: vi.fn(),
-  listTtsVoices: vi.fn(), previewTts: vi.fn(), setTtsVoice: vi.fn(),
-  // P4-B 语音/设置面
-  voiceStartRecord: vi.fn(), voiceStopRecord: vi.fn(), voiceCommit: vi.fn(), voiceDiscard: vi.fn(),
-  voiceStartRealtime: vi.fn(), voiceStopRealtime: vi.fn(), voiceCancelRealtime: vi.fn(),
-  voiceStartDictation: vi.fn(), voiceStopDictation: vi.fn(), voiceCancelDictation: vi.fn(),
-  audioCancel: vi.fn(), voiceSendAudio: vi.fn(), settingsLoad: vi.fn(), settingsSave: vi.fn(),
-  listLive2dModels: vi.fn(), readLive2dModelFile: vi.fn(), onPersistFlushRequest: vi.fn(() => () => {}), persistFlushDone: vi.fn(async () => {}),
-  onToolEvent: vi.fn(() => () => {}), toolDecide: vi.fn(), toolCancel: vi.fn(), toolList: vi.fn(), toolPickSource: vi.fn(), toolConfirmUpload: vi.fn(), toolGrantDirectory: vi.fn(), toolListGrants: vi.fn(), toolRevokeGrant: vi.fn(), toolListHistory: vi.fn(),
-  // 阶段 7 批次 A（Task 5）：诊断面（DesktopApiLike 全契约镜像——mock 补键）
-  diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
-}
+// I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。裸 mock 返回
+// undefined，且 `as never` 让「镜像与真实契约漂移」无法被发现；工厂的默认值覆盖同一批键，
+// 且各键都是**带真实签名**的 vi.fn，下面的 mockImplementation/mockResolvedValue 因此受检。
+const mockApi = createDesktopApiMock()
 
 describe('connectionStore', () => {
   beforeEach(() => {
+    // 顺序有意为之：先清历史，再注入。工厂的默认实现来自 `vi.fn(impl)`，此处不依赖
+    // reset 是否恢复原始实现——默认值在任何 reset 语义下都由注入之后的状态决定。
+    vi.resetAllMocks()
     setActivePinia(createPinia())
     setDesktopApi(mockApi)
-    vi.resetAllMocks()
   })
 
   it('connect 成功:调 api.connect(无参);等待期间乐观 connecting,成功后状态由 onChatState 推送决定', async () => {
