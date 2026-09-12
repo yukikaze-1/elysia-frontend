@@ -1,0 +1,26 @@
+/* src/renderer/src/reduced-motion.css
+ *
+ * M-24（2026-09-12，全量评审）：把「减少动态」真正落到 CSS 动画上。
+ *
+ * 机制：根元素带 `cy-reduce-motion` 时才生效；该类由 `utils/reduce-motion.ts` 施加，
+ * 触发条件是 **操作系统 `prefers-reduced-motion: reduce` ∨ 应用自有「减少动态」开关**
+ * （`settings.live2d.reduceMotion`）。用类而不是纯媒体查询的原因见该模块头部注释
+ * （组件 scoped 样式带 `[data-v-*]`，媒体查询规则的特异性压不过它，除非上 `!important`）。
+ *
+ * 选择器必须带 `html.cy-reduce-motion` 前缀：它给出「1 个元素 + 2 个类」的底数，
+ * 高于组件 scoped 规则（如 `.cy-tool-status.is-running .cy-tool-dot[data-v-x]` = 4 个类级，
+ * 本文件对应规则为 html(元素)+cy-reduce-motion+…+4 个类级 = 5 类级 1 元素）——无需 `!important`。
+ *
+ * **覆盖完整性由门禁守住**：`tests/unit/reduce-motion.spec.ts` 会扫描 `src/renderer/src` 下所有
+ * `animation: … infinite` 的规则，任何一处未被本文件覆盖即红。新增持续动画时必须同步加到这里，
+ * 否则「减少动态」会静默漏掉它——这正是 M-24 当初的成因。
+ */
+
+html.cy-reduce-motion .cy-queue-status,
+html.cy-reduce-motion .cy-rec-dot,
+html.cy-reduce-motion .cy-typing-dot,
+html.cy-reduce-motion .cy-spinner,
+html.cy-reduce-motion .cy-rt-pulse,
+html.cy-reduce-motion .cy-tool-status.is-running .cy-tool-dot {
+  animation: none;
+}

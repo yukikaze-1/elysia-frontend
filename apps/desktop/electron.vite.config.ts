@@ -24,17 +24,25 @@ export default defineConfig(({ mode }) => {
   // 开发期本地端口在本模块外部（src/main/config/dev-ports.ts）定义——主进程启动断言/文档登记表与这里
   // 读的是同一个常量。端口只在这里下发一次，renderer 的 `server.port` 是构建期唯一生效点。
   const devServer = devServerConfig()
+  // P2-1（2026-09-12，全量评审 M-35）：生产构建开启压缩——此前无 `build.minify`，实测分发产物里
+  // 躺着约 2.5 MB 未压缩源码文本（renderer 1724 KB/45335 行、main 603 KB、preload 214 KB）。
+  // **只在 production 开启**：`--mode test`（集成套件的 out/ 构建）与 dev 保持不压缩，否则集成失败
+  // 时的堆栈会失去可读性——test 是调试面、不是分发面。代价：生产 main/preload 堆栈失去原名且不发
+  // sourcemap，故由 CI 的 `verify:artifact --smoke`（CSP/协议/Vue 挂载/计算样式）作为压缩后门禁。
+  const minify = mode === 'production' ? ('esbuild' as const) : false
   return {
     main: {
       plugins: [externalizeDepsPlugin()],
       define: { __APP_MODE__: JSON.stringify(mode) }, // CJS main 文本替换，可靠
-      resolve: { alias: { '@shared': resolve('src/shared') } }
+      resolve: { alias: { '@shared': resolve('src/shared') } },
+      build: { minify }
     },
     preload: {
       // 沙箱 preload 只能 require 有限模块，zod 必须 bundle 进产物（externalize → require('zod') 运行时报错，
       // contextBridge 不执行 → window.desktopApi undefined）。main 非沙箱不受限。
       plugins: [externalizeDepsPlugin({ exclude: ['zod'] })],
-      resolve: { alias: { '@shared': resolve('src/shared') } }
+      resolve: { alias: { '@shared': resolve('src/shared') } },
+      build: { minify }
     },
     renderer: {
       plugins: [vue(), devCspPlugin()],
@@ -56,7 +64,8 @@ export default defineConfig(({ mode }) => {
         // P4-B Task 10：pcm-worklet.js 必须以同源文件 asset 输出（cyrene://renderer），
         // 不能被 Vite 默认 4KB assetsInlineLimit 内联为 data: URL——CSP script-src 'self' 会拦 data:，
         // AudioWorklet.addModule 将加载失败（design §4.8 / D-P7：CSP 零改动）。
-        assetsInlineLimit: 0
+        assetsInlineLimit: 0,
+        minify
       }
     }
   }

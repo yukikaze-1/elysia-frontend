@@ -418,6 +418,7 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 | **Linux 真实运行时（自建）** | workflow `linux-runtime`（self-hosted Ubuntu `yomu-X99`，**取证面，非必过门禁**） | 全量集成套件跑在自建 Ubuntu（xvfb）上，用于取**同 OS 家族**基线并为 integration 分片定标。**不替换**托管 integration job——Linux 是两条 symlink 逃逸断言的唯一覆盖点。self-hosted 差异（不带 `--with-deps`、不挂 `cache: pnpm`）与一次性系统依赖（xvfb、`playwright install-deps`）见[决策记录](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md) |
 | **集成套件分片** | CI：`integration`（3 分片）+ `integration-live2d`（独占）——**2026-09-12 起两者均在自建 Linux runner 上**（GitHub Actions 额度耗尽，托管 job 无法启动，见决策记录 §10） | 原单 job 串行 27 文件（10.4 分钟 = 整条 CI 墙钟）拆为：最吃多线程软渲染的 `electron-live2d.spec.ts` 独占一个 job（实测定标 182.3s vs 托管 278.8s），其余 26 文件 `--shard=N/3`。**按文件特性切而非均匀切**：`--shard` 只按路径哈希 + 文件数均分、不看耗时，重文件混进随机分片必然成为新瓶颈。分片数取 3 的逐片耗时表、三实例承载方式与回退路径见[决策记录 §9.3／§10](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md) |
 | 退出路径资源收口 | `tools` 单测 | `toolSvc.shutdown()` 必须清 `timers` **与** `captureTimers`（后者由 M1 引入的第二张表） |
+| 「减少动态」覆盖完整性 | `tests/unit/reduce-motion.spec.ts` | 扫描 `src/renderer/src` 下**每一处** `animation: … infinite`，要求全部被 `reduced-motion.css` 覆盖，**反向**也查（覆盖规则指向已不存在的动画即红），并带退化哨兵（已知 ≥6 处）。注释剥离按「字符换空格、保留换行」处理，故报出的行号是原文行号。变异验证：删一条覆盖 → 红并点名 `CyChatInput.vue` 的规则行；加一条不存在的选择器 → 反向红 |
 
 ## 9. 性能与稳定性
 

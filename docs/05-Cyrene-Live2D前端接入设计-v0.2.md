@@ -320,6 +320,8 @@ P0：
 
 用户开启“减少动态效果”后关闭鼠标跟随和非必要点击动作。
 
+> **作用域扩展（2026-09-12，全量评审 M-24）：** 上句只覆盖 Live2D 侧。该开关现已**同时门控整个界面的持续 CSS 动画**——判据为「系统 `prefers-reduced-motion` ∨ 本开关 ⇒ 根元素 `cy-reduce-motion` 类」，由 `renderer/src/reduced-motion.css` 关掉 6 处 `animation: … infinite`（覆盖完整性由 `tests/unit/reduce-motion.spec.ts` 守住）。连带后果：`CyLive2DPane` 里该开关**不再随 Live2D 启用状态禁用**（作用域已超出 Live2D，关闭 Live2D 时它仍有实际作用）；开关文案相应改为「禁用鼠标跟随与点击动作，并关闭界面持续动画（减轻晕动）」。Live2D 侧行为本身未变。
+
 ## 12. 性能策略
 
 ### 12.1 性能模式

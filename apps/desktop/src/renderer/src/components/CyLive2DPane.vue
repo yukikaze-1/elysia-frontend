@@ -199,11 +199,10 @@ const statusText = computed(() => {
       <label class="cy-l2d-row">
         <CySwitch
           :model-value="settings.live2d.reduceMotion"
-          :disabled="!settings.live2d.enabled"
           aria-label="减少动态"
           @change="(v) => onToggle('reduceMotion', v)"
         />
-        <span class="cy-l2d-label"><span class="cy-l2d-label-main">减少动态 <span class="cy-toggle-state" :class="{ on: settings.live2d.reduceMotion }">{{ settings.live2d.reduceMotion ? '已开启' : '已关闭' }}</span></span><small>禁用鼠标跟随与点击动作（减轻晕动）</small></span>
+        <span class="cy-l2d-label"><span class="cy-l2d-label-main">减少动态 <span class="cy-toggle-state" :class="{ on: settings.live2d.reduceMotion }">{{ settings.live2d.reduceMotion ? '已开启' : '已关闭' }}</span></span><small>禁用鼠标跟随与点击动作，并关闭界面持续动画（减轻晕动）</small></span>
       </label>
     </div>
 

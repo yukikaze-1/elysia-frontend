@@ -1,7 +1,8 @@
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import { createPinia } from 'pinia'
 import App from './App.vue'
 import './tokens.css'
+import './reduced-motion.css'
 import { setDesktopApi } from './stores/desktop-api'
 import { useConnectionStore } from './stores/connection.store'
 import { useMessageStore } from './stores/message.store'
@@ -20,6 +21,7 @@ import { useCharacterEditorStore } from './stores/character-editor.store'
 import { useCharacterRuntimeStore } from './stores/character-runtime.store'
 import { createCharacterRuntimeCoordinator } from './stores/character-runtime-coordinator'
 import { createRendererBootstrap } from './bootstrap'
+import { createReduceMotionGate, REDUCE_MOTION_QUERY } from './utils/reduce-motion'
 
 const app = createApp(App)
 app.use(createPinia())
@@ -39,6 +41,20 @@ window.addEventListener('unhandledrejection', (e) => rendererError('unhandledrej
 
 // G1（spec §4.5/P2-2）：createPinia 之后、mount 之前同步 hydrate 布局偏好，避免首帧闪默认布局
 useLayoutStore().hydrate()
+
+// M-24（2026-09-12，全量评审）：「减少动态」门控。此前 `prefers-reduced-motion` 零支持，且自有开关
+// （settings.live2d.reduceMotion）只管 Live2D 的鼠标跟随/点击动作，6 处 `animation: … infinite`
+// 完全无门控 ⇒ doc 03 §14 的对应条款长期未满足。现把两个来源（OS 偏好 ∨ 自有开关）折算成根元素
+// 的 `cy-reduce-motion` 类，由 reduced-motion.css 统一关掉那些持续动画（覆盖完整性另有门禁）。
+// 放在 mount 之前：首帧即生效，避免"先动一下再停"。settings 是异步水合（fail-open），故 watch 兜住。
+const settingsStore = useSettingsStore()
+const reduceMotionGate = createReduceMotionGate({
+  root: document.documentElement,
+  media: typeof window.matchMedia === 'function' ? window.matchMedia(REDUCE_MOTION_QUERY) : { matches: false },
+  readSetting: () => settingsStore.live2d.reduceMotion
+})
+reduceMotionGate.sync()
+watch(() => settingsStore.live2d.reduceMotion, () => { reduceMotionGate.sync() })
 
 // P2-1 + R3:Pinia install 之后接线(Pinia 已 setActivePinia,use*Store() 才可用)——注入 api + 常驻订阅(store 级,组件卸载无关)。
 // P0-01:订阅与启动 snapshot 水合编排收敛到 bootstrap(epoch 防迟到 snapshot 覆盖新 push)。
