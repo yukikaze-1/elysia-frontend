@@ -12,7 +12,10 @@ export interface SecretRule {
 
 export interface SecretHit {
   name: string
-  [key: string]: unknown
+  /** 1 基行号 */
+  line: number
+  /** 命中完整行文本（allowlist 锚定与展示用） */
+  text: string
 }
 
 /** 黑名单规则集（name + 正则） */
@@ -45,5 +48,5 @@ export function scanSecretsInText(text: string, blacklist?: SecretRule[]): Secre
 /** 该 allowlist 条目是否匹配这一行（entry 形态由脚本决定，故用 unknown） */
 export function allowlistEntryMatches(entry: unknown, lineText: string, hitName: string): boolean
 
-/** 为某行找出适用的 allowlist 条目（无则返回 undefined） */
-export function allowlistEntryFor(entries: unknown[], lineText: string, hitName: string): unknown
+/** 为某行找出适用的 allowlist 条目（无则返回 null）；条目类型由调用方给出 */
+export function allowlistEntryFor<T>(entries: readonly T[], lineText: string, hitName: string): T | null

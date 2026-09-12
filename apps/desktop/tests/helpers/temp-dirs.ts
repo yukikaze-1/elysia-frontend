@@ -95,7 +95,11 @@ export const TEST_TEMP_PREFIXES: readonly string[] = [
   'cyrene-symlink-probe-',
   'cyrene-test-',
   'cyrene-tgt-',
-  'cyrene-tgt2-'
+  'cyrene-tgt2-',
+  // P2-10：verify-sensitive 端到端用例（真跑扫描脚本）的 fixture 根。
+  // 该 spec 自己会清理，但按本门禁的规矩新前缀必须登记——否则一旦它的清理漏了，
+  // 目录会在 $TEMP 里永久留下而无人发现（这正是本表存在的理由）。
+  'cyvs-'
 ]
 
 /** 并发运行保护：比这更新的目录视为「可能有人正在用」，不回收 */

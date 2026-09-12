@@ -112,9 +112,14 @@ describe('IPC 安全', () => {
     })
     expect(err).toContain('SCHEMA_VALIDATION_FAILED')
   })
-  it('凭据往返按 safeStorage 可用性分支断言', async () => {
+  it('凭据往返按 safeStorage 可用性分支断言（并记录实际走的分支，M-32）', async () => {
     const flow = await page.evaluate(async (): Promise<{
-      initial: string; setErr: string | null; s1?: string; s2?: string; s3?: string; afterClear?: string
+      initial: string
+      setErr: string | null
+      s1?: string
+      s2?: string
+      s3?: string
+      afterClear?: string
     }> => {
       const initial = await window.desktopApi.getCredentialStatus()
       if (initial === 'unavailable') {
@@ -124,11 +129,22 @@ describe('IPC 安全', () => {
         return { initial, setErr, afterClear }
       }
       await window.desktopApi.setEndpoint('http://127.0.0.1:8765')   // 新规则：token 需先绑定 endpoint，否则 setBackendToken 抛 CREDENTIAL_UNAVAILABLE
-      const s2 = await window.desktopApi.setBackendToken('sk-test-token')
-      const s3 = await window.desktopApi.getCredentialStatus()
-      const s4 = await window.desktopApi.clearBackendToken()
-      return { initial, setErr: null, s1: s2, s2: s3, s3: s4 }
+      const setResult = await window.desktopApi.setBackendToken('sk-test-token')
+      const statusAfterSet = await window.desktopApi.getCredentialStatus()
+      const statusAfterClear = await window.desktopApi.clearBackendToken()
+      return { initial, setErr: null, s1: setResult, s2: statusAfterSet, s3: statusAfterClear }
     })
+    // —— M-32：把「这次实际走了哪条分支」变成**可见事实**，而不是隐含在 if/else 里 ——
+    // 本仓集成装配直接注入 electron 真实 safeStorage（`src/main/index.ts:199`），只有单测注入 fake；
+    // 故这里的分支 = 本机的真实凭据后端：
+    //   'empty'/'available' → 真实 OS 加密确实被执行（Windows DPAPI / macOS Keychain / 有 keyring 的 Linux）；
+    //   'unavailable'       → 无可用 keyring（headless Linux / CI 的 xvfb），走 basic_text → 拒存降级分支，
+    //                         此时**OS 加密往返未被验证**，只验证了降级路径（降级路径本身被测是对的，但不等价）。
+    const branch = flow.initial === 'unavailable'
+      ? 'unavailable：safeStorage 不可用 → 仅验证降级（OS 加密往返未执行）'
+      : `${flow.initial}：safeStorage 可用 → 真实 OS 加密往返已执行`
+    // 分支归属必须显式可见（M-32；CI 日志里一眼可读）
+    console.log(`[ipc-security] 凭据分支 = ${branch}`)
     if (flow.initial === 'unavailable') {
       expect(flow.setErr).toContain('CREDENTIAL_UNAVAILABLE')
       expect(flow.afterClear).toBe('unavailable')
@@ -145,7 +161,12 @@ describe('IPC 安全', () => {
       await window.desktopApi.setEndpoint('https://attacker.example') // origin 变 → 自动清 token 绑定
       return { skipped: false, status: await window.desktopApi.getCredentialStatus() }
     })
-    if (res.skipped) return
+    if (res.skipped) {
+      // M-32：跳过也要可见——否则 CI 日志里这条用例"通过"，读者无法知道它其实没验证任何东西
+      // 跳过原因必须显式可见（M-32）
+      console.log('[ipc-security] endpoint 绑定清理解除用例跳过：safeStorage 不可用（无 keyring 环境）')
+      return
+    }
     expect(res.status).toBe('empty')   // 集成套件跑 Mock（launchApp 设 CYRENE_BACKEND=mock）；真正禁止外发 token 的 connect 守卫在 Real 路径，由 chat-service 单测覆盖
   })
   it('getRuntimeInfo 返回装配模式', async () => {
