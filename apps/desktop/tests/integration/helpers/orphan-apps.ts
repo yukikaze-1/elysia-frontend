@@ -15,7 +15,7 @@
 //  3. 只有「进程表可读」时才动手；平台不支持或查询失败时**什么都不做**（只报告），绝不猜测；
 //  4. 返回结构化结果，调用方负责输出——本模块不写 console，便于单测。
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readlinkSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 /** launchApp 的临时 userData 前缀（mkdtempSync(join(tmpdir(), 'cy-int-ud-'))） */
@@ -156,7 +156,18 @@ function readProcessTableLinux(): ScanResult {
       const commandLine = readFileSync(join('/proc', name, 'cmdline'), 'utf8').split('\0').filter(Boolean).join(' ')
       if (!commandLine) continue
       let executable = ''
-      try { executable = readFileSync(join('/proc', name, 'exe'), 'utf8') } catch { /* 权限不足：留空即不匹配 */ }
+      // 2026-09-12 修复（**实测：这一行曾让自建 Linux runner 必然 OOM，且只在"Linux 上跑着大体积可执行文件"时暴露**）：
+      // `/proc/<pid>/exe` 是**符号链接**，而 `readFileSync` 会顺着链接把**整个可执行文件**当 UTF-8 读进来。
+      // 实测数据（Ubuntu 自建 runner，2026-09-12）：该机跑着多个 Google Chrome，每个进程的 exe 指向
+      // 281,881,848 字节（269MB）的 /opt/google/chrome/chrome，全机各进程 exe 体量合计约 **8.7GB**；
+      // 读进来还要 `split('\0')` 展开成上千万片段，于是 vitest 主进程**在收集阶段**就
+      // `FATAL ERROR: Reached heap limit`（4GB 打满；把堆放到 8GB 也只是涨到 9GB 再崩，说明是无界增长）。
+      // 托管 runner 上只有 node/git/xvfb 这类小二进制，故此前从未暴露——**这个缺陷只对自建 runner
+      // 与"开着 Chrome/Electron 的开发者桌面"生效**，而这两者恰恰是本仓库集成套件的目标运行环境。
+      // 正确做法是读**链接目标路径**（readlink）而不是文件内容；大小写/分隔符归一等匹配细节仍由调用方
+      // `carriesTestAppSignature` 负责。已删除的可执行文件其 readlink 结果为 `<path> (deleted)`，
+      // 不匹配 electron 签名——与修复前的行为一致（原先同样匹配不到）。
+      try { executable = readlinkSync(join('/proc', name, 'exe')) } catch { /* 权限不足/进程已退出：留空即不匹配 */ }
       entries.push({ pid: Number(name), ppid: ppidOfLinux(name), executable, commandLine })
     } catch { /* 进程在枚举期间退出：跳过 */ }
   }

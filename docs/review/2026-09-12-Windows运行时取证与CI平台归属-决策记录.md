@@ -131,3 +131,77 @@
 - 位置判读：794 行是 B6 里**切模型之前**的第一个像素断言（默认 haru 画布）。`countNonTransparentPx` 的 `-1` 是「采样失败」、`0` 是「画布真空白」，报 `0` ⇒ 画布存在但没画出来。B6 与 test 2 / C2.x 不同，**不对「静态回退」分支做处理**，故该次启动若 WebGL 失败即必红。
 - **倾向 flake 而非回归**的四条依据：① 隔壁批次只改「模型装配到哪个目录」并要求显式 `--user-data default`，而 CI 里 **test 1（`list-models` 含 haru 且 `available: true`）通过** ⇒ 模型在 app 会读的位置；② 同批其它同类像素断言（B3 / F-1 / B7）在同一 run 中通过 ⇒ 渲染在别的实例里正常；③ 同一用例在前一次 run（`34680938308`，07:31）与开发者本机（其提交信息记「集成 27 文件 153 通过 + 2 skipped」）均通过；④ 仓库既有记录把这类现象定性为 xvfb/SwiftShader 环境性 flake（V-08/V-12：「先复现并采集证据，不能直接归因业务代码」）。
 - **判别动作**：`gh run rerun 34684926682 --failed`（与 7.1 的代理验证共用同一次重跑）。重跑绿 ⇒ 记为环境性 flake；再红于同一点 ⇒ 转确定性缺陷，须按「B6 缺回退分支」单独处理。
+
+## 8. 自建 Linux runner（`yomu-X99`）首次可用：一个仓库级 OOM 缺陷的定位与修复
+
+### 8.1 现象：自建 runner 上必然 OOM，托管 runner 完全正常
+
+首次 dispatch `linux-runtime`（run `34685789785`，job 仅 1m39s）在 `Integration tests (xvfb)` 步骤以 **exit 134（SIGABRT）** 结束：
+
+```
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+[459875] 19355 ms: Mark-Compact (reduce) 4237.3 (4271.9) -> 4237.3 (4239.4) MB   ← 释放不掉 ⇒ 存活对象打满堆
+```
+
+`Mark-Compact` 一个字节都没释放 + 栈顶是 `v8::String::NewFromUtf8` ⇒ 是**存活的大字符串**，不是垃圾堆积。且崩溃发生在**任何用例跑完之前**（收集阶段）。
+
+### 8.2 定位过程（每步都在服务器上实测，非推断）
+
+| 步骤 | 做法 | 结果 |
+|---|---|---|
+| 排除 spec 相关 | 分别只跑 `markdown-xss`（2 用例）与 `electron-live2d` | **两者都 OOM** ⇒ 与 spec 无关 |
+| 排除并发度 | `--maxWorkers=1`、`taskset -c 0-3`（模拟 4 核托管机） | **都 OOM** ⇒ 与 CPU 数/并发度无关 |
+| 排除「需要更大堆」 | `NODE_OPTIONS=--max-old-space-size=8192` | 堆涨到 **9058MB 仍 OOM** ⇒ **无界增长**，不是容量不足 |
+| 二分配置 | 最小 vitest 配置（无 alias/无 globalSetup/单文件） | 正常（158MB） |
+| 二分配置 | 仓库 alias+超时，**去掉 `globalSetup`** | 正常（158MB，用例真跑了） |
+| 二分配置 | 加回 `globalSetup`（仓库原文件） | **OOM**（4651MB） |
+| 换空 `globalSetup` | 指向一个 `console.log` 的空文件 | 正常 ⇒ 不是 vitest 的 globalSetup 机制 |
+| 单独跑嫌疑函数 | `readProcessTable()` + `scanOrphanTestApps()`（脱离 vitest） | **同样 OOM** ⇒ 锁定在 `helpers/orphan-apps.ts` |
+| 读源码 | `orphan-apps.ts:159`：`readFileSync(join('/proc', name, 'exe'), 'utf8')` | **根因** |
+
+### 8.3 根因：`/proc/<pid>/exe` 是符号链接，`readFileSync` 读的是**被链接文件的内容**
+
+`/proc/<pid>/exe` 指向可执行文件本体；`readFileSync` 会跟着链接把**整个二进制**当 UTF-8 读进来（该行紧接着还有 `split('\0')` 展开）。本机实测规模：
+
+```
+/opt/google/chrome/chrome   281,881,848 字节（269MB） × 每个 Chrome 进程
+全机各进程 exe 体量合计     8.7 GB
+```
+
+服务器上跑着多个 Google Chrome（本项目之外的用途），于是「读一个 exe = 读 269MB 二进制」× 多个进程，字符串瞬间吃满 4GB，再 `split('\0')` 展开成上千万片段 → 无界增长。
+
+**为什么此前从未暴露**：它只在「Linux + 存在大体积可执行文件进程」时发作。托管 runner 上只有 `node`/`git`/`xvfb` 这类小二进制；Windows 宿主走的是 CIM/PowerShell 查询路径（`Win32_Process`），根本不读 `/proc`。**换句话说：这个缺陷恰好只在自建 runner 与"开着 Chrome/Electron 的 Linux 开发者桌面"上生效** —— 而这两者正是本仓库集成套件的目标运行环境。
+
+### 8.4 修复与判别力验证
+
+- 修法：`readFileSync(...)` → **`readlinkSync(...)`**（读链接目标路径，即本就想要的"可执行文件路径"）；已删除的可执行文件其 readlink 结果为 `<path> (deleted)`，不匹配 electron 签名——与修复前行为一致。`cmdline`/`stat` 两行保持不变（它们是普通 proc 文件，不是符号链接）。
+- 回归用例：`tests/unit/orphan-apps.spec.ts` 新增（Linux-only，Windows 上 skip）——断言当前进程的 `executable` 与 `readlinkSync('/proc/<pid>/exe')` **逐字一致**、长度 < PATH_MAX、不含 NUL。
+- **判别力实测**（在跑着 Chrome 的那台机器上）：修复后 21 tests 全绿；把该行**回退**成 `readFileSync(..., 'utf8')` 后，该用例**直接以 `FATAL ERROR: Reached heap limit` 收场**（连断言都执行不到）⇒ 缺陷不会静默通过。
+- 修复后同机实测：进程表扫描 `executable` 字段最长 **116 字符**（路径）、峰值 **73MB**、exit 0；全量集成 **27 files 全过**。
+
+### 8.5 自建 Linux runner 的基线（修复后实测，2026-09-12）
+
+同一套件三处对照（测试耗时口径）：
+
+| spec | 托管 ubuntu-latest（4 vCPU） | **`yomu-X99`（E5-2690v3，24 线程）** | 本机 i5-13600KF（Windows） |
+|---|---|---|---|
+| `electron-live2d`（28） | 278.8s | **182.3s** | 124.7s |
+| `electron-generation-stall`（1） | 52.1s | 52.7s | 51.4s |
+| `electron-voice`（16） | 43.3s | **51.8s** | 28.5s |
+| `electron-tools`（13） | 31.2s | **38.3s** | 21.8s |
+| `perf-gate`（5） | 18.5s | **26.2s** | 18.2s |
+| `settings-model-services`（11） | 17.5s | **21.7s** | 12.5s |
+| **全量 Duration** | 558.9s | **509.7s** | 350.7s |
+
+**结论（决定了下一步该做什么）**：单实例在这台服务器上只比托管快 **9%**——Live2D 那类吃多线程软渲染的文件更快（182 vs 279），但其余文件因 **单核性能弱于现代托管机**而更慢（voice 51.8 vs 43.3、tools 38.3 vs 31.2）。**单实例搬家买不到墙钟**；真正的收益来自**同一台 24 线程机器上并发跑 2–3 个分片**（本机峰值 RSS 仅 823MB、残留 electron 进程 0，资源余量充足）。分片本身尚未实施（用户明确暂缓）。
+
+### 8.6 运维现状（**未持久化，需人工补一步**）
+
+- 该 runner 目前是**用 `nohup ./run.sh` 拉起的前台实例**（pid 440458），**没有 systemd 单元**——因为服务器上 **sudo 需要密码**，我无法执行 `svc.sh install`。重启机器后会掉。
+- 要转成常驻服务（需用户本人 `sudo`）：
+  ```bash
+  # 先停掉我起的临时实例，避免同一注册上出现两个 listener
+  pkill -f 'actions-runner-fe/bin/Runner.Listener'
+  cd ~/actions-runner-fe && sudo ./svc.sh install yomu && sudo ./svc.sh start
+  ```
+- 与 Windows 侧相反的运维事实：**这台服务器直连 github.com 返回 200**（无需代理），`~/.cache/electron`（120M）、`~/.cache/ms-playwright`（967M，含 `chromium-1234`）、pnpm store（4.1G）均已就位，16 个 Electron/Chromium 系统库齐全，`xvfb-run` 已装 —— 故 `linux-runtime.yml` 里不带 `--with-deps` 的写法成立。

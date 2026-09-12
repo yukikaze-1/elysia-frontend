@@ -10,10 +10,12 @@
 // 即**签名分处两个进程**：调试开关只在 main，临时 userData 只在子进程。早期只看单进程的判据
 // 因此只匹配到子进程（杀它会触发 Chromium 崩溃恢复重建），必须沿 ppid 回到 main 整体回收。
 import { describe, expect, it } from 'vitest'
+import { readlinkSync } from 'node:fs'
 import {
   ORPHAN_USER_DATA_PREFIX,
   carriesTestAppSignature,
   descendantsOf,
+  readProcessTable,
   reclaimOrphanTestApps,
   resolveMainPid,
   scanOrphanTestApps,
@@ -199,5 +201,32 @@ describe('遗留测试应用回收', () => {
     expect(attempted).toEqual([3000])
     expect(result.orphans).toHaveLength(1)
     expect(result.orphans[0].pids).toEqual([3000])
+  })
+})
+
+// —— 真机进程表读取（2026-09-12 OOM 事故回归）——
+//
+// 事故链（自建 Ubuntu runner 上稳定复现；托管 runner 与 Windows 宿主均不复现）：
+//   `readProcessTableLinux()` 原先用 `readFileSync('/proc/<pid>/exe', 'utf8')` 取可执行文件路径，
+//   而 `/proc/<pid>/exe` 是**符号链接**——读文件会顺着链接把**整个可执行文件**当 UTF-8 读进来。
+//   该机跑着多个 Google Chrome（每个 exe = 281,881,848 字节，269MB），全机各进程 exe 体量合计约 8.7GB；
+//   读进来还要 `split('\0')` 展开成上千万片段 ⇒ vitest 主进程**在收集阶段**就
+//   `FATAL ERROR: Reached heap limit`（4GB 打满；把堆放宽到 8GB 也只是涨到 9GB 再崩，说明是无界增长）。
+//   托管 runner 上只有 node/git/xvfb 这类小二进制，故该缺陷长期未被发现——它**只对「Linux 上跑着
+//   大体积可执行文件」的机器生效**，而那恰好是自建 runner 与开发者桌面的常见形态。
+//
+// 判据两条：① 与 `readlinkSync` 逐字一致（等价性锚点）；② 长度 < PATH_MAX 且不含 NUL
+//（二进制内容必然含大量 NUL）。**判别力已实测**：在跑着 Chrome 的那台 Linux 上跑本用例——
+// 修复后 21 tests 全绿；把该行回退成 `readFileSync(..., 'utf8')` 后，本用例**直接以
+// `FATAL ERROR: Reached heap limit` 收场**（连断言都执行不到），即缺陷不会静默通过。
+describe('进程表读取（Linux /proc 语义）', () => {
+  it.skipIf(process.platform !== 'linux')('executable 取的是链接目标路径，而不是被链接文件的内容（2026-09-12 OOM 回归）', () => {
+    const scanned = readProcessTable()
+    expect(scanned.readable).toBe(true)
+    const self = scanned.entries.find((candidate) => candidate.pid === process.pid)
+    expect(self, '进程表里应包含测试进程自身').toBeTruthy()
+    expect(self!.executable).toBe(readlinkSync(`/proc/${process.pid}/exe`))
+    expect(self!.executable.length).toBeLessThan(4096)
+    expect(self!.executable).not.toContain('\0')
   })
 })
