@@ -135,5 +135,4 @@ button:disabled { opacity: .5; cursor: default; }
 .cy-load-more-error { color: var(--cy-danger); font-size: var(--cy-font-xs); }
 .cy-load-more-error button { margin-left: var(--cy-space-2); color: var(--cy-danger); }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 720px) { header { flex-direction: column; } .cy-revision-toolbar { width: 100%; justify-content: flex-start; } .cy-revision-list li { align-items: flex-start; flex-direction: column; } }
 </style>

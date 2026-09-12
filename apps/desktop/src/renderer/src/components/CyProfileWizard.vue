@@ -274,9 +274,4 @@ function onKeydown(e: KeyboardEvent): void {
 .cy-profile-primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); background: var(--cy-accent-tint); }
 .cy-profile-activate { border-color: transparent; color: var(--cy-on-brand); background: var(--cy-brand-gradient); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 680px) {
-  .cy-wizard { width: min(100%, 480px); }
-  .cy-wizard-body { grid-template-columns: 1fr; }
-  .cy-wizard-type, .cy-wizard-capabilities { grid-column: auto; }
-}
 </style>

@@ -376,10 +376,4 @@ button.primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-s
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:disabled { opacity: .5; cursor: default; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 720px) {
-  .cy-editor-heading { flex-direction: column; }
-  .cy-editor-status { justify-items: start; text-align: left; }
-  .cy-editor-actions { align-items: stretch; flex-direction: column; }
-  .cy-editor-actions > div { justify-content: flex-end; }
-}
 </style>

@@ -261,9 +261,4 @@ onBeforeUnmount(() => { triggerElement = null })
   box-shadow: var(--cy-shadow);
 }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 680px) {
-  .cy-settings { width: 100%; height: min(760px, 92vh); }
-  .cy-settings-nav { flex-basis: 176px; }
-  .cy-settings-body { padding: var(--cy-space-6-5); }
-}
 </style>

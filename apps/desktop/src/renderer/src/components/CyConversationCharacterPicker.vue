@@ -334,5 +334,4 @@ watch(() => props.open, (open) => {
 .cy-character-picker-footer .primary { border-color: var(--cy-accent-strong); background: var(--cy-accent); color: var(--cy-accent-text); }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 button:disabled { opacity: .55; cursor: not-allowed; }
-@media (max-width: 560px) { .cy-character-picker-backdrop { padding: var(--cy-space-4); } .cy-character-picker-header, .cy-picker-search, .cy-picker-list, .cy-character-picker-footer { padding-left: var(--cy-space-6); padding-right: var(--cy-space-6); } }
 </style>

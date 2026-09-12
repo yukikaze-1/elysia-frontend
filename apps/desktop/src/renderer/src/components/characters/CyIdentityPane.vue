@@ -245,9 +245,4 @@ button:disabled { opacity: 0.5; cursor: default; }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); transform: translateY(-1px); }
 button.primary:hover:not(:disabled) { filter: brightness(1.04); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 720px) {
-  .cy-field-row { grid-template-columns: 1fr; }
-  .cy-form-actions { align-items: stretch; flex-direction: column; }
-  .cy-form-actions > div { justify-content: flex-end; }
-}
 </style>

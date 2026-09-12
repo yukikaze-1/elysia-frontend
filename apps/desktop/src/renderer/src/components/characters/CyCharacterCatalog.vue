@@ -202,10 +202,4 @@ button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:disabled { opacity: 0.5; cursor: default; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-@media (max-width: 760px) {
-  .cy-catalog-heading { flex-direction: column; }
-  .cy-catalog-filters { grid-template-columns: 1fr 1fr; }
-  .cy-search-field { grid-column: 1 / -1; }
-  .cy-character-list { grid-template-columns: 1fr; }
-}
 </style>

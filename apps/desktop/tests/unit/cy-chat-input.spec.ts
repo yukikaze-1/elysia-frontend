@@ -6,6 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import type { BackendEvent } from '@shared/contracts'
 import CyChatInput from '../../src/renderer/src/components/CyChatInput.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -39,20 +40,30 @@ const mockApi = {
   diagnosticsState: vi.fn(), diagnosticsDevModeSet: vi.fn(), diagnosticsOpenLogDir: vi.fn(), diagnosticsClearLogs: vi.fn(), diagnosticsExport: vi.fn(), onDiagnosticsDevEvent: vi.fn(() => () => {}), getLastCrash: vi.fn(),
 }
 
-function mountInput(): ReturnType<typeof mount> {
-  return mount(CyChatInput, {
-    global: {
-      stubs: {
-        CyAttachmentQueue: true,
-        CyDropOverlay: true,
-        CyEmojiPicker: true,
-        CyVoicePending: true,
-        CyRealtimeBar: true,
-        CyDictationHint: true,
-        CyVoiceConsentDialog: true
-      }
+/** 子组件全 stub（聚焦 CyChatInput 自身逻辑）；M-22 起，键盘→焦点相关用例需 attachTo（见下） */
+const MOUNT_OPTIONS = {
+  global: {
+    stubs: {
+      CyAttachmentQueue: true,
+      CyDropOverlay: true,
+      CyEmojiPicker: true,
+      CyVoicePending: true,
+      CyRealtimeBar: true,
+      CyDictationHint: true,
+      CyVoiceConsentDialog: true
     }
-  })
+  }
+}
+
+function mountInput(): ReturnType<typeof mount> {
+  return mount(CyChatInput, MOUNT_OPTIONS)
+}
+
+/** M-22：键盘/焦点用例需要组件落在 document 内（脱离文档时 happy-dom 不把 focus 反映到
+ *  document.activeElement，`blur` 也不会派发）——既有用例一律用 mountInput（不 attachTo），
+ *  保持原挂载形状不动。 */
+function mountInputAttached(): ReturnType<typeof mount> {
+  return mount(CyChatInput, { ...MOUNT_OPTIONS, attachTo: document.body })
 }
 
 /** 组件按钮禁用态：DOMWrapper<Element> 无 disabled，按 HTMLButtonElement 取 */
@@ -239,6 +250,167 @@ describe('CyChatInput 麦克风拒绝 composer banner（final-review round2）',
   it('micError 未置位 → 无 banner', () => {
     const wrapper = mountInput()
     expect(wrapper.find('.cy-mic-error-banner').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+// M-22（2026-09-11 全量评审）：按住说话按钮此前只绑 pointer 链，原生 <button> 看似可操作，
+// 但键盘唯一能产生的 click 无 handler ⇒ WCAG 2.1.1 失败且无替代路径。以下钉住新增的键盘等价语义，
+// 并且**两个方向都断言**：键盘能起/停采集（正向），以及"不重复起采集 / 不干扰指针路径"（负向）。
+describe('CyChatInput 按住说话键盘可操作（M-22）', () => {
+  const VOICE_BTN = '[aria-label="输入法转写（按住说话）"]'
+
+  /** 以真实 store 动作做替身：start 同步置 dictating、stop 同步回 idle——这样能观察到"采集是否被重复开启"
+   *  （第二次 start 会再次落 mode/调用计数），而不是只看到一个 mock 调用次数。 */
+  function stubDictation(): { start: ReturnType<typeof vi.spyOn>; stop: ReturnType<typeof vi.spyOn> } {
+    const voice = useVoiceStore()
+    const start = vi.spyOn(voice, 'startDictation').mockImplementation(() => { voice.mode = 'dictating'; return Promise.resolve() })
+    const stop = vi.spyOn(voice, 'stopDictation').mockImplementation(() => { voice.mode = 'idle'; return Promise.resolve() })
+    return { start, stop }
+  }
+
+  it('常态（idle + 语音开启 + 已连接）：按住说话按钮**可用**且 aria-pressed=false（正向方向）', () => {
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    expect(btn.exists(), '按钮必须存在').toBe(true)
+    expect(isDisabled(wrapper, VOICE_BTN), '常态下按住说话按钮必须可用').toBe(false)
+    expect(btn.attributes('aria-pressed')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('Enter keydown 起采集 / keyup 提交；采集期间 aria-pressed=true（键盘用户真的有入口）', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: 'Enter' })
+    expect(start, 'keydown 必须真的开始采集').toHaveBeenCalledTimes(1)
+    expect(useVoiceStore().mode, '按下期间处于转写态（UI 可解释）').toBe('dictating')
+    expect(btn.attributes('aria-pressed'), '按住中 aria-pressed=true').toBe('true')
+    await btn.trigger('keyup', { key: 'Enter' })
+    expect(stop, 'keyup 必须真的提交').toHaveBeenCalledTimes(1)
+    await nextTick()
+    expect(btn.attributes('aria-pressed')).toBe('false')
+    wrapper.unmount()
+  })
+
+  it('Space 与 Enter 等价（keydown 起 / keyup 停）', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: ' ' })
+    expect(start).toHaveBeenCalledTimes(1)
+    await btn.trigger('keyup', { key: ' ' })
+    expect(stop).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('按键自动重复（keydown repeat）不重入采集', async () => {
+    const { start } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: 'Enter' })
+    await btn.trigger('keydown', { key: 'Enter', repeat: true })
+    await btn.trigger('keydown', { key: 'Enter', repeat: true })
+    expect(start, 'auto-repeat 的重复 keydown 不得再次开始采集').toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keyboardHolding 门被清（按住中失焦）后，仍处于物理按住状态的 repeat keydown 不得重开采集', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: 'Enter' })          // 物理按下
+    await btn.trigger('blur')                                // 失焦 → 提交并清 keyboardHolding（keyup 永不再到达）
+    expect(stop).toHaveBeenCalledTimes(1)
+    await btn.trigger('keydown', { key: 'Enter', repeat: true })   // 手指仍按着 → 系统继续发 repeat keydown
+    expect(start, 'e.repeat 门必须独立成立：此时 keyboardHolding 已被清，只剩它能挡重入').toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('keyup 之后浏览器补发的合成 click 不会二次进入（本按钮无 click handler，采集不被重新开启）', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: 'Enter' })
+    await btn.trigger('keyup', { key: 'Enter' })
+    await btn.trigger('click')   // Enter/Space 的默认激活产物（模板 .prevent 已抑制；此处置为不该有反应）
+    expect(start, 'click 不得重新开始采集').toHaveBeenCalledTimes(1)
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(useVoiceStore().mode, 'keyup 之后必须停在 idle，不得被 click 拉回转写态').toBe('idle')
+    wrapper.unmount()
+  })
+
+  it('指针路径一字未改：pointerdown 起采集 + setPointerCapture，pointerup 提交', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    const el = btn.element as HTMLButtonElement
+    const capture = vi.fn()
+    el.setPointerCapture = capture
+    await btn.trigger('pointerdown', { pointerId: 7, clientY: 100 })
+    expect(start, 'pointerdown 仍必须开始采集').toHaveBeenCalledTimes(1)
+    expect(capture, 'pointerdown 仍必须捕获指针（上滑取消语义依赖它）').toHaveBeenCalledWith(7)
+    await btn.trigger('pointerup')
+    expect(stop, 'pointerup 仍必须提交').toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+
+  it('上滑取消（pointermove 越过 60px 阈值 → 置 cancel → pointerup 走 cancelDictation）不变', async () => {
+    const { stop } = stubDictation()
+    const voice = useVoiceStore()
+    const cancel = vi.spyOn(voice, 'cancelDictation').mockImplementation(() => Promise.resolve())
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('pointerdown', { pointerId: 1, clientY: 200 })
+    await btn.trigger('pointermove', { pointerId: 1, clientY: 100 })   // 上滑 100px > 60
+    await btn.trigger('pointerup')
+    expect(cancel, '上滑后松手必须取消而非提交').toHaveBeenCalledTimes(1)
+    expect(stop).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('禁用门与指针路径一致：语音总开关关 → 键盘 keydown 不开始采集（DOM 禁用 + 处理器自身的 dictationDisabled 门）', async () => {
+    const { start } = stubDictation()
+    useSettingsStore().voice.enabled = false
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    expect(isDisabled(wrapper, VOICE_BTN), 'DOM 层：语音关闭时按钮必须禁用').toBe(true)
+    await btn.trigger('keydown', { key: 'Enter' })
+    expect(start, '禁用态下键盘不得开始采集').not.toHaveBeenCalled()
+    // 去掉 DOM 层的 disabled 再按一次：此时只剩处理器内的 dictationDisabled 门（两层门都要真的成立，
+    // 否则"看起来禁用了"会掩盖"逻辑上没拦"）
+    ;(btn.element as HTMLButtonElement).removeAttribute('disabled')
+    await btn.trigger('keydown', { key: 'Enter' })
+    expect(start, '处理器自身也必须拦（不能只靠 disabled 属性）').not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('键盘按住期间到达的指针事件不得二次起采集（两条路径不同时开始），但 pointerup 仍是「松手」信号', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: 'Enter' })
+    expect(start, '键盘 keydown 起采集').toHaveBeenCalledTimes(1)
+    await btn.trigger('pointerdown', { pointerId: 3, clientY: 50 })
+    expect(start, '键盘已按住时 pointerdown 不得再次开始采集（不重复进入采集）').toHaveBeenCalledTimes(1)
+    // 语义说明：dictationHold 是"按住中"的唯一真值（键盘按住也置位），pointerup 因此同样收尾——
+    // 这是刻意的：松手/松键都是用户"说完了"的表达，收尾重复调用是幂等的，重复**开始**才是问题。
+    await btn.trigger('pointerup')
+    expect(stop, 'pointerup 作为松手信号收尾一次').toHaveBeenCalledTimes(1)
+    expect(useVoiceStore().mode).toBe('idle')
+    wrapper.unmount()
+  })
+
+  it('键盘按住期间失焦（Tab 走开，keyup 不再到达）→ 提交收尾，不留无 UI 解释的持续采集', async () => {
+    const { start, stop } = stubDictation()
+    const wrapper = mountInputAttached()
+    const btn = wrapper.find(VOICE_BTN)
+    await btn.trigger('keydown', { key: 'Enter' })
+    expect(start).toHaveBeenCalledTimes(1)
+    await btn.trigger('blur')
+    expect(stop, '失焦必须收尾（否则采集会一直留在 dictating）').toHaveBeenCalledTimes(1)
+    await nextTick()
+    expect(btn.attributes('aria-pressed'), '收尾后必须回落到 false（不得卡在按住态）').toBe('false')
     wrapper.unmount()
   })
 })

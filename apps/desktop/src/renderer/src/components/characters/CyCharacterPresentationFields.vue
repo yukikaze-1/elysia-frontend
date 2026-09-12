@@ -110,5 +110,4 @@ input { width: 100%; box-sizing: border-box; padding: var(--cy-space-4) var(--cy
 .cy-check-field input { width: auto; }
 .cy-help { margin: var(--cy-space-4) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
 input:focus-visible, summary:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 720px) { .cy-field-row { grid-template-columns: 1fr; } }
 </style>

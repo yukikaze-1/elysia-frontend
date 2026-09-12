@@ -71,11 +71,59 @@ function onVoicePointerDown(e: PointerEvent): void {
   onDictationPointerDown(e)
 }
 const dictationHold = ref<{ startY: number; cancel: boolean } | null>(null)
+/** M-22：键盘"按住"门——与 dictationHold 分离存放。原因：dictationHold 承载 pointer 专属数据
+ *  （startY 上滑基准 + cancel 标记）并驱动 `.cancel` 视觉；键盘没有坐标，复用会让 pointermove
+ *  的上滑语义对键盘态产生无意义耦合判断。两者都以"按住中"为真值，故共用同一套 start/stop 出口。 */
+const keyboardHolding = ref(false)
+/** 记录本次按住是如何开始的：`blur` 兜底必须能分辨"键盘按住中被拿走焦点"（keyup 永远收不到 → 可能
+ *  留下无 UI 解释的持续采集）与"上滑取消后失焦"（已进 cancel 态，不该再补一次 stop） */
+let holdStartedByKeyboard = false
+/** 订阅式 start（M-22 要求「click 晚到不得二次进入」）：**同步**置 hold 标记，因此同一次按键
+ *  auto-repeat 产生的后续 keydown、以及 keydown 之后浏览器补发的 `click`，都到不了 store。
+ *  `startDictation` 自身也有 mode 门（voice.store guardStart），但它的 id 是 `await` 之后才记入的，
+ *  「按下→立刻松开→再按」在 await 窗口内 mode 仍是 idle——单靠 store 门挡不住第二次 start。 */
+function beginDictationHold(): void {
+  dictationHold.value = { startY: Number.POSITIVE_INFINITY, cancel: false }
+  void voiceStore.startDictation()
+}
 function onDictationPointerDown(e: PointerEvent): void {
   if (voiceActive.value && voiceStore.mode !== 'dictating') return
+  if (dictationHold.value) return   // M-22：键盘已按住时忽略 pointer（两条路径不得同时起一次采集）
+  holdStartedByKeyboard = false
   dictationHold.value = { startY: e.clientY, cancel: false }
   ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
   void voiceStore.startDictation()
+}
+/** M-22：键盘路径（Enter / Space）——「按住说话」的等价键盘语义：keydown 起采集、keyup 提交。
+ *  - `e.repeat` 门 + `keyboardHolding` 门：系统按键自动重复的多次 keydown 不重入；
+ *  - `@keydown.enter.prevent` / `@keydown.space.prevent`（模板）阻止 Enter/Space 的默认行为，
+ *    从而**不产生合成 click**——所以本按钮不需要 `@click`，也就不存在"keyup 已 stop、click 又 start"；
+ *  - 与 pointer 路径同一禁用门（dictationDisabled）：语音关闭 / 其它语音模式进行中不放行。 */
+function onDictationKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  if (e.repeat || keyboardHolding.value) return
+  if (dictationDisabled.value) return
+  holdStartedByKeyboard = true
+  keyboardHolding.value = true
+  beginDictationHold()
+}
+function onDictationKeyup(e: KeyboardEvent): void {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  if (!keyboardHolding.value) return
+  keyboardHolding.value = false
+  holdStartedByKeyboard = false
+  onDictationPointerUp()
+}
+/** 兜底：按住期间按钮失焦（Tab 走开 / 宿主重渲染）→ keyup 不会再到达本元素，采集会一直留在
+ *  'dictating' 且没有任何 UI 能解释。仅键盘按住路径补一次提交；上滑取消态不重复收尾。
+ *  采集未能启动（start 被 guard 拒绝）时 mode 不为 'dictating'，同样不误调 stop。 */
+function onDictationBlur(): void {
+  if (!keyboardHolding.value) return
+  keyboardHolding.value = false
+  holdStartedByKeyboard = false
+  if (voiceStore.mode !== 'dictating') { dictationHold.value = null; return }
+  onDictationPointerUp()
 }
 function onDictationPointerMove(e: PointerEvent): void {
   if (!dictationHold.value) return
@@ -84,6 +132,9 @@ function onDictationPointerMove(e: PointerEvent): void {
 function onDictationPointerUp(): void {
   const hold = dictationHold.value
   dictationHold.value = null
+  // M-22：键盘路径也经此收尾（keyup/blur）——收尾即按住结束，键盘门一并复位，避免指针路径
+  // 结束后 keyboardHolding 残留导致下一次 keyup 被误判为"有按住"而多发一次 stop。
+  if (holdStartedByKeyboard) { holdStartedByKeyboard = false; keyboardHolding.value = false }
   if (!hold) return
   if (hold.cancel) void voiceStore.cancelDictation()
   else void voiceStore.stopDictation()
@@ -412,17 +463,26 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
           </button>
           <span class="cy-composer-footer-spacer" />
           <span class="cy-composer-hint">Enter 发送 · Shift+Enter 换行</span>
-          <!-- 🎙️ 转录主键(hold)：按住说→进草稿。上滑取消语义不变 -->
+          <!-- 🎙️ 转录主键(hold)：按住说→进草稿。上滑取消语义不变。
+               M-22：键盘等价路径——Enter/Space keydown 起采集、keyup 提交（`aria-pressed` 随之暴露"按住中"）。
+               `.prevent` 是必要性而非风格：它抑制 Enter/Space 的默认激活 → 不产生合成 click，
+               故 keyup 之后不存在"click 又把采集开回来"的一次重复进入。 -->
           <button
             class="cy-voice-btn"
             :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel }"
             :disabled="dictationDisabled"
+            :aria-pressed="voiceStore.mode === 'dictating'"
             :title="'转写（按住说话）'"
             aria-label="输入法转写（按住说话）"
             @pointerdown="onVoicePointerDown"
             @pointermove="onDictationPointerMove"
             @pointerup="onDictationPointerUp"
             @pointercancel="onDictationPointerCancel"
+            @keydown.enter.prevent="onDictationKeydown"
+            @keydown.space.prevent="onDictationKeydown"
+            @keyup.enter="onDictationKeyup"
+            @keyup.space="onDictationKeyup"
+            @blur="onDictationBlur"
           >
             <!-- 语音转写图标：麦克风 + 声波 + 「文」（语音转文字惯用构图；aria-label/title 不变） -->
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2.75" width="4.5" height="7.5" rx="2.25" /><path d="M2.5 8.5a4.25 4.25 0 0 0 7.5 0" /><path d="M6.25 13.5v2" /><path d="M14.75 5a5 5 0 0 1 0 6.5" /><path d="M17.5 3.25a8 8 0 0 1 0 10" /><text x="16.5" y="22" font-size="10.5" fill="currentColor" stroke="none" text-anchor="middle">文</text></svg>

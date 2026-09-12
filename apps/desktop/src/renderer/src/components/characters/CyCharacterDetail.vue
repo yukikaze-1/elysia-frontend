@@ -209,9 +209,4 @@ button { padding: var(--cy-space-3) var(--cy-space-5-5); border: 1px solid var(-
 button:disabled { opacity: 0.5; cursor: default; }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 2px; }
-@media (max-width: 720px) {
-  .cy-detail-header { flex-wrap: wrap; }
-  .cy-detail-actions { width: 100%; justify-content: flex-start; }
-  dl > div { grid-template-columns: 1fr; gap: var(--cy-space-1-5); }
-}
 </style>
