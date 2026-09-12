@@ -359,7 +359,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 1. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
-4. 全量评审建议的 P0 批次**已全部完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；**P0-7 亦已解除**（2026-09-12：使用范围限定为个人自用 ⇒ `EXT-01` 的约束面没有实例，见 §4 与对应决策记录）。Windows 打包进 CI 属 P2-4，仍待做（见 §5）。
+4. 全量评审建议的 P0 批次**已全部完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；**P0-7 的 `EXT-01` 半边已解除**（2026-09-12：使用范围限定为个人自用 ⇒ 该约束面没有实例，见 §4 与对应决策记录）。Windows 打包进 CI（P2-4）**已完成**：`ci.yml` 的 windows job 跑 `electron-builder --dir` 与静态 `verify:artifact`（L388／L392 实测）。
+   - **P0-7 的另一半未做，且未被任何记录一并解除**：评审 P0-7 行含两项——`EXT-01` **与** `asar: false` 的处置（改 `asar: true`，或为 `resources/app/**` 补 SHA-256 清单）+ `verify-artifact.cjs` 校验。实测 `electron-builder.yml:9` 仍为 `asar: false`，`verify-artifact.cjs` 内无任何 SHA-256 清单校验。解除记录（本文件 §4 与 2026-09-12 决策记录）只写了「原本只依赖 EXT-01」，与评审该行的定义不符。**待用户一句话定案**：随个人使用范围一并解除，还是保留为待办。在此之前不计入「已全部完成」。
 4.1 **建议的门禁判别力三项已完成**（`b51ba49`，报告 P1-2／P2-5／P1-4，见 §1 与 §3.1）。剩余 **H-05～H-10 六条 High 一条未动**，均属 P1：H-05 契约镜像锚点（P1-3）、H-06／H-07 角色域双缓存（P1-10，高风险、需真机复验）、H-08 长会话性能（P1-9）、H-09 写文件大小校验前移＋diff 出主线程（P1-8）、H-10 流式 watchdog／切会话取消（P1-7）、H-11a 写序列化＋唯一临时名（P1-5）。另 P1-1（`registry` 预算默认值）、P1-11（`noImplicitAny`／type-aware lint）、P1-12（renderer 报错进诊断包）亦未动。
 5. **剩余批次进度（2026-09-11 第二轮更新）**：**评审所列各项均已落地** —— H-10／H-09／H-11a／H-05／H-07(mock 侧)／H-06+H-07(判据收敛)／H-08(两个安全半边)／H-02(重落地)／P2-6／P1-1(声明门禁)／P1-11(noImplicitAny + 三条 type-aware)／P1-12 全部完成并各自变异验证，CI 5/5 全绿（`1ee4f4b`）。
 6. **三处待办项的最终裁决（第 3 轮实测，见 §3.1）**：① H-06/H-07 的 **IPC 级**修订号感知读 —— 核实后判定为**架构迁移而非缺陷修复**（Main 状态缓存已在角色变更时失效，陈旧路径不成立；渲染层栅栏已收敛为唯一判据），留待真机时段按"受信侧加固"处理。
@@ -378,7 +379,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 5. **H-01 的取舍已按推荐定案**：采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒——理由是这两个目录的同用户临时文件同样可能含密钥，而附件链是 Renderer 唯一能用字符串指认本地文件的地方；代价明确且**改一处即可放开**。H-12 的两处取舍亦已定案：`uncaughtException` 接管 fail-safe（弹窗 + 退出），`unhandledRejection` 只留痕不终止。
 6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。
 7. H-11b 的降级故障只到「Main 拒绝写入 + 日志/诊断计数 + `getLastError()`」；**renderer 侧仍不会向用户显示持久化故障**（`draft.store` 的持久化失败是 fail-open 吞掉的），属 M-19 一类。
-8. M-20 其余 **6 处** `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）**未动**——属视觉设计取舍，待用户决定；本批只收口了安全授权按钮。
+8. ~~M-20 其余 6 处 `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）未动、待用户决定~~ **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`，见 §3.1）：这 6 处改用配对文本 token `--cy-accent-text`（`tokens.css:33`，明暗两套；评审建议的 `--cy-accent-strong` 在浅色下仍 <4.5:1，故未采用）。本轮复测：`color: var(--cy-accent)` 在 `src/renderer/src` 下 **0 命中**，配对 token 有 29 处使用。此项因此不再需要用户决定。
 9. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
 10. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
 
