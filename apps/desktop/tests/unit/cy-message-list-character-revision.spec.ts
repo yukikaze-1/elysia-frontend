@@ -20,6 +20,7 @@ import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { useCharacterCatalogStore } from '../../src/renderer/src/stores/character-catalog.store'
 import CyMessageList from '../../src/renderer/src/components/CyMessageList.vue'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 const CREATED_AT = '2026-09-10T04:20:00.000Z'
 
@@ -69,11 +70,11 @@ function userMessage(): Message {
 
 /** 只装配渲染路径需要的只读面；写命令不参与本回归。 */
 function installApi(summaries: CharacterSummary[], detail: Awaited<ReturnType<MockCharacterBackend['getCharacter']>>): void {
-  setDesktopApi({
+  setDesktopApi(createDesktopApiMock({
     listCharacters: vi.fn(async () => ({ items: summaries, hasMore: false })),
     getCharacter: vi.fn(async () => detail),
     getMe: vi.fn(async () => { throw new Error('本回归不读取 identity') })
-  } as never)
+  }))
 }
 
 describe('CyMessageList 角色 revision identity 渲染（DataCloneError 真机回归）', () => {

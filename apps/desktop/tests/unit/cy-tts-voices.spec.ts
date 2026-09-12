@@ -6,12 +6,13 @@ import { flushPromises, mount } from '@vue/test-utils'
 import CyTtsVoices from '../../src/renderer/src/components/CyTtsVoices.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { useModelServiceStore } from '../../src/renderer/src/stores/model-service.store'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 const previewTts = vi.fn()
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  setDesktopApi({ previewTts, setTtsVoice: vi.fn() } as never)
+  setDesktopApi(createDesktopApiMock({ previewTts, setTtsVoice: vi.fn() }))
   vi.clearAllMocks()
 })
 

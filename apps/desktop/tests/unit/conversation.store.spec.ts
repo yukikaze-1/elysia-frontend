@@ -13,6 +13,7 @@ import { useVoiceStore } from '../../src/renderer/src/stores/voice.store'
 import { useIdentityStore } from '../../src/renderer/src/stores/identity.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import type { Message } from '@shared/contracts'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 const mockApi = {
   connect: vi.fn(), disconnect: vi.fn(), listConversations: vi.fn(), getMessages: vi.fn(),
@@ -1023,7 +1024,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
 
   it('activate 无 anchor 行为不变（回归：首屏 getMessages 拉取）', async () => {
     const getMessages = vi.fn(async () => ({ items: [], hasMore: false }))
-    setDesktopApi({ activate: async () => ({ conversationId: 'c2' }), getMessages, getMessageContext: vi.fn() } as never)
+    setDesktopApi(createDesktopApiMock({ activate: async () => ({ conversationId: 'c2' }), getMessages, getMessageContext: vi.fn() }))
     const cs = useConversationStore()
     await cs.activate('c2')
     expect(getMessages).toHaveBeenCalledTimes(1)
@@ -1034,7 +1035,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
     const setHighlight = vi.fn()
     ms.loadContextWindow = loadContextWindow as never
     ms.setHighlight = setHighlight as never
-    setDesktopApi({ activate: async () => ({ conversationId: 'c3' }) } as never)
+    setDesktopApi(createDesktopApiMock({ activate: async () => ({ conversationId: 'c3' }) }))
     const cs = useConversationStore()
     await cs.activate('c3', { messageId: 'm9', segmentId: 'seg1' })
     expect(loadContextWindow).toHaveBeenCalledWith('m9')
@@ -1044,7 +1045,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
     const ms = useMessageStore()
     ms.loadContextWindow = vi.fn(async () => false) as never
     ms.setHighlight = vi.fn() as never
-    setDesktopApi({} as never)
+    setDesktopApi(createDesktopApiMock({}))
     const cs = useConversationStore()
     cs.$patch({ currentId: 'c1' })
     const ok = await cs.jumpToMessage('c1', 'm1')
@@ -1057,7 +1058,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
     const setHighlight = vi.fn()
     ms.loadContextWindow = loadContextWindow as never
     ms.setHighlight = setHighlight as never
-    setDesktopApi({ activate: async () => ({ conversationId: 'c9' }) } as never)
+    setDesktopApi(createDesktopApiMock({ activate: async () => ({ conversationId: 'c9' }) }))
     const cs = useConversationStore()
     cs.$patch({ currentId: 'c1' })
     await cs.jumpToMessage('c9', 'm1', 'seg1')

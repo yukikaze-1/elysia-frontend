@@ -52,14 +52,18 @@ export type DesktopApiMock = {
 /**
  * overrides 的受检形态——本 helper 判别力的来源：
  *   - **键**：`[K in keyof O]` 只枚举 O 自身出现的键，而整体约束 `O extends DesktopApiOverrides<O>`
- *     要求这些键都能在 DesktopApiLike 里找到；写不存在的键 → 该键被映射成 `never`
- *     （TS 报 `not assignable to type 'undefined'`）→ **编译失败**。
- *     （注意：即便不靠这一点，`keyof O extends keyof DesktopApiLike` 的写法也会让 TS 对
- *      fresh object literal 报 excess property——两条防线都实测有效。）
+ *     要求这些键都能在 DesktopApiLike 里找到；写不存在的键 → 该键被映射成 `never` → **编译失败**。
  *   - **值**：交叉 `Partial<DesktopApiLike>` 让「真实键 + 错误签名」也编译失败
- *     （实测：少一个必填字段报 TS2322 `Property 'ok' is missing … TtsPreviewOutcome`）。
- *   - 裸 `vi.fn()` 仍是合法 override（`Mock<Procedure>` 由 `any` 组成，与任何签名交叉都不坍缩），
- *     因为「本 spec 不关心该方法的实现」本就是合法的 mock 意图。
+ *     （实测：`vi.fn(async () => 12345)` 报 TS2322 并**把真实签名写进报错里**）。
+ *
+ * **实测更正（2026-09-12，迁移时被证伪的两条初版注释）**：
+ *   ① 「裸 `vi.fn()` 与任何签名交叉都不坍缩」**不成立**——`Mock<Procedure | Constructable>` 在 strict
+ *      模式下不可赋值给具体签名，于是 `setDesktopApi({ attachmentsCheck: vi.fn() } as never)` 这种
+ *      最常见的写法**全部编译失败**（这是全量迁移的真实阻塞点，不是个例）。
+ *   ② 试图用 `| ReturnType<typeof vi.fn>` 显式放行裸 mock **也不成立**：那会让每个键推断成联合类型，
+ *      参数约束 `O extends DesktopApiOverrides<O>` 随之失败，错误数反而从 32 涨到 42（实测）。
+ *   故本工厂**只接受带类型参数的 mock**（`vi.fn<(a: string) => Promise<X>>()`）或等价的具体函数；
+ *   裸 mock 的 spec 要么写类型参数，要么留在 `desktop-api-mock-migration.spec.ts` 的 PENDING 里。
  */
 type DesktopApiOverrides<O> = Partial<{
   [K in keyof O]: K extends keyof DesktopApiLike ? DesktopApiLike[K] : never

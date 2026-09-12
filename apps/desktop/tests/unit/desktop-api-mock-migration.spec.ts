@@ -2,7 +2,7 @@
 //
 // I-06 / P2-10 的**迁移进度门禁**（2026-09-12）。
 //
-// 背景：评审指出 40 个 spec 手搓 `setDesktopApi({...} as never)`，那个 cast 抹掉了唯一能发现
+// 背景：评审指出 40 个 spec 手搓 `setDesktopApi(createDesktopApiMock({...}))`，那个 cast 抹掉了唯一能发现
 // 「mock 与 DesktopApiLike 漂移」的机制——preload 面从 74 键涨到 93 键期间，方法被重命名/改签名
 // 时 mock 会静默继续提供**已不存在**的形状，而 spec 照样全绿。受检工厂见
 // `tests/unit/helpers/desktop-api.ts`。
@@ -27,7 +27,6 @@ const PENDING = [
   'character-editor.store.spec.ts',
   'character-stores.spec.ts',
   'connection.store.spec.ts',
-  'conversation.store.spec.ts',
   'cy-attachment-media.spec.ts',
   'cy-attachment-placeholder.spec.ts',
   'cy-character-catalog.spec.ts',
@@ -42,12 +41,10 @@ const PENDING = [
   'cy-diagnostics-pane.spec.ts',
   'cy-identity-pane.spec.ts',
   'cy-markdown.spec.ts',
-  'cy-message-list-character-revision.spec.ts',
   'cy-renderer-crash-banner.spec.ts',
   'cy-security-pane.spec.ts',
   'cy-tool-approval.spec.ts',
   'cy-tool-card.spec.ts',
-  'cy-tts-voices.spec.ts',
   'cy-voice-consent-dialog.spec.ts',
   'cy-voice-pane.spec.ts',
   'draft.store.spec.ts',
@@ -61,7 +58,6 @@ const PENDING = [
   'message-store-generation-exit.spec.ts',
   'model-service.store.spec.ts',
   'settings.store.spec.ts',
-  'sticker-contract.spec.ts',
   'tool.store.spec.ts',
   'voice.store.spec.ts'
 ] as const

@@ -9,6 +9,7 @@ import { chatQueryHistorySchema } from '../../src/main/ipc/channels'
 import { ChatHistoryPageSchema } from '../../src/shared/schemas/ipc-response'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { useHistoryViewerStore } from '../../src/renderer/src/stores/historyViewer.store'
+import { createDesktopApiMock } from './helpers/desktop-api'
 
 /** 后端 SearchMessagesResponse 真实形状（无 resource/kind/url；None 可选字段省略——wire_dict 行为） */
 const realStickerSearch = {
@@ -66,7 +67,7 @@ describe('D3 贴图真实契约（category=sticker 真实形状）', () => {
     if (!parsed.success) return
     const mapper = new RestMapper()
     const page = { items: parsed.data.items.map((i) => mapper.toChatHistoryItem(i)), hasMore: false }
-    setDesktopApi({ queryChatHistory: async () => page } as never)
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => page }))
     const s = useHistoryViewerStore()
     s.openViewer('sticker')
     s.$patch({ category: 'sticker' })
