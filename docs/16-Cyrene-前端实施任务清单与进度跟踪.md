@@ -389,7 +389,7 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 集成（04 收口定向） | `message-list-follow-bottom`＋`perf-gate` | PASS |
 | flake 复核 | 全量单测**连跑 10 次** | **10/10 绿**（修复前同口径 15 轮 2 红，另 10 轮 1 红） |
 | X99 配方（④） | 16 轮 | **16/16 绿**（第三轮修复后的第二次独立复核） |
-| GitHub CI | `.github/workflows/ci.yml` | 见本表下方 |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS**：[run 34774556848](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34774556848)（`f7ce3ea`）**8/8 首跑即绿**——含"测试目录 type-aware 全集"生效后的 `typecheck + lint`，以及带新增 ④c 断言的全部集成分片 |
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
