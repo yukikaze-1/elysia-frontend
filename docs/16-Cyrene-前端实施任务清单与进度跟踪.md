@@ -371,6 +371,26 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 
 **本批"先量后改"救回来的判断 3 次**：① ④ 的门限由实测的 31px 定，而不是按上一轮反推的"40–50px"（那个反推只有上界）；② `require-await` 被实测否掉（64 处全是接口实现的惯用写法）；③ **我自己写错的一处被既有用例当场抓住**——`voice-capture` 的 `port.onmessage` 第一版只认 `ArrayBuffer`，而 AudioWorklet 实际 postMessage 的是 **Uint8Array**（等于掐断音频链路），`voice-capture.spec.ts` 立刻红。另记一条同族教训：`eslint --fix` 删掉的 2 处类型断言**删错了**（对象字面量会把字面量联合拓宽回 `string`），typecheck 立刻红——**自动修复必须复核**。
 
+**2026-09-13 第四批（右键菜单锚点／测试目录 type-aware 全集／④ 触发源／一族 flaky 的根因）**——用户选定「做 右键菜单被列表滚动关掉、测试侧 type-aware 全集、④ 触发源逐点定位、real-backend-search 竞态」：
+
+| 项 | 状态 | 证据/说明 |
+|---|---|---|
+| 右键菜单被列表滚动关掉 | **已修（`CyContextMenu` 改为"跟随锚点"）** | 探针读数：菜单确实开了（`menuOpen=1`），400ms 内被**恰好一次 scroll 事件**关掉，同时 `scrollHeight` 710→742（列表自己在布局/重锚）——原判据"任何滚动即关闭"分不清"用户滚的"与"应用自己滚的"。修法：新增可选 `anchor`，给了就**跟随目标**（保持打开时的相对偏移），只有目标从 DOM 消失或整体出视口才关闭；消息列表与会话列表都给了锚点。**变异验证两次**：单测侧把"跟随"改回"任何滚动即关"⇒ 跟随那条红；集成侧摘掉 `:anchor` 绑定 ⇒ 新增的 ④c 红 |
+| ④ 触发源**逐点定位** | **已定位（第四轮探针）** | 冻结条件改成"**第一次小幅下移**"（修复之后"翻转"不再发生，等 flip 等于把观测点关掉——实测 16 轮 0 flip）。16 轮里 4 轮命中，**数值逐像素一致**：`WcommitScrollHeights/bottom top=6778 h=7351 c=573` → 3–6ms 后 `S top=6747 d=31 h=7320 c=573`——**`h` 与 `top` 同步减少同一个量**，新 `top` 正好等于新 `max`。即：**我们自己合并实测高 → 总高缩短 → 浏览器把 scrollTop 夹到新上界**（不是用户上翻、不是容器尺寸变化）。修复不需要改：累计门限天然覆盖，且这类夹小只要虚拟列表会合并实测高就无法避免 |
+| 测试侧 type-aware **全集** | **已完成** | `tests/**` 接入 `recommendedTypeChecked` 全集，只豁免两条经实测判定"在测试替身上前提不成立"的规则（`require-await` 474＝async 测试替身、`unbound-method` 73＝`expect(obj.method)` 惯例／原生 this 无关函数）。实测 **455 条 / 74 文件**全部清偿（208 条自动修 + 逐条判语义）。**修法口径**：优先给值标注真实类型（`vi.fn((input: CharacterListQuery) => …)`）——那样契约漂移时测试会**编译失败**；禁止 `any`/`as any`/`@ts-ignore`/`eslint-disable`（diff 已按这三个模式扫过） |
+| `real-backend-search` 一族"偶发" | **两条根因各自定位并修掉** | ① **happy-dom 默认 URL**：vitest 的 happy-dom 环境默认把窗口 URL 设成 `http://localhost:3000`，happy-dom 据此**真的去 fetch** 它（无服务 ⇒ ECONNREFUSED），该请求常在环境拆卸**之后**落定 ⇒ 抛未处理错误，被 vitest 记到**当时正在跑的那个文件**头上（这解释了"每次红的文件都不同"）。修法：`environmentOptions: { happyDOM: { url: 'about:blank' } }`——噪音条数 3/5 → **0**。② **默认 5s 单测预算在满载时不够**（`session-store` 连写 52 条 / `diagnostics-handlers` 超时，伴随 `ENOTEMPTY` 清理噪声）⇒ 按实测提到 **15s**（真卡死仍会抓到，只是晚 10 秒；**不加 retry、不放宽断言**） |
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（exit 0） |
+| Lint | `pnpm lint` | PASS（exit 0，`--max-warnings=0`；生产集成 + 测试目录**全集**均已生效） |
+| 单元测试 | `pnpm test` | PASS（见下方"连跑 10 次 0 红"行） |
+| 集成（`context-menu`，含新增 ④c） | `vitest run … context-menu` | PASS（1/1，4.9s；此前该用例在本机稳定红并让 ④b 轮询白等 15s） |
+| 集成（04 收口定向） | `message-list-follow-bottom`＋`perf-gate` | PASS |
+| flake 复核 | 全量单测**连跑 10 次** | **10/10 绿**（修复前同口径 15 轮 2 红，另 10 轮 1 红） |
+| X99 配方（④） | 16 轮 | **16/16 绿**（第三轮修复后的第二次独立复核） |
+| GitHub CI | `.github/workflows/ci.yml` | 见本表下方 |
+
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
 - `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。
