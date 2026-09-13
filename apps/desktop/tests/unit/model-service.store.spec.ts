@@ -84,9 +84,9 @@ describe('modelServiceStore', () => {
   })
   it('startEdit 编辑 custom：baseUrl 优先全量（scheme/path 保留）；无则回退 host 拼 https（P4-A final review）', async () => {
     const s = useModelServiceStore()
-    s.startEdit({ ...PROFILES[1], endpointLabel: 'api.example.com', baseUrl: 'http://api.example.com:8080/v1' } as never)
+    s.startEdit({ ...PROFILES[1], endpointLabel: 'api.example.com', baseUrl: 'http://api.example.com:8080/v1' })
     expect(s.drafts['my-llm'].baseUrl).toBe('http://api.example.com:8080/v1')
-    s.startEdit({ ...PROFILES[1], endpointLabel: 'api.example.com' } as never)
+    s.startEdit({ ...PROFILES[1], endpointLabel: 'api.example.com' })
     expect(s.drafts['my-llm'].baseUrl).toBe('https://api.example.com')
   })
   it('testProfile 透传 baseUrl（新 custom 未持久化，测试需 baseUrl 才能构造请求；P4-A final review）', async () => {

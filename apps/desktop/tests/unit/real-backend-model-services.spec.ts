@@ -33,18 +33,43 @@ async function makeBackend(
   return { backend, ws }
 }
 
+/** fetch 入参 → 请求 URL 文本：生产代码一律传 string；URL/Request 各取其 url 字段
+ *（断言本意是「请求了哪个 URL」，String(Request) 只会得到 '[object Request]'）。 */
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
+/** 取 mock fetch 记录的 JSON 请求体对象：本后端 REST 一律发 JSON 字符串；形状不符直接抛错，
+ *  与原 String(body) + JSON.parse 的失败语义一致（不会静默降级为通过）。 */
+function jsonRequestBody(init?: RequestInit): Record<string, unknown> {
+  const body = init?.body
+  if (typeof body !== 'string') throw new Error(`请求体应为 JSON 字符串，实际为 ${typeof body}`)
+  const parsed: unknown = JSON.parse(body)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('请求体应为 JSON 对象')
+  return { ...parsed }
+}
+
+/** 取请求体里的子对象字段（缺失/非对象即抛错，等价于原先点号取属性的 TypeError 失败路径）。 */
+function jsonField(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = parent[key]
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`请求体字段 ${key} 应为 JSON 对象`)
+  return { ...value }
+}
+
 /** 按路由匹配的假 REST（返回 Response；calls 记录每次请求） */
 function mockFetch(
   routes: Array<{ test: (url: string, init?: RequestInit) => boolean; body: unknown; status?: number }>,
   calls: { url: string; init?: RequestInit }[] = []
 ): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {
-    const u = String(url)
+    const u = requestUrl(url)
     calls.push({ url: u, init })
     const route = routes.find((r) => r.test(u, init))
     if (!route) throw new Error(`no mock for ${init?.method ?? 'GET'} ${u}`)
     return new Response(JSON.stringify(route.body), { status: route.status ?? 200, headers: { 'Content-Type': 'application/json' } })
-  }) as typeof fetch
+  })
 }
 
 /** rest.py ProvidersResponse wire（providers-mapper 消费形状） */
@@ -76,7 +101,7 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
     const input: ModelProfileTestCommand = { service: 'llm', provider: 'deepseek', model: 'deepseek-v4-flash', level: 'connectivity' }
     const r = await backend.testModelProfile(input)
     expect(r).toEqual({ profileId: 'deepseek/deepseek-v4-flash', service: 'llm', level: 'connectivity', ok: true, latencyMs: 42 })
-    const body = JSON.parse(String(calls[0]?.init?.body))
+    const body = jsonRequestBody(calls[0]?.init)
     expect(body).toEqual({ service: 'llm', provider: 'deepseek', model: 'deepseek-v4-flash', level: 'connectivity' })
   })
 
@@ -93,7 +118,7 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
     expect(calls).toHaveLength(2)
     expect(calls[0]?.init?.method).toBe('POST')
     expect(calls[1]?.init?.method).toBeUndefined()   // 回读 GET（restFetch 不显式设 method）
-    const postBody = JSON.parse(String(calls[0]?.init?.body))
+    const postBody = jsonRequestBody(calls[0]?.init)
     expect(postBody).toEqual({ service: 'llm', entry: { name: 'my-llm', base_url: 'https://api.example.com', api_key: 'sk-abc' } })
     expect(saved.id).toBe('custom/my-llm')
     expect(saved.source).toBe('custom')
@@ -129,9 +154,10 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
       ], calls)
     })
     await backend.saveModelProfile({ type: 'llm', name: 'my-llm', baseUrl: 'https://api.example.com', capabilities: ['auth', 'stream'] })
-    const postBody = JSON.parse(String(calls[0]?.init?.body))
-    expect(Array.isArray(postBody.entry.capabilities)).toBe(false)
-    expect(postBody.entry.capabilities).toEqual({ auth: true, stream: true })
+    const postBody = jsonRequestBody(calls[0]?.init)
+    const entry = jsonField(postBody, 'entry')
+    expect(Array.isArray(entry['capabilities'])).toBe(false)
+    expect(entry['capabilities']).toEqual({ auth: true, stream: true })
   })
 
   it('deleteModelProfile：DELETE /api/providers/llm/x；409 body{ok:false,code} → reject 且 details.code 透传', async () => {
@@ -177,13 +203,13 @@ describe('RealBackend 模型/TTS REST 方法（Task 4）', () => {
     expect(r.mime).toBe('audio/wav')
     expect(r.durationMs).toBe(1200)
     expect(Buffer.from(r.bytes as Uint8Array).toString('utf8')).toBe('fake-audio-bytes')
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ voice_id: 'v1' })
+    expect(jsonRequestBody(calls[0]?.init)).toEqual({ voice_id: 'v1' })
   })
 
   it('previewTts 后端 ok:false → {ok:false, error}；ok 但无音频 → {ok:false,error:试听无音频数据}', async () => {
     const { backend } = await makeBackend({}, {
       fetchImpl: mockFetch([
-        { test: (_u, init) => String(init?.body).includes('bad'), body: { ok: false, error: 'VOICE_NOT_FOUND: 声音不存在' } },
+        { test: (_u, init) => typeof init?.body === 'string' && init.body.includes('bad'), body: { ok: false, error: 'VOICE_NOT_FOUND: 声音不存在' } },
         { test: (u) => u.includes('/api/tts/preview'), body: { ok: true } }
       ])
     })

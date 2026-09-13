@@ -1,7 +1,9 @@
 // apps/desktop/tests/unit/backend-error-handlers.spec.ts
 import { describe, expect, it, vi } from 'vitest'
+import type { Mock } from 'vitest'
 import { buildBackendErrorHandlers } from '../../src/main/chat/backend-error-handlers'
 import { CyreneError, CyreneErrorCode } from '../../src/shared/errors'
+import type { AuditEvent } from '../../src/main/diagnostics/audit'
 
 const noopSanitize = (m: string): string => m
 
@@ -47,11 +49,17 @@ describe('buildBackendErrorHandlers', () => {
   })
   it('onError → audit connection:error（含 backendCode/retryable，summary 无原始 details）', () => {
     const logger = makeLogger()
-    const audit = vi.fn()
+    // 审计回调按 backend-error-handlers 的真实签名 `(event: Omit<AuditEvent,'ts'>) => void` 标注——
+    // 裸 `vi.fn()` 的调用实参是 `any`，标注后 `audit.mock.calls[0][0]` 才是受检的审计载荷
+    const audit: Mock<(event: Omit<AuditEvent, 'ts'>) => void> = vi.fn()
     const h = buildBackendErrorHandlers({ logger, sanitize: noopSanitize, send: vi.fn(), mode: 'real', getBuild: () => ({}), audit })
     h.onError(new CyreneError(CyreneErrorCode.BACKEND_REJECTED, '队列满', { backendCode: 'QUEUE_FULL', retryable: true }))
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'connection:error', summary: expect.stringContaining('BACKEND_REJECTED') }))
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ summary: expect.stringContaining('QUEUE_FULL') }))
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ summary: expect.stringContaining('retryable') }))
+    // `expect.objectContaining`/`expect.stringContaining` 的返回类型被 vitest 声明成 `any`；
+    // 改为按调用序取审计实参断言（等价：三条断言分别落在 summary 的 code/backendCode/retryable 上）
+    const audited = audit.mock.calls[0][0]
+    expect(audited.type).toBe('connection:error')
+    expect(audited.summary).toContain('BACKEND_REJECTED')
+    expect(audited.summary).toContain('QUEUE_FULL')
+    expect(audited.summary).toContain('retryable')
   })
 })

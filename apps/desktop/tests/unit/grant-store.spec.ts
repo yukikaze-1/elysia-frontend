@@ -2,9 +2,15 @@
 // F-4 修复：mkSettings.load 用「同步可读 thenable」——createGrantStore 构造期 eager load 同步填充缓存，
 // 测试无需 await（与 tool-service step 8 的同步 matches 用法一致）。
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import type { Mock } from 'vitest'
 import { createGrantStore } from '../../src/main/tools/grant-store'
 import type { PermissionGrant } from '../../src/shared/contracts/tool'
 import type { SettingsService } from '../../src/main/settings/settings-service'
+import type { AuditEvent } from '../../src/main/diagnostics/audit'
+
+/** "任意字符串" 非对称匹配器：vitest 把 `expect.any` 的返回类型声明成 `any`，放进 `PermissionGrant`
+ *  这类具名契约会命中 no-unsafe-assignment；运行时 `expect.any(String)` 就是这个匹配器，故收窄到 string。 */
+const anyString = (): string => expect.any(String) as string
 
 /** 同步可读 thenable：then 回调立即执行（微任务=同步语义），createGrantStore 构造期缓存即刻填充（F-4） */
 function syncResolve<T>(value: T): Promise<T> {
@@ -16,7 +22,8 @@ function mkSettings(grants: PermissionGrant[] = []): SettingsService {
 }
 let now = 1_750_000_000_000
 function mkStore(grants: PermissionGrant[] = [], identity: string | undefined = 'http://localhost:8000', platform: 'posix' | 'windows' = 'posix') {
-  const audit = vi.fn()
+  // 审计回调按 GrantStoreDeps 的真实签名 `(ev: AuditEvent) => void` 标注——裸 `vi.fn()` 的调用实参是 `any`
+  const audit: Mock<(ev: AuditEvent) => void> = vi.fn()
   const warn = vi.fn()   // V-16 修复：warn 提升至 mkStore 顶部（settings 无 logger——原夹具从 settings 取 undefined 必炸）
   const settings = mkSettings(grants)
   const store = createGrantStore({
@@ -31,8 +38,7 @@ function mkStore(grants: PermissionGrant[] = [], identity: string | undefined = 
   })
   return { store, audit, settings, warn }
 }
-function grant(over: Partial<PermissionGrant> = {}): PermissionGrant {
-  return { id: 'grant-a', toolName: 'desktop.file.read', scope: { directory: '/home/u/docs' },
+function grant(over: Partial<PermissionGrant> = {}): PermissionGrant {  return { id: 'grant-a', toolName: 'desktop.file.read', scope: { directory: '/home/u/docs' },
     backendIdentity: 'http://localhost:8000', expiresAt: now + 86_400_000, createdAt: '2026-08-20T00:00:00.000Z',
     source: 'directory', ...over }
 }
@@ -45,10 +51,11 @@ describe('grant-store', () => {
     expect(g.id.startsWith('grant-')).toBe(true)
     expect(g.createdAt).toBeTruthy()
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'grant:created', permissionGrantId: g.id, backendIdentity: 'http://localhost:8000',
-      summary: expect.stringContaining('目录授权（工具 desktop.file.read，有效期至') as never,
+      type: 'grant:created', permissionGrantId: g.id, backendIdentity: 'http://localhost:8000'
     }))
-    expect(audit.mock.calls[0][0].summary).not.toContain('/home/u')   // F-5：无目录路径
+    const createdAudit = audit.mock.calls[0][0]
+    expect(createdAudit.summary).toContain('目录授权（工具 desktop.file.read，有效期至')   // 原为 expect.stringContaining——vitest 把它的返回类型声明成 any
+    expect(createdAudit.summary).not.toContain('/home/u')   // F-5：无目录路径
     expect(settings.save).toHaveBeenCalledWith({ tools: { grants: [g] } })   // 全量 tools 子树提交
   })
   it('add 幂等（N-6）：同 toolName+目录+身份+未撤销未过期 → 返回既有不重复创建', () => {
@@ -125,12 +132,11 @@ describe('grant-store', () => {
     now += 86_400_001   // 过期
     expect(store.matches('desktop.file.read', '/home/u/docs/a.txt')).toBeUndefined()
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'grant:expired', permissionGrantId: 'grant-exp' }))
-    expect(store.list().find((g) => g.id === 'grant-exp')).toMatchObject({ revokedAt: expect.any(String), revokeSource: 'expired' })
-  })
+    expect(store.list().find((g) => g.id === 'grant-exp')).toMatchObject({ revokedAt: anyString(), revokeSource: 'expired' })  })
   it('revoke（N-5/F-9）：未过期 → user 分支；已过期 → expired 分支；已撤销 → no-op 不覆写不重复审计', () => {
     const { store, audit } = mkStore([grant()])
     const r1 = store.revoke('grant-a')
-    expect(r1).toMatchObject({ revokeSource: 'user', revokedAt: expect.any(String) })
+    expect(r1).toMatchObject({ revokeSource: 'user', revokedAt: anyString() })
     const r2 = store.revoke('grant-a')
     expect(r2).toBeUndefined()   // 已撤销 no-op
     expect(audit).toHaveBeenCalledTimes(1)   // 仅 grant:revoked 一次

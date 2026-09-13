@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { createToolService, DesktopToolRequest, ToolServiceError } from '../../src/main/tools/tool-service'   // ToolServiceError import（H4）
 import { createToolRegistry, DESKTOP_TOOL_VERSION } from '../../src/main/tools/tool-registry'
 import { GRANT_TTL_OPTIONS_MS } from '../../src/shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单
+import type { ToolStatusCommand } from '../../src/shared/contracts/backend'   // wire tool.status 六态命令契约（submitStatus 断言取值）
 
 /** 测试事件收集接口（按本文件断言字段最小建模；PublicToolEvent 可赋值） */
 interface ToolEv {
@@ -25,6 +26,17 @@ interface AuditEv {
   type?: string
   permissionDecision?: string
   cancelSource?: string
+}
+
+/**
+ * `submitStatus` 是 `vi.fn()`（vitest 对裸 `vi.fn()` 的声明是 `Mock<Procedure>`，调用实参为 `any`），
+ * 故本 helper 按 ToolServiceDeps 的真实签名把 mock.calls 收成 `ToolStatusCommand` 元组：
+ * 用例里 `[0].status` / `[0].callId` / `[0].attachments` 直接受 wire 契约检查，无需逐处标注。
+ */
+function submitCalls(submitStatus: unknown): ToolStatusCommand[][] {
+  if (typeof submitStatus !== 'function' || !('mock' in submitStatus)) throw new Error('submitStatus 必须是 vi.fn()')
+  const mock = submitStatus as { mock: { calls: ToolStatusCommand[][] } }
+  return mock.mock.calls
 }
 
 const FIXTURES = '/tmp/cyrene-fixtures'
@@ -67,7 +79,9 @@ describe('决策链', () => {
     const last = events.at(-1)!
     expect(last.status).toBe('rejected'); expect(last.error?.code).toBe('CAPABILITY_UNAVAILABLE')
     // H1：策略拒也回 wire rejected（spec §3.2 step 13）
-    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'rejected', error: expect.objectContaining({ code: 'CAPABILITY_UNAVAILABLE' }) }))
+    const rejectedCmd: ToolStatusCommand = submitCalls(submitStatus).at(-1)![0]
+    expect(rejectedCmd.status).toBe('rejected')
+    expect(rejectedCmd.error?.code).toBe('CAPABILITY_UNAVAILABLE')
   })
   it('平台不支持 → 同码拒绝（B3；注入 windows-only 工具，H7）', async () => {
     const registry = createToolRegistry()
@@ -192,8 +206,8 @@ describe('幂等与状态机', () => {
     expect(events.filter(e => e.status === 'awaiting_permission').length).toBe(2)   // tc_2 晋升
     // expiresAt 定时器已清 → 不会再有 cancelled 双终态（accepted→rejected 是合法协议序列，无 cancelled 即证明）
     await vi.advanceTimersByTimeAsync(70_000)
-    const call1Wires = submitStatus.mock.calls.filter(c => c[0].callId === 'call_1').map(c => c[0].status)
-    expect(call1Wires).toEqual(['accepted', 'rejected'])   // 仅 accepted→rejected，无 cancelled 双终态
+    const call1Statuses = submitCalls(submitStatus).filter(c => c[0].callId === 'call_1').map(c => c[0].status)
+    expect(call1Statuses).toEqual(['accepted', 'rejected'])   // 仅 accepted→rejected，无 cancelled 双终态
     vi.useRealTimers()
   })
   it('已拒绝保持拒绝（不重弹窗）', async () => {
@@ -233,7 +247,7 @@ describe('幂等与状态机', () => {
     const { svc, submitStatus } = mkService({ executorOverride: async () => ({ output: { path: p }, summary: 'ok' }) })
     await svc.handleRequest(mkReq({ arguments: { path: p } }))
     await svc.decide('call_1', 'allow_once')
-    const order = submitStatus.mock.calls.map(c => c[0].status)
+    const order = submitCalls(submitStatus).map(c => c[0].status)
     expect(order).toEqual(['accepted', 'running', 'result'])
   })
   it('decide deny → rejected + wire rejected + 审计 tool:decision deny', async () => {
@@ -262,7 +276,9 @@ describe('幂等与状态机', () => {
     await vi.advanceTimersByTimeAsync(0)                  // 让 running wireSend 微任务落定、执行超时 timer 挂起
     await vi.advanceTimersByTimeAsync(31_000)             // read defaultTimeoutMs=30s
     expect(events.at(-1)!.status).toBe('timeout')
-    expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'error', error: expect.objectContaining({ code: 'TIMEOUT' }) }))   // M1：wire error{TIMEOUT} 非 cancelled
+    const timeoutCmd: ToolStatusCommand = submitCalls(submitStatus).at(-1)![0]
+    expect(timeoutCmd.status).toBe('error')
+    expect(timeoutCmd.error?.code).toBe('TIMEOUT')   // M1：wire error{TIMEOUT} 非 cancelled
     release()
     await deciding
     vi.useRealTimers()
@@ -275,9 +291,9 @@ describe('幂等与状态机', () => {
     const { svc } = mkService({ submitStatus, executorOverride: async () => ({ output: { path: p }, summary: 'ok', attachments }) })
     await svc.handleRequest(mkReq({ arguments: { path: p } }))
     await svc.decide('call_1', 'allow_once')
-    expect(submitStatus.mock.calls.filter(c => c[0].status === 'result')).toHaveLength(1)
+    expect(submitCalls(submitStatus).filter(c => c[0].status === 'result')).toHaveLength(1)
     await svc.reconnect()
-    const resultCalls = submitStatus.mock.calls.filter(c => c[0].status === 'result')
+    const resultCalls = submitCalls(submitStatus).filter(c => c[0].status === 'result')
     expect(resultCalls).toHaveLength(2)                    // 重连重发
     expect(resultCalls[1][0].attachments).toEqual(attachments)   // URL 随重发带上
   })
@@ -319,9 +335,9 @@ describe('幂等与状态机', () => {
     const { svc } = mkService({ submitStatus, executorOverride: async () => ({ output: { path: p }, summary: 'ok' }) })
     await svc.handleRequest(mkReq({ arguments: { path: p } }))
     await svc.decide('call_1', 'allow_once')
-    expect(submitStatus.mock.calls.filter(c => c[0].status === 'result').length).toBe(1)   // 首次 result 发送失败（statusSent=false）
+    expect(submitCalls(submitStatus).filter(c => c[0].status === 'result').length).toBe(1)   // 首次 result 发送失败（statusSent=false）
     await svc.reconnect()
-    expect(submitStatus.mock.calls.filter(c => c[0].status === 'result').length).toBe(2)   // 重连重发
+    expect(submitCalls(submitStatus).filter(c => c[0].status === 'result').length).toBe(2)   // 重连重发
     // selected-set 清空：先 select 豁免 → reconnect → 豁免失效
   })
   it('shutdown：停止接收 + 未决授权按拒绝（B2）', async () => {
@@ -417,7 +433,7 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
     expect(preview).toMatchObject({ sourceId: 's1', sourceName: '屏幕 1', width: 1920, height: 1080, bytes: 4 })
     await svc.confirmUpload('call_1')
     expect(events.at(-1)?.status).toBe('completed')
-    expect(submitStatus.mock.calls.map(c => c[0].status)).toEqual(['accepted', 'running', 'result'])
+    expect(submitCalls(submitStatus).map(c => c[0].status)).toEqual(['accepted', 'running', 'result'])
     expect(submitStatus).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'result' }))
   })
   it('预览 >256KiB 降级为缩略图 + confirm 闭环（A-18/L-5/M3）', async () => {

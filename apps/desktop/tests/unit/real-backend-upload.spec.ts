@@ -53,7 +53,7 @@ describe('RealBackend.uploadAttachments multipart（D2）', () => {
 
   it('audio/webm + video/webm 已消歧 kind 透传不串位（顺序 audio/video）', async () => {
     let form: FormData | undefined
-    const fetchImpl = vi.fn(async (_u, init) => {
+    const fetchImpl = vi.fn(async (_u: RequestInfo | URL, init?: RequestInit) => {
       form = init?.body as FormData
       return new Response(JSON.stringify({ attachments: [] }), { status: 200, headers: { 'content-type': 'application/json' } })
     })

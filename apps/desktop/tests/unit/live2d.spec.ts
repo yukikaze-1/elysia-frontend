@@ -116,7 +116,7 @@ function installFakes(opts: { models?: Live2DModelSummary[] } = {}) {
   const models = opts.models ?? [MODEL_HARU, MODEL_LIL, MODEL_BROKEN]
   const adapter = makeFakeAdapter()
   const list = vi.fn(async () => models)
-  const ctrl = new Live2DController({ adapter: asAdapter(adapter), list: list as unknown as () => Promise<Live2DModelSummary[]> })
+  const ctrl = new Live2DController({ adapter: asAdapter(adapter), list: list })
   setLive2dControllerFactory(() => ctrl)
   mockApi.listLive2dModels.mockResolvedValue(models)
   return { adapter, list, models, ctrl }

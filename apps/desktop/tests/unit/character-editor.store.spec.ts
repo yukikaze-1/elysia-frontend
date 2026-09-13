@@ -3,10 +3,13 @@ import { createPinia, setActivePinia } from 'pinia'
 import type {
   CharacterDetail,
   CharacterDraft,
+  CharacterPreviewCommand,
   CharacterPreviewResult,
   CharacterValidationResult,
+  CreateCharacterCommand,
   PersistedCharacterDraft,
   CharacterMutationResult,
+  UpdateCharacterCommand,
   CharacterDraftSummary
 } from '@shared/contracts'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -78,9 +81,9 @@ describe('characterEditorStore FE-D2', () => {
       }),
       deleteCharacterDraft: vi.fn(async (key: string) => { saved = saved.filter((item) => item.key !== key) }),
       validateCharacter: vi.fn(async (): Promise<CharacterValidationResult> => ({ valid: true, issues: [] })),
-      previewCharacter: vi.fn(async (): Promise<CharacterPreviewResult> => ({ ephemeral: true, reply: '临时回复', model: 'mock' })),
-      createCharacter: vi.fn(async (input: { draft: CharacterDraft }) => ({ ...original, summary: { ...original.summary, displayName: input.draft.displayName }, current: { ...original.current, ...input.draft, revision: 1 } })),
-      updateCharacter: vi.fn(async (input: { draft: CharacterDraft }) => mutation({ ...original, summary: { ...original.summary, displayName: input.draft.displayName, currentRevision: 4 }, current: { ...original.current, ...input.draft, revision: 4 } }))
+      previewCharacter: vi.fn(async (_input: CharacterPreviewCommand): Promise<CharacterPreviewResult> => ({ ephemeral: true, reply: '临时回复', model: 'mock' })),
+      createCharacter: vi.fn(async (input: CreateCharacterCommand) => ({ ...original, summary: { ...original.summary, displayName: input.draft.displayName }, current: { ...original.current, ...input.draft, revision: 1 } })),
+      updateCharacter: vi.fn(async (input: UpdateCharacterCommand) => mutation({ ...original, summary: { ...original.summary, displayName: input.draft.displayName, currentRevision: 4 }, current: { ...original.current, ...input.draft, revision: 4 } }))
     }
   }
 
@@ -112,12 +115,18 @@ describe('characterEditorStore FE-D2', () => {
 
     store.beginClone(detail(), '复制角色')
     await store.save()
-    expect(api.createCharacter).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ displayName: '复制角色' }) }))
+    // `expect.objectContaining` 的返回类型被 vitest 声明成 `any`（放进 toHaveBeenCalledWith 即 no-unsafe-assignment）；
+    // 工厂里的 createCharacter 已按 CreateCharacterCommand 标注入参，故按调用序取实参断言
+    expect(api.createCharacter).toHaveBeenCalledTimes(1)
+    const cloneInput = api.createCharacter.mock.calls[0][0]
+    expect(cloneInput.draft.displayName).toBe('复制角色')
     expect(api.updateCharacter).not.toHaveBeenCalled()
 
     store.beginCreate(draft('新角色'))
     await store.save()
-    expect(api.createCharacter).toHaveBeenLastCalledWith({ draft: expect.objectContaining({ displayName: '新角色' }) })
+    expect(api.createCharacter).toHaveBeenCalledTimes(2)
+    const createInput = api.createCharacter.mock.calls[1][0]
+    expect(createInput.draft.displayName).toBe('新角色')
   })
 
   it('更新字段只改当前 draft，防抖写入 Main 草稿并可 flush/recover', async () => {
@@ -167,7 +176,11 @@ describe('characterEditorStore FE-D2', () => {
     api.validateCharacter.mockResolvedValueOnce({ valid: true, issues: [{ severity: 'warning', code: 'STYLE', path: '/description', message: '建议补充' }] })
     await store.previewCharacter('你好')
     expect(store.preview).toMatchObject({ ephemeral: true, reply: '临时回复' })
-    expect(api.previewCharacter).toHaveBeenCalledWith({ draft: expect.any(Object), userMessage: '你好' })
+    // `expect.objectContaining`/`expect.any` 的返回类型被 vitest 声明成 `any`；按调用序取实参断言（语义等价）
+    expect(api.previewCharacter).toHaveBeenCalledTimes(1)
+    const previewInput = api.previewCharacter.mock.calls[0][0]
+    expect(previewInput.draft).toBeDefined()
+    expect(previewInput.userMessage).toBe('你好')
     await store.save()
     expect(api.createCharacter).toHaveBeenCalledTimes(1)
     expect(store.preview).toMatchObject({ ephemeral: true })
@@ -227,17 +240,16 @@ describe('characterEditorStore FE-D2', () => {
     await vi.advanceTimersByTimeAsync(CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS)
     await flushMicrotasks()
     expect(api.saveCharacterDraft).toHaveBeenCalledTimes(1)
-    expect(saved[0]).toMatchObject({
-      key: store.draftKey,
-      mode: 'create',
-      displayName: '保存失败仍可恢复',
-      draft: expect.objectContaining({
-        displayName: '保存失败仍可恢复',
-        description: '远端 create 失败后的最新说明',
-        promptProfile: expect.objectContaining({ corePersonality: '真诚' }),
-        runtimeDefaults: expect.objectContaining({ proactive: expect.any(Object) })
-      })
-    })
+    // `expect.objectContaining`/`expect.any` 的返回类型被 vitest 声明成 `any`（放进 toMatchObject 即 no-unsafe-assignment）；
+    // 落盘条目本身是 PersistedCharacterDraft（工厂 saveCharacterDraft 的实参类型），故逐字段断言等价
+    const persistedAfterFailure = saved[0]
+    expect(persistedAfterFailure.key).toBe(store.draftKey)
+    expect(persistedAfterFailure.mode).toBe('create')
+    expect(persistedAfterFailure.displayName).toBe('保存失败仍可恢复')
+    expect(persistedAfterFailure.draft.displayName).toBe('保存失败仍可恢复')
+    expect(persistedAfterFailure.draft.description).toBe('远端 create 失败后的最新说明')
+    expect(persistedAfterFailure.draft.promptProfile.corePersonality).toBe('真诚')
+    expect(persistedAfterFailure.draft.runtimeDefaults.proactive).toBeDefined()
     expect(saved[0].draft).toEqual(store.draft)
   })
 
@@ -256,10 +268,8 @@ describe('characterEditorStore FE-D2', () => {
     await flushMicrotasks()
     expect(api.saveCharacterDraft).toHaveBeenCalledTimes(1)
     expect(store.persistenceStatus).toBe('success')
-    expect(saved[0]).toMatchObject({
-      displayName: '连接变化仍保存',
-      draft: expect.objectContaining({ description: '连接 token 变化前的最新草稿' })
-    })
+    expect(saved[0].displayName).toBe('连接变化仍保存')
+    expect(saved[0].draft.description).toBe('连接 token 变化前的最新草稿')   // 原为 draft: expect.objectContaining(...)
   })
 
   it('保存进行中修改 statePolicy，远端成功后保留策略并落盘脏草稿', async () => {
@@ -286,11 +296,11 @@ describe('characterEditorStore FE-D2', () => {
     expect(store.dirty).toBe(true)
     await vi.advanceTimersByTimeAsync(CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS)
     await flushMicrotasks()
-    expect(saved).toContainEqual(expect.objectContaining({
-      key: 'edit:custom/test',
-      statePolicy: 'reset_evolution',
-      draft: expect.objectContaining({ description: '保存中仍要保留的内容' })
-    }))
+    // 原为 `toContainEqual(expect.objectContaining(...))`；落盘条目类型真实，故取末条逐字段断言等价
+    const persistedWithPolicy = saved.at(-1)!
+    expect(persistedWithPolicy.key).toBe('edit:custom/test')
+    expect(persistedWithPolicy.statePolicy).toBe('reset_evolution')
+    expect(persistedWithPolicy.draft.description).toBe('保存中仍要保留的内容')
   })
 
   it('reload-after-confirm 丢弃当前草稿前必须显式确认，save-as-new 使用 create', async () => {
@@ -307,7 +317,8 @@ describe('characterEditorStore FE-D2', () => {
     store.beginEdit(detail())
     store.updateDraft({ displayName: '另存为新角色' })
     await store.saveAsNew()
-    expect(api.createCharacter).toHaveBeenLastCalledWith({ draft: expect.objectContaining({ displayName: '另存为新角色' }) })
+    expect(api.createCharacter).toHaveBeenCalledTimes(1)
+    expect(api.createCharacter.mock.calls[0][0].draft.displayName).toBe('另存为新角色')   // 原为 expect.objectContaining
   })
 
   it('validation/preview 使用各自 token：preview 不会令迟到 validation 永久卡在 loading', async () => {
@@ -420,7 +431,10 @@ describe('characterEditorStore FE-D2', () => {
     expect(store.draft?.description).toBe('保存期间的新输入')
     expect(store.dirty).toBe(true)
     await vi.advanceTimersByTimeAsync(CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS)
-    expect(saved).toContainEqual(expect.objectContaining({ key: 'edit:custom/rebased', draft: expect.objectContaining({ description: '保存期间的新输入' }) }))
+    // 原为 `toContainEqual(expect.objectContaining(...))`；落盘条目类型真实，取末条逐字段断言等价
+    const persistedRebased = saved.at(-1)!
+    expect(persistedRebased.key).toBe('edit:custom/rebased')
+    expect(persistedRebased.draft.description).toBe('保存期间的新输入')
   })
 
   it('保存清理等待期间切换 editor：不同 key 删除旧 key，同 deterministic edit key 保护新会话', async () => {
@@ -543,11 +557,11 @@ describe('characterEditorStore FE-D2', () => {
   it('preview object 只能提供 userMessage，不能注入另一份 draft', async () => {
     const store = useCharacterEditorStore()
     store.beginCreate(draft('真实当前草稿'))
-    await store.previewCharacter({ draft: draft('攻击者草稿'), userMessage: '只采用这条消息' } as never)
-    expect(api.previewCharacter).toHaveBeenLastCalledWith(expect.objectContaining({
-      userMessage: '只采用这条消息',
-      draft: expect.objectContaining({ displayName: '真实当前草稿' })
-    }))
+    await store.previewCharacter({ draft: draft('攻击者草稿'), userMessage: '只采用这条消息' })
+    // 原为 expect.objectContaining 双层匹配；previewCharacter 实参已受 CharacterPreviewCommand 检查，故直接取实参
+    const previewedDraft = api.previewCharacter.mock.calls.at(-1)![0]
+    expect(previewedDraft.userMessage).toBe('只采用这条消息')
+    expect(previewedDraft.draft.displayName).toBe('真实当前草稿')
   })
 
   it('归档当前角色立即失效未到 debounce 的草稿；归档其它角色不取消当前写入', async () => {
@@ -562,6 +576,7 @@ describe('characterEditorStore FE-D2', () => {
     store.updateDraft({ description: '其它角色归档仍应保留' })
     await store.handleCharacterArchived('custom/other')
     await vi.advanceTimersByTimeAsync(CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS)
-    expect(api.saveCharacterDraft).toHaveBeenCalledWith(expect.objectContaining({ draft: expect.objectContaining({ description: '其它角色归档仍应保留' }) }))
+    expect(api.saveCharacterDraft).toHaveBeenCalledTimes(1)
+    expect(api.saveCharacterDraft.mock.calls[0][0].draft.description).toBe('其它角色归档仍应保留')   // 原为 expect.objectContaining
   })
 })

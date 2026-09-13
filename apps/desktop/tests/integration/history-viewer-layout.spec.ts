@@ -150,7 +150,7 @@ describe('历史查看器布局（FE-S3-RUN2-P1-01，阶段7批次C Task2 虚拟
       const page = launched.page
       const readGrid = () => page.evaluate(() => {
         const box = (sel: string) => {
-          const el = document.querySelector(sel) as HTMLElement | null
+          const el = document.querySelector(sel)
           if (!el) return null
           const r = el.getBoundingClientRect()
           return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }

@@ -94,7 +94,7 @@ const noopUnsubscribe = (): (() => void) => () => {}
 export function typedMock<K extends keyof DesktopApiLike>(
   impl?: NonNullable<DesktopApiLike[K]>
 ): Mock<NonNullable<DesktopApiLike[K]>> {
-  return vi.fn(impl) as Mock<NonNullable<DesktopApiLike[K]>>
+  return vi.fn(impl)
 }
 
 // —— 少量「结构较深」实体的一次性空值（默认值只能有一个来源，否则又变成各处手搓）——

@@ -13,6 +13,27 @@ function msg(id: string, createdAt: string, extra = ''): Message {
 }
 function conv(id: string, updatedAt: string): Conversation { return { id, title: id, updatedAt } }
 
+/** 读回持久化 JSON 文件为对象（顶层非对象即抛错：与原先点号取属性失败同属“测试红色”，不会静默通过）。 */
+function readJsonObject(text: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(text)
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('持久化文件顶层应为 JSON 对象')
+  return { ...parsed }
+}
+
+/** 取 JSON 对象的子对象字段（缺失/非对象即抛错）。 */
+function jsonObjectField(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = parent[key]
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`持久化文件字段 ${key} 应为 JSON 对象`)
+  return { ...value }
+}
+
+/** 取 JSON 对象的数组字段（缺失/非数组即抛错）；返回原数组引用，供就地注入非法条目。 */
+function jsonArrayField(parent: Record<string, unknown>, key: string): unknown[] {
+  const value = parent[key]
+  if (!Array.isArray(value)) throw new Error(`持久化文件字段 ${key} 应为 JSON 数组`)
+  return value
+}
+
 async function makeStore(activeConv = 'c1') {
   const base = await mkdtemp(join(tmpdir(), 'cyrene-session-'))
   const safeRoot = await realpath(base)
@@ -37,8 +58,8 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
     const h = env.s.hydrate()
     expect(h.drafts.find((d) => d.conversationId === 'c1')?.text).toBe('你好')
     expect(h.scrollAnchors['c1']).toEqual({ messageId: 'm1', offset: 5 })
-    const raw = JSON.parse(await readFile(join(env.base, 'drafts-v1.json'), 'utf8'))
-    expect(raw.schemaVersion).toBe(1)
+    const raw = readJsonObject(await readFile(join(env.base, 'drafts-v1.json'), 'utf8'))
+    expect(raw['schemaVersion']).toBe(1)
   })
 
   it('单草稿 UTF-8 >100KB 拒绝 DRAFT_LIMIT_EXCEEDED（权威校验，防御 untrusted renderer）', async () => {
@@ -121,8 +142,9 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
   it('条目级 schema 失败丢条目不污染整文件（损坏不污染）', async () => {
     env = await makeStore()
     await env.s.cacheMessages({ conversationId: 'c1', messages: [msg('ok', 't')], updatedAt: 't' })
-    const raw = JSON.parse(await readFile(join(env.base, 'message-cache-v1.json'), 'utf8'))
-    raw.snapshots.c1.messages.push({ messageId: '', conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't' })
+    const raw = readJsonObject(await readFile(join(env.base, 'message-cache-v1.json'), 'utf8'))
+    const c1Snapshot = jsonObjectField(jsonObjectField(raw, 'snapshots'), 'c1')
+    jsonArrayField(c1Snapshot, 'messages').push({ messageId: '', conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't' })
     // P2-4 同款：mode 0600 写入——0644 带 group/other 位会先触发 openSafeFile 权限拒绝（整文件隔离），而非逐条丢弃路径
     await writeFile(join(env.base, 'message-cache-v1.json'), JSON.stringify(raw), { encoding: 'utf8', mode: 0o600 })
     const s2 = new SessionStore({
@@ -236,7 +258,7 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
       env.s.persistSession({ conversationId: 'c3', draft: { text: 'c', updatedAt: 't3' }, scrollAnchor: null })
     ])
     const rejected = results.filter((r) => r.status === 'rejected')
-    expect(rejected, `并发写出现失败：${rejected.map((r) => String((r as PromiseRejectedResult).reason)).join(' | ')}`).toEqual([])
+    expect(rejected, `并发写出现失败：${rejected.map((r) => String((r).reason)).join(' | ')}`).toEqual([])
 
     // 落盘内容必须是最后一次调用时的完整内存态（三条草稿都在，lastActive 为最后一次设置的值）
     const raw = JSON.parse(await readFile(join(env.base, 'drafts-v1.json'), 'utf8')) as {
@@ -255,7 +277,7 @@ describe('SessionStore（spec §4.4.2/§4.5）', () => {
       env.s.cacheMessages({ conversationId: 'c2', messages: [msg('m2', '2026-01-02T00:00:00Z')], updatedAt: 'u2' })
     ])
     const rejected = results.filter((r) => r.status === 'rejected')
-    expect(rejected, `并发写出现失败：${rejected.map((r) => String((r as PromiseRejectedResult).reason)).join(' | ')}`).toEqual([])
+    expect(rejected, `并发写出现失败：${rejected.map((r) => String((r).reason)).join(' | ')}`).toEqual([])
     // 可解析 = 没有半截 JSON 落盘（原子替换的核心承诺）
     const raw = JSON.parse(await readFile(join(env.base, 'message-cache-v1.json'), 'utf8')) as { snapshots: Record<string, unknown> }
     expect(Object.keys(raw.snapshots).sort()).toEqual(['c1', 'c2'])

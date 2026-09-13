@@ -37,7 +37,7 @@ describe('atomicWriteFile 并发写（H-11a）', () => {
     const results = await Promise.allSettled(payloads.map((p) => atomicWriteFile(target(), p, { safeRoot: root })))
 
     const rejected = results
-      .map((r, i) => (r.status === 'rejected' ? `#${i}: ${String((r as PromiseRejectedResult).reason)}` : null))
+      .map((r, i) => (r.status === 'rejected' ? `#${i}: ${String((r).reason)}` : null))
       .filter((x): x is string => x !== null)
     expect(rejected, `并发写出现失败（固定临时名会让后 rename 者 ENOENT）:\n${rejected.join('\n')}`).toEqual([])
   })

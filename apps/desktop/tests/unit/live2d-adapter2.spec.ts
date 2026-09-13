@@ -145,7 +145,7 @@ vi.mock('@framework/cubismmodelsettingjson', () => {
       if (!layout || typeof layout !== 'object') return false
       let ret = false
       for (const k of Object.keys(layout)) {
-        const v = Number((layout as Record<string, unknown>)[k])
+        const v = Number((layout)[k])
         if (Number.isFinite(v)) {
           out.set(k, v)
           ret = true
@@ -271,7 +271,7 @@ vi.mock('@framework/math/cubismmodelmatrix', () => {
     constructor(w?: number, h?: number) {
       this.w = w ?? 0
       this.h = h ?? 0
-      instances.push(this as unknown as { w: number; h: number; layoutMap: Map<string, number> | null })
+      instances.push(this)
     }
     setupFromLayout(map: Map<string, number>): void {
       this.layoutMap = new Map(map)
@@ -604,7 +604,7 @@ describe('Layout 装配 + draw() MVP 拟合路径', () => {
     expect(m?.[5]).toBeCloseTo(1) // sy * 2 = 0.5*2
     expect(m?.[12]).toBeCloseTo(0.25) // offsetX=1 → +0.25 clip
     expect(m?.[13]).toBeCloseTo(-0.25) // offsetY=-1 → -0.25 clip
-    for (const v of Array.from(m as Float32Array)) {
+    for (const v of Array.from(m)) {
       expect(Number.isFinite(v)).toBe(true) // 非退化（无 NaN/Infinity）
     }
 

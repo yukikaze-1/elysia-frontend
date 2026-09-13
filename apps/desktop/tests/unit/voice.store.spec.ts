@@ -45,8 +45,19 @@ function ev<T extends { event: string }>(partial: T): BackendEvent {
   return { eventId: 'e1', sequence: 1, ...partial } as unknown as BackendEvent
 }
 
+/**
+ * `expect.stringMatching()` 在 @vitest/expect 的公开类型里返回 `any`
+ * （`node_modules/@vitest/expect/dist/index.d.ts`：`stringMatching: (expected: string | RegExp) => any`）。
+ * 直接写进期望对象会让该属性退化成 `any`（no-unsafe-assignment）。运行时它返回的是 vitest 的
+ * asymmetric matcher（相等引擎按 `asymmetricMatch` 特判），本 spec 里这些位置恒代表一个字符串，
+ * 故在这一处（且仅此一处）把它收窄成 `string`——**期望值本身一字未改**。
+ */
+function stringMatching(pattern: RegExp): string {
+  return expect.stringMatching(pattern) as string
+}
+
 function onChunk(bytes: Uint8Array): void {
-  const opts = fake.start.mock.calls[0][0] as PcmCaptureOptions
+  const opts = fake.start.mock.calls[0][0]
   opts.onChunk(bytes)
 }
 
@@ -161,7 +172,7 @@ describe('voiceStore', () => {
     expect(store.consentPending).toBe(false)
     expect(store.pendingAction).toBeNull()
     expect(store.confirmDispatching).toBe(false) // settle 后复位
-    expect(mockApi.voiceStartRecord).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
+    expect(mockApi.voiceStartRecord).toHaveBeenCalledWith({ recordingId: stringMatching(/^rec_/) })
     expect(fake.start).toHaveBeenCalled()
     expect(store.mode).toBe('recording')
   })
@@ -206,7 +217,7 @@ describe('voiceStore', () => {
     expect(fake.start).toHaveBeenCalledTimes(1)
     expect(mockApi.voiceStartRecord.mock.invocationCallOrder[0]).toBeLessThan(fake.start.mock.invocationCallOrder[0])
     // capture.start 收到 onChunk/onStop/deviceId
-    const opts = fake.start.mock.calls[0][0] as PcmCaptureOptions
+    const opts = fake.start.mock.calls[0][0]
     expect(typeof opts.onChunk).toBe('function')
     expect(typeof opts.onStop).toBe('function')
     expect(opts.deviceId).toBeUndefined() // 缺省 micDeviceId
@@ -219,7 +230,7 @@ describe('voiceStore', () => {
   it('record：silenceAutoStop 默认关闭 → 不给采集层传 silence（行为与开启该设置前一致）', async () => {
     const store = useVoiceStore()
     await store.startRecord()
-    const opts = fake.start.mock.calls[0][0] as PcmCaptureOptions
+    const opts = fake.start.mock.calls[0][0]
     expect(opts.silence).toBeUndefined()
     expect(useSettingsStore().voice.silenceAutoStop).toBe(false)
   })
@@ -229,7 +240,7 @@ describe('voiceStore', () => {
     settings.setVoice({ silenceAutoStop: true, silenceStopMs: 1500 })
     const store = useVoiceStore()
     await store.startRecord()
-    const opts = fake.start.mock.calls[0][0] as PcmCaptureOptions
+    const opts = fake.start.mock.calls[0][0]
     expect(opts.silence?.durationMs).toBe(1500)
 
     // 采集层判定静音到点 → 走的是与手动停止完全相同的路径（voiceStopRecord + record_pending）
@@ -245,14 +256,14 @@ describe('voiceStore', () => {
     await store.startRecord()
     await store.stopRecord()
     expect(store.mode).toBe('record_pending')
-    expect(mockApi.voiceStopRecord).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
+    expect(mockApi.voiceStopRecord).toHaveBeenCalledWith({ recordingId: stringMatching(/^rec_/) })
     const handler = subscribe(store)
     handler(ev({ event: 'voice.transcript', recordingId: lastRecordingId(), text: '你好世界' }))
     expect(store.record.transcript).toBe('你好世界')
     expect(store.caption).toBe('你好世界')
     const ok = await store.commitRecord()
     expect(ok).toBe(true)
-    expect(mockApi.voiceCommit).toHaveBeenCalledWith(expect.objectContaining({ recordingId: expect.stringMatching(/^rec_/), text: '你好世界' }))
+    expect(mockApi.voiceCommit).toHaveBeenCalledWith(expect.objectContaining({ recordingId: stringMatching(/^rec_/), text: '你好世界' }))
     expect(store.mode).toBe('idle') // 成功清态
     expect(store.record.transcript).toBeUndefined()
     expect(store.caption).toBe('')
@@ -300,7 +311,7 @@ describe('voiceStore', () => {
     await store.startRecord()
     await store.stopRecord()
     await store.discardRecord()
-    expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: expect.stringMatching(/^rec_/) })
+    expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: stringMatching(/^rec_/) })
     expect(store.mode).toBe('idle')
     expect(store.record.elapsedMs).toBe(0)
     expect(store.caption).toBe('')
@@ -425,7 +436,7 @@ describe('voiceStore', () => {
     expect(store.micError?.code).toBe('NOT_ALLOWED')
     expect(store.micError?.message).toContain('麦克风权限被拒绝')
     // 同一 recordingId：discard 保留 startRecord 生成的 id（不提前清、不丢关联）
-    const startId = mockApi.voiceStartRecord.mock.calls[0][0].recordingId as string
+    const startId = mockApi.voiceStartRecord.mock.calls[0][0].recordingId
     expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: startId })
     resolveDiscard()
     await p
@@ -592,7 +603,7 @@ describe('voiceStore', () => {
   it('realtime：start → voiceStartRealtime(带 conversationId) + 采集', async () => {
     const store = useVoiceStore()
     await store.startRealtime()
-    expect(mockApi.voiceStartRealtime).toHaveBeenCalledWith({ sessionId: expect.stringMatching(/^vs_/), conversationId: 'conv-1' })
+    expect(mockApi.voiceStartRealtime).toHaveBeenCalledWith({ sessionId: stringMatching(/^vs_/), conversationId: 'conv-1' })
     expect(fake.start).toHaveBeenCalled()
     expect(store.mode).toBe('realtime')
     expect(store.captureReady).toBe(true)
@@ -666,7 +677,7 @@ describe('voiceStore', () => {
     await store.startRealtime()
     await store.stopRealtime()
     expect(fake.stop).toHaveBeenCalled()
-    expect(mockApi.voiceStopRealtime).toHaveBeenCalledWith({ sessionId: expect.stringMatching(/^vs_/) })
+    expect(mockApi.voiceStopRealtime).toHaveBeenCalledWith({ sessionId: stringMatching(/^vs_/) })
     expect(store.mode).toBe('realtime') // 清态由 ended 事件完成
     const handler = subscribe(store)
     handler(ev({ event: 'voice_session.ended', sessionId: 'vs_1', reason: 'stopped' }))
@@ -677,7 +688,7 @@ describe('voiceStore', () => {
     const store = useVoiceStore()
     await store.startRealtime()
     await store.cancelRealtime()
-    expect(mockApi.voiceCancelRealtime).toHaveBeenCalledWith({ sessionId: expect.stringMatching(/^vs_/) })
+    expect(mockApi.voiceCancelRealtime).toHaveBeenCalledWith({ sessionId: stringMatching(/^vs_/) })
   })
 
   it('realtime：micError——capture.start 拒绝 → micError + 模式回 idle + voiceCancelRealtime', async () => {
@@ -687,7 +698,7 @@ describe('voiceStore', () => {
     expect(store.micError?.code).toBe('DEVICE_IN_USE')
     expect(store.mode).toBe('idle')
     expect(store.captureReady).toBe(false)
-    expect(mockApi.voiceCancelRealtime).toHaveBeenCalledWith({ sessionId: expect.stringMatching(/^vs_/) })
+    expect(mockApi.voiceCancelRealtime).toHaveBeenCalledWith({ sessionId: stringMatching(/^vs_/) })
   })
 
   // —— 输入法转写 ——
@@ -696,7 +707,7 @@ describe('voiceStore', () => {
     useSettingsStore().dictation.sttProfileId = 'stt/p1'
     const store = useVoiceStore()
     await store.startDictation()
-    expect(mockApi.voiceStartDictation).toHaveBeenCalledWith({ clientRequestId: expect.stringMatching(/^req_/), sttProfileId: 'stt/p1' })
+    expect(mockApi.voiceStartDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/), sttProfileId: 'stt/p1' })
     expect(fake.start).toHaveBeenCalled()
     expect(store.mode).toBe('dictating')
   })
@@ -705,7 +716,7 @@ describe('voiceStore', () => {
     useSettingsStore().dictation.sttProfileId = undefined
     const store = useVoiceStore()
     await store.startDictation()
-    expect(mockApi.voiceStartDictation).toHaveBeenCalledWith({ clientRequestId: expect.stringMatching(/^req_/) })
+    expect(mockApi.voiceStartDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/) })
     expect(mockApi.voiceStartDictation.mock.calls[0][0]).not.toHaveProperty('sttProfileId')
   })
 
@@ -731,7 +742,7 @@ describe('voiceStore', () => {
     await store.startDictation()
     await store.cancelDictation()
     expect(fake.stop).toHaveBeenCalled()
-    expect(mockApi.voiceCancelDictation).toHaveBeenCalledWith({ clientRequestId: expect.stringMatching(/^req_/) })
+    expect(mockApi.voiceCancelDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/) })
     const handler = subscribe(store)
     handler(ev({ event: 'dictation.cancelled', clientRequestId: 'req_1' }))
     expect(store.dictation.caption).toBe('')
@@ -742,7 +753,7 @@ describe('voiceStore', () => {
     const store = useVoiceStore()
     await store.startDictation()
     await store.stopDictation()
-    expect(mockApi.voiceStopDictation).toHaveBeenCalledWith({ clientRequestId: expect.stringMatching(/^req_/) })
+    expect(mockApi.voiceStopDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/) })
   })
 
   it('dictation：micError——capture.start 拒绝 → micError + 模式回 idle + voiceCancelDictation', async () => {
@@ -751,7 +762,7 @@ describe('voiceStore', () => {
     await store.startDictation()
     expect(store.micError?.message).toContain('无可用麦克风')
     expect(store.mode).toBe('idle')
-    expect(mockApi.voiceCancelDictation).toHaveBeenCalledWith({ clientRequestId: expect.stringMatching(/^req_/) })
+    expect(mockApi.voiceCancelDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/) })
   })
 
   // —— TTS ——

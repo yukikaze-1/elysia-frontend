@@ -77,7 +77,7 @@ async function registerOnce(adapter: unknown, media: MediaLike): Promise<{ invok
     invoke: (channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> => {
       const listener = getListeners().get(channel)
       if (!listener) throw new Error(`通道未注册: ${channel}`)
-      return listener(fakeEvent as never, ...args) as Promise<IpcResult<unknown>>
+      return listener(fakeEvent, ...args) as Promise<IpcResult<unknown>>
     }
   }
 }

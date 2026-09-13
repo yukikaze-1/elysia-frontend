@@ -11,7 +11,8 @@ const FIXTURES = join(__dirname, '../../src/main/fixtures/wire-v2')
 
 function readLines(name: string): unknown[] {
   const raw = readFileSync(join(FIXTURES, name), 'utf8')
-  return raw.split('\n').map((l) => l.trim()).filter((l) => l.length > 0).map((l) => JSON.parse(l))
+  // JSON.parse 的返回类型是 `any`；本函数声明返回 unknown[]，故先收成 unknown 再交出去（下游 parseRawFrame 按 unknown 入参）
+  return raw.split('\n').map((l) => l.trim()).filter((l) => l.length > 0).map((l) => JSON.parse(l) as unknown)
 }
 
 interface WireManifest {
@@ -23,8 +24,22 @@ interface WireManifest {
   scenario?: string
 }
 
+/** manifest 运行时判型：字段齐备且类型正确才收窄成 `WireManifest`（不靠断言假装 JSON.parse 的产物合法） */
+function isWireManifest(value: unknown): value is WireManifest {
+  if (typeof value !== 'object' || value === null) return false
+  const m = value as Record<string, unknown>
+  return typeof m.backendCommit === 'string' &&
+    typeof m.protocol === 'string' &&
+    typeof m.serverProtocolVersion === 'string' &&
+    typeof m.schemaHash === 'string' &&
+    typeof m.verified === 'boolean' &&
+    (m.scenario === undefined || typeof m.scenario === 'string')
+}
+
 function readManifest(name: string): WireManifest {
-  return JSON.parse(readFileSync(join(FIXTURES, name), 'utf8'))
+  const raw: unknown = JSON.parse(readFileSync(join(FIXTURES, name), 'utf8'))
+  if (!isWireManifest(raw)) throw new Error(`${name}: manifest 字段缺失或类型不符`)
+  return raw
 }
 
 const VERIFIED_COMMIT = 'beeba5776413dde9761375c2fd9541d6636f180d'

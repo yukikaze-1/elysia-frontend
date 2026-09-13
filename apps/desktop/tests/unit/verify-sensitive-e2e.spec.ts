@@ -47,6 +47,14 @@ const SCRIPT = fileURLToPath(new URL('../../scripts/verify-sensitive.mjs', impor
 interface AllowlistEntry { path: string; anchor: RegExp; reason: string; rules?: string[] }
 interface Hit { name: string; line: number; text: string }
 
+/** 条目运行时判型：字段齐备且类型正确才收窄成 `AllowlistEntry`（不靠断言假装 eval/JSON 产物合法） */
+function isAllowlistEntry(value: unknown): value is AllowlistEntry {
+  if (typeof value !== 'object' || value === null) return false
+  const e = value as Record<string, unknown>
+  return typeof e.path === 'string' && e.anchor instanceof RegExp && typeof e.reason === 'string' &&
+    (e.rules === undefined || (Array.isArray(e.rules) && e.rules.every((r) => typeof r === 'string')))
+}
+
 /**
  * 从**脚本源码**取出 `const ALLOWLIST = [ … ]` 的字面量并求值。
  * 为何不 import 脚本：`verify-sensitive.mjs` 顶层带副作用（`git ls-files` + `process.exit`），
@@ -63,10 +71,11 @@ function loadRealAllowlist(): AllowlistEntry[] {
   const literal = src.slice(start + marker.length - 1, end + 2)
   const value: unknown = (0, eval)(literal)   // 只求值本仓源码里的字面量，见上方注记
   if (!Array.isArray(value) || value.length === 0) throw new Error('ALLOWLIST 求值结果不是非空数组')
-  for (const e of value) {
-    if (!(e?.anchor instanceof RegExp) || typeof e.path !== 'string') throw new Error(`条目形态异常：${JSON.stringify(e)}`)
-  }
-  return value as AllowlistEntry[]
+  const entries: unknown[] = value
+  const bad = entries.find((e) => !isAllowlistEntry(e))
+  if (bad !== undefined) throw new Error(`条目形态异常：${JSON.stringify(bad)}`)
+  // 逐个 isAllowlistEntry 通过后元素即 AllowlistEntry；显式 re-narrow（TS 不会从循环里的守卫收窄整个数组）
+  return entries.filter((e): e is AllowlistEntry => isAllowlistEntry(e))
 }
 
 const ALLOWLIST = loadRealAllowlist()

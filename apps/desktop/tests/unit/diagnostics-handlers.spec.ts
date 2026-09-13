@@ -76,12 +76,12 @@ async function registerOnce(service: ServiceLike): Promise<{ invoke: (channel: s
   const { setMainWindow } = await import('../../src/main/ipc/registry')
   const { registerDiagnosticsHandlers } = await import('../../src/main/ipc/diagnostics-handlers')
   setMainWindow(fakeWindow as never)
-  registerDiagnosticsHandlers({ service: service as never, sanitize, logger })
+  registerDiagnosticsHandlers({ service: service, sanitize, logger })
   return {
     invoke: (channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> => {
       const listener = getListeners().get(channel)
       if (!listener) throw new Error(`通道未注册: ${channel}`)
-      return listener(fakeEvent as never, ...args) as Promise<IpcResult<unknown>>
+      return listener(fakeEvent, ...args) as Promise<IpcResult<unknown>>
     },
     logger,
   }
@@ -153,7 +153,7 @@ describe('registerDiagnosticsHandlers 真实接线（electron mock 捕获 ipcMai
     expect(trustedInvoke).toBeTypeOf('function') // 保证 registerOnce 已装配（listener 捕获完成）
     const listener = getListeners().get(IpcChannels.diagnosticsState)
     expect(listener).toBeDefined()
-    const res = await listener!(evilEvent as never) as IpcResult<unknown>
+    const res = await listener!(evilEvent) as IpcResult<unknown>
     expect(res.ok).toBe(false)
     if (!res.ok) expect(res.error.message).toBe('拒绝')
     expect(service.getState).not.toHaveBeenCalled() // 拒绝面不触达服务

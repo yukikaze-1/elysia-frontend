@@ -55,7 +55,7 @@ describe('shared cloneValue（JSON-safe 深拷贝，2026-09-10 抽取）', () =>
     try {
       // @ts-expect-error 测试替身
       delete globalThis.structuredClone
-      const copy = cloneValue({ keep: 1, drop: undefined } as { keep: number; drop?: undefined })
+      const copy = cloneValue({ keep: 1, drop: undefined })
       expect('drop' in copy).toBe(false)
     } finally {
       globalThis.structuredClone = original

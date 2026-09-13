@@ -179,7 +179,9 @@ describe('IPC 安全', () => {
       const hidden = new BrowserWindow({ show: false, webPreferences: { preload: preloadPath, sandbox: true, contextIsolation: true, nodeIntegration: false } })
       await hidden.loadURL('about:blank')
       try {
-        const outcome = await hidden.webContents.executeJavaScript('window.desktopApi.getAppInfo()')
+        // `executeJavaScript` 的返回类型就是 `any`（Electron 契约如此）：落成 unknown 再交给断言，
+        // 不让 any 顺着 `{ ok, outcome }` 这个对象继续扩散（type-aware 全集，2026-09-13）。
+        const outcome: unknown = await hidden.webContents.executeJavaScript('window.desktopApi.getAppInfo()')
         return { ok: true, outcome }
       } catch (e: unknown) { return { ok: false, err: String(e) } }
       finally { hidden.destroy() }
@@ -195,7 +197,7 @@ describe('IPC 安全', () => {
       const win = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false, sandbox: false } })
       await win.loadURL('about:blank')
       try {
-        const out = await win.webContents.executeJavaScript(
+        const out: unknown = await win.webContents.executeJavaScript(
           "require('electron').ipcRenderer.invoke('cy:nonexistent-channel-xyz').then((r) => 'ok:' + JSON.stringify(r)).catch((e) => 'err:' + e.message)"
         )
         return { out }

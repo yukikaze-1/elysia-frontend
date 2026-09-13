@@ -108,8 +108,11 @@ describe('诊断设置 IPC（spec §6.2/§9）', () => {
   it('clear-logs：state.lastCleanup 回显（removedFiles/freedBytes）+ 审计 diagnostics:logs-cleared', async () => {
     await page.evaluate(() => window.desktopApi.diagnosticsClearLogs())
     // 清空结果经 state 刷新回显（spec §6.2：清空结果经 state 附带，不造第二响应形状）
+    // `expect.any(Number)` 的返回类型就是 `any`（vitest 有意如此）：先收成 unknown 再放进期望对象，
+    // 免得 any 顺着 `toMatchObject` 的参数扩散（type-aware 全集，2026-09-13）。期望值语义未变。
+    const anyNumber: unknown = expect.any(Number)
     await expect.poll(async () => page.evaluate(() => window.desktopApi.diagnosticsState()), { timeout: 5000, interval: 200 })
-      .toMatchObject({ lastCleanup: { removedFiles: expect.any(Number), freedBytes: expect.any(Number) } })
+      .toMatchObject({ lastCleanup: { removedFiles: anyNumber, freedBytes: anyNumber } })
     const st = await page.evaluate(() => window.desktopApi.diagnosticsState())
     expect(st.lastCleanup!.removedFiles).toBeGreaterThanOrEqual(0)
     expect(st.lastCleanup!.freedBytes).toBeGreaterThanOrEqual(0)

@@ -87,12 +87,12 @@ async function registerOnce(adapter: unknown, settings: SettingsStub): Promise<{
     invoke: (channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> => {
       const listener = getListeners().get(channel)
       if (!listener) throw new Error(`通道未注册: ${channel}`)
-      return listener(fakeEvent as never, ...args) as Promise<IpcResult<unknown>>
+      return listener(fakeEvent, ...args) as Promise<IpcResult<unknown>>
     },
     emitOneWay: (channel: string, event: unknown, payload: unknown): void => {
       const listener = getListeners().get(channel)
       if (!listener) throw new Error(`通道未注册: ${channel}`)
-      listener(event as never, payload)
+      listener(event, payload)
     },
     logger
   }

@@ -241,7 +241,7 @@ describe('ring 容量与 dispose', () => {
   it('devTap 回调体异常隔离：坏事件（null）仅 warn 不中断', () => {
     const { svc, adapter, logger } = makeCtx({ sanitize: (s) => s })
     svc.setDevMode(true)
-    adapter.tap(null as unknown as BackendEvent) // 取字段抛错 → 单条丢弃 + warn（不外抛，防断事件流）
+    adapter.tap(null) // 取字段抛错 → 单条丢弃 + warn（不外抛，防断事件流）
     expect(logger.warn).toHaveBeenCalledWith('diagnostics:dev-event-error', expect.anything())
   })
 

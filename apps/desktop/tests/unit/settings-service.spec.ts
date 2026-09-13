@@ -44,7 +44,8 @@ describe('SettingsService', () => {
     expect(saved.dictation.insertMode).toBe('append')     // dictation 子树原样
     expect(saved.version).toBe(1)
     // 原子写产物：JSON 可读、与返回值一致、无 .tmp 残留
-    const onDisk = JSON.parse(readFileSync(settingsPath(dir), 'utf8'))
+    // 落盘产物是外部 JSON：先收成 unknown 再交给断言（JSON.parse 的返回类型是 any，直接赋给变量即 no-unsafe-assignment）
+    const onDisk: unknown = JSON.parse(readFileSync(settingsPath(dir), 'utf8'))
     expect(onDisk).toEqual(saved)
     expect(existsSync(`${settingsPath(dir)}.tmp`)).toBe(false)
     // 二次 save 只 merge 该子树，前次已改字段保持

@@ -2,7 +2,7 @@
 // Task 4 (P4-B):real-backend 语音控制帧(wire JSON 逐字)+ 单活动语音会话注册表 +
 // sendAudioBytes 双 guard + commitVoice pendingAck 复用 + 语音族错误路由(D-P15)+ 二进制接收忽略。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { RealBackend, type RealBackendOptions, type WebSocketLike } from '../../src/main/transport/real-backend'
+import { RealBackend, type RealBackendOptions } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { CyreneErrorCode } from '@shared/errors'
@@ -103,7 +103,7 @@ async function makeBackend(opts: Partial<RealBackendOptions> = {}): Promise<{
   const events: BackendEvent[] = []
   const backend = new RealBackend({
     now: () => Date.now(),
-    wsFactory: () => ws as WebSocketLike,
+    wsFactory: () => ws,
     onProtocolWarning: (w) => warnings.push(w),
     onError: (e) => errors.push(e),
     ...opts
@@ -308,7 +308,7 @@ describe('RealBackend commitVoice pendingAck 复用（Task 4）', () => {
 
   it('commitVoice 未连接 → NOT_CONNECTED（先 guard 再注册 pending，无悬空条目）', async () => {
     const ws = new FakeWs()
-    const backend = new RealBackend({ now: () => Date.now(), wsFactory: () => ws as WebSocketLike })
+    const backend = new RealBackend({ now: () => Date.now(), wsFactory: () => ws })
     await backend.setToken('t')
     await expect(backend.commitVoice({ recordingId: 'rec-1', text: 'hi', clientRequestId: 'c-1', clientMessageId: 'm-1', conversationId: 'conv-1' }))
       .rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
@@ -330,7 +330,7 @@ describe('RealBackend sendAudioBytes 双 guard（Task 4）', () => {
   it('断连 → VOICE_BINARY_NOT_CONNECTED warn 丢弃，不 throw', async () => {
     const ws = new FakeWs()
     const warnings: ProtocolWarning[] = []
-    const backend = new RealBackend({ now: () => Date.now(), wsFactory: () => ws as WebSocketLike, onProtocolWarning: (w) => warnings.push(w) })
+    const backend = new RealBackend({ now: () => Date.now(), wsFactory: () => ws, onProtocolWarning: (w) => warnings.push(w) })
     await backend.setToken('t')
     expect(() => backend.sendAudioBytes(new Uint8Array([1]))).not.toThrow()
     expect(binaryCount(ws)).toBe(0)

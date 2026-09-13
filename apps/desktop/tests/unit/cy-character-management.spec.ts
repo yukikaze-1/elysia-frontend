@@ -232,8 +232,12 @@ describe('角色管理 UI FE-D3', () => {
     await wrapper.get('.cy-preview textarea').setValue('请问候我')
     await wrapper.get('.cy-preview button').trigger('click')
     await flushPromises()
-    expect(previewCharacter).toHaveBeenCalledWith(expect.objectContaining({ userMessage: '请问候我', draft: expect.any(Object) }))
-    expect(previewCharacter.mock.calls[0][0].draft).toBeDefined()
+    expect(previewCharacter).toHaveBeenCalledTimes(1)
+    // `expect.objectContaining`/`expect.any` 的返回类型被 vitest 声明成 `any`；改为按调用序取实参断言，
+    // previewCharacter 的实参本身已受 CharacterPreviewCommand 检查
+    const previewInput = previewCharacter.mock.calls[0][0]
+    expect(previewInput.userMessage).toBe('请问候我')
+    expect(previewInput.draft).toBeDefined()
     expect(wrapper.text()).toContain('本结果不会修改草稿')
     expect(wrapper.text()).toContain('安全预览')
     expect(wrapper.find('.cy-preview-result .cy-markdown').exists()).toBe(true)

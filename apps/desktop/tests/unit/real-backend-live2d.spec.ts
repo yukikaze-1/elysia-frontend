@@ -3,7 +3,7 @@
 // 冻结契约形状的帧按 Task 1 raw-schema → FrameMapper → Live2DDirectiveEvent emit；旧契约/畸形形状经
 // raw-schema .strict() fail-closed 丢弃（RAW_FRAME_INVALID 告警，不 emit、不崩）。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { RealBackend, type WebSocketLike } from '../../src/main/transport/real-backend'
+import { RealBackend } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 
@@ -27,7 +27,7 @@ async function makeBackend(features: Record<string, unknown> = {}): Promise<{
   const events: BackendEvent[] = []
   const backend = new RealBackend({
     now: () => Date.now(),
-    wsFactory: () => ws as WebSocketLike,
+    wsFactory: () => ws,
     onProtocolWarning: (w) => warnings.push(w)
   })
   backend.subscribe((e) => events.push(e))

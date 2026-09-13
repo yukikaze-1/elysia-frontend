@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
-import type { UpdateUserIdentityCommand } from '@shared/contracts'
+import type { CharacterListQuery, UpdateUserIdentityCommand } from '@shared/contracts'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import CyIdentityPane from '../../src/renderer/src/components/characters/CyIdentityPane.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -23,7 +23,7 @@ beforeEach(() => {
   setDesktopApi(createDesktopApiMock({
     getMe: vi.fn(() => backend.getMe()),
     updateMe,
-    listCharacters: vi.fn((input = {}) => backend.listCharacters(input))
+    listCharacters: vi.fn((input: CharacterListQuery) => backend.listCharacters(input))
   }))
 })
 
@@ -122,7 +122,7 @@ describe('CyIdentityPane FE-C', () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const canonical = { status: 'active' as const, limit: 100 }
-    const listCharacters = vi.fn((input = {}) => backend.listCharacters(input))
+    const listCharacters = vi.fn((input: CharacterListQuery) => backend.listCharacters(input))
     setDesktopApi(createDesktopApiMock({ getMe: vi.fn(() => backend.getMe()), updateMe, listCharacters }))   // I-06 / P2-10：原为 `as never`
     const catalog = useCharacterCatalogStore()
     await catalog.loadList(canonical)

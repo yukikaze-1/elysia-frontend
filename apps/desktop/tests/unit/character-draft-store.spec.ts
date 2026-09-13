@@ -91,6 +91,27 @@ function writeRootFile(base: string, payload: string | Buffer): Promise<void> {
   return writeFile(join(base, CHARACTER_DRAFT_FILE_NAME), payload, { mode: 0o600 })
 }
 
+/** JSON 对象判型：`JSON.parse` 的产物是外部输入（lib 里返回 `any`），先收成 `unknown` 再用它收窄。 */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 磁盘上的草稿根文件：形状对齐 character-draft-store 的 rootSchema（版本 + 记录数组）。 */
+interface CharacterDraftFileOnDisk {
+  schemaVersion: number
+  entries: unknown[]
+}
+
+/** 读并判型草稿根文件：`JSON.parse` → `unknown` → 逐层收窄，断言里不再出现 `any`。 */
+function readDraftFile(text: string): CharacterDraftFileOnDisk {
+  const raw: unknown = JSON.parse(text)
+  if (!isJsonObject(raw) || typeof raw.schemaVersion !== 'number' || !Array.isArray(raw.entries)) {
+    throw new Error('草稿根文件形状非法（schemaVersion/entries）')
+  }
+  const entries: unknown[] = raw.entries
+  return { schemaVersion: raw.schemaVersion, entries }
+}
+
 describe('CharacterDraftStore FE-D2', () => {
   const environments: string[] = []
   afterEach(async () => {
@@ -102,7 +123,7 @@ describe('CharacterDraftStore FE-D2', () => {
     await env.store.save(entry('create:one', '2026-08-31T00:00:00.000Z', '角色一'))
     expect(env.store.list()).toEqual([{ key: 'create:one', mode: 'create', displayName: '角色一', updatedAt: '2026-08-31T00:00:00.000Z' }])
     expect(env.store.get('create:one')?.draft.displayName).toBe('角色一')
-    const raw = JSON.parse(await readFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), 'utf8'))
+    const raw = readDraftFile(await readFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), 'utf8'))
     expect(raw.schemaVersion).toBe(1)
     expect(raw.entries).toHaveLength(1)
     expect(await readFile(join(env.base, `${CHARACTER_DRAFT_FILE_NAME}.tmp`), 'utf8').catch(() => '')).toBe('')
@@ -137,7 +158,7 @@ describe('CharacterDraftStore FE-D2', () => {
   it('同一进程并发保存串行落盘，最终文件始终可解析且最后状态可重载', async () => {
     const env = await makeStore(); environments.push(env.base)
     await Promise.all(Array.from({ length: 10 }, (_, index) => env.store.save(entry(`create:${index}`, `2026-08-31T00:00:${String(index).padStart(2, '0')}.000Z`))))
-    const raw = JSON.parse(await readFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), 'utf8'))
+    const raw = readDraftFile(await readFile(join(env.base, CHARACTER_DRAFT_FILE_NAME), 'utf8'))
     expect(raw.entries).toHaveLength(10)
     const fresh = new CharacterDraftStore({ ...({ appCache: env.base, safeRoot: env.safeRoot, logger: env.logger as never, countDiagnostic: () => {} }) })
     await fresh.load()

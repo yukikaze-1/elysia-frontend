@@ -156,7 +156,7 @@ describe('统一建窗入口', () => {
     const factory = vi.fn((_opts: BrowserWindowConstructorOptions) => f.win)
     createAppWindow(BASE_OPTIONS, SILENT, factory)
     expect(factory).toHaveBeenCalledTimes(1)
-    const passed = factory.mock.calls[0]![0]
+    const passed = factory.mock.calls[0][0]
     expect(passed.show).toBe(false)
     expect(passed.alwaysOnTop).toBe(false)
     expect(passed.skipTaskbar).toBe(true)

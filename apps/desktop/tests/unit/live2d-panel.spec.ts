@@ -126,8 +126,8 @@ describe('CyLive2DPanel：失败态诊断（模型清单 + 原因）', () => {
     fake = makeFakeController('failed')
     setLive2dControllerFactory(() => fake.ctrl)
     mockApi.listLive2dModels.mockResolvedValue([
-      { ...MODELS[0]!, available: false },
-      { ...MODELS[1]!, available: false }
+      { ...MODELS[0], available: false },
+      { ...MODELS[1], available: false }
     ])
     const wrapper = await mountPanel()
     const overlay = wrapper.get('.cy-live-overlay.is-diagnostic')

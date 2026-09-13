@@ -28,7 +28,7 @@ function assistantMessage(messageId: string, texts: string[]): Message {
 }
 
 function userMessage(messageId: string, content: string): Message {
-  return { messageId, conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't', content } as Message
+  return { messageId, conversationId: 'c1', role: 'user', status: 'completed', createdAt: 't', content }
 }
 
 const LONG = 'line of markdown text\n'.repeat(400)   // ≈ 9 KB

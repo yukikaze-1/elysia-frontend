@@ -140,12 +140,12 @@ describe('DOMPURIFY_CONFIG（配置钉住——USE_PROFILES 缺席 + 显式白�
     expect((DOMPURIFY_CONFIG as Record<string, unknown>).USE_PROFILES).toBeUndefined()
   })
   it('ALLOWED_TAGS 含渲染面、不含 input/script/style', () => {
-    const tags = DOMPURIFY_CONFIG.ALLOWED_TAGS as string[]
+    const tags = DOMPURIFY_CONFIG.ALLOWED_TAGS
     expect(tags).toContain('a'); expect(tags).toContain('pre'); expect(tags).toContain('code'); expect(tags).toContain('img')
     expect(tags).not.toContain('input'); expect(tags).not.toContain('script'); expect(tags).not.toContain('style')
   })
   it('ALLOWED_ATTR 白名单（无 on*/style/id）', () => {
-    const attrs = DOMPURIFY_CONFIG.ALLOWED_ATTR as string[]
+    const attrs = DOMPURIFY_CONFIG.ALLOWED_ATTR
     expect(attrs).toContain('href'); expect(attrs).toContain('src'); expect(attrs).toContain('class')
     expect(attrs).not.toContain('onerror'); expect(attrs).not.toContain('style'); expect(attrs).not.toContain('id')
   })

@@ -7,8 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   RealBackend,
   type RealBackendOptions,
-  type TtsMediaSink,
-  type WebSocketLike
+  type TtsMediaSink
 } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
@@ -48,7 +47,7 @@ async function makeBackend(opts: Partial<RealBackendOptions> = {}, features: Rec
   const events: BackendEvent[] = []
   const backend = new RealBackend({
     now: () => Date.now(),
-    wsFactory: () => ws as WebSocketLike,
+    wsFactory: () => ws,
     getTtsMedia: () => sink,
     onProtocolWarning: (w) => warnings.push(w),
     ...opts
@@ -62,10 +61,10 @@ async function makeBackend(opts: Partial<RealBackendOptions> = {}, features: Rec
 }
 
 const readyEventsOf = (events: BackendEvent[]): Extract<BackendEvent, { event: 'audio.session.ready' }>[] =>
-  events.filter((e) => e.event === 'audio.session.ready') as Extract<BackendEvent, { event: 'audio.session.ready' }>[]
+  events.filter((e) => e.event === 'audio.session.ready')
 
 const startedEventsOf = (events: BackendEvent[]): Extract<BackendEvent, { event: 'audio.session.started' }>[] =>
-  events.filter((e) => e.event === 'audio.session.started') as Extract<BackendEvent, { event: 'audio.session.started' }>[]
+  events.filter((e) => e.event === 'audio.session.started')
 
 beforeEach(() => { vi.clearAllMocks() })
 
@@ -174,7 +173,7 @@ describe('RealBackend TTS audio_* 帧缓冲 + sink（Task 5）', () => {
 
   it('sink 写入抛错 → 丢弃 ready 且释放 audio identity', async () => {
     const { ws, events } = await makeBackend({
-      getTtsMedia: () => ({ putTtsAudio: () => { throw new Error('media write failed') } }) as TtsMediaSink
+      getTtsMedia: () => ({ putTtsAudio: () => { throw new Error('media write failed') } })
     })
     ws.push({
       type: 'audio_start', stream_id: 6, format: 'wav',

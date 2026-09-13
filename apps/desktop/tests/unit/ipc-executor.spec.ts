@@ -61,7 +61,10 @@ describe('createIpcHandler', () => {
     expect(await h(undefined)).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
   })
   it('fn 抛 null → UNKNOWN（非对象不崩 catch）', async () => {
-    const h = createIpcHandler(z.undefined(), z.undefined(), () => { throw null }, { sanitize: noopSanitize })
+    // 原为 `throw null`（only-throw-error：抛的不是 Error）；本用例要的是「catch 到的不是 Error 实例」这条路径，
+    // 故包成 Error 并把它作为 cause 保留——executor 的两个结构化分支（CyreneError/ToolServiceError）都不命中，
+    // 仍落 UNKNOWN 兜底，语义与原用例一致
+    const h = createIpcHandler(z.undefined(), z.undefined(), () => { throw new Error('non-object throw', { cause: null }) }, { sanitize: noopSanitize })
     expect(await h(undefined)).toMatchObject({ ok: false, error: { code: 'UNKNOWN' } })
   })
   it('message 超长 → <message-too-long>（64KB 门在 executor）', async () => {
@@ -76,7 +79,7 @@ describe('createIpcHandler', () => {
   })
   it('responseSchema 校验失败 → SCHEMA_VALIDATION_FAILED + 字段摘要 + 日志(channel/logger 注入)', async () => {
     const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }
-    const handler = createIpcHandler(z.undefined(), z.object({ ok: z.boolean() }), () => ({ bad: 1 }) as never, { sanitize: (m) => m, channel: 'chat:get-state', logger: logger as never })
+    const handler = createIpcHandler(z.undefined(), z.object({ ok: z.boolean() }), () => ({ bad: 1 }) as never, { sanitize: (m) => m, channel: 'chat:get-state', logger: logger })
     const res = await handler(undefined)
     expect(res.ok).toBe(false)
     if (!res.ok) { expect(res.error.code).toBe('SCHEMA_VALIDATION_FAILED'); expect(res.error.message).toContain('响应校验失败'); expect(res.error.message).toContain('ok') }

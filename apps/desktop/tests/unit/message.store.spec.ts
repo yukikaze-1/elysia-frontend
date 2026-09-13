@@ -355,7 +355,7 @@ describe('messageStore 流式应用', () => {
     mockApi.send.mockImplementationOnce(() => new Promise((res) => { resolveSend = res }))
     const store = useMessageStore()
     const p = store.send('hi')   // 乐观 local-* 同步入 byId
-    const localKey = Object.keys(store.byId)[0]!
+    const localKey = Object.keys(store.byId)[0]
     expect(localKey.startsWith('local-')).toBe(true)
     // 切会话 → resetConversation 清空 byId
     store.resetConversation('conv-2')
@@ -372,12 +372,12 @@ describe('messageStore 流式应用', () => {
     mockApi.send.mockImplementationOnce(() => new Promise((res) => { resolveSend = res }))
     const store = useMessageStore()
     const p = store.send('hi')
-    const localKey = Object.keys(store.byId)[0]!
+    const localKey = Object.keys(store.byId)[0]
     expect(store.byId[localKey]?.status).toBe('pending')
     // 非 pending 的 local-* 与普通消息应保留
     store.loadReplay('conv-1', [
-      { messageId: 'local-done', conversationId: 'conv-1', role: 'user', content: 'x', status: 'acknowledged', createdAt: 't' } as Message,
-      { messageId: 'msg-normal', conversationId: 'conv-1', role: 'user', content: 'y', status: 'pending', createdAt: 't' } as Message
+      { messageId: 'local-done', conversationId: 'conv-1', role: 'user', content: 'x', status: 'acknowledged', createdAt: 't' },
+      { messageId: 'msg-normal', conversationId: 'conv-1', role: 'user', content: 'y', status: 'pending', createdAt: 't' }
     ])
     // 断线:无 active generation 也要清理(F11:清理循环插在早退之前)
     store.handleConnectionStateChange({ status: 'reconnecting' })
@@ -679,7 +679,10 @@ describe('G3 附件发送编排（spec §4.4/§5）', () => {
     mockApi.send.mockResolvedValueOnce({ clientRequestId: 'c1' })
     const store = useMessageStore()
     await store.send('hi')
-    expect(mockApi.send).toHaveBeenCalledWith(expect.not.objectContaining({ attachments: expect.anything() }))
+    // 原为 `expect.not.objectContaining({ attachments: expect.anything() })`——`expect.anything()` 的返回类型是 any；
+    // 改为按调用序取实参（mockApi.send 经受检工厂 ⇒ 实参类型是 SendMessageInput）断言 attachments 缺省
+    const sendInput = mockApi.send.mock.calls[0][0]
+    expect(sendInput.attachments).toBeUndefined()
   })
 })
 
@@ -787,8 +790,8 @@ describe('message.store 高亮与上下文窗口（spec §4.5，D5/D6/P2-3）', 
     conversationStore.$patch({ currentId: 'conv-1' })
     const store = useMessageStore()
     store.loadPage({ items: [
-      { messageId: 'mine', conversationId: 'conv-1', role: 'user', content: 'x', status: 'completed', createdAt: 't' } as Message,
-      { messageId: 'other', conversationId: 'conv-2', role: 'user', content: 'y', status: 'completed', createdAt: 't' } as Message
+      { messageId: 'mine', conversationId: 'conv-1', role: 'user', content: 'x', status: 'completed', createdAt: 't' },
+      { messageId: 'other', conversationId: 'conv-2', role: 'user', content: 'y', status: 'completed', createdAt: 't' }
     ], hasMore: false })
     expect(store.byId.mine).toBeDefined()
     expect(store.byId.other).toBeUndefined()
@@ -881,10 +884,17 @@ describe('P4-B 语音扩展：voice_session.turn + sendVoiceCommit（spec §5.11
     const store = useMessageStore()
     const ok = await store.sendVoiceCommit('rec-1', '语音内容')
     expect(ok).toBe(true)
-    expect(mockApi.voiceCommit).toHaveBeenCalledWith(expect.objectContaining({
-      recordingId: 'rec-1', text: '语音内容', conversationId: 'conv-1',
-      clientRequestId: expect.any(String), clientMessageId: expect.any(String)
-    }))
+    // `expect.objectContaining`/`expect.any` 的返回类型被 vitest 声明成 `any`；按调用序取实参断言（mockApi.voiceCommit
+    // 经受检工厂 ⇒ 实参类型是 VoiceCommitInput），语义等价：recordingId/text/conversationId 精确，两个 id 为非空字符串
+    expect(mockApi.voiceCommit).toHaveBeenCalledTimes(1)
+    const commitInput = mockApi.voiceCommit.mock.calls[0][0]
+    expect(commitInput.recordingId).toBe('rec-1')
+    expect(commitInput.text).toBe('语音内容')
+    expect(commitInput.conversationId).toBe('conv-1')
+    expect(typeof commitInput.clientRequestId).toBe('string')
+    expect(commitInput.clientRequestId.length).toBeGreaterThan(0)
+    expect(typeof commitInput.clientMessageId).toBe('string')
+    expect(commitInput.clientMessageId.length).toBeGreaterThan(0)
     expect(store.byId['msg-voice-1']).toBeDefined()   // migrateKey 后正式 ID
     expect(store.byId['msg-voice-1']?.role).toBe('user')
     expect(store.byId['msg-voice-1']?.status).toBe('acknowledged')

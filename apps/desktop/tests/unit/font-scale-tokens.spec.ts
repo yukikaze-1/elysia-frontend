@@ -50,7 +50,7 @@ function fontTokenLines(text: string): Array<{ line: number; name: string; value
   const out: Array<{ line: number; name: string; value: string }> = []
   text.split('\n').forEach((raw, i) => {
     const m = /^\s*(--cy-font-[a-z0-9-]+)\s*:\s*(.+?);/.exec(raw)
-    if (m) out.push({ line: i + 1, name: m[1]!, value: m[2]! })
+    if (m) out.push({ line: i + 1, name: m[1], value: m[2] })
   })
   return out
 }
@@ -71,7 +71,7 @@ describe('字体缩放：token 阶梯（规则 ①）', () => {
       .map((l, i) => ({ line: i + 1, m: /^\s*(--cy-user-font-scale)\s*:\s*(.+?);/.exec(l) }))
       .filter((d) => d.m !== null)
     expect(defs.length, `${SCALE_VAR} 必须**恰好**定义一次（多写一处会让覆盖顺序变得不可推理）`).toBe(1)
-    expect(defs[0]!.m![2]).toBe('1')
+    expect(defs[0].m![2]).toBe('1')
   })
 })
 

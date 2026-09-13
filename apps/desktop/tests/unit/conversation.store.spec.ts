@@ -1033,7 +1033,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
     const ms = useMessageStore()
     const loadContextWindow = vi.fn(async () => true)
     const setHighlight = vi.fn()
-    ms.loadContextWindow = loadContextWindow as never
+    ms.loadContextWindow = loadContextWindow
     ms.setHighlight = setHighlight as never
     setDesktopApi(createDesktopApiMock({ activate: async () => ({ conversationId: 'c3' }) }))
     const cs = useConversationStore()
@@ -1043,7 +1043,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
   })
   it('jumpToMessage 当前会话：直接 loadContextWindow + setHighlight；失败写 error', async () => {
     const ms = useMessageStore()
-    ms.loadContextWindow = vi.fn(async () => false) as never
+    ms.loadContextWindow = vi.fn(async () => false)
     ms.setHighlight = vi.fn() as never
     setDesktopApi(createDesktopApiMock({}))
     const cs = useConversationStore()
@@ -1056,7 +1056,7 @@ describe('conversation.store activate(id, anchor?) 与 jumpToMessage（spec §4.
     const ms = useMessageStore()
     const loadContextWindow = vi.fn(async () => true)
     const setHighlight = vi.fn()
-    ms.loadContextWindow = loadContextWindow as never
+    ms.loadContextWindow = loadContextWindow
     ms.setHighlight = setHighlight as never
     setDesktopApi(createDesktopApiMock({ activate: async () => ({ conversationId: 'c9' }) }))
     const cs = useConversationStore()

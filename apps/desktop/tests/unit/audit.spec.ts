@@ -2,6 +2,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { createAuditor, auditFilesToDelete } from '../../src/main/diagnostics/audit'
 import type { FileWriter } from '../../src/main/diagnostics/file-writer'
 
+/** JSON 对象判型：`JSON.parse` 的产物是外部输入（lib 里返回 `any`），先收成 `unknown` 再用它收窄。 */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 取一行审计 JSONL 并判型为「字符串键对象」：后续 `parsed.type` 这类断言不再落在 `any` 上。 */
+function parseAuditLine(line: string): Record<string, unknown> {
+  const raw: unknown = JSON.parse(line)
+  if (!isJsonObject(raw)) throw new Error(`审计行不是 JSON 对象：${line}`)
+  return raw
+}
+
 function fakeWriter(): { writer: FileWriter; lines: string[] } {
   const lines: string[] = []
   return { writer: { append: vi.fn(async (l: string) => { lines.push(l) }), flush: vi.fn(async () => {}), close: vi.fn(async () => {}), clear: vi.fn(async () => ({ removedFiles: 0, freedBytes: 0 })) }, lines }
@@ -27,7 +39,7 @@ describe('createAuditor', () => {
     const sanitize = (m: string): string => m.replace(/\/home\/alice/g, '~')
     const a = createAuditor(writer, { sanitize, retentionDays: 30, dir: '/audit' })
     await a.audit({ ts: 't', type: 'tool:run', summary: 'read /home/alice/x with Bearer abc.def-ghi_123XYZ' })
-    const parsed = JSON.parse(lines[0])
+    const parsed = parseAuditLine(lines[0])
     expect(parsed.type).toBe('tool:run')
     expect(parsed.summary).toBe('read ~/x with Bearer [REDACTED]')
   })
@@ -35,7 +47,7 @@ describe('createAuditor', () => {
     const { writer, lines } = fakeWriter()
     const a = createAuditor(writer, { sanitize: (m) => m, retentionDays: 30, dir: '/audit' })
     await a.audit({ ts: 't', type: 'credential:set', toolId: 'tid', callId: 'cid', status: 'ok', durationMs: 12 })
-    const parsed = JSON.parse(lines[0])
+    const parsed = parseAuditLine(lines[0])
     expect(parsed.toolId).toBe('tid')
     expect(parsed.callId).toBe('cid')
     expect(parsed.durationMs).toBe(12)
@@ -44,7 +56,7 @@ describe('createAuditor', () => {
     const { writer, lines } = fakeWriter()
     const a = createAuditor(writer, { sanitize: (m) => m, retentionDays: 30, dir: '/audit' })
     await a.audit({ ts: 't', type: 'tool:decision', toolId: 'tid', callId: 'cid', status: 'awaiting_permission', summary: 'path=<str:8>', riskLevel: 'medium', permissionDecision: 'allow_once', startedAt: '2026-08-20T00:00:00.000Z', errorCode: 'TOOL_ERROR', cancelSource: 'user' })
-    const parsed = JSON.parse(lines[0])
+    const parsed = parseAuditLine(lines[0])
     expect(parsed).toMatchObject({ riskLevel: 'medium', permissionDecision: 'allow_once', startedAt: '2026-08-20T00:00:00.000Z', errorCode: 'TOOL_ERROR', cancelSource: 'user' })
     // 既有字段不受扩展影响
     expect(parsed.toolId).toBe('tid')

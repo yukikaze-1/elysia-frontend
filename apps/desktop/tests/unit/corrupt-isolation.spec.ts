@@ -9,7 +9,7 @@ import { createCorruptIsolation } from '../../src/main/persistence/corrupt-isola
 
 // 只替换 rename（其余 fs 操作保持真实）：用可控失败确定性地覆盖「改名失败」这条路径，
 // 不依赖平台权限语义（Windows 上只读目录并不会让 rename 失败）。
-const { renameMode } = vi.hoisted(() => ({ renameMode: { value: 'real' as 'real' | 'eperm' | 'enoent' } }))
+const { renameMode } = vi.hoisted(() => ({ renameMode: { value: 'real' } }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {

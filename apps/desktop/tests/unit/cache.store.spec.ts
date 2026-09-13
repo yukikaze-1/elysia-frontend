@@ -51,7 +51,7 @@ describe('cacheStore（spec §4.5）', () => {
     }
     const task = useCacheStore().pushMessages('c1', [source], 'now')
     source.content = 'await 中改写'
-    source.assistantSegments![0]!.text = 'await 中分段改写'
+    source.assistantSegments![0].text = 'await 中分段改写'
     source.character!.displayName = 'await 中角色改写'
     resolveCache()
     await task
@@ -66,7 +66,7 @@ describe('cacheStore（spec §4.5）', () => {
       character: { displayName: 'Elysia' }
     })
     source.content = '成功后改写'
-    source.assistantSegments![0]!.text = '成功后分段改写'
+    source.assistantSegments![0].text = '成功后分段改写'
     source.character!.presentation!.themeColor = '#000000'
     expect(useCacheStore().snapshotMessages('c1')?.[0]).toMatchObject({
       content: '原始正文',

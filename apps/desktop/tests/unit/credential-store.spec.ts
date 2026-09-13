@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { CredentialStore, createEmptyFile } from '../../src/main/credentials/credential-store'
+import { CredentialStore, createEmptyFile, type CredentialFileSchemaV1 } from '../../src/main/credentials/credential-store'
 import type { SafeStorageLike } from '../../src/main/credentials/safe-storage'
 import { CyreneErrorCode } from '../../src/shared/errors'
 import { isKeyAllowed } from '../../src/shared/contracts'
@@ -11,6 +11,38 @@ import { windowsPlatform } from '../../src/main/persistence/safe-open'
 
 /** 测试直读私有 filePath（避免为测试改公开 API） */
 function filePathOf(s: CredentialStore): string { return (s as unknown as { filePath: string }).filePath }
+
+/** JSON 对象判型：`JSON.parse` 的产物是外部输入（lib 里返回 `any`），先收成 `unknown` 再用它收窄。 */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * 磁盘上的凭据文件（**读侧视图**）：加密块字段直接引用生产者导出的 `CredentialFileSchemaV1['keys']`
+ * （生产者改字段名 → 这里编译失败）；只把**值域**放宽成 `string`/`number`——`version=1`、
+ * `algo='safeStorage'` 这类**值**仍由用例断言，若在读盘阶段就按字面量判死，那些断言会退化成恒真。
+ */
+type CredentialBlockOnDisk = Omit<CredentialFileSchemaV1['keys'][string], 'algo'> & { algo: string }
+interface CredentialFileOnDisk {
+  version: number
+  keys: Record<string, CredentialBlockOnDisk>
+}
+
+/** 读并判型凭据文件：`JSON.parse` → `unknown` → 逐层收窄，全程不用断言。 */
+function readCredentialFile(file: string): CredentialFileOnDisk {
+  const raw: unknown = JSON.parse(readFileSync(file, 'utf8'))
+  if (!isJsonObject(raw) || typeof raw.version !== 'number' || !isJsonObject(raw.keys)) {
+    throw new Error(`凭据文件形状非法：${file}`)
+  }
+  const keys: Record<string, CredentialBlockOnDisk> = {}
+  for (const [key, block] of Object.entries(raw.keys)) {
+    if (!isJsonObject(block) || typeof block.enc !== 'string' || typeof block.algo !== 'string') {
+      throw new Error(`凭据块形状非法：${file} / ${key}`)
+    }
+    keys[key] = { enc: block.enc, algo: block.algo }
+  }
+  return { version: raw.version, keys }
+}
 
 /** 假 safeStorage：enc:前缀往返；decrypt 可注入失败 */
 function fakeSafe(over: Partial<SafeStorageLike> = {}): SafeStorageLike {
@@ -85,7 +117,7 @@ describe('setCredential', () => {
   it('set 后文件 0600 + version:1 + 每 key 加密块', async () => {
     const s = makeStore()
     await s.setCredential('backend.token', 'tok')
-    const raw = JSON.parse(readFileSync(filePathOf(s), 'utf8'))
+    const raw = readCredentialFile(filePathOf(s))
     expect(raw.version).toBe(1)
     expect(raw.keys['backend.token'].algo).toBe('safeStorage')
     expect(raw.keys['backend.token'].enc).toBe(Buffer.from('enc:tok').toString('base64'))
@@ -109,7 +141,7 @@ describe('setCredential', () => {
     const s = makeStore()
     writeFileSync(filePathOf(s), '{corrupt', { mode: 0o600 })
     await s.setCredential('backend.token', 'fresh')
-    const raw = JSON.parse(readFileSync(filePathOf(s), 'utf8'))
+    const raw = readCredentialFile(filePathOf(s))
     expect(raw.keys['backend.token']).toBeTruthy()
   })
   it('重叠 set 串行化不丢更新（队列）', async () => {
@@ -148,7 +180,7 @@ describe('getCredential / clearCredential', () => {
     const s = makeStore()
     writeFileSync(filePathOf(s), '{corrupt', { mode: 0o600 })
     await s.clearCredential('backend.token')
-    const raw = JSON.parse(readFileSync(filePathOf(s), 'utf8'))
+    const raw = readCredentialFile(filePathOf(s))
     expect(raw).toEqual({ version: 1, keys: {} })
   })
   it('clear 遇版本未知 → 抛 UNSUPPORTED_VERSION', async () => {
@@ -160,7 +192,7 @@ describe('getCredential / clearCredential', () => {
     const s = makeStore({ safe: fakeSafe({ getSelectedStorageBackend: () => 'basic_text' }) })
     writeFileSync(filePathOf(s), JSON.stringify({ version: 1, keys: { 'backend.token': { enc: 'eA==', algo: 'safeStorage' } } }), { mode: 0o600 })
     await s.clearCredential('backend.token')
-    const raw = JSON.parse(readFileSync(filePathOf(s), 'utf8'))
+    const raw = readCredentialFile(filePathOf(s))
     expect(raw.keys['backend.token']).toBeUndefined()
   })
 })
@@ -183,7 +215,7 @@ describe('EMPTY_FILE 工厂', () => {
     await storeA.setCredential('model.llm.key', 'llm')
     writeFileSync(file, '{corrupt', { mode: 0o600 })
     await storeB.setCredential('model.stt.key', 'stt')
-    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    const raw = readCredentialFile(file)
     expect(raw.keys['model.stt.key']).toBeTruthy()
     expect(raw.keys['backend.token']).toBeUndefined()
     expect(raw.keys['model.llm.key']).toBeUndefined()
@@ -196,7 +228,7 @@ describe('EMPTY_FILE 工厂', () => {
     await storeA.setCredential('backend.token', 'a')
     writeFileSync(file, '{corrupt', { mode: 0o600 })
     await storeB.setCredential('backend.token', 'b')
-    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    const raw = readCredentialFile(file)
     expect(raw.keys['backend.token'].enc).toBe(Buffer.from('enc:b').toString('base64'))
   })
   it('两个 Store 单 key 损坏重建回归守卫（clear 变体）', async () => {
@@ -207,7 +239,7 @@ describe('EMPTY_FILE 工厂', () => {
     await storeA.setCredential('backend.token', 'a')
     writeFileSync(file, '{corrupt', { mode: 0o600 })
     await storeB.clearCredential('backend.token')
-    const raw = JSON.parse(readFileSync(file, 'utf8'))
+    const raw = readCredentialFile(file)
     expect(raw).toEqual({ version: 1, keys: {} })
   })
 })

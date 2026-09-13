@@ -6,6 +6,14 @@ import { isDocumentRequest, MediaService, parseMediaPath, resolveSignUrl, Signed
 
 const now = () => 1_752_000_000_000   // 固定时钟（2026-07 起）
 
+/** fetch 入参 → 请求 URL 文本：生产代码一律传 string；URL/Request 各取其 url 字段
+ *（断言本意是「请求了哪个 URL」，String(Request) 只会得到 '[object Request]'）。 */
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
 function mkService(opts: {
   sign?: (id: string) => Promise<{ url: string; expiresAt: string }>
   readToolAttachment?: (id: string) => Promise<{ bytes: Uint8Array; mimeType: 'image/png' } | null>
@@ -135,7 +143,7 @@ describe('MediaService.resolveSignedUrl（缓存/重签）', () => {
 describe('MediaService.stream attachment 分支', () => {
   it('Range 请求 → 透传 Range/Accept，后端 206 直通', async () => {
     const fetchImpl = vi.fn(async (u: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(u)
+      const url = requestUrl(u)
       expect(url).toBe('https://cdn.x/att_1?sig=s')
       expect(init?.headers).toMatchObject({ range: 'bytes=0-1023' })
       return new Response(new Uint8Array(64), { status: 206, headers: { 'content-type': 'video/mp4', 'content-range': 'bytes 0-63/1024', 'accept-ranges': 'bytes' } })
@@ -175,7 +183,7 @@ describe('MediaService P0-01 相对签名 URL 全链路（spec §4.1）', () => 
   it('相对 sign.url → stream 请求绝对 URL（Range/206 透传）', async () => {
     const sign = vi.fn(async (id: string) => ({ url: `/api/attachments/${id}?sig=s`, expiresAt: new Date(now() + 3600_000).toISOString() }))
     const fetchImpl = vi.fn(async (u: RequestInfo | URL) => {
-      expect(String(u)).toBe('http://127.0.0.1:9/api/attachments/att_1?sig=s')
+      expect(requestUrl(u)).toBe('http://127.0.0.1:9/api/attachments/att_1?sig=s')
       return new Response(new Uint8Array(64), { status: 206, headers: { 'content-type': 'video/mp4' } })
     })
     const svc = mkService({ sign, fetchImpl })
@@ -185,7 +193,7 @@ describe('MediaService P0-01 相对签名 URL 全链路（spec §4.1）', () => 
   it('相对 sign.url → checkStatus 请求绝对 URL → ok', async () => {
     const sign = vi.fn(async (id: string) => ({ url: `/api/attachments/${id}?sig=s`, expiresAt: new Date(now() + 3600_000).toISOString() }))
     const fetchImpl = vi.fn(async (u: RequestInfo | URL) => {
-      expect(String(u)).toBe('http://127.0.0.1:9/api/attachments/att_1?sig=s')
+      expect(requestUrl(u)).toBe('http://127.0.0.1:9/api/attachments/att_1?sig=s')
       return new Response('', { status: 200 })
     })
     const svc = mkService({ sign, fetchImpl })
@@ -240,7 +248,7 @@ describe('MediaService P0-01 相对签名 URL 全链路（spec §4.1）', () => 
 describe('MediaService.stream sticker 分支（G4 边界，spec §4.4/§2）', () => {
   it('stickerId 白名单 + MIME 白名单 + 静态代理（无签名）', async () => {
     const fetchImpl = vi.fn(async (u: RequestInfo | URL) => {
-      const url = String(u)
+      const url = requestUrl(u)
       expect(url).toBe('http://127.0.0.1:9/static/stickers/st_1.png')
       return new Response(new Uint8Array([0x89, 0x50]), { status: 200, headers: { 'content-type': 'image/png' } })
     })

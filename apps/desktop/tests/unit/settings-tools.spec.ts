@@ -19,7 +19,7 @@ describe('ToolsSettingsSchema', () => {
     // 全量合法旧文件形状（voice 五必填 + dictation.insertMode——F-1 修复：缺字段 parse 恒失败）
     const parsed = SettingsStateSchema.parse({ ...DEFAULT_SETTINGS })
     expect(parsed.tools).toEqual({ grants: [] })
-    const legacy = SettingsStateSchema.parse({ ...DEFAULT_SETTINGS, tools: undefined } as never)   // 显式无 tools（default 兜底）
+    const legacy = SettingsStateSchema.parse({ ...DEFAULT_SETTINGS, tools: undefined })   // 显式无 tools（default 兜底）
     expect(legacy.tools).toEqual({ grants: [] })
   })
   it('grant 形状 strict：未知字段拒、toolName 二值、revokeSource 二值可选', () => {

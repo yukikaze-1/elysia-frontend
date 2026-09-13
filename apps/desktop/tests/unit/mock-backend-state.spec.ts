@@ -201,7 +201,7 @@ describe('MockBackend 连接状态', () => {
 
   it('FE-E2 profile generation.failed 与 started 共享捕获的 immutable tuple', async () => {
     const characters = new MockCharacterBackend()
-    const binding = characters.getConversationBindings()['builtin/elysia']!
+    const binding = characters.getConversationBindings()['builtin/elysia']
     const backend = new MockBackend({
       features: characters.features,
       characterBindings: characters.getConversationBindings(),

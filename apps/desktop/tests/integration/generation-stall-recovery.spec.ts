@@ -52,7 +52,10 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs: number, wha
     } catch (err) { last = err }
     await new Promise((r) => setTimeout(r, 250))
   }
-  throw new Error(`等待超时（${timeoutMs}ms）：${what}${last ? ` — 最后一次错误：${String(last)}` : ''}`)
+  // `String(last)` 对对象会得到 '[object Object]'（`no-base-to-string`，type-aware 全集 2026-09-13）：
+  // 这是超时诊断文案，按 Error/字符串两支取可读文本即可，不制造假文案。
+  const detail = last instanceof Error ? last.message : typeof last === 'string' ? last : '[非 Error 抛出值]'
+  throw new Error(`等待超时（${timeoutMs}ms）：${what}${last ? ` — 最后一次错误：${detail}` : ''}`)
 }
 
 beforeAll(async () => {

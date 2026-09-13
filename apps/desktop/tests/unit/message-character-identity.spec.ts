@@ -8,7 +8,6 @@ import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { createDesktopApiMock } from './helpers/desktop-api'
 import type {
-  BackendEvent,
   CharacterBindingSnapshot,
   CharacterGenerationRef,
   GenerationCompletedEvent,
@@ -108,7 +107,7 @@ describe('messageStore FE-E2 角色生成身份', () => {
       characterRevision: binding.characterRevision
     })
     const conversation = useConversationStore()
-    conversation.items[0]!.character!.displayName = '目录新名字'
+    conversation.items[0].character!.displayName = '目录新名字'
     expect(store.byId['message-1']?.character?.displayName).toBe('Elysia')
   })
 
@@ -128,7 +127,7 @@ describe('messageStore FE-E2 角色生成身份', () => {
     enableProfiles()
     const store = useMessageStore()
     store.applyEvent(started())
-    store.applyEvent({ ...completed({ characterRevision: 3 }), event: 'generation.failed', error: { code: 'BAD', message: 'wrong identity' } } as BackendEvent)
+    store.applyEvent({ ...completed({ characterRevision: 3 }), event: 'generation.failed', error: { code: 'BAD', message: 'wrong identity' } })
     expect(store.byId['message-1']?.status).toBe('failed')
     expect(store.activeGenerationId).toBeUndefined()
     expect(store.generationIdentityById['generation-1']).toBeUndefined()

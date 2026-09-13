@@ -4,6 +4,7 @@
 // 环境 happy-dom：Vue Test Utils 轻量挂载（子组件全部 stub，聚焦 CyChatInput 自身逻辑）；
 // store 经 setDesktopApi mock api + createPinia 装配真实 store，按用例改写 state 断言禁用态。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
@@ -242,11 +243,13 @@ describe('CyChatInput 按住说话键盘可操作（M-22）', () => {
   const VOICE_BTN = '[aria-label="输入法转写（按住说话）"]'
 
   /** 以真实 store 动作做替身：start 同步置 dictating、stop 同步回 idle——这样能观察到"采集是否被重复开启"
-   *  （第二次 start 会再次落 mode/调用计数），而不是只看到一个 mock 调用次数。 */
-  function stubDictation(): { start: ReturnType<typeof vi.spyOn>; stop: ReturnType<typeof vi.spyOn> } {
+   *  （第二次 start 会再次落 mode/调用计数），而不是只看到一个 mock 调用次数。
+   *  返回的两个 spy 显式标注 `MockInstance<() => Promise<void>>`：`vi.spyOn(voice,'startDictation')` 默认推断成
+   *  `SpyInstance<Procedure>`（调用签名 `(...args:any[])=>any`），解构出来即 no-unsafe-assignment。 */
+  function stubDictation(): { start: MockInstance<() => Promise<void>>; stop: MockInstance<() => Promise<void>> } {
     const voice = useVoiceStore()
-    const start = vi.spyOn(voice, 'startDictation').mockImplementation(() => { voice.mode = 'dictating'; return Promise.resolve() })
-    const stop = vi.spyOn(voice, 'stopDictation').mockImplementation(() => { voice.mode = 'idle'; return Promise.resolve() })
+    const start: MockInstance<() => Promise<void>> = vi.spyOn(voice, 'startDictation').mockImplementation(() => { voice.mode = 'dictating'; return Promise.resolve() })
+    const stop: MockInstance<() => Promise<void>> = vi.spyOn(voice, 'stopDictation').mockImplementation(() => { voice.mode = 'idle'; return Promise.resolve() })
     return { start, stop }
   }
 

@@ -4,25 +4,27 @@ import type { CharacterServiceBackendPort } from '../../src/main/characters/char
 import { CharacterService, CHARACTER_SERVICE_BACKEND_CODES } from '../../src/main/characters/character-service'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 
+/** 端口桩：每个 vi.fn 显式以 CharacterServiceBackendPort 对应方法的真实签名实例化，
+ *  形参因此拿到契约类型（契约漂移即编译失败），不再以隐式 any 透传给 mock。 */
 function makePort(): { port: CharacterServiceBackendPort; mock: MockCharacterBackend } {
   const mock = new MockCharacterBackend()
   return {
     mock,
     port: {
-      getMe: vi.fn(() => mock.getMe()),
-      updateMe: vi.fn((input) => mock.updateMe(input)),
-      listCharacters: vi.fn((input) => mock.listCharacters(input)),
-      getCharacter: vi.fn((id) => mock.getCharacter(id)),
-      createCharacter: vi.fn((input) => mock.createCharacter(input)),
-      updateCharacter: vi.fn((input) => mock.updateCharacter(input)),
-      cloneCharacter: vi.fn((input) => mock.cloneCharacter(input)),
-      archiveCharacter: vi.fn((id) => mock.archiveCharacter(id)),
-      rollbackCharacter: vi.fn((input) => mock.rollbackCharacter(input)),
-      validateCharacter: vi.fn((draft) => mock.validateCharacter(draft)),
-      previewCharacter: vi.fn((input) => mock.previewCharacter(input)),
-      listCharacterRevisions: vi.fn((input) => mock.listCharacterRevisions(input)),
-      getCharacterState: vi.fn((id) => mock.getCharacterState(id)),
-      resetCharacterEvolution: vi.fn((input) => mock.resetCharacterEvolution(input))
+      getMe: vi.fn<CharacterServiceBackendPort['getMe']>(() => mock.getMe()),
+      updateMe: vi.fn<CharacterServiceBackendPort['updateMe']>((input) => mock.updateMe(input)),
+      listCharacters: vi.fn<CharacterServiceBackendPort['listCharacters']>((input) => mock.listCharacters(input)),
+      getCharacter: vi.fn<CharacterServiceBackendPort['getCharacter']>((id) => mock.getCharacter(id)),
+      createCharacter: vi.fn<CharacterServiceBackendPort['createCharacter']>((input) => mock.createCharacter(input)),
+      updateCharacter: vi.fn<CharacterServiceBackendPort['updateCharacter']>((input) => mock.updateCharacter(input)),
+      cloneCharacter: vi.fn<CharacterServiceBackendPort['cloneCharacter']>((input) => mock.cloneCharacter(input)),
+      archiveCharacter: vi.fn<CharacterServiceBackendPort['archiveCharacter']>((id) => mock.archiveCharacter(id)),
+      rollbackCharacter: vi.fn<CharacterServiceBackendPort['rollbackCharacter']>((input) => mock.rollbackCharacter(input)),
+      validateCharacter: vi.fn<CharacterServiceBackendPort['validateCharacter']>((draft) => mock.validateCharacter(draft)),
+      previewCharacter: vi.fn<CharacterServiceBackendPort['previewCharacter']>((input) => mock.previewCharacter(input)),
+      listCharacterRevisions: vi.fn<CharacterServiceBackendPort['listCharacterRevisions']>((input) => mock.listCharacterRevisions(input)),
+      getCharacterState: vi.fn<CharacterServiceBackendPort['getCharacterState']>((id) => mock.getCharacterState(id)),
+      resetCharacterEvolution: vi.fn<CharacterServiceBackendPort['resetCharacterEvolution']>((input) => mock.resetCharacterEvolution(input))
     }
   }
 }
@@ -209,8 +211,11 @@ describe('CharacterService 角色编排', () => {
     await service.getCharacterState('instance-elysia')
     await service.getCharacterState('instance-cyrene')
 
+    // vitest 的 expect.arrayContaining 返回类型被 @vitest/expect 声明为 any；按“未知期望值”如实收成
+    // unknown 再放进断言对象（匹配器运行时行为不变，仅阻断 any 扩散）。
+    const resetFieldsMatcher: unknown = expect.arrayContaining(['mood'])
     await expect(service.resetCharacterEvolution({ characterInstanceId: 'instance-elysia', expectedStateVersion: 1 }))
-      .resolves.toMatchObject({ state: { stateVersion: 2 }, resetFields: expect.arrayContaining(['mood']) })
+      .resolves.toMatchObject({ state: { stateVersion: 2 }, resetFields: resetFieldsMatcher })
 
     await service.getMe()
     await service.listCharacters()

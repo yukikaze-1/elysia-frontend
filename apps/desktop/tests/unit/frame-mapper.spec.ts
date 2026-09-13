@@ -23,11 +23,11 @@ describe('FrameMapper raw → 领域', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const ev = mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1', conversationId: 'conv-1', model: 'm1' }) as GenerationStartedEvent
     expect(ev).not.toBeNull()
-    expect(ev!.event).toBe('generation.started')
-    expect(ev!.responseId).toBe('gen-1')
-    expect(ev!.messageId).toBe('msg-1')
-    expect(ev!.conversationId).toBe('conv-1')
-    expect(ev!.model).toBe('m1')
+    expect(ev.event).toBe('generation.started')
+    expect(ev.responseId).toBe('gen-1')
+    expect(ev.messageId).toBe('msg-1')
+    expect(ev.conversationId).toBe('conv-1')
+    expect(ev.model).toBe('m1')
   })
 
   it('generation.started 无法补齐 conversationId 抛 PROTOCOL_MISMATCH', () => {
@@ -44,7 +44,7 @@ describe('FrameMapper raw → 领域', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     mapper.setActiveConversationId('conv-9')
     const ev = mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' }) as GenerationStartedEvent
-    expect(ev!.conversationId).toBe('conv-9')
+    expect(ev.conversationId).toBe('conv-9')
   })
 
   it('segment.started 建立 meta,delta 用缓存 channel/kind 补全', () => {
@@ -52,10 +52,10 @@ describe('FrameMapper raw → 领域', () => {
     mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
     mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'inner_voice', kind: 'text' })
     const delta = mapper.mapFrame({ type: 'generation.delta', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, deltaSequence: 0, delta: '第一句' }) as GenerationDeltaEvent
-    expect(delta!.event).toBe('generation.delta')
-    expect(delta!.channel).toBe('inner_voice')
-    expect(delta!.kind).toBe('text')
-    expect(delta!.text).toBe('第一句')
+    expect(delta.event).toBe('generation.delta')
+    expect(delta.channel).toBe('inner_voice')
+    expect(delta.kind).toBe('text')
+    expect(delta.text).toBe('第一句')
   })
 
   it('delta 无 segment meta 抛 PROTOCOL_MISMATCH(不默认 public_reply/text)', () => {
@@ -70,7 +70,7 @@ describe('FrameMapper raw → 领域', () => {
     mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
     mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'public_reply', kind: 'text' })
     const delta = mapper.mapFrame({ type: 'generation.delta', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 9, deltaSequence: 0, delta: 'x' }) as GenerationDeltaEvent
-    expect(delta!.segmentIndex).toBe(0) // meta 为准
+    expect(delta.segmentIndex).toBe(0) // meta 为准
     expect(warnings.some((w) => w.code === ProtocolWarningCode.MAPPER_SEGMENT_INDEX_MISMATCH)).toBe(true)
   })
 
@@ -92,8 +92,8 @@ describe('FrameMapper raw → 领域', () => {
     mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
     mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'inner_voice', kind: 'text' })
     const ev = mapper.mapFrame({ type: 'generation.segment.completed', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'inner_voice', kind: 'text', content: '权威文本' }) as SegmentCompletedEvent
-    expect(ev!.content).toBe('权威文本')
-    expect(ev!.kind).toBe('text')
+    expect(ev.content).toBe('权威文本')
+    expect(ev.kind).toBe('text')
     // meta 已清理 → 同一 segment 的迟到 delta 无 meta → 抛 PROTOCOL_MISMATCH(证明已清理)
     expect(() => mapper.mapFrame({ type: 'generation.delta', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, deltaSequence: 1, delta: '迟到' })).toThrow(CyreneError)
   })
@@ -103,9 +103,9 @@ describe('FrameMapper raw → 领域', () => {
     mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
     mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'inner_voice', kind: 'text' })
     const ev = mapper.mapFrame({ type: 'generation.segment.completed', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'inner_voice', kind: 'text' }) as SegmentCompletedEvent
-    expect(ev!.content).toBeUndefined()
-    expect(ev!.channel).toBe('inner_voice')
-    expect(ev!.kind).toBe('text')
+    expect(ev.content).toBeUndefined()
+    expect(ev.channel).toBe('inner_voice')
+    expect(ev.kind).toBe('text')
   })
 
   it('status 段 completed 后保留 meta:迟到 delta 返回 null 而非抛错', () => {
@@ -132,13 +132,13 @@ describe('FrameMapper raw → 领域', () => {
       conversationUsage: { total: 2100, byModel: { 'm1': 2100 } }
     }
     const ev = mapper.mapFrame(raw) as GenerationCompletedEvent
-    expect(ev!.event).toBe('generation.completed')
-    expect(ev!.responseId).toBe('gen-1')
-    expect(ev!.messageId).toBe('msg-1')
-    expect(ev!.emotion).toBe('happy')
-    expect(ev!.finishReason).toBe('stop')
-    expect(ev!.usage).toEqual({ input: 100, output: 20, total: 120, source: 'provider_reported', rounds: [{ model: 'm1', inputTokens: 100, outputTokens: 20, totalTokens: 120, roundNum: 1 }] })
-    expect(ev!.conversationUsage).toEqual({ total: 2100, byModel: { 'm1': 2100 }, source: 'server_aggregate' })
+    expect(ev.event).toBe('generation.completed')
+    expect(ev.responseId).toBe('gen-1')
+    expect(ev.messageId).toBe('msg-1')
+    expect(ev.emotion).toBe('happy')
+    expect(ev.finishReason).toBe('stop')
+    expect(ev.usage).toEqual({ input: 100, output: 20, total: 120, source: 'provider_reported', rounds: [{ model: 'm1', inputTokens: 100, outputTokens: 20, totalTokens: 120, roundNum: 1 }] })
+    expect(ev.conversationUsage).toEqual({ total: 2100, byModel: { 'm1': 2100 }, source: 'server_aggregate' })
   })
 
   it('F-1：generation.completed 中文 mood（开心）原样透传为 emotion（前端归一在 state-source normalizeEmotionCode）', () => {
@@ -155,8 +155,8 @@ describe('FrameMapper raw → 领域', () => {
       completeness: 'complete'
     }
     const ev = mapper.mapFrame(raw) as GenerationCompletedEvent
-    expect(ev!.event).toBe('generation.completed')
-    expect(ev!.emotion).toBe('开心') // 透传不裁剪；归一由 live2d/state-source 消费
+    expect(ev.event).toBe('generation.completed')
+    expect(ev.emotion).toBe('开心') // 透传不裁剪；归一由 live2d/state-source 消费
   })
 
   it('Σtotal_tokens !== turn_total 告警但保留服务端 turn_total', () => {
@@ -169,7 +169,7 @@ describe('FrameMapper raw → 领域', () => {
       model: 'm1'
     }
     const ev = mapper.mapFrame(raw) as GenerationCompletedEvent
-    expect(ev!.usage!.total).toBe(100) // 服务端权威
+    expect(ev.usage!.total).toBe(100) // 服务端权威
     expect(warnings.some((w) => w.code === ProtocolWarningCode.MAPPER_TOKEN_SUM_MISMATCH)).toBe(true)
   })
 
@@ -191,9 +191,9 @@ describe('FrameMapper raw → 领域', () => {
       type: 'generation.failed', generationId: 'gen-1', messageId: 'msg-1',
       code: 'GENERATION_TIMEOUT', message: '超时', retryable: true, details: { elapsed_ms: 30000 }
     }) as GenerationFailedEvent
-    expect(ev!.event).toBe('generation.failed')
-    expect(ev!.error).toEqual({ code: 'GENERATION_TIMEOUT', message: '超时', retryable: true, details: { elapsed_ms: 30000 } })
-    expect(ev!.messageId).toBe('msg-1')
+    expect(ev.event).toBe('generation.failed')
+    expect(ev.error).toEqual({ code: 'GENERATION_TIMEOUT', message: '超时', retryable: true, details: { elapsed_ms: 30000 } })
+    expect(ev.messageId).toBe('msg-1')
   })
 
   it('eventId/sequence 按收帧顺序单调唯一', () => {
@@ -218,63 +218,63 @@ describe('FrameMapper 语音/TTS 帧 → 领域（阶段4 批次B）', () => {
   it('voice.transcript → voice.transcript 事件,保留 recordingId/text/emotion', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const ev = mapper.mapFrame({ type: 'voice.transcript', recordingId: 'rec_1', text: '你好', emotion: 'happy' }) as VoiceTranscriptEvent
-    expect(ev!.event).toBe('voice.transcript')
-    expect(ev!.recordingId).toBe('rec_1')
-    expect(ev!.text).toBe('你好')
-    expect(ev!.emotion).toBe('happy')
+    expect(ev.event).toBe('voice.transcript')
+    expect(ev.recordingId).toBe('rec_1')
+    expect(ev.text).toBe('你好')
+    expect(ev.emotion).toBe('happy')
   })
   it('voice_session.* 各帧映射正确（started/partial/turn/ack/ended）', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const started = mapper.mapFrame({ type: 'voice_session.started', sessionId: 'vs_1', conversationId: 'conv-1' }) as VoiceSessionStartedEvent
-    expect(started!.event).toBe('voice_session.started')
-    expect(started!.sessionId).toBe('vs_1')
-    expect(started!.conversationId).toBe('conv-1')
+    expect(started.event).toBe('voice_session.started')
+    expect(started.sessionId).toBe('vs_1')
+    expect(started.conversationId).toBe('conv-1')
     const partial = mapper.mapFrame({ type: 'voice_session.partial', sessionId: 'vs_1', turnId: 1, segmentIndex: 3, text: '字幕' }) as VoiceSessionPartialEvent
-    expect(partial!.event).toBe('voice_session.partial')
-    expect(partial!.turnId).toBe(1)
-    expect(partial!.segmentIndex).toBe(3)
-    expect(partial!.text).toBe('字幕')
+    expect(partial.event).toBe('voice_session.partial')
+    expect(partial.turnId).toBe(1)
+    expect(partial.segmentIndex).toBe(3)
+    expect(partial.text).toBe('字幕')
     const turn = mapper.mapFrame({ type: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'msg-1', conversationId: 'conv-1', text: '确认' }) as VoiceSessionTurnEvent
-    expect(turn!.event).toBe('voice_session.turn')
-    expect(turn!.messageId).toBe('msg-1')
-    expect(turn!.conversationId).toBe('conv-1')
-    expect(turn!.text).toBe('确认')
+    expect(turn.event).toBe('voice_session.turn')
+    expect(turn.messageId).toBe('msg-1')
+    expect(turn.conversationId).toBe('conv-1')
+    expect(turn.text).toBe('确认')
     const ack = mapper.mapFrame({ type: 'voice_session.ack', sessionId: 'vs_1', seq: 42 }) as VoiceSessionAckEvent
-    expect(ack!.event).toBe('voice_session.ack')
-    expect(ack!.seq).toBe(42)
+    expect(ack.event).toBe('voice_session.ack')
+    expect(ack.seq).toBe(42)
     const ended = mapper.mapFrame({ type: 'voice_session.ended', sessionId: 'vs_1', reason: 'cancelled' }) as VoiceSessionEndedEvent
-    expect(ended!.event).toBe('voice_session.ended')
-    expect(ended!.reason).toBe('cancelled')
+    expect(ended.event).toBe('voice_session.ended')
+    expect(ended.reason).toBe('cancelled')
   })
   it('conversationId 缺省省略,voice_session.started/turn 不抛 PROTOCOL_MISMATCH（非 generation 帧无补齐逻辑）', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const started = mapper.mapFrame({ type: 'voice_session.started', sessionId: 'vs_1' }) as VoiceSessionStartedEvent
-    expect(started!.conversationId).toBeUndefined()
+    expect(started.conversationId).toBeUndefined()
     const turn = mapper.mapFrame({ type: 'voice_session.turn', sessionId: 'vs_1', turnId: 1, messageId: 'm', text: 't' }) as VoiceSessionTurnEvent
-    expect(turn!.conversationId).toBeUndefined()
+    expect(turn.conversationId).toBeUndefined()
   })
   it('dictation.* 各帧映射正确（partial/final/cancelled）', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const partial = mapper.mapFrame({ type: 'dictation.partial', text: '累积' }) as DictationPartialEvent
-    expect(partial!.event).toBe('dictation.partial')
-    expect(partial!.text).toBe('累积')
+    expect(partial.event).toBe('dictation.partial')
+    expect(partial.text).toBe('累积')
     const final = mapper.mapFrame({ type: 'dictation.final', clientRequestId: 'req_1', text: '最终' }) as DictationFinalEvent
-    expect(final!.event).toBe('dictation.final')
-    expect(final!.clientRequestId).toBe('req_1')
-    expect(final!.text).toBe('最终')
+    expect(final.event).toBe('dictation.final')
+    expect(final.clientRequestId).toBe('req_1')
+    expect(final.text).toBe('最终')
     const cancelled = mapper.mapFrame({ type: 'dictation.cancelled', clientRequestId: 'req_1' }) as DictationCancelledEvent
-    expect(cancelled!.event).toBe('dictation.cancelled')
-    expect(cancelled!.clientRequestId).toBe('req_1')
+    expect(cancelled.event).toBe('dictation.cancelled')
+    expect(cancelled.clientRequestId).toBe('req_1')
   })
   it('audio_start → audio.session.started（streamId=stream_id,format 透传）;audio_cancelled → audio.session.cancelled', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
     const started = mapper.mapFrame({ type: 'audio_start', stream_id: 7, format: 'wav', sampleRate: 16000, durationMs: 1200 }) as AudioSessionStartedEvent
-    expect(started!.event).toBe('audio.session.started')
-    expect(started!.streamId).toBe(7)
-    expect(started!.format).toBe('wav')
+    expect(started.event).toBe('audio.session.started')
+    expect(started.streamId).toBe(7)
+    expect(started.format).toBe('wav')
     const cancelled = mapper.mapFrame({ type: 'audio_cancelled', stream_id: 7 }) as AudioSessionCancelledEvent
-    expect(cancelled!.event).toBe('audio.session.cancelled')
-    expect(cancelled!.streamId).toBe(7)
+    expect(cancelled.event).toBe('audio.session.cancelled')
+    expect(cancelled.streamId).toBe(7)
   })
   it('audio / audio_end 返回 null（transport 消费，不进 mapper）', () => {
     const mapper = new FrameMapper({ connectionId: 'conn-1' })
@@ -287,14 +287,14 @@ describe('FrameMapper 语音/TTS 帧 → 领域（阶段4 批次B）', () => {
     const b = mapper.stampEvent<VoiceErrorEvent>({ event: 'voice.error', code: 'STT_UNAVAILABLE', message: 'STT 未启用' })
     const c = mapper.mapFrame({ type: 'dictation.partial', text: 'p' }) as DictationPartialEvent
     const d = mapper.stampEvent<AudioSessionReadyEvent>({ event: 'audio.session.ready', streamId: 9, url: 'cyrene://renderer/__cyrene-media/tts-live/1', format: 'wav' })
-    expect(a!.sequence).toBe(1)
+    expect(a.sequence).toBe(1)
     expect(b.sequence).toBe(2)
-    expect(c!.sequence).toBe(3)
+    expect(c.sequence).toBe(3)
     expect(d.sequence).toBe(4)
-    expect([a!.sequence, b.sequence, c!.sequence, d.sequence]).toEqual([1, 2, 3, 4])
-    expect(a!.eventId).toBe('conn-1:1')
+    expect([a.sequence, b.sequence, c.sequence, d.sequence]).toEqual([1, 2, 3, 4])
+    expect(a.eventId).toBe('conn-1:1')
     expect(b.eventId).toBe('conn-1:2')
-    expect(c!.eventId).toBe('conn-1:3')
+    expect(c.eventId).toBe('conn-1:3')
     expect(d.eventId).toBe('conn-1:4')
   })
   it('stampEvent 打全事件:eventId/sequence 由同一计数器,partial 字段原样保留', () => {

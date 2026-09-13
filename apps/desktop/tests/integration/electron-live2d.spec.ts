@@ -110,7 +110,10 @@ async function statusText(page: Page): Promise<string> {
   return page.evaluate(() => document.querySelector('.cy-live-status')?.textContent ?? '')
 }
 async function selectValue(page: Page): Promise<string> {
-  return page.evaluate(() => (document.querySelector('select[aria-label="选择 Live2D 模型"]') as HTMLSelectElement | null)?.value ?? '')
+  // 用 `querySelector<HTMLSelectElement>` 而不是类型断言：属性选择器不触发 TS 的标签名映射，
+  // 返回的是 `Element | null`（`as HTMLSelectElement` 会被 `no-unnecessary-type-assertion` 判为多余并**自动删掉**，
+  // 删掉后 `.value` 就编译不过——自动修复必须复核，这条是实测踩到的）。
+  return page.evaluate(() => document.querySelector<HTMLSelectElement>('select[aria-label="选择 Live2D 模型"]')?.value ?? '')
 }
 /** 等 Live2D 状态落到终态（就绪/回退/失败）并返回其文案 */
 async function waitLive2dSettled(page: Page): Promise<string> {

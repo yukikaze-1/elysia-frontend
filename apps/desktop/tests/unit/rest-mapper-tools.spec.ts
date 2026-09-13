@@ -2,10 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { RestMapper, pairToolCalls } from '../../src/main/transport/protocol-v2/rest-mapper'
 import type { Message, MessageToolInfo } from '@shared/contracts/message'
 import type { RestMessage } from '../../src/main/transport/protocol-v2/rest-types'
-import type { RawSessionMessageItem } from '../../src/main/transport/protocol-v2/raw-types'
 
 const mapper = new RestMapper()
-const asRest = (raw: unknown): RestMessage => raw as unknown as RestMessage // review P-10：显式类型，不用 as never
+const asRest = (raw: unknown): RestMessage => raw as RestMessage // review P-10：显式类型，不用 as never
 
 describe('归档 tool_calls 骨架解析（Task 5 / F-6-19）', () => {
   it('assistant tool_calls 骨架解析（ToolCallData 形状；arguments JSON 串不解析）；tool 角色消息保留 MessageToolInfo 不进 toolCalls', () => {
@@ -82,8 +81,8 @@ describe('pairToolCalls 配对（Task 5 / F-6-19/21）', () => {
   })
   it('回放路径：toDomainMessageFromReplay 组装数组 → pairToolCalls 配对（review F3）', () => {
     const msgs = [
-      mapper.toDomainMessageFromReplay({ role: 'assistant', message_id: 'm1', timestamp: 't0', tool_calls: [{ id: 'tc_1', function: { name: 'get_time', arguments: '{}' } }] } as unknown as RawSessionMessageItem, 'c'),
-      mapper.toDomainMessageFromReplay({ role: 'tool', message_id: 'm2', timestamp: 't1', content: 'ok', tool_call_id: 'tc_1', name: 'get_time', success: true } as unknown as RawSessionMessageItem, 'c')
+      mapper.toDomainMessageFromReplay({ role: 'assistant', message_id: 'm1', timestamp: 't0', tool_calls: [{ id: 'tc_1', function: { name: 'get_time', arguments: '{}' } }] }, 'c'),
+      mapper.toDomainMessageFromReplay({ role: 'tool', message_id: 'm2', timestamp: 't1', content: 'ok', tool_call_id: 'tc_1', name: 'get_time', success: true }, 'c')
     ]
     const out = pairToolCalls(msgs)
     expect(out[0].toolCalls?.[0]?.outputSummary).toBe('ok')
@@ -145,8 +144,8 @@ describe('pairToolCalls R-A3 空串错误（Task 6 / D6B-21）', () => {
     // 基于既有回放用例：构造含 assistant tool_calls + role=tool 结果（error 空串）的 replay 数组 →
     // toDomainMessageFromReplay → pairToolCalls → toolCalls 配对成功且不被空串错误翻转
     const msgs = [
-      mapper.toDomainMessageFromReplay({ role: 'assistant', message_id: 'm1', timestamp: 't0', tool_calls: [{ id: 'tc_1', function: { name: 'get_time', arguments: '{}' } }] } as unknown as RawSessionMessageItem, 'c'),
-      mapper.toDomainMessageFromReplay({ role: 'tool', message_id: 'm2', timestamp: 't1', content: 'ok', tool_call_id: 'tc_1', name: 'get_time', success: false, error: '' } as unknown as RawSessionMessageItem, 'c')
+      mapper.toDomainMessageFromReplay({ role: 'assistant', message_id: 'm1', timestamp: 't0', tool_calls: [{ id: 'tc_1', function: { name: 'get_time', arguments: '{}' } }] }, 'c'),
+      mapper.toDomainMessageFromReplay({ role: 'tool', message_id: 'm2', timestamp: 't1', content: 'ok', tool_call_id: 'tc_1', name: 'get_time', success: false, error: '' }, 'c')
     ]
     const out = pairToolCalls(msgs)
     expect(out[0].toolCalls?.[0]?.status).toBe('completed')

@@ -97,24 +97,26 @@ export default tseslint.config(
     rules: { '@typescript-eslint/require-await': 'off' }
   },
   {
-    // 测试目录接入 type-aware（2026-09-13）：**先接三条高信号规则**（口径 B）。
+    // 测试目录接入 type-aware（2026-09-13，口径 A ＝ **全集**减两条经实测豁免的规则）。
     //
-    // 为什么是这三条：它们正是本仓真实缺陷所属的类别（异步语义用错 / promise 没人管），
-    // 而且在测试里同样致命——**测试自己吞掉 rejection，会把"实现坏了"伪装成"测试通过"**。
-    // 实测命中仅 9 处（`no-floating-promises` 5／`await-thenable` 2／`no-misused-promises` 2），
-    // 已逐处判断语义后修完（悬空的 `connect` 补 await；有意交错的用 `void` 显式声明；
-    // `await` 一个同步函数、`mockImplementation(async …)` 用在 void 位置两类直接去掉多余修饰）。
+    // 为什么值得做：测试自己吞掉 rejection、或在 `any` 上做断言，会把"实现坏了"伪装成"测试通过"。
+    // 实测全集 **455 条 / 74 文件**；其中 208 条 `no-unnecessary-type-assertion` 可自动修，其余逐条判语义后修完。
+    // 修法口径：**优先给值标注真实类型**（例如把 `vi.fn((input) => …)` 写成
+    // `vi.fn((input: CharacterListQuery) => …)`，类型从 `@shared/contracts` import）——这样契约漂移时
+    // 测试会**编译失败**，价值不止于消警；其次才是 `unknown` + 判型收窄。
     //
-    // 为什么不顺手接全集（口径 A）：实测 **1012 条 / 122 个测试文件**，其中 547 条来自两条
-    // "在测试替身上前提不成立"的规则（`require-await` 474＝async 测试替身、`unbound-method` 73＝
-    // vitest 的 `expect(obj.method)` 惯例）。剩下的仍以"给夹具补类型"为主，属独立一轮；
-    // 两个口径的实测比较与建议见 docs/review/2026-09-13-type-aware-lint全集接入生产代码-决策记录.md §6。
+    // 两条豁免（**有计数、有理由**，与生产侧同款）：
+    //   · `require-await` 474 条：`async` 测试替身——它们实现 `Promise<T>` 返回的接口，函数体内没有可 await 的步骤；
+    //   · `unbound-method` 73 条：实测绝大多数是 vitest 的 `expect(obj.method).toHaveBeenCalled…` 惯例
+    //     （vitest 自己的文档亦建议对该规则豁免），其余是 `originalConfirm = window.confirm` 这类原生
+    //     this 无关函数。两者都不是"分离后 this 会指错"的真实风险。
+    // 两个口径的实测比较见 docs/review/2026-09-13-type-aware-lint全集接入生产代码-决策记录.md §6。
     files: ['tests/**/*.ts', 'tests/**/*.mts'],
+    extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: { parserOptions: { ...TS_PROJECT } },
     rules: {
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/no-misused-promises': 'error'
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/unbound-method': 'off'
     }
   },
   {

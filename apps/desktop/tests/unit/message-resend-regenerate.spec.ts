@@ -67,7 +67,7 @@ describe('messageStore：重新发送（doc 03 §7.5 / doc 12 C-03）', () => {
 
     expect(ok).toBe(true)
     expect(mockApi.send).toHaveBeenCalledTimes(1)
-    const payload = mockApi.send.mock.calls[0]![0]
+    const payload = mockApi.send.mock.calls[0][0]
     expect(payload).toMatchObject({ conversationId: 'conv-1', text: '你好' })
     expect(payload.clientRequestId, '失败消息的旧 id 从未到达后端 ⇒ 必须换新 id').not.toBe('orig-req-id')
     // 不新增气泡（C-03 的核心不变量）；乐观 key 迁到 serverMessageId，避免留下 local-* 悬挂 id
@@ -85,7 +85,7 @@ describe('messageStore：重新发送（doc 03 §7.5 / doc 12 C-03）', () => {
     const ok = await store.resendUserMessage('u-1')
 
     expect(ok).toBe(true)
-    expect(mockApi.send.mock.calls[0]![0].clientRequestId).toBe('orig-req-id')
+    expect(mockApi.send.mock.calls[0][0].clientRequestId).toBe('orig-req-id')
     expect(store.order.length).toBe(1)
     expect(store.byId['u-1']?.status).toBe('acknowledged')
   })
@@ -156,7 +156,7 @@ describe('messageStore：重新生成（doc 03 §7.5 / doc 02 §16.2）', () => 
 
     expect(ok).toBe(true)
     expect(mockApi.send).toHaveBeenCalledTimes(1)
-    const payload = mockApi.send.mock.calls[0]![0]
+    const payload = mockApi.send.mock.calls[0][0]
     expect(payload.text, '应跳过无正文的 u-2、取 u-1').toBe('第一条')
     expect(payload.conversationId).toBe('conv-1')
     expect(payload.clientRequestId).not.toBe('orig-req-id')

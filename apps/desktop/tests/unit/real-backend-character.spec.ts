@@ -106,12 +106,20 @@ function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } })
 }
 
+/** fetch 入参 → 请求 URL 文本：生产代码一律传 string；URL/Request 各取其 url 字段
+ *（断言本意是「请求了哪个 URL」，String(Request) 只会得到 '[object Request]'）。 */
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
+
 describe('RealBackend 角色 REST 适配器', () => {
   it('按冻结矩阵调用所有角色 REST 路径，并只向上返回领域形状', async () => {
     const socket = new FakeWs()
     const calls: Array<{ method: string; url: string; body?: string; authorization?: string }> = []
     const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-      const url = String(input)
+      const url = requestUrl(input)
       const parsed = new URL(url)
       calls.push({
         method: init?.method ?? 'GET', url,
@@ -159,8 +167,11 @@ describe('RealBackend 角色 REST 适配器', () => {
     await expect(backend.validateCharacter(draft)).resolves.toMatchObject({ valid: false, issues: [{ path: '/promptProfile/speakingStyle' }] })
     await expect(backend.previewCharacter({ draft, userMessage: '你好，今天过得怎么样？' })).resolves.toMatchObject({ ephemeral: true, reply: '临时回复' })
     await expect(backend.getCharacterState('instance-1')).resolves.toMatchObject({ stateVersion: 3, mood: { intensity: 0.4 } })
+    // vitest 的 expect.arrayContaining 返回类型被 @vitest/expect 声明为 any；按“未知期望值”如实收成
+    // unknown 再放进断言对象（匹配器运行时行为不变，仅阻断 any 扩散）。
+    const resetFieldsMatcher: unknown = expect.arrayContaining(['mood'])
     await expect(backend.resetCharacterEvolution({ characterInstanceId: 'instance-1', expectedStateVersion: 3 }))
-      .resolves.toMatchObject({ state: { stateVersion: 4, mood: { label: '开心' } }, resetFields: expect.arrayContaining(['mood']) })
+      .resolves.toMatchObject({ state: { stateVersion: 4, mood: { label: '开心' } }, resetFields: resetFieldsMatcher })
 
     expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
       'GET /api/me', 'PUT /api/me', 'GET /api/characters', 'GET /api/characters/character-1', 'POST /api/characters',
@@ -170,11 +181,11 @@ describe('RealBackend 角色 REST 适配器', () => {
       'POST /api/character-instances/instance-1/reset-evolution'
     ])
     expect(calls.every((call) => call.authorization === 'Bearer token-1')).toBe(true)
-    expect(new URL(calls[2]!.url).search).toBe('?source=custom&status=active&search=Ely&cursor=cursor-1&limit=10')
-    expect(JSON.parse(calls[1]!.body ?? '')).toEqual({ expectedRevision: 1, displayName: '旅人', locale: 'zh-CN', timezone: 'Asia/Shanghai' })
-    expect(JSON.parse(calls[4]!.body ?? '')).not.toHaveProperty('draft')
-    expect(JSON.parse(calls[11]!.body ?? '')).toHaveProperty('draft')
-    expect(JSON.parse(calls[13]!.body ?? '')).toEqual({ expectedStateVersion: 3 })
+    expect(new URL(calls[2].url).search).toBe('?source=custom&status=active&search=Ely&cursor=cursor-1&limit=10')
+    expect(JSON.parse(calls[1].body ?? '')).toEqual({ expectedRevision: 1, displayName: '旅人', locale: 'zh-CN', timezone: 'Asia/Shanghai' })
+    expect(JSON.parse(calls[4].body ?? '')).not.toHaveProperty('draft')
+    expect(JSON.parse(calls[11].body ?? '')).toHaveProperty('draft')
+    expect(JSON.parse(calls[13].body ?? '')).toEqual({ expectedStateVersion: 3 })
   })
 
   it('严格拒绝 malformed 角色响应，并在显式 source 切换后丢弃旧请求', async () => {

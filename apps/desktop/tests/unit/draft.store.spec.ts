@@ -4,10 +4,21 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useDraftStore, DRAFT_MAX_BYTES } from '../../src/renderer/src/stores/draft.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { createDesktopApiMock } from './helpers/desktop-api'
-import type { SessionPersistenceState } from '@shared/contracts'
+import type { PersistSessionInput, SessionPersistenceState } from '@shared/contracts'
 
 // I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。
 const mockApi = createDesktopApiMock()
+
+/**
+ * "任意字符串" 非对称匹配器（`updatedAt` 只断言存在性，不断言取值）。
+ *
+ * 为什么不直接写 `expect.any(String)`：vitest 把 `expect.any` 的返回类型声明成 `any`
+ * （实测 `AsymmetricMatchersContaining.any: (sample?: unknown) => any`），放进 `PersistSessionInput`
+ * 这类具名契约里会命中 `no-unsafe-assignment`。运行时 `expect.any(String)` 的返回值确实就是
+ * 这个非对称匹配器，故经 `unknown` 收窄到目标类型；预期对象本身仍用真实契约类型标注，
+ * 契约漂移照样编译报错。
+ */
+const anyString = (): string => expect.any(String) as string
 
 /** 空水合态（本组用例只关心 persistenceDegraded，其余字段给最小合法值） */
 const EMPTY_STATE: SessionPersistenceState = { drafts: [], scrollAnchors: {}, conversations: [], messageSnapshots: {} }
@@ -24,9 +35,10 @@ describe('draftStore（spec §4.4.1）', () => {
     expect(mockApi.persistSession).not.toHaveBeenCalled()
     vi.advanceTimersByTime(800)
     expect(mockApi.persistSession).toHaveBeenCalledTimes(1)
-    expect(mockApi.persistSession).toHaveBeenCalledWith({
-      conversationId: 'c1', draft: { text: '你好', updatedAt: expect.any(String) }, scrollAnchor: { messageId: 'm1', offset: 5 }
-    })
+    const expectedWrite: PersistSessionInput = {
+      conversationId: 'c1', draft: { text: '你好', updatedAt: anyString() }, scrollAnchor: { messageId: 'm1', offset: 5 }
+    }
+    expect(mockApi.persistSession).toHaveBeenCalledWith(expectedWrite)
   })
 
   it('超限（UTF-8 字节 >100KB）拒绝写入 + overLimit 置位，不静默截断', () => {
@@ -53,9 +65,10 @@ describe('draftStore（spec §4.4.1）', () => {
     s.clear('c1')
     expect(s.drafts['c1']).toBeUndefined()
     await s.flush('c1')
-    expect(mockApi.persistSession).toHaveBeenLastCalledWith({
-      conversationId: 'c1', draft: { text: '', updatedAt: expect.any(String) }, scrollAnchor: null
-    })
+    const expectedClear: PersistSessionInput = {
+      conversationId: 'c1', draft: { text: '', updatedAt: anyString() }, scrollAnchor: null
+    }
+    expect(mockApi.persistSession).toHaveBeenLastCalledWith(expectedClear)
     const state: SessionPersistenceState = {
       drafts: [{ conversationId: 'c9', text: '旧草稿', attachmentLocalIds: [], updatedAt: 't' }],
       scrollAnchors: { c9: { messageId: 'm9', offset: 3 } }, conversations: [], messageSnapshots: {}
@@ -90,8 +103,15 @@ describe('draftStore（spec §4.4.1）', () => {
     expect(mockApi.persistSession).not.toHaveBeenCalled()
     await s.flushAll()
     expect(mockApi.persistSession).toHaveBeenCalledTimes(2)
-    expect(mockApi.persistSession).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'c1', draft: expect.objectContaining({ text: 'a' }) }))
-    expect(mockApi.persistSession).toHaveBeenCalledWith(expect.objectContaining({ conversationId: 'c2', draft: expect.objectContaining({ text: 'b' }) }))
+    // 逐次断言 c1/c2 的落盘载荷（原为两次 `expect.objectContaining`——vitest 把它的返回类型声明成
+    // `any`，放进具名契约会命中 no-unsafe-assignment；这里改成按调用序取载荷，断言等价且载荷类型真实）
+    const [callC1, callC2] = mockApi.persistSession.mock.calls
+    const payloadC1: PersistSessionInput = callC1[0]
+    const payloadC2: PersistSessionInput = callC2[0]
+    expect(payloadC1.conversationId).toBe('c1')
+    expect(payloadC1.draft.text).toBe('a')
+    expect(payloadC2.conversationId).toBe('c2')
+    expect(payloadC2.draft.text).toBe('b')
     vi.advanceTimersByTime(2000)
     expect(mockApi.persistSession).toHaveBeenCalledTimes(2)       // 定时器已取消，不重复写
   })

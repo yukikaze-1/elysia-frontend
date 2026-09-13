@@ -15,9 +15,12 @@ import {
   RENDERER_CONSOLE_MAX_PER_WINDOW,
   RENDERER_CONSOLE_WINDOW_MS
 } from '../../src/main/windows/renderer-console'
+import type { LogFields } from '../../src/main/diagnostics/logger'
 
 function makeSink(over: Partial<Parameters<typeof createRendererConsoleSink>[0]> = {}) {
-  const warn = vi.fn()
+  // logger 按 renderer-console 的真实依赖 `Pick<Logger,'warn'>` 标注——裸 `vi.fn()` 的调用实参是 `any`
+  // （原写法 `warn.mock.calls.map((c) => c[0])` 因此命中 no-unsafe-return）
+  const warn = vi.fn<(code: string, fields?: LogFields) => void>()
   let clock = 1_000_000
   const sink = createRendererConsoleSink({
     logger: { warn },

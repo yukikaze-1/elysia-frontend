@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { isProxy, isReactive } from 'vue'
-import type { CharacterCatalogChangedEvent, CharacterDraft, CharacterStateChangedEvent, UpdateUserIdentityCommand, UserIdentityProfile } from '@shared/contracts'
+import type {
+  CharacterCatalogChangedEvent, CharacterDraft, CharacterListQuery, CharacterPreviewCommand,
+  CharacterRevisionQuery, CharacterStateChangedEvent, CloneCharacterCommand, CreateCharacterCommand,
+  RollbackCharacterCommand, UpdateCharacterCommand, UpdateUserIdentityCommand, UserIdentityProfile
+} from '@shared/contracts'
 import { MockCharacterBackend } from '../../src/main/characters/mock-character-backend'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { createDesktopApiMock } from './helpers/desktop-api'
@@ -35,17 +39,17 @@ const baseApi = {
       ...(input.defaultCharacterId !== undefined ? { defaultCharacterId: input.defaultCharacterId } : {})
     }
   }),
-  listCharacters: vi.fn((input = {}) => backend.listCharacters(input)),
+  listCharacters: vi.fn((input: CharacterListQuery = {}) => backend.listCharacters(input)),
   getCharacter: vi.fn((id: string) => backend.getCharacter(id)),
-  listCharacterRevisions: vi.fn((input) => backend.listCharacterRevisions(input)),
+  listCharacterRevisions: vi.fn((input: CharacterRevisionQuery) => backend.listCharacterRevisions(input)),
   getCharacterState: vi.fn((id: string) => backend.getCharacterState(id)),
-  createCharacter: vi.fn((input) => backend.createCharacter(input)),
-  updateCharacter: vi.fn((input) => backend.updateCharacter(input)),
-  cloneCharacter: vi.fn((input) => backend.cloneCharacter(input)),
+  createCharacter: vi.fn((input: CreateCharacterCommand) => backend.createCharacter(input)),
+  updateCharacter: vi.fn((input: UpdateCharacterCommand) => backend.updateCharacter(input)),
+  cloneCharacter: vi.fn((input: CloneCharacterCommand) => backend.cloneCharacter(input)),
   archiveCharacter: vi.fn((id: string) => backend.archiveCharacter(id)),
-  rollbackCharacter: vi.fn((input) => backend.rollbackCharacter(input)),
-  validateCharacter: vi.fn((draft) => backend.validateCharacter(draft)),
-  previewCharacter: vi.fn((input) => backend.previewCharacter(input))
+  rollbackCharacter: vi.fn((input: RollbackCharacterCommand) => backend.rollbackCharacter(input)),
+  validateCharacter: vi.fn((draft: CharacterDraft) => backend.validateCharacter(draft)),
+  previewCharacter: vi.fn((input: CharacterPreviewCommand) => backend.previewCharacter(input))
 }
 
 function characterDraft(name: string): CharacterDraft {
@@ -227,16 +231,16 @@ describe('characterCatalogStore FE-B', () => {
     const d1Backend = new MockCharacterBackend()
     const d1Api = {
       getMe: vi.fn(() => d1Backend.getMe()),
-      listCharacters: vi.fn((input = {}) => d1Backend.listCharacters(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => d1Backend.listCharacters(input)),
       getCharacter: vi.fn((id: string) => d1Backend.getCharacter(id)),
-      listCharacterRevisions: vi.fn((input) => d1Backend.listCharacterRevisions(input)),
-      createCharacter: vi.fn((input) => d1Backend.createCharacter(input)),
-      updateCharacter: vi.fn((input) => d1Backend.updateCharacter(input)),
-      cloneCharacter: vi.fn((input) => d1Backend.cloneCharacter(input)),
+      listCharacterRevisions: vi.fn((input: CharacterRevisionQuery) => d1Backend.listCharacterRevisions(input)),
+      createCharacter: vi.fn((input: CreateCharacterCommand) => d1Backend.createCharacter(input)),
+      updateCharacter: vi.fn((input: UpdateCharacterCommand) => d1Backend.updateCharacter(input)),
+      cloneCharacter: vi.fn((input: CloneCharacterCommand) => d1Backend.cloneCharacter(input)),
       archiveCharacter: vi.fn((id: string) => d1Backend.archiveCharacter(id)),
-      rollbackCharacter: vi.fn((input) => d1Backend.rollbackCharacter(input)),
-      validateCharacter: vi.fn((draft) => d1Backend.validateCharacter(draft)),
-      previewCharacter: vi.fn((input) => d1Backend.previewCharacter(input))
+      rollbackCharacter: vi.fn((input: RollbackCharacterCommand) => d1Backend.rollbackCharacter(input)),
+      validateCharacter: vi.fn((draft: CharacterDraft) => d1Backend.validateCharacter(draft)),
+      previewCharacter: vi.fn((input: CharacterPreviewCommand) => d1Backend.previewCharacter(input))
     }
     setDesktopApi(createDesktopApiMock(d1Api))
     const store = useCharacterCatalogStore()
@@ -275,10 +279,10 @@ describe('characterCatalogStore FE-B', () => {
     const oldDetail = deferred<Awaited<ReturnType<MockCharacterBackend['getCharacter']>>>()
     const oldRevisions = deferred<Awaited<ReturnType<MockCharacterBackend['listCharacterRevisions']>>>()
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
       getCharacter: vi.fn((id: string) => local.getCharacter(id)),
-      listCharacterRevisions: vi.fn((input) => local.listCharacterRevisions(input)),
-      updateCharacter: vi.fn((input) => local.updateCharacter(input)),
+      listCharacterRevisions: vi.fn((input: CharacterRevisionQuery) => local.listCharacterRevisions(input)),
+      updateCharacter: vi.fn((input: UpdateCharacterCommand) => local.updateCharacter(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id))
     }
     setDesktopApi(createDesktopApiMock(apiMock))
@@ -321,8 +325,8 @@ describe('characterCatalogStore FE-B', () => {
   it('FE-D1 mutation 的 default/active/archived query 语义正确且主动 fence 不遗留 loading', async () => {
     const local = new MockCharacterBackend()
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
-      createCharacter: vi.fn((input) => local.createCharacter(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
+      createCharacter: vi.fn((input: CreateCharacterCommand) => local.createCharacter(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id))
     }
     setDesktopApi(createDesktopApiMock(apiMock))
@@ -353,9 +357,9 @@ describe('characterCatalogStore FE-B', () => {
     const oldDetail = deferred<Awaited<ReturnType<MockCharacterBackend['getCharacter']>>>()
     const oldRevisions = deferred<Awaited<ReturnType<MockCharacterBackend['listCharacterRevisions']>>>()
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
       getCharacter: vi.fn((id: string) => local.getCharacter(id)),
-      listCharacterRevisions: vi.fn((input) => local.listCharacterRevisions(input))
+      listCharacterRevisions: vi.fn((input: CharacterRevisionQuery) => local.listCharacterRevisions(input))
     }
     setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
@@ -397,10 +401,10 @@ describe('characterCatalogStore FE-B', () => {
     const local = new MockCharacterBackend()
     const created = await local.createCharacter({ draft: characterDraft('match-me') })
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
-      updateCharacter: vi.fn((input) => local.updateCharacter(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
+      updateCharacter: vi.fn((input: UpdateCharacterCommand) => local.updateCharacter(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id)),
-      previewCharacter: vi.fn((input) => local.previewCharacter(input))
+      previewCharacter: vi.fn((input: CharacterPreviewCommand) => local.previewCharacter(input))
     }
     setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
@@ -436,7 +440,7 @@ describe('characterCatalogStore FE-B', () => {
 
   it('FE-D1 低版本摘要不能把不匹配当前 query 的旧状态带回', async () => {
     const local = new MockCharacterBackend()
-    const apiMock = { listCharacters: vi.fn((input = {}) => local.listCharacters(input)) }
+    const apiMock = { listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)) }
     setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
     await store.loadList({})
@@ -466,9 +470,9 @@ describe('characterCatalogStore FE-B', () => {
     const created = await local.createCharacter({ draft: characterDraft('archive-fence') })
     const staleArchive = deferred<Awaited<ReturnType<MockCharacterBackend['archiveCharacter']>>>()
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
       getCharacter: vi.fn((id: string) => local.getCharacter(id)),
-      updateCharacter: vi.fn((input) => local.updateCharacter(input)),
+      updateCharacter: vi.fn((input: UpdateCharacterCommand) => local.updateCharacter(input)),
       archiveCharacter: vi.fn(() => staleArchive.promise)
     }
     setDesktopApi(createDesktopApiMock(apiMock))
@@ -539,7 +543,7 @@ describe('characterCatalogStore FE-B', () => {
     }
     const staleDetail = deferred<Awaited<ReturnType<MockCharacterBackend['getCharacter']>>>()
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
       getCharacter: vi.fn(() => staleDetail.promise)
     }
     setDesktopApi(createDesktopApiMock(apiMock))
@@ -597,11 +601,11 @@ describe('characterCatalogStore FE-B', () => {
     const other = await local.createCharacter({ draft: characterDraft('other') })
     const otherRevisions = deferred<Awaited<ReturnType<MockCharacterBackend['listCharacterRevisions']>>>()
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
-      listCharacterRevisions: vi.fn((input) => input.characterId === other.summary.characterId
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
+      listCharacterRevisions: vi.fn((input: CharacterRevisionQuery) => input.characterId === other.summary.characterId
         ? otherRevisions.promise
         : local.listCharacterRevisions(input)),
-      updateCharacter: vi.fn((input) => local.updateCharacter(input))
+      updateCharacter: vi.fn((input: UpdateCharacterCommand) => local.updateCharacter(input))
     }
     setDesktopApi(createDesktopApiMock(apiMock))
     const store = useCharacterCatalogStore()
@@ -806,7 +810,7 @@ describe('characterCatalogStore FE-B', () => {
     const syncFailure = await local.createCharacter({ draft: characterDraft('archive-sync-failure') })
     const asyncFailure = await local.createCharacter({ draft: characterDraft('archive-async-failure') })
     const apiMock = {
-      listCharacters: vi.fn((input = {}) => local.listCharacters(input)),
+      listCharacters: vi.fn((input: CharacterListQuery = {}) => local.listCharacters(input)),
       archiveCharacter: vi.fn((id: string) => local.archiveCharacter(id))
     }
     setDesktopApi(createDesktopApiMock(apiMock))

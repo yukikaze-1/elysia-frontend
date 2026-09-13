@@ -108,12 +108,15 @@ describe('handleRendererGone（抽函数——注入 fake deps，不依赖 Brows
   function makeLogger() {
     return { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }
   }
-  function deps(overrides: Partial<Parameters<typeof handleRendererGone>[1]> = {}) {
-    const base: Parameters<typeof handleRendererGone>[1] = {
+  /** handleRendererGone 的 deps 第二参（含 logger/audit/setMarker/reload） */
+  type RendererGoneDeps = Parameters<typeof handleRendererGone>[1]
+  function deps(overrides: Partial<RendererGoneDeps> = {}) {
+    // setMarker 按 handleRendererGone 的真实 deps 签名标注——裸 `vi.fn()` 的调用实参是 `any`
+    const base = {
       logger: makeLogger(),
       audit: vi.fn(),
-      setMarker: vi.fn(),
-      reload: vi.fn(),
+      setMarker: vi.fn<(m: { reason: string; exitCode: number; ts: number }) => void>(),
+      reload: vi.fn()
     }
     return { ...base, ...overrides }
   }
@@ -127,11 +130,17 @@ describe('handleRendererGone（抽函数——注入 fake deps，不依赖 Brows
   })
 
   it('crashed 触发 warn + audit(renderer:crash) + setMarker(reason/exitCode/ts) + reload', () => {
-    const d = deps()
+    // setMarker 以带真实签名的 mock 注入（deps() 的 `{...base, ...overrides}` 会把 Mock 展宽成裸函数签名，
+    // 展宽后 `.mock.calls` 不可达——原写法只能用 expect.any(Number)，其返回类型是 any）；这里保留调用记录
+    const setMarker = vi.fn<(m: { reason: string; exitCode: number; ts: number }) => void>()
+    const d = deps({ setMarker })
     handleRendererGone({ reason: 'crashed', exitCode: 1 }, d)
-    expect(d.logger!.warn).toHaveBeenCalledWith('render-process-gone', { reason: 'crashed', exitCode: 1 })
+    expect(d.logger.warn).toHaveBeenCalledWith('render-process-gone', { reason: 'crashed', exitCode: 1 })
     expect(d.audit).toHaveBeenCalledWith({ type: 'renderer:crash', summary: '渲染进程异常：crashed (exit 1)' })
-    expect(d.setMarker).toHaveBeenCalledWith({ reason: 'crashed', exitCode: 1, ts: expect.any(Number) })
+    const marker = setMarker.mock.calls[0][0]
+    expect(marker.reason).toBe('crashed')
+    expect(marker.exitCode).toBe(1)
+    expect(typeof marker.ts).toBe('number')
     expect(d.reload).toHaveBeenCalledTimes(1)
   })
 
@@ -160,7 +169,7 @@ describe('handleChildProcessGone（index.ts 抽函数——child-process-gone GP
 
 describe('render-process-gone 监听接线（createMainWindow 装配）+ getCrashMarker 一次性读后清', () => {
   it('监听读 details——crashed → audit + marker 写入 + reload；getCrashMarker 读后清。注：win.webContents 的 render-process-gone 为 2 参 (event, details)（electron.d.ts:17304）', () => {
-    setCrashSink({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() } as never, audit: vi.fn() })
+    setCrashSink({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }, audit: vi.fn() })
     createMainWindow(undefined, undefined)
     const listener = h.goneHandlers.get('render-process-gone')
     expect(listener).toBeDefined()

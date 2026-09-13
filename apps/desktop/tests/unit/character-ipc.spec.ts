@@ -54,7 +54,13 @@ describe('FE-B 角色 IPC Main handler', () => {
     const state = await invoke(handlers, IpcChannels.characterInstancesGetState, { characterInstanceId: 'instance-elysia' })
     expect(state).toMatchObject({ ok: true, data: { characterId: 'builtin/elysia', characterInstanceId: 'instance-elysia' } })
     const reset = await invoke(handlers, IpcChannels.characterInstancesResetEvolution, { characterInstanceId: 'instance-elysia', expectedStateVersion: 1 })
-    expect(reset).toMatchObject({ ok: true, data: { state: { stateVersion: 2 }, resetFields: expect.arrayContaining(['mood']) } })
+    // `expect.arrayContaining` 的返回类型被 vitest 声明成 `any`；先把 IpcResult 判型收窄到 ok 分支
+    // （形状断言仍由原来的 toMatchObject 完成，语义不变），再判 resetFields 含 'mood'
+    if (reset.ok === false) throw new Error(`reset 应成功: ${reset.error.code}`)
+    expect(reset).toMatchObject({ ok: true, data: { state: { stateVersion: 2 } } })
+    const resetData: unknown = reset.data
+    const resetFields = (resetData as { resetFields?: unknown }).resetFields
+    expect(Array.isArray(resetFields) && resetFields.includes('mood')).toBe(true)
   })
 
   it('请求/响应均 strict：未知字段和错误 arity 在 Main 边界拒绝', async () => {
@@ -178,7 +184,7 @@ describe('FE-B 角色 IPC Main handler', () => {
     const handlers = new Map<string, { invoke: (raw: unknown) => Promise<IpcResult<unknown>>; arity: number }>()
     registerCharacterHandlers({
       service: { archiveCharacter: vi.fn(async () => { throw new Error('REMOTE_ARCHIVE_FAILED') }) } as never,
-      drafts: { deleteByCharacterId: cleanup } as never,
+      drafts: { deleteByCharacterId: cleanup },
       sanitize,
       logger: logger as never,
       register: (channel, invoke, arity = 0) => handlers.set(channel, { invoke, arity })

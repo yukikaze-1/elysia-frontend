@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_CLI_USER_DATA_FLAVOR, resolveModelsDir, resolveUserDataDir } from '../../scripts/live2d-install.mjs'
+import { manifestSchema } from '../../src/main/live2d/model-registry'
 
 const execFileP = promisify(execFile)
 
@@ -50,6 +51,16 @@ interface IntegrityFile { files: IntegrityEntry[] }
 /** 读并**带类型**解析 integrity.json（避免 any 扩散到断言里） */
 async function readIntegrity(dst: string): Promise<IntegrityFile> {
   return JSON.parse(await readFile(join(dst, 'integrity.json'), 'utf8')) as IntegrityFile
+}
+
+/**
+ * 读并**判型** manifest.json：`JSON.parse` 的产物是外部输入（lib 里返回 `any`），故先收成 `unknown`，
+ * 再交给**消费者自己的** `manifestSchema`（`src/main/live2d/model-registry.ts`）解析——
+ * 类型与校验一并引用生产者，不在此另写镜像；形状漂移会在这里就红，而不是在断言里静默放过。
+ */
+async function readManifest(dst: string) {
+  const raw: unknown = JSON.parse(await readFile(join(dst, 'manifest.json'), 'utf8'))
+  return manifestSchema.parse(raw)
 }
 
 /** 取某路径的条目；缺失即失败（比 `!` 断言更有信息量，也免掉 possibly-undefined） */
@@ -262,7 +273,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     expect(stdout).toContain('haru 装配完成')
 
     const dst = join(modelsDirFor(userDataRoot), 'haru')
-    const manifest = JSON.parse(await readFile(join(dst, 'manifest.json'), 'utf8'))
+    const manifest = await readManifest(dst)
     expect(manifest).toMatchObject({
       id: 'haru',
       displayName: 'Haru',
@@ -312,7 +323,7 @@ describe('CLI 装配（strip-types spawn，spec §3.5 顺序）', () => {
     )
     expect(code).toBe(0)
     const dst = join(modelsDirFor(userDataRoot), 'haru-noicon')
-    const manifest = JSON.parse(await readFile(join(dst, 'manifest.json'), 'utf8'))
+    const manifest = await readManifest(dst)
     expect(manifest).not.toHaveProperty('preview')
     await expect(lstat(join(dst, 'preview.png'))).rejects.toThrow()
     const integrity = await readIntegrity(dst)

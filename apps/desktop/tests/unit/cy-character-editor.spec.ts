@@ -233,7 +233,11 @@ describe('CyCharacterEditor 角色编辑器', () => {
 
     await actions[1].trigger('click')
     await flushPromises()
-    expect(createCharacter).toHaveBeenCalledWith({ draft: expect.objectContaining({ displayName: '本地版本' }) })
+    expect(createCharacter).toHaveBeenCalledTimes(1)
+    // `expect.objectContaining` 的返回类型被 vitest 声明成 `any`（放进 toHaveBeenCalledWith 即 no-unsafe-assignment）；
+    // createCharacter 经 typedMock<'createCharacter'> 构造，实参本身已受 CreateCharacterCommand 检查
+    const created = createCharacter.mock.calls[0][0]
+    expect(created.draft.displayName).toBe('本地版本')
     expect(wrapper.emitted('saved')).toHaveLength(1)
     expect(editor.baseCharacterId).toBe('custom/test')
     wrapper.unmount()

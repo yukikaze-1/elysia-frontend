@@ -355,7 +355,7 @@ describe('PcmCapture', () => {
       const input = new Float32Array(640).fill(0.5)
       ctx.scriptProcessors[0].onaudioprocess!({
         inputBuffer: { getChannelData: () => input }
-      } as unknown as AudioProcessingEvent)
+      })
 
       expect(capturedChunks).toHaveLength(2)
       expect(capturedChunks[0].byteLength).toBe(PCM_CHUNK_BYTES)
@@ -363,7 +363,7 @@ describe('PcmCapture', () => {
       // 跨事件聚合：再补 2 样本（不足整块）无输出
       ctx.scriptProcessors[0].onaudioprocess!({
         inputBuffer: { getChannelData: () => new Float32Array([0.5, 0.5]) }
-      } as unknown as AudioProcessingEvent)
+      })
       expect(capturedChunks).toHaveLength(2)
 
       await capture.stop()

@@ -23,7 +23,7 @@ describe('singleLineText（普通文本压单行）', () => {
   it('连续空白折叠为单空格；超长截断加省略号', () => {
     expect(singleLineText('a\n\r b\t  c')).toBe('a b c')
     expect(singleLineText('x'.repeat(300))).toHaveLength(201)
-    expect(singleLineText('x'.repeat(300))!.endsWith('…')).toBe(true)
+    expect(singleLineText('x'.repeat(300)).endsWith('…')).toBe(true)
   })
 })
 
@@ -103,7 +103,7 @@ describe('formatToolDetail / effectiveTruncated', () => {
 describe('formatDuration（耗时展示）', () => {
   it('undefined/null/NaN/Infinity/负数/0 → 空串（不显示 0ms）', () => {
     for (const v of [undefined, null, Number.NaN, Number.POSITIVE_INFINITY, -5, 0]) {
-      expect(formatDuration(v as number | undefined | null)).toBe('')
+      expect(formatDuration(v)).toBe('')
     }
   })
   it('(0,1) → <1ms；[1,1000) → 整数 ms；≥1000 → 秒最多一位小数', () => {

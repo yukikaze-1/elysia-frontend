@@ -1,12 +1,39 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createServer, type Server } from 'http'
-import { WebSocketServer } from 'ws'
+import { WebSocketServer, type RawData } from 'ws'
 import { AddressInfo } from 'net'
 import { RealBackend, type RealBackendOptions, type WebSocketLike } from '../../src/main/transport/real-backend'
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { CyreneErrorCode } from '@shared/errors'
 import type { UploadContent } from '../../src/main/transport/backend-adapter'
+
+/** ws 文本帧 → utf8 文本：RawData 是 Buffer | ArrayBuffer | Buffer[]，只有 Buffer（及 Buffer[]）能按 utf8 解码。 */
+function rawDataToText(data: RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8')
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8')
+  return Buffer.from(data).toString('utf8')
+}
+
+/** 客户端 → 服务器 WS 帧：JSON 对象 + string 型 type（wire 契约保证；形状不符直接抛错，不静默吞帧）。 */
+type ClientFrame = Record<string, unknown> & { type: string }
+
+function parseClientFrame(data: RawData): ClientFrame {
+  const parsed: unknown = JSON.parse(rawDataToText(data))
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('客户端帧不是 JSON 对象')
+  const frame: Record<string, unknown> = { ...parsed }
+  if (typeof frame['type'] !== 'string') throw new Error('客户端帧缺 string 型 type')
+  const clientFrame: ClientFrame = { ...frame, type: frame['type'] }
+  return clientFrame
+}
+
+/** fetch 入参 → 请求 URL 文本：生产代码一律传 string；URL/Request 各取其 url 字段
+ *（断言本意是「请求了哪个 URL」，String(Request) 只会得到 '[object Request]'）。 */
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.href
+  return input.url
+}
 
 let server: Server
 let wss: WebSocketServer
@@ -38,7 +65,7 @@ beforeAll(async () => {
     ws.send(JSON.stringify({ type: 'expression', expression: 'idle' }))
     ws.send(JSON.stringify({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-g', conversationId: 'conv-1', model: 'm1' }))
     ws.on('message', (data) => {
-      const frame = JSON.parse(String(data))
+      const frame = parseClientFrame(data)
       receivedClientFrames.push(frame.type)
       receivedClientPayloads.push(frame)
       if (frame.type === 'text') {
@@ -355,7 +382,7 @@ describe('RealBackend WS 连接', () => {
         }
       }
     }
-    const b = new RealBackend({ now: () => Date.now(), wsFactory: () => fakeWs as never })
+    const b = new RealBackend({ now: () => Date.now(), wsFactory: () => fakeWs })
     await expect(b.connect({ serverUrl: 'http://x', token: 't' })).rejects.toMatchObject({ code: CyreneErrorCode.PROTOCOL_MISMATCH })
     expect(b.getConnectionState().status).toBe('error')
   })
@@ -536,7 +563,7 @@ describe('RealBackend REST 方法', () => {
   function mockFetch(responses: Record<string, unknown>): { fetchImpl: typeof fetch; calls: { url: string; opts: RequestInit }[] } {
     const calls: { url: string; opts: RequestInit }[] = []
     const fetchImpl = async (url: string | URL | Request, opts?: RequestInit) => {
-      const u = String(url)
+      const u = requestUrl(url)
       calls.push({ url: u, opts: opts ?? {} })
       const key = Object.keys(responses).find((k) => u.includes(k))
       if (!key) throw new Error(`no mock for ${u}`)
@@ -590,7 +617,7 @@ describe('RealBackend REST 方法', () => {
     expect(page.hasMore).toBe(false)
 
     const badFetch = async () => new Response(JSON.stringify({ code: 'CONTRACT_VALIDATION', message: '非法游标' }), { status: 400 })
-    const b2 = new RealBackend({ fetchImpl: badFetch as never, now: () => Date.now(), wsFactory: () => fakeWs() })
+    const b2 = new RealBackend({ fetchImpl: badFetch, now: () => Date.now(), wsFactory: () => fakeWs() })
     await b2.connect({ serverUrl: 'http://test.local', token: 't' })
     await expect(b2.getConversationMessages({ conversationId: 'c', before: 'bad' })).rejects.toMatchObject({ code: CyreneErrorCode.INVALID_INPUT })
   })
@@ -652,7 +679,7 @@ describe('RealBackend uploadAttachments / signAttachmentUrl（spec §4.5/§3.2�
     return new Promise((resolve) => {
       const s = createServer((req, res) => {
         const chunks: Buffer[] = []
-        req.on('data', (c) => chunks.push(c))
+        req.on('data', (c: Buffer) => chunks.push(c))
         req.on('end', () => handler(req, chunks))
         if (req.url === '/api/uploads') {
           setTimeout(() => {
@@ -731,8 +758,8 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
     await b.connect({ serverUrl: 'http://backend.local', token: 'secret-token' })
     const result = await b.readToolAttachment('call_2025c9e03ffa')
     expect(result).toEqual({ bytes: png, mimeType: 'image/png' })
-    const [url, init] = fetchImpl.mock.calls[0]!
-    expect(String(url)).toBe('http://backend.local/uploads/desktop/call_2025c9e03ffa.png')
+    const [url, init] = fetchImpl.mock.calls[0]
+    expect(requestUrl(url)).toBe('http://backend.local/uploads/desktop/call_2025c9e03ffa.png')
     expect((init?.headers as Record<string, string>).authorization).toBe('Bearer secret-token')
     await b.disconnect()
   })
@@ -790,7 +817,10 @@ describe('RealBackend 工具接线（Task 6，M1 补直测）', () => {
       permissionRequired: true, approvalAuthority: 'client', paramHash: 'h', expiresAt: 'not-a-date' }))
     spy.mockRestore()
     expect(onToolRequest).not.toHaveBeenCalled()   // 帧被丢弃
-    expect(logger.warn).toHaveBeenCalledWith('tool.request:parse-failed', expect.objectContaining({ message: expect.any(String) }))
+    // vitest 的 expect.any 返回类型被 @vitest/expect 声明为 any；按“未知期望值”如实收成 unknown
+    // 再嵌进断言对象（匹配器运行时行为不变，仅阻断 any 扩散）。
+    const anyStringMatcher: unknown = expect.any(String)
+    expect(logger.warn).toHaveBeenCalledWith('tool.request:parse-failed', expect.objectContaining({ message: anyStringMatcher }))
     // V-06 续帧：坏帧后注入后续**有效** tool.request 帧 → onToolRequest 被调用（证循环继续处理，丢帧不传染）
     b['handleFrame'](JSON.stringify({ type: 'tool.request', callId: 'call_ok', toolName: 'desktop.file.read', toolVersion: '1.0',
       runtime: 'desktop', sourceCallId: 'tc_ok', arguments: { path: '/y' }, riskLevel: 'medium',

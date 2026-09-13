@@ -97,7 +97,7 @@ async function collectTableFacts(page: Page): Promise<TableFacts | null> {
     const lastCell = table.querySelector<HTMLElement>('tr > *:last-child')
     const headerCells = table.querySelectorAll<HTMLElement>('thead th')
     const headerCellGap = headerCells.length >= 2
-      ? headerCells[1]!.getBoundingClientRect().left - headerCells[0]!.getBoundingClientRect().right
+      ? headerCells[1].getBoundingClientRect().left - headerCells[0].getBoundingClientRect().right
       : Number.NaN
     // 归零再量：本函数会被 expect.poll 反复调用，上一次调用已把表格滚到最右——
     // 不归零就会把"滚动后"的几何当成"滚动前"，判据随之失效（本用例首版即栽在这里）。

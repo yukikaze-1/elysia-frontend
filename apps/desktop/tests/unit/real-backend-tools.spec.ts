@@ -3,7 +3,7 @@
 // 对齐 real-backend-model-services.spec 夹具形态（FakeWs + makeBackend 手动 connect + fetchImpl 注入）；
 // 断连/非 2xx/解析失败 → null 降级（reconnect queryStatus 查询分支消费）。
 import { describe, expect, it, vi } from 'vitest'
-import { RealBackend, type WebSocketLike } from '../../src/main/transport/real-backend'
+import { RealBackend } from '../../src/main/transport/real-backend'
 import { DesktopCallStatusSchema, RepoCallStatusSchema } from '../../src/shared/schemas/ipc-response'
 import { DesktopCallStatusSchema as RestDesktopCallStatusSchema } from '../../src/main/transport/protocol-v2/rest-schemas'
 
@@ -22,7 +22,7 @@ async function mkBackend(fetchImpl: (url: string, init?: RequestInit) => Promise
   const ws = new FakeWs()
   const backend = new RealBackend({
     now: () => Date.now(),
-    wsFactory: () => ws as WebSocketLike,
+    wsFactory: () => ws,
     fetchImpl: fetchImpl as typeof fetch,
     onProtocolWarning: vi.fn(), onError: vi.fn(), logger: { warn: vi.fn() },
   })
@@ -42,7 +42,10 @@ describe('批次 C：getToolCallStatus', () => {
     const b = await mkBackend(fetchImpl)
     const r = await b.getToolCallStatus('call_1')
     expect(r).toMatchObject({ callId: 'call_1', status: 'expired' })
-    expect(fetchImpl).toHaveBeenCalledWith('http://localhost:8000/api/tools/calls/call_1', expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer tok' }) }))
+    // vitest 的 expect.objectContaining 返回类型被 @vitest/expect 声明为 any；这里按“未知期望值”如实收成
+    // unknown 再嵌进外层断言对象（匹配器运行时行为不变，仅阻断 any 扩散）。
+    const authorizationMatcher: unknown = expect.objectContaining({ authorization: 'Bearer tok' })
+    expect(fetchImpl).toHaveBeenCalledWith('http://localhost:8000/api/tools/calls/call_1', expect.objectContaining({ headers: authorizationMatcher }))
   })
   it('schema strict：未知字段拒 / 缺必填拒 / succeeded/failed 合法', () => {
     const base = { callId: 'c', toolName: 't', toolVersion: '1', runtime: 'desktop', paramHash: 'h', status: 'succeeded', createdAt: 'x', expiresAt: 'y' }
