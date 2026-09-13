@@ -379,9 +379,20 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
    * 不让 renderer 各渲染点自行过滤：UI 层过滤只能做到「不显示」，而这里能给出**可操作的原因**。
    */
   private restFailure(error: unknown): CyreneError {
-    return error instanceof CyreneError
-      ? error
-      : new CyreneError(CyreneErrorCode.NOT_CONNECTED, '无法连接后端：网络请求失败，请检查连接或后端是否在运行')
+    if (error instanceof CyreneError) return error
+    // 底层成因不能就此消失：实测为定位一次偶发失败花了三轮，正是因为这里把
+    // `ECONNREFUSED` / `ECONNRESET` / abort / DNS 等完全不同的成因压成一句话且不留任何痕迹。故把原始错误挂在
+    // **非枚举的 `cause`**（ES2022 语义，不进序列化）：不改用户可见文案、不改错误码。
+    const wrapped = new CyreneError(CyreneErrorCode.NOT_CONNECTED,
+      '无法连接后端：网络请求失败，请检查连接或后端是否在运行')
+    Object.defineProperty(wrapped, 'cause', { value: error, enumerable: false, configurable: true, writable: true })
+    // 同时把**成因的码/名**放进 `details`（仅码名：
+    // 不带消息、不带路径）——这样下一次偶发在**CI 日志里就能读出成因**（vitest 会把 details 序列化进失败输出）。
+    // IPC 执行器只从 details 里取特定字段（retryable/requestId/issues 等），故不会被整体投影给 Renderer。
+    const causeCode = (error as { code?: unknown }).code
+    const kind = typeof causeCode === 'string' ? causeCode : error instanceof Error ? error.name : typeof error
+    Object.defineProperty(wrapped, 'details', { value: { cause: kind }, enumerable: true, configurable: true, writable: true })
+    return wrapped
   }
 
   /**
