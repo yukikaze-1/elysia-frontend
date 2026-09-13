@@ -206,6 +206,24 @@
   **attempt 2 通过（2m43s）**，故 `258d564` 的 CI 记录为「首跑红于既有 ④ 偶发 → 重跑失败分片后全绿」。
   失败 attempt 的关键事实已在重跑前取回（GitHub 会覆盖 attempt 日志，见本文件既有注记）：
   `median=449px`（≤200）、`within < 15/25`。**"重跑即绿"本身不构成收敛证据**，只是把该 run 结清。
+  **第 5 次再现（2026-09-13，`26c7d12` / [run 34752619683](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34752619683)）**：
+  又是 `integration (shard 2/3)`，三条断言全红，且**数值与两次历史运行逐像素相同**——
+  `median=2506px`、`max=5011px`、`within=2/25`、`settledGap=5526px`（与 `34692644842`、`34740592698` 一字不差）。
+  **这条数据改变了定性口径**：三次运行落在**同一组数值**上，说明它不是随机噪声，而是**某个确定性饱和态**
+  （夹具固定 ⇒ 一旦"跟随完全停住"，采样出来的缺口就是同一串数字）；本轮仍未定位触发条件。
+  已排除的最简解释（本轮**读码实测**，不是猜）：**不是 rAF 被隐藏窗口节流**——`main-window.ts:106` 明确
+  设了 `backgroundThrottling: false`（"渲染进程 timer/rAF 恒定运行，不随窗口遮挡/失焦节流"）。
+  与代码里已记录的那条**"再无恢复路径"**分支高度吻合（`CyMessageList.vue:112-125` 的探针注记：
+  "一旦早退，缺口更大、atBottom 更不可能为真…此后 scrollTop 冻结、不再产生 scroll 事件"，
+  探针实测 scrollTop 冻在 6146 而 scrollHeight 从 7176 涨到 12093）——**下一轮的判别动作**：
+  把 ④ 的自诊断从"三个聚合值"扩成"冻结曲线"（逐采样滚动 `scrollTop`/`scrollHeight`/`atBottom`/`stickToBottom`），
+  并在 CI 复现时据此判定停在哪个分支；**在此之前不放宽判据、不关闭疑虑**。
+  `26c7d12` 的处置与**第 6 次尝试**：`gh run rerun --failed` 重跑该分片 —— **同一 commit 三次 attempt 的结果是「红 → 红（四个数值与上一次逐像素相同）→ 绿」**（run 34752619683 最终 **8/8 全绿**）。
+  **这三次把口径钉得更准，两个方向都要写清**（不可只取一半）：
+  - **不是随机噪声**：三次里有两次数值一字不差（`median=2506px max=5011px within=2/25 settledGap=5526px`），且与 2026-09-12 的 `34692644842`（**本批之前**）完全相同 ⇒ 触发时缺口落在一个**确定的饱和值**上，不像"机器慢一点"那样连续浮动；
+  - **但也不能说成"该分片必红"**：第三次同一 commit 转绿（本机、shard 1/3、3/3 亦绿）⇒ 它取决于**运行时的环境状态**，而不是代码路径的固定分支。
+  **故最后定性：环境状态相关的确定性饱和态**（触发时数值固定、不触发时完全贴底）。判据照旧**不放宽**、疑虑**不关闭**；下一步判别动作见上（把 ④ 的自诊断扩成"冻结曲线"）。
+  **工具事实（利于下一步）**：本机可 `ssh 192.168.1.18`（`yomu-X99`，24 核，runner 所在机）且该机有 `~/elysia-frontend` 开发克隆 ⇒ 下一步可先在 X99 上按分片的 CPU 亲和（`taskset -c 14-23`）复现，不必每次推 CI 等一轮。
 
 
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
@@ -256,7 +274,7 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 构建 | `pnpm build` | PASS |
 | 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动） |
 | 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | 见下方本批 CI 行 |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS（重跑后 8/8 全绿）**：`26c7d12` / [run 34752619683](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34752619683)。首跑红在 `integration (shard 2/3)` 的**既有 ④**（同一 commit 三次 attempt：红 → 红（数值逐像素相同）→ 绿，见上文第 5 次再现）；其余 7 个 job 首跑即绿。**与本批改动无关**：同一组数值在 2026-09-12 的 `34692644842`（本批之前）上已出现过。**不以重跑掩盖**：判据未改、结论按"环境状态相关的确定性饱和态"记录 |
 
 **本批变异验证 3 次**：M1 失败后不再放回 patch → 单测 **红 4 条**；M2 摘掉设置页状态条 → 组件 **红 5/6** + 集成红于 `expected +0 to be 1`；M3 `SettingsService.load()` 恢复"隔离失败上抛" → 单测红于 promise rejected、**集成红于 `firstWindow: Target page, context or browser has been closed`（应用根本起不来）**——即修前的真实行为。
 
