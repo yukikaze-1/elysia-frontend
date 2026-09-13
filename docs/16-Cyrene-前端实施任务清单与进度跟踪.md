@@ -291,10 +291,11 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | GitHub CI | `.github/workflows/ci.yml` | **PASS**（`26c7d12` 与 `bdef229` 各 8/8 全绿；`6171cd1` 首跑红于既有 ④、重跑被顶掉）——三次 run 的逐条事实见本表下方 |
 
 **本批 CI 行的逐条事实**（行宽到上限，故移出表外）：
-- `26c7d12` / [run 34752619683](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34752619683)：**8/8 全绿**（同一 commit 三次 attempt：红 → 红（数值逐像素相同）→ 绿，见上文第 5 次再现）；
-- `6171cd1`（纯文档）/ [run 34753436139](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34753436139)：首跑红在 `integration (shard 2/3)` 的**既有 ④**（第 6 次），其余 7 个 job 全绿；**其重跑被下一次 push 顶掉（cancelled）**；
-- `bdef229`（纯文档）/ [run 34753892800](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34753892800)：**8/8 全绿、首跑即绿**。
-三次的红都与本批改动无关（同一组数值在 2026-09-12 的 `34692644842`、以及本批之前的纯 workflow 提交上都出现过）；**判据未改、结论按上文记录**，不以重跑掩盖。
+- `081d3fe`→`7a3d34a` 的 run **首跑两处红**：`integration (shard 1/3)` 红在我**新增**的 `settings-save-failure.spec.ts`（`expected 1 to be +0`——⑤b 让降级**启动即可见**，而该用例仍写着"初始不应有提示"；**行为对、用例旧**，`60ecbca` 按新口径改写）；`integration (shard 2/3)` 红在既有 ④（**CI 日志本轮自己打出了冻结曲线**）。
+- `60ecbca`：shard 1/3 转绿，仅剩 ④；`gh run rerun --failed` 后 **8/8 全绿**。
+- `b0f9b9d`（**纯文档**）红在 `windows build-level`：`tests/unit/settings-service.spec.ts` **0 test**，报 `failed to create directory '…\node_modules\electron\dist\resources': os error 183` + `Downloading Electron binary...`——**我新加的 `import … settings-handlers` 经 `ipc/registry` 间接 import electron**，纯 node 单测因此触发 Electron 二进制懒下载（**本仓 M-40/P2-4 记过的同一坑，这次是我自己造的**）。已由 `e049f23` 修：规则移到 `SettingsService.loadForRenderer()`，spec 不再 import handler。
+- `e049f23`：**8/8 首跑即绿**（含 `windows build-level` 与两个此前红过的分片）。
+**判据一字未改**；④ 的复现与冻结曲线见本批决策记录 §4。
 
 **本批变异验证 3 次**：M1 失败后不再放回 patch → 单测 **红 4 条**；M2 摘掉设置页状态条 → 组件 **红 5/6** + 集成红于 `expected +0 to be 1`；M3 `SettingsService.load()` 恢复"隔离失败上抛" → 单测红于 promise rejected、**集成红于 `firstWindow: Target page, context or browser has been closed`（应用根本起不来）**——即修前的真实行为。
 
@@ -315,7 +316,7 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 敏感扫描 | `verify:sensitive` | PASS |
 | 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议 |
 | 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | `081d3fe`（①⑤ 代码）→ `2f3f0b9`／`7a3d34a` 的 run **首跑两处红**：`integration (shard 1/3)` 红在我**新增**的 `settings-save-failure.spec.ts`（`expected 1 to be +0`——⑤b 让降级启动即可见，而该用例仍写着"初始不应有提示"；**行为对、用例旧**），`integration (shard 2/3)` 红在既有 ④；`60ecbca` 修掉前者后 **shard 1/3 转绿**，仅剩 ④，`gh run rerun --failed` 重跑后 **8/8 全绿**。**判据一字未改**；④ 的 CI 日志本轮**自己打出了冻结曲线**（`top` 冻结而 `height` 继续增长） |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS**：`60ecbca` 重跑后 8/8、`e049f23` **首跑即绿**。其间三处红都**不是** ④ 偶发，逐条见本表下方 |
 
 **本批变异验证 4 次**：① 摘掉写守卫 → 降级用例红且 `save()` 由 reject 变 **resolve**（"覆写"真的发生）；② 隔离失败改回吞掉 → 降级用例红；③ `cache.store` 的 catch 改回静默 → 3 条红；④ `settings:load` 改回返回默认值 → 拒绝读取用例红。
 **两处被既有门禁/用例抓到的真问题**：① `voice-handlers.spec` 的 settings 替身缺 `getLastError()`（handler 依赖面变了）当场变红，已按其真实契约补齐；② **我第一版"判别用例"是假判别**——用 safeRoot 不匹配造降级时 `assertStorageRoot` 本来就会拦住写，"覆写"发生不了，红的只是错误码不同；已改为"正确 safeRoot + 注入 isolate 失败"的真实形态。
