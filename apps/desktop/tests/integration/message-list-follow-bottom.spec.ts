@@ -213,10 +213,11 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       console.log(`[follow-bottom ④] 清意图事件数=${clearTotals[clearTotals.length - 1] ?? 0} 最近一次=${lasts[lasts.length - 1] || '（无）'}`)
       console.log(`[follow-bottom ④] 位置下移事件（最近一次）：${upLasts[upLasts.length - 1] || '（无）'}`)
       console.log(`[follow-bottom ④] 首次清意图（intent 1→0，决定性读数）：${flip || '（本轮未发生）'}`)
-      // 第三轮探针：翻转那一刻的**事件时间线**——这是"是谁把位置回退了 31px"的唯一直接证据
-      // （W=程序性写并带调用点、S=scroll 事件带下移量、R=容器尺寸变化）。
+      // 第三轮探针：**第一次位置下移**那一刻的事件时间线——这是"是谁把位置回退了 31px"的直接证据
+      // （W=程序性写并带调用点、S=scroll 事件带下移量、R=容器尺寸变化）。冻结条件不看是否翻转：
+      // 修复之后翻转已不再发生，但下移仍在发生。
       const trace = traces.find((t) => t.length > 0) ?? ''
-      console.log(`[follow-bottom ④] 翻转时间线：${trace || '（本轮未发生）'}`)
+      console.log(`[follow-bottom ④] 首次下移时间线：${trace || '（本轮未发生）'}`)
       // 冻结判定（**纯诊断**）：末尾**连续 ≥3 个采样** top 不变而 height 仍在增长。
       // 第一版写成"任意相邻两点 top 相同且 height 增长"——实测**假阳性**（X99 run2：`top=…,6701,6701,…`
       // 只是跟随恰好落回同一个取整值，`intent` 全程为 1、`settledGap=0`、用例本身通过）。

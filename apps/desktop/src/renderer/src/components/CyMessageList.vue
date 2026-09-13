@@ -181,10 +181,20 @@ const firstFlip = ref('')
 const flipTrace = ref('')
 const trace: string[] = []
 const TRACE_MAX = 8
+/**
+ * 冻结时机（第三轮修订）：**第一次"位置下移"事件**就冻结，而不是等"意图被清"。
+ *
+ * 为什么改：`USER_SCROLL_MIN_PX=64` 之后，那 31px 的布局回退**不再清意图**，于是"等翻转"的探针
+ * 在 X99 上连跑 16 轮一次都不触发（16/16 绿，无 flip）——**修复效果把观测点关掉了**。
+ * 而我们要定位的是"**谁把位置回退了**"，这件事仍然每轮都在发生，所以冻结条件改成"第一次 d>0"。
+ */
+function freezeTrace(mark: string): void {
+  if (!flipTrace.value) flipTrace.value = `${mark} ${trace.join(' | ')}`
+}
 function pushTrace(entry: string): void {
   if (trace.length >= TRACE_MAX) trace.shift()
   trace.push(entry)
-  if (firstFlip.value && !flipTrace.value) flipTrace.value = trace.join(' | ')
+  if (firstFlip.value) freezeTrace('FLIP')
 }
 const probeNow = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 let traceT0 = 0
@@ -252,6 +262,20 @@ function openMessageMenu(payload: { messageId: string; x: number; y: number }): 
   messageMenu.value = { open: true, x: payload.x, y: payload.y, messageId: payload.messageId }
 }
 
+/**
+ * 菜单的**锚点**（2026-09-13，实测缺陷修复）：把触发菜单的那一行交给 `CyContextMenu`，
+ * 于是滚动时菜单**跟随该行**（而不是"任何滚动就关"）。
+ *
+ * 修的是什么：流式回复期间列表会自行跟随底部/重锚，那些 scroll 事件与用户操作无关，
+ * 却会把刚打开的菜单立刻关掉（探针读数：菜单确实开了、400ms 内被恰好一次 scroll 事件关掉）。
+ * 行不在渲染窗口里（虚拟列表已经把它卸载）时 `querySelector` 返回 null ⇒ 菜单关闭，这正是想要的语义。
+ */
+function messageMenuAnchor(): HTMLElement | null {
+  const id = messageMenu.value.messageId
+  if (!id) return null
+  return container.value?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`) ?? null
+}
+
 const messageMenuItems = computed<ContextMenuItem[]>(() => {
   const msg = messageMenu.value.messageId ? messageStore.byId[messageMenu.value.messageId] : undefined
   if (!msg) return []
@@ -309,8 +333,12 @@ function onScroll(): void {
   if (!el) return
   const prevTop = scrollTop.value
   scrollTop.value = el.scrollTop
-  // 第三轮探针：scroll 事件的时序（含下移量与当时几何量），与 W/R 一起构成"谁回退了位置"的时间线
+  // 第三轮探针：scroll 事件的时序（含下移量与当时几何量），与 W/R 一起构成"谁回退了位置"的时间线。
+  // **第一次下移就冻结**（见 freezeTrace 的说明：修复之后"翻转"不再发生，但"下移"仍在发生）。
   pushTrace(`S t=${tRel()} top=${Math.round(el.scrollTop)} d=${Math.round(prevTop - el.scrollTop)} h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}`)
+  // 只冻"小幅下移"（<100px）：那才是"布局回退 vs 用户上翻"分不清的那一类。会话恢复/来源跳转那种
+  // 几百像素的程序性写入是另一回事（时间线里一眼可辨），不值得抢先冻住。
+  if (el.scrollTop < prevTop && prevTop - el.scrollTop < 100) freezeTrace('SMALL-RETREAT')
   const atBottomNow = computeAtBottom(el)
   atBottom.value = atBottomNow
   // H-02（意图/位置分离）：滚到（近）底部 → 恢复跟随意图；**确认**用户上翻（见 USER_SCROLL_MIN_PX）→ 放弃跟随。
@@ -676,6 +704,7 @@ onMounted(() => {
       :x="messageMenu.x"
       :y="messageMenu.y"
       :items="messageMenuItems"
+      :anchor="messageMenuAnchor"
       @select="onMessageMenuSelect"
       @close="messageMenu.open = false"
     />
