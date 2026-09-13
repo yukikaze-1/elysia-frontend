@@ -244,6 +244,26 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 
 **门禁**：`typecheck`／`lint`／`unit`（`orphan-apps` 28 passed + 1 skipped）全 PASS；②-1 过变异验证；②-2 的扫描是**只读**脚本（临时目录，未入库）。两项文档改动经 `pnpm docs:index` + `docs:check`。
 
+**2026-09-13 M-19 批次（设置保存失败可见性）门禁记录**——用户在本会话 H-11b renderer 半边落地后指定「M-19 继续排查和修复一下」。完整排查、取舍、刻意没做的五项与残余见[决策记录](review/2026-09-13-M-19-设置保存失败可见性-决策记录.md)。
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（exit 0） |
+| Lint | `pnpm lint` | PASS（exit 0） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / **83** review / 40 superpowers / 42 archived） |
+| 单元测试 | `pnpm test` | PASS（**252 文件 / 3089 通过** + 6 expected-fail + 22 skipped；本批净增 **14** 条 = `settings.store` +5、`cy-settings-save-status` 6、`settings-service` +3） |
+| 集成测试（新增 1 个 spec） | `pnpm test:integration` | PASS（`settings-save-failure` 1/1；本机以 **Windows 目录 junction** 形态跑通，Linux 侧走**文件 symlink** 形态） |
+| 构建 | `pnpm build` | PASS |
+| 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动） |
+| 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
+| GitHub CI | `.github/workflows/ci.yml` | 见下方本批 CI 行 |
+
+**本批变异验证 3 次**：M1 失败后不再放回 patch → 单测 **红 4 条**；M2 摘掉设置页状态条 → 组件 **红 5/6** + 集成红于 `expected +0 to be 1`；M3 `SettingsService.load()` 恢复"隔离失败上抛" → 单测红于 promise rejected、**集成红于 `firstWindow: Target page, context or browser has been closed`（应用根本起不来）**——即修前的真实行为。
+
+**本批顺带发现的第四条缺陷（不在评审里，实测确认）**：`SettingsService.load()` 的隔离失败会上抛，而 `main/index.ts:374` 是 **eager `await settingsSvc.load()`**（注释却写着"不阻塞启动"）⇒ 设置文件无法隔离时**整个应用起不来**。已改为降级态（保现场 + 拒绝写入 + 启动照常），与 `SessionStore` 同纪律。**这条不是 M-19 原文的范围，是排查中打出来的**——记录在此以免被读成"顺手重构"。
+
+**本批观察到一次单元测试 flake（如实记录，未改任何断言）**：全量 `pnpm test` 第一遍红在 `real-backend-search.spec.ts`「单流（all）首屏按 sortKey 升序」，栈落在 `RealBackend.restFailure`，同轮 stderr 出现 happy-dom 的 `AsyncTaskManager has been destroyed` / `DOMException [NetworkError] … http://localhost:3000/x`（该 spec 注入 fetch 替身）。**单独重跑该文件 10/10 绿、随后全量重跑 252 文件全绿**，故定性为 happy-dom 拆装竞态类偶发；**未放宽任何断言**。本批改动面（设置域）与该 spec（历史查询 REST）无交集。
+
 CI 历史（本表 CI 行只记当前批次，历史见下）：
 - `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
@@ -564,7 +584,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
    - 错误码拆为 `PERSISTENCE_DEGRADED`／`PERSISTENCE_WRITE_FAILED`（此前都兜底成 `UNKNOWN/内部错误`），跨 IPC 的只有**无路径投影**（基名 + 封闭触发标签）；
    - **拒绝写入语义与操作级 fail-open 均未变**；这一条同时兑现了 doc 06 §12 一直写着却从未实现的「**提示用户**」；
    - 变异 4 次；集成用例在本机（Windows **junction** 形态）与 CI（Linux **symlink** 形态）都能跑真链路，见 §3.1。
-   **M-19（设置保存失败不可见）仍是独立未修项**（属产品决定），见决策记录 §3 与残余小节。
+   **M-19（设置保存失败不可见）已于 2026-09-13 单独修复**（见下一条与 §3.1 的 M-19 批次行）：保存失败不再丢弃改动 + 设置中心三态可见 + doc 11 §9 口径改写；并顺带修掉一处**启动路径缺陷**（设置文件隔离失败会让应用起不来）。
 8. ~~M-20 其余 6 处 `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）未动、待用户决定~~ **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`，见 §3.1）：这 6 处改用配对文本 token `--cy-accent-text`（`tokens.css:33`，明暗两套；评审建议的 `--cy-accent-strong` 在浅色下仍 <4.5:1，故未采用）。本轮复测：`color: var(--cy-accent)` 在 `src/renderer/src` 下 **0 命中**，配对 token 有 29 处使用。此项因此不再需要用户决定。
 9. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
 10. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
@@ -585,7 +605,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 | doc 03 §5.2 | 加载更多／失败重试 | 未实现（现有懒加载＋错误态已覆盖功能面） | **建议砍／降级**（观感增强） |
 | doc 03 §5.3 | 骨架屏＋创建引导 | 未实现；另：空态文案含半角逗号 —— **半角逗号已修（2026-09-13）**：只读扫描 `src/**` 的「注释外 CJK 后半角逗号」命中 14 处，其中**用户可见文本 8 处已改全角**（`CyChatInput` 断线横幅 1 处 + `real-backend` 7 条会经 IPC 原文展示的 `CyreneError` 文案），**日志文本 6 处刻意不改**（`this.warn` 只进日志、用户看不到；日志/注释的半角是本仓既有惯例） | **建议砍**（骨架屏）；半角逗号**已完成** |
 | doc 03 §12.3 | 发送快捷键／自动滚动 | 未实现（Enter 发送已有） | **建议先澄清规格**（"快捷键可配"与"自动滚动开关"语义未定） |
-| doc 11 §9 | 未同步／同步中／已同步／错误 四态 | `同步中`／`已同步` **0 命中** | **建议砍或改写规格**（当前不存在"跨端同步"概念） |
+| doc 11 §9 | 未同步／同步中／已同步／错误 四态 | `同步中`／`已同步` **0 命中** | **建议砍或改写规格**（当前不存在"跨端同步"概念）→ **2026-09-13 已按"本地保存"语义改写为三态并落地（M-19）**：**正在保存／已保存／保存失败**，常驻设置中心头部下方，失败为 `role="alert"` 且必须说明"改动没丢"；实现同时修掉「保存失败丢弃改动」与「`saveError` 是死状态」两处缺陷。**注**：这不是把"跨端同步"做出来了——原条款写错了域（本应用设置只落本机 `settings.json`），doc 11 §9 正文与 §9 注记均已就地改写 |
 | 评审 §18／进度条 | 进度反馈 | `role="progressbar"` **0 命中** | **建议砍**（无明确消费者） |
 | doc 03 §15 验收项 | 「窄窗口下 Live2D 和会话栏可折叠」 | 窗口硬最小宽度 **1100** ⇒ <1100 不可达，该项**当前不可验收** | **文档修正**：**已按建议就地改写口径（2026-09-13）**——清单行内直接写明「当前不可验收、1100 以上固定布局、<1100 属已知产品缺口、不得读作已实现或待回归」，并指向 §3.1 的范围修正 |
 

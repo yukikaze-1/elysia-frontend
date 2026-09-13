@@ -334,6 +334,12 @@ interface PersistedSettingsV2 {
 
 输入法转写的执行位置由 `dictationSttProfileId` 所指 Profile 决定，不再另存一个可能冲突的 `dictationRuntime`。切换 STT Profile 时，Store 必须从 Profile 重新派生并展示 Backend、本机或 Local Worker 数据去向。
 
+> **保存失败可见性注记（2026-09-13，M-19）：** 设置保存这条链此前有**两处**让失败到达不了用户，本轮都修了：
+> ① **改动被丢弃**——`settings.store.persist()` 的 `pending = {}` 在 `await` **之前**执行，写盘失败即丢掉该 patch（用户看到开关即时生效、重启后被静默还原）。现失败时把这份 patch **merge 回待写队列**（等待期间的新改动优先），并安排**一次**延时自动重试（不是按 500ms 防抖节奏重试——磁盘满/权限不足是持续失败，那样等于热循环打盘）；再失败则留给下一次修改或退出 flush。
+> ② **失败不可见**——`saveError` / `saved` 是**死状态**（全仓无组件渲染），而 Live2D 子页写着"500ms 自动保存"。现设置中心**头部下方常驻三态**：正在保存／已保存／**保存失败（`role="alert"`，并明确"改动仍保留在待写队列"）**；文案经 `error-message.ts` 单一来源，跨 IPC 只传 code（`SETTINGS_SAVE_FAILED` 单次写失败；隔离失败复用 `PERSISTENCE_DEGRADED`），**不含任何本地路径**。
+> ③ 顺带修掉一处**启动路径缺陷**（H-11b 同族、本轮排查发现）：`SettingsService.load()` 的损坏隔离失败会**上抛**，而 `main/index.ts` 是 eager `await settingsSvc.load()`（注释写着"不阻塞启动"）——"配置文件是符号链接 / 被 AV 或备份代理锁住导致改名失败"会让**整个应用起不来**。现转降级态：保留默认内存态、**拒绝后续写入**（保现场，与 `SessionStore` 同纪律）、留痕计数，启动照常。
+> 口径细节见 doc 11 §9（原「跨端同步四态」已按本地保存语义改写为三态）与 [M-19 决策记录](review/2026-09-13-M-19-设置保存失败可见性-决策记录.md)。
+
 安全策略由 Main 单独持久化，包含沙盒目录、规范化路径黑名单、域名黑名单、权限审批历史和有效授权。Renderer 只获得公开摘要和撤销接口。
 
 > **迁移注记（2026-08-21，阶段 6 批次 C）：** `SettingsState` 增 `tools: { grants: PermissionGrant[] }` 子树（`ToolsSettingsSchema.default({grants: []})`，**version 保持 1**——旧文件无 `tools` 字段走 default 填充空 grants，不触发 `.corrupt` 重建，无迁移脚本）。**GrantStore 边界注记**：grants 读写归 Main `grant-store.ts`（`settings.tools.grants` 是唯一持久化面）；目录授权属**本机受信面**——settings.json 被篡改（形状合法）可注入非黑名单敏感目录 grant，防护 = 黑名单 step 5 恒先拒（`/etc` 注入无效）+ schema strict 只允 read/write + 装载期逐条校验剔除畸形条目（`settings:grant-invalid` 日志）+ 形状失败 corrupt 隔离回默认（grant 全清 fail-safe），「无永久 grant」保证仅在创建流成立（装载期不复查 expiresAt 上限）为接受风险（doc 07 注记 N-8）。Renderer 经 `tool:grants`（只读）+ `tool:grant-revoke`（撤销）交互，settingsStore 不消费 tools（`tool:grants` 为授权管理权威刷新源，F-12）。
