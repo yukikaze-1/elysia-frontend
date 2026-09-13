@@ -3,7 +3,8 @@ import { describe, expect, it, afterEach, vi } from 'vitest'
 import { mkdtemp, readFile, readdir, rm, writeFile, realpath } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { SessionStore, describeSchemaProblem } from '../../src/main/persistence/session-store'
+import { SessionStore, describeSchemaProblem, toWriteFailure } from '../../src/main/persistence/session-store'
+import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type { Conversation, Message } from '@shared/contracts'
 
 function msg(id: string, createdAt: string, extra = ''): Message {
@@ -314,7 +315,6 @@ describe('SessionStore 损坏路径 fail-closed（H-11b）', () => {
     expect(await readFile(join(base, 'drafts-v1.json'), 'utf8')).toBe(raw)
     await rm(base, { recursive: true, force: true })
   })
-
   it('未降级时 getLastError 为 undefined 且写入正常（不误报）', async () => {
     const base = await mkdtemp(join(tmpdir(), 'cyrene-h11b3-'))
     const counts: string[] = []
@@ -347,5 +347,95 @@ describe('SessionStore 损坏路径 fail-closed（H-11b）', () => {
     expect(await readFile(join(base, 'drafts-v1.json'), 'utf8'), '原文件逐字节未变').toBe(raw)
     await rm(base, { recursive: true, force: true })
     await rm(other, { recursive: true, force: true })
+  })
+})
+
+// —— H-11b renderer 半边（2026-09-13）：降级/写失败必须能被 Renderer 区分并展示 ——
+//
+// 修复前的用户可见症状：Main 拒绝写入 → 错误码是泛化的 `UNKNOWN`（executor 兜底成「内部错误」），
+// Renderer 的 `draft.store.persistNow` 又无条件 fail-open 吞掉 —— 用户看到的就是"什么都没有"，
+// 直到重启才发现草稿全丢。本组用例钉住三件事：① 降级有**专属**码；② 降级态随 hydrate 出到 Renderer，
+// 且**不含绝对路径**；③ 单次写失败也有专属码且不带路径。
+describe('持久化故障的用户可见性（H-11b renderer 半边，2026-09-13）', () => {
+  async function makeDegraded() {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-h11b5-'))
+    const counts: string[] = []
+    const raw = JSON.stringify({ schemaVersion: 99, entries: { c1: { text: '必须保住', updatedAt: 't' } } })
+    await writeFile(join(base, 'drafts-v1.json'), raw, { encoding: 'utf8', mode: 0o600 })
+    const s = new SessionStore({
+      appCache: base, safeRoot: await realpath(base), logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      countDiagnostic: (code: string) => { counts.push(code) }, getActiveConversationId: () => 'c1'
+    })
+    // 注入隔离失败的真实形态（AV/备份代理/只读目录下 rename 失败）
+    const isolation = (s as unknown as { isolation: { isolate(): Promise<string> } }).isolation
+    isolation.isolate = async () => { throw new Error(`EPERM: rename denied, ${join(base, 'drafts-v1.json')}`) }
+    await s.load()
+    return { s, base, counts, raw }
+  }
+
+  it('降级拒绝写入 → 错误码是 PERSISTENCE_DEGRADED（不再是泛化 UNKNOWN）', async () => {
+    const { s, base } = await makeDegraded()
+    try {
+      await expect(s.persistSession({ conversationId: 'c1', draft: { text: '新', updatedAt: 't2' }, scrollAnchor: null }))
+        .rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    } finally { await rm(base, { recursive: true, force: true }) }
+  })
+
+  it('降级态随 hydrate 出到 Renderer，且投影不含绝对路径（只给基名 + 封闭触发标签）', async () => {
+    const { s, base, raw } = await makeDegraded()
+    try {
+      const h = s.hydrate()
+      expect(h.persistenceDegraded, '降级态必须能被 Renderer 看到').toBeDefined()
+      expect(h.persistenceDegraded?.file).toBe('drafts-v1.json')
+      expect(h.persistenceDegraded?.reason).toBe('schema-version-mismatch:99')
+      // 关键不变量（Main 是路径边界）：投影里不得出现临时根路径或盘符
+      const serialized = JSON.stringify(h.persistenceDegraded)
+      expect(serialized).not.toContain(base)
+      expect(serialized).not.toMatch(/[/\\]{1,2}[^\s"]*[\\/]/)
+      expect(serialized).not.toMatch(/[A-Za-z]:\\/)
+      // 而内部诊断仍保留完整原文（含路径），两边不混淆
+      expect(s.getLastError()?.reason).toContain('isolate-failed:')
+      expect(s.getLastError()?.reason).toContain(base)
+      // 原文件仍在磁盘上（"保现场"不是靠渲染层措辞，而是真的没写）
+      expect(await readFile(join(base, 'drafts-v1.json'), 'utf8')).toBe(raw)
+    } finally { await rm(base, { recursive: true, force: true }) }
+  })
+
+  it('未降级时 hydrate 不含 persistenceDegraded 字段（不误报）', async () => {
+    const healthy = await makeStore()
+    try {
+      const h = healthy.s.hydrate()
+      expect(h.persistenceDegraded).toBeUndefined()
+      expect('persistenceDegraded' in h).toBe(false)
+    } finally { await rm(healthy.base, { recursive: true, force: true }) }
+  })
+
+  it('真实写失败（父目录消失）→ PERSISTENCE_WRITE_FAILED，且 message 不含路径', async () => {
+    const failing = await makeStore()
+    const base = failing.base
+    await rm(base, { recursive: true, force: true })   // 目录整体消失：atomicWriteFile 的 realpath/包含性复核失败
+    let caught: unknown
+    try {
+      await failing.s.persistSession({ conversationId: 'c1', draft: { text: 'x', updatedAt: 't' }, scrollAnchor: null })
+    } catch (e) { caught = e }
+    expect(caught).toMatchObject({ code: 'PERSISTENCE_WRITE_FAILED' })
+    const message = (caught as Error).message
+    expect(message).not.toContain(base)
+    expect(message).not.toMatch(/[/\\]/)
+  })
+
+  // 纯函数直测：把「哪些码可展示」这条纪律钉在映射函数上，而不是靠集成用例碰运气
+  it('toWriteFailure：只采纳 errno 形状的码，且绝不带原文/路径', () => {
+    expect(toWriteFailure(Object.assign(new Error('ENOSPC: no space left, open /tmp/x'), { code: 'ENOSPC' })))
+      .toMatchObject({ code: 'PERSISTENCE_WRITE_FAILED', message: '本地保存失败（ENOSPC）' })
+    expect(toWriteFailure(new Error('父目录逃逸安全根（/tmp/secret）')))
+      .toMatchObject({ code: 'PERSISTENCE_WRITE_FAILED', message: '本地保存失败' })
+    // 非 errno 形状的 code（含路径分隔符/小写/超长）一律不采纳，防把畸形值透出去
+    for (const bad of ['/tmp/x', 'enospc', 'A'.repeat(33), 'E NOSPACE']) {
+      expect((toWriteFailure(Object.assign(new Error('x'), { code: bad })) as Error).message).toBe('本地保存失败')
+    }
+    // 已有语义码不覆盖（配额/大小/降级各有专属码，调用方依赖它们）
+    const semantic = new CyreneError(CyreneErrorCode.DRAFT_LIMIT_EXCEEDED, '草稿超过 100KB 上限')
+    expect(toWriteFailure(semantic)).toBe(semantic)
   })
 })

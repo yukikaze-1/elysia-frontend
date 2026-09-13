@@ -40,4 +40,12 @@ export interface SessionPersistenceState {
   lastActiveConversationId?: string
   conversations: Conversation[]
   messageSnapshots: Record<string, Message[]>
+  /**
+   * H-11b renderer 半边（2026-09-13）：本地持久化**降级态**（损坏文件隔离失败后拒绝一切写入）。
+   *
+   * 只在降级时出现；`file` 是基名、`reason` 取自封闭取值（`read-failed:<errno>` /
+   * `not-an-object` / `schema-version-mismatch:<n>`），**都不含绝对路径**——真实 fs 错误原文只进
+   * Main 日志与 `SessionStore.getLastError()`，不跨 IPC（Main 是路径边界）。
+   */
+  persistenceDegraded?: { file: string; reason: string }
 }

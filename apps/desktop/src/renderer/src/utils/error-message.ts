@@ -59,6 +59,10 @@ const ERROR_TEXT: Record<string, string> = {
   // —— 角色草稿/持久化域 ——
   CHARACTER_DRAFT_STORAGE_UNAVAILABLE: '本地草稿存储暂时不可用；请稍后重试。',
   SCHEMA_VALIDATION_FAILED: '数据格式无效；请刷新后重试。',
+  // —— H-11b renderer 半边（2026-09-13）：本地持久化故障首次有了用户可见出口 ——
+  // 降级态在本进程内不会自愈，措辞必须让用户做出正确动作（别以为重启就好：现场是被**故意**保住的）。
+  PERSISTENCE_DEGRADED: '本地保存已停用：损坏的本地文件未能隔离，为避免覆盖现场已停止一切写入。',
+  PERSISTENCE_WRITE_FAILED: '本地保存失败：草稿与离线缓存没有被写入磁盘。',
   // —— 身份域 ——
   IDENTITY_SAVE_STALE: '档案已被更新，较旧的保存结果已丢弃。',
 }

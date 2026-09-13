@@ -9,6 +9,9 @@ import type { SessionPersistenceState } from '@shared/contracts'
 // I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。
 const mockApi = createDesktopApiMock()
 
+/** 空水合态（本组用例只关心 persistenceDegraded，其余字段给最小合法值） */
+const EMPTY_STATE: SessionPersistenceState = { drafts: [], scrollAnchors: {}, conversations: [], messageSnapshots: {} }
+
 describe('draftStore（spec §4.4.1）', () => {
   beforeEach(() => { setActivePinia(createPinia()); setDesktopApi(mockApi); vi.useFakeTimers(); mockApi.persistSession.mockReset(); mockApi.persistSession.mockResolvedValue({}) })
   afterEach(() => { vi.useRealTimers() })
@@ -97,5 +100,54 @@ describe('draftStore（spec §4.4.1）', () => {
     const s = useDraftStore()
     await s.flushAll()
     expect(mockApi.persistSession).not.toHaveBeenCalled()
+  })
+
+  // —— H-11b renderer 半边（2026-09-13）：持久化失败不再静默 ——
+  // 修复前 `persistNow` 的 catch 无条件 fail-open：保内存态、下次重试、不告诉任何人。
+  // 对单次抖动这是对的；对"降级态（本进程内不会自愈）"则意味着用户会一直以为草稿存着。
+  describe('持久化故障可见性（H-11b renderer 半边）', () => {
+    it('写入被拒（PERSISTENCE_DEGRADED）→ persistenceFailure 置位，且内存态仍保留（fail-open 不退化）', async () => {
+      const s = useDraftStore()
+      mockApi.persistSession.mockRejectedValueOnce(new Error('[PERSISTENCE_DEGRADED] 持久化已降级（drafts-v1.json：schema-version-mismatch:99），已拒绝写入以保留现场'))
+      s.saveDraft('c1', '没存住的内容')
+      await s.flush('c1')
+      expect(s.persistenceFailure).toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+      expect(s.drafts['c1'], 'fail-open：内存态必须保留，否则用户当场丢字').toBe('没存住的内容')
+    })
+
+    it('单次写失败（PERSISTENCE_WRITE_FAILED）→ 置位；下一次成功写回后清除', async () => {
+      const s = useDraftStore()
+      mockApi.persistSession.mockRejectedValueOnce(new Error('[PERSISTENCE_WRITE_FAILED] 本地保存失败（ENOSPC）'))
+      s.saveDraft('c1', 'a')
+      await s.flush('c1')
+      expect(s.persistenceFailure).toMatchObject({ code: 'PERSISTENCE_WRITE_FAILED' })
+      s.saveDraft('c1', 'ab')
+      await s.flush('c1')
+      expect(mockApi.persistSession).toHaveBeenCalledTimes(2)
+      expect(s.persistenceFailure, '恢复可写后必须撤下横幅，否则提示变成噪音').toBeUndefined()
+    })
+
+    it('降级态不会被一次"成功"响应清掉（Main 侧条件本进程内不可自愈）', async () => {
+      const s = useDraftStore()
+      s.hydrate({ ...EMPTY_STATE, persistenceDegraded: { file: 'drafts-v1.json', reason: 'schema-version-mismatch:99' } })
+      expect(s.persistenceFailure).toMatchObject({ code: 'PERSISTENCE_DEGRADED', file: 'drafts-v1.json' })
+      s.saveDraft('c1', 'x')
+      await s.flush('c1')   // mock 默认 resolve({})
+      expect(s.persistenceFailure?.code).toBe('PERSISTENCE_DEGRADED')
+    })
+
+    it('启动水合即显示降级态（不是等到下一次键入触发拒绝才显示）', () => {
+      const s = useDraftStore()
+      expect(s.persistenceFailure).toBeUndefined()
+      s.hydrate({ ...EMPTY_STATE, persistenceDegraded: { file: 'message-cache-v1.json', reason: 'read-failed:unknown' } })
+      expect(s.persistenceFailure).toEqual({ code: 'PERSISTENCE_DEGRADED', file: 'message-cache-v1.json', reason: 'read-failed:unknown' })
+    })
+
+    it('水合正常时清除上次故障（一次成功水合 = 持久化可用）', () => {
+      const s = useDraftStore()
+      s.hydrate({ ...EMPTY_STATE, persistenceDegraded: { file: 'drafts-v1.json', reason: 'not-an-object' } })
+      s.hydrate(EMPTY_STATE)
+      expect(s.persistenceFailure).toBeUndefined()
+    })
   })
 })

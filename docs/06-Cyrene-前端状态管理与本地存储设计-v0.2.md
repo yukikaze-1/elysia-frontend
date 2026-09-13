@@ -443,6 +443,16 @@ Demo 可以按复杂度选择：
 
 缓存损坏时：隔离损坏文件 → 使用默认状态启动 → 从后端恢复 → 提示用户可导出诊断信息。
 
+> **实现状态注记（2026-09-13，H-11b renderer 半边落地）：** 上句四步此前**只实现到第三步**——隔离（2026-09-11 起为 fail-closed：隔离失败即置降级态并拒绝一切写入，保现场）与"用默认状态启动"都在，但「**提示用户**」这一步在实现里从未存在：`SessionStore.getLastError()` 全仓只有测试在读，Renderer 侧 `draft.store.persistNow` 又无条件 fail-open 吞掉写入失败，于是用户看到的是"一切正常"，重启后草稿全丢。现补齐：
+>
+> - 降级态随**启动水合**一次性告知（`SessionPersistenceState.persistenceDegraded`），这是用户进入应用后第一个能知道"本地保存已停用"的时刻——不必等到下一次键入被拒；
+> - 用户在**任何视图**下都能看到全局横幅（`CyPersistenceBanner`，挂 `App.vue` 根部）：`SessionStore` 管的是 `drafts-v1.json` 与 `message-cache-v1.json` **两个**文件，挂在聊天区会导致切到设置页就看不见；
+> - 跨 IPC 的只有**无路径投影**（文件名基名 + 封闭触发标签 `read-failed:<errno>`／`not-an-object`／`schema-version-mismatch:<n>`）；含 fs 原文（可能含绝对路径）的完整原因仍只在 Main 的 `getLastError()`／日志／诊断里，符合「Renderer 不得收到绝对本地路径」的边界；
+> - 错误码拆两类：`PERSISTENCE_DEGRADED`（本进程内不会自愈，建议先备份再重启）与 `PERSISTENCE_WRITE_FAILED`（单次写失败，恢复可写后自动重试）——两类用户动作不同，此前都被兜底成 `UNKNOWN/内部错误`；
+> - **拒绝写入的语义未变**（仍然 fail-closed），操作级 fail-open 也未变（聊天/连接/删除照常可用，只是不落盘）。
+>
+> 「提示用户可导出诊断信息」继续由既有诊断页承担。**残余**：`cache-messages` 通道的**单次**写失败仍是 fire-and-forget（`cache.store.pushMessages` 的 `catch { 缓存缺落由后端调和兜底 }` 是有意设计），未接 UI；**M-19（设置保存失败不可见）仍未修**，它与 doc 11 §9 的四态一起属产品决定。详见 [H-11b renderer 半边决策记录](review/2026-09-13-H-11b-renderer半边-持久化降级对用户可见-决策记录.md)。
+
 ## 13. 容量和清理
 
 - 限制本地消息缓存总量；

@@ -7,6 +7,7 @@
 // UII-QQ 设置页批次：应用内标题栏移除（原生系统标题栏承担窗口标题）——网格单行，折叠会话栏按钮移入 NavRail 顶部。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CyRendererCrashBanner from './components/CyRendererCrashBanner.vue'
+import CyPersistenceBanner from './components/CyPersistenceBanner.vue'
 import CyNavRail from './components/CyNavRail.vue'
 import CyConversationList from './components/CyConversationList.vue'
 import CyChatView from './components/CyChatView.vue'
@@ -65,9 +66,13 @@ watch(() => layout.notice, (n) => {
   <!-- 四区布局:导航 / 会话列表 / 聊天 / Live2D 右栏（角色栏是布局列，不覆盖聊天）。grid-template-* 由有效布局驱动（D10）。
        阶段 4 批次 A：Chat 视图整体 v-if；Tasks 占位；Settings 全窗 overlay（fixed，覆盖标题栏以下全部区域）。
        阶段 7 批次 B（Task 3）：CyRendererCrashBanner 全局挂载（不随 view 切换）——reload 后 getLastCrash 读 marker 提示。
+       2026-09-13（H-11b renderer 半边）：CyPersistenceBanner 同款全局挂载——本地保存降级/失败必须
+       在**任何视图**下都看得见（它挡住的是草稿+离线缓存两个文件的写入，不只聊天区那一条路径）。
        7D：CyLive2DPanel 常驻挂载（不随 chat v-if 卸载）——settings 打开时 v-show 隐藏但保留 ready 态，
        rAF 由面板内 currentView gate 停止；诊断页 Live2D 性能读数因此可读到真实帧耗时/帧率。 -->
   <CyRendererCrashBanner />
+  <CyPersistenceBanner />
+
   <div
     ref="rootRef"
     class="cy-app"

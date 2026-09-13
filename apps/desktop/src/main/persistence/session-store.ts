@@ -57,14 +57,41 @@ function msgBytes(m: Message): number {
 }
 function nowIso(): string { return new Date().toISOString() }
 
+/**
+ * 写失败结构化（H-11b renderer 半边，2026-09-13）。
+ *
+ * 此前 `atomicWriteFile` 的原始错误直接上抛，经 `createIpcHandler` 的兜底分支变成
+ * `{ code: 'UNKNOWN', message: '内部错误' }` —— Renderer 既分不清「降级拒绝写入」与
+ * 「磁盘满/权限不足」，也拿不到任何可展示的原因，于是持久化失败在 UI 上就是"什么都没有"
+ * （评审 M-19 同族症状）。
+ *
+ * 纪律：**只取 errno 码**（`ENOSPC`/`EACCES`/`EROFS`…），绝不把 fs 错误原文或路径带出去
+ * ——Main 是路径边界，Renderer 不得收到绝对本地路径。
+ */
+export function toWriteFailure(err: unknown): unknown {
+  if (err instanceof CyreneError) return err   // 已有语义码（DRAFT_LIMIT_EXCEEDED / IPC_MESSAGE_TOO_LARGE / PERSISTENCE_DEGRADED）不覆盖
+  const raw = (err as NodeJS.ErrnoException | undefined)?.code
+  const code = typeof raw === 'string' && /^[A-Z0-9_]{1,32}$/.test(raw) ? raw : undefined
+  return new CyreneError(
+    CyreneErrorCode.PERSISTENCE_WRITE_FAILED,
+    code === undefined ? '本地保存失败' : `本地保存失败（${code}）`
+  )
+}
+
 export class SessionStore {
   private readonly draftsFile: string
   private readonly cacheFile: string
   private readonly isolation: CorruptIsolation
   private drafts: DraftsFile = { schemaVersion: 1, entries: {}, scrollAnchors: {} }
   private cache: CacheFile = { schemaVersion: 1, conversations: [], snapshots: {} }
-  /** 持久化降级态（H-11b）：损坏文件隔离失败后置位，此后拒绝一切写入以保现场 */
-  private degraded: { file: string; reason: string } | undefined
+  /**
+   * 持久化降级态（H-11b）：损坏文件隔离失败后置位，此后拒绝一切写入以保现场。
+   *
+   * 三字段**分栏存放**（2026-09-13，renderer 半边）：`trigger` 取自封闭取值（`read-failed:<errno>` /
+   * `not-an-object` / `schema-version-mismatch:<n>`，**无路径**），`detail` 是真实 fs 错误原文
+   * （**含绝对路径**）。前者可经 IPC 展示，后者只进日志/`getLastError()`。
+   */
+  private degraded: { file: string; trigger: string; detail: string } | undefined
 
   constructor(private readonly deps: SessionStoreDeps) {
     this.draftsFile = join(deps.appCache, 'drafts-v1.json')
@@ -151,22 +178,41 @@ export class SessionStore {
       await this.isolation.isolate(file, 'session', this.deps.safeRoot)   // countDiagnostic 在 isolate 内部（防双计数）
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)
-      this.degraded = { file: basename(file), reason: `${reason}; isolate-failed:${detail}` }
+      // 2026-09-13：只把**无路径**的 trigger 与原始 detail 分栏存放（详见 degraded 字段注释）——
+      // detail 里是 fs 错误原文（`isolate 目标逃逸安全根: /abs/path/...`），绝不能跨 IPC。
+      this.degraded = { file: basename(file), trigger: reason, detail }
       this.deps.countDiagnostic('persistence:degraded')
       this.deps.logger.error('persistence:degraded', { file: basename(file), reason, message: detail })
     }
     return parse({})
   }
 
-  /** 降级原因（H-11b）；undefined 表示持久化正常。供诊断与测试读取。 */
-  getLastError(): { file: string; reason: string } | undefined { return this.degraded }
+  /** 降级原因（H-11b）；undefined 表示持久化正常。供诊断与测试读取。**含 fs 原文（可含绝对路径），不得跨 IPC**。 */
+  getLastError(): { file: string; reason: string } | undefined {
+    return this.degraded === undefined
+      ? undefined
+      : { file: this.degraded.file, reason: `${this.degraded.trigger}; isolate-failed:${this.degraded.detail}` }
+  }
+
+  /**
+   * 降级态的可展示投影（H-11b renderer 半边，2026-09-13）。
+   *
+   * 与 `getLastError()` 的区别只有一处，但正是关键：**去掉 `detail`**。于是返回的 `reason` 是封闭取值
+   * （形状为 `read-failed:<errno>` / `not-an-object` / `schema-version-mismatch:<n>`），不含任何本地路径，
+   * 可以安全地经 `hydrate` 交给 Renderer 显示。两者同源，故不会各自漂移。
+   */
+  getDegradedNotice(): { file: string; reason: string } | undefined {
+    return this.degraded === undefined
+      ? undefined
+      : { file: this.degraded.file, reason: this.degraded.trigger }
+  }
 
   /** 写入前守卫：降级态下拒绝一切写入，绝不覆写未能隔离的原文件 */
   private assertWritable(): void {
     if (!this.degraded) return
     throw new CyreneError(
-      CyreneErrorCode.UNKNOWN,
-      `持久化已降级（${this.degraded.file}：${this.degraded.reason}），已拒绝写入以保留现场`
+      CyreneErrorCode.PERSISTENCE_DEGRADED,
+      `持久化已降级（${this.degraded.file}：${this.degraded.trigger}），已拒绝写入以保留现场`
     )
   }
 
@@ -198,11 +244,13 @@ export class SessionStore {
     // 顺序由队列保证，故最后落盘的必然是最新一次调用的状态。
     const data = JSON.stringify(this.drafts)
     await this.enqueueWrite(() => atomicWriteFile(this.draftsFile, data, { safeRoot: this.deps.safeRoot }))
+      .catch((e: unknown) => { throw toWriteFailure(e) })
   }
   private async writeCache(): Promise<void> {
     this.assertWritable()
     const data = JSON.stringify(this.cache)
     await this.enqueueWrite(() => atomicWriteFile(this.cacheFile, data, { safeRoot: this.deps.safeRoot }))
+      .catch((e: unknown) => { throw toWriteFailure(e) })
   }
 
   /** 响应装箱：默认全量；超 MAX_IPC_MESSAGE_BYTES 时按顺序降级（spec §4.2 P1-2），降级记诊断计数、不记正文 */
@@ -210,12 +258,16 @@ export class SessionStore {
     const drafts = Object.entries(this.drafts.entries).map(([conversationId, e]) => ({
       conversationId, text: e.text, attachmentLocalIds: [], updatedAt: e.updatedAt
     }))
+    // H-11b renderer 半边（2026-09-13）：降级态随水合一次性告知 Renderer——这是用户进入应用后
+    // **第一个**能知道「本地保存已停用」的时刻（此前只有 Main 日志与诊断计数知道）。
+    const degradedNotice = this.getDegradedNotice()
     let state: SessionPersistenceState = {
       drafts,
       scrollAnchors: { ...this.drafts.scrollAnchors },
       lastActiveConversationId: this.drafts.lastActiveConversationId,
       conversations: this.cache.conversations,
-      messageSnapshots: Object.fromEntries(Object.entries(this.cache.snapshots).map(([k, v]) => [k, v.messages]))
+      messageSnapshots: Object.fromEntries(Object.entries(this.cache.snapshots).map(([k, v]) => [k, v.messages])),
+      ...(degradedNotice === undefined ? {} : { persistenceDegraded: degradedNotice })
     }
     if (this.stateBytes(state) <= MAX_IPC_MESSAGE_BYTES) return state
     this.deps.countDiagnostic('hydrate:degraded')
@@ -270,13 +322,19 @@ export class SessionStore {
     if (this.stateBytes(state) > MAX_IPC_MESSAGE_BYTES) {
       // ④ 兜底仍超 → 空草稿+空快照拒绝路径（启动不阻塞，连接后由后端全量调和；保证出参 ≤4MiB 不变量）
       this.deps.countDiagnostic('hydrate:rejected')
-      return { drafts: [], scrollAnchors: {}, lastActiveConversationId: this.drafts.lastActiveConversationId, conversations: [], messageSnapshots: {} }
+      return {
+        drafts: [], scrollAnchors: {}, lastActiveConversationId: this.drafts.lastActiveConversationId,
+        conversations: [], messageSnapshots: {},
+        // 降级态**不能**被体积降级丢掉：它正是"保存已经不可用"的告知，丢了就等于又静默一次
+        ...(degradedNotice === undefined ? {} : { persistenceDegraded: degradedNotice })
+      }
     }
     return state
   }
 
   private stateBytes(state: SessionPersistenceState): number {
     let n = 1024
+    if (state.persistenceDegraded) n += 256   // 降级投影（基名 + 封闭标签，实测 <200B）：纳入预算，免"降级时反而超限"
     for (const d of state.drafts) n += estBytes(d.text)
     for (const c of state.conversations) n += estBytes(c.title)
     for (const msgs of Object.values(state.messageSnapshots)) for (const m of msgs) n += msgBytes(m)

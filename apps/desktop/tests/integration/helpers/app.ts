@@ -1,5 +1,5 @@
 import { _electron, chromium, type ElectronApplication, type Page } from 'playwright'
-import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync, realpathSync } from 'fs'
+import { mkdtempSync, rmSync, readFileSync, existsSync, mkdirSync, writeFileSync, realpathSync, symlinkSync, statSync } from 'fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'os'
 import { join, extname, resolve, sep, dirname } from 'path'
@@ -109,19 +109,36 @@ function comparablePath(path: string): string {
   return process.platform === 'win32' ? real.toLowerCase() : real
 }
 
+/**
+ * 启动前预置项。
+ *
+ * `symlinkTo`（2026-09-13，H-11b renderer 半边用例）：把预置文件做成指向**外部**的符号链接。
+ * 这是在不碰 ACL/权限（Windows 上不可移植）的前提下，让 Main 真实进入「损坏隔离失败 → 降级态」
+ * 的唯一可移植构造：`openSafeFile` 拒符号链接（posix O_NOFOLLOW / windows pre-open lstat）
+ * → `readFile` 走隔离重建 → `isolate()` 的 `assertContained` 因 realpath 落在 safeRoot 之外而上抛
+ * → `SessionStore` 置降级位。流程全部是产品代码，本选项本身不注入任何测试专用分支。
+ * 需要 symlink 权限：Linux 恒可；Windows 需开发者模式 —— 调用方按 `canCreateSymlink()` 探测后跳过。
+ */
+export type SeedFile = { relPath: string; content: string } | { relPath: string; symlinkTo: string }
+
 /** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env。
  *  seedFiles：启动时预置文件（relPath 相对 userData 根，如 'app-cache/message-cache-v1.json'）——损坏恢复测试在 load() 前注入非法 JSON。
  *  opts.env：附加环境变量（先合并；测试隔离/Mock 三项不变量随后覆盖，调用方不可改写安全门；
  *  Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
  *  目录 0700、文件 0600：否则 ensureUserDataDirs（0700 无 group/other）与 openSafeFile 读（0400 无 group/other）会因权限误判损坏/拒绝启动 */
-export async function launchApp(seedFiles?: Array<{ relPath: string; content: string }>, opts: LaunchOptions = {}): Promise<LaunchedApp> {
+export async function launchApp(seedFiles?: SeedFile[], opts: LaunchOptions = {}): Promise<LaunchedApp> {
   const electronPath = ELECTRON_EXEC
   const userData = opts.userData ?? mkdtempSync(join(tmpdir(), 'cy-int-ud-'))
   mkdirSync(userData, { recursive: true, mode: 0o700 }) // 复用路径时保证存在（mkdtemp 路径已存在，幂等）
   for (const f of seedFiles ?? []) {
     const p = join(userData, 'Cyrene', f.relPath)
     mkdirSync(dirname(p), { recursive: true, mode: 0o700 })
-    writeFileSync(p, f.content, { mode: 0o600 })
+    if ('symlinkTo' in f) {
+      // 链接类型按**目标**推断（Windows 上必须显式给：文件→'file'、目录→'junction'；posix 用 'dir'）。
+      // junction 在 Windows 上**免特权**（不需要开发者模式），故目录目标在两边都能用。
+      const isDir = statSync(f.symlinkTo).isDirectory()
+      symlinkSync(f.symlinkTo, p, isDir ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file')
+    } else writeFileSync(p, f.content, { mode: 0o600 })
   }
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),

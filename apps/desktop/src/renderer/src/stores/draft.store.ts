@@ -4,10 +4,23 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { PersistSessionResult, ScrollAnchor, SessionPersistenceState } from '@shared/contracts'
 import { api } from './desktop-api'
+import { parsePublicError } from '../utils/public-error'
 
 export const DRAFT_MAX_BYTES = 100 * 1024
 export const DRAFT_DEBOUNCE_MS = 800
 export const DRAFT_MAX_ENTRIES = 50
+
+/**
+ * 本地持久化故障（H-11b renderer 半边，2026-09-13）。
+ *
+ * `code` 为 IPC 公开错误码（UI 经 `errorMessage()` 取文案，本 store 不产出用户措辞）；
+ * `file`/`reason` 只在降级态有值，来自 Main 的无路径投影（基名 + 封闭标签）。
+ */
+export interface PersistenceFailure {
+  code: string
+  file?: string
+  reason?: string
+}
 
 function nowIso(): string { return new Date().toISOString() }
 function byteLength(s: string): number { return new TextEncoder().encode(s).byteLength }
@@ -18,6 +31,15 @@ export const useDraftStore = defineStore('draft', () => {
   const overLimit = ref<Record<string, boolean>>({})
   const hydrated = ref(false)
   const evictionNotice = ref<string[]>([])
+  /**
+   * 本地持久化故障（H-11b renderer 半边，2026-09-13）。
+   *
+   * 此前 `persistNow` 的 catch 是**无条件 fail-open**：保内存态、下次重试、不告诉任何人。
+   * 对「单次抖动」这是对的；对「降级态」却是错的——降级在本进程内**不会自愈**，
+   * 用户会一直以为草稿存着，直到重启后发现全丢。评审把这条记为 H-11b 的 renderer 半边
+   * （此前只到「Main 拒绝写入 + 日志/诊断计数」，UI 侧一个字都看不到）。
+   */
+  const persistenceFailure = ref<PersistenceFailure | undefined>(undefined)
   /** convId → pending timer：防抖窗口内再次保存重置；flush/purge 取消 */
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -38,9 +60,15 @@ export const useDraftStore = defineStore('draft', () => {
       if (res?.evictedConversationIds?.length) {
         removeConversations(res.evictedConversationIds) // 评审 P2-4：淘汰项内存清理（草稿/锚点/定时器）+ 一次性通知——否则被 Main 淘汰的草稿留在 Renderer 内存，保存即重新写回、50 会话配额反复震荡
       }
+      // 写回成功即清「单次失败」；降级态是 Main 侧的持续条件（本进程内不可自愈），只能由 hydrate 改变——
+      // 若在这里一并清掉，UI 会在"拒绝写入 → 立刻显示 → 下一次尝试又清掉"之间闪烁。
+      if (persistenceFailure.value?.code !== 'PERSISTENCE_DEGRADED') persistenceFailure.value = undefined
       return res
-    } catch {
-      return undefined // fail-open（C1 同款）：持久化失败保内存态，下次触发重试
+    } catch (e) {
+      // fail-open（C1 同款）保留：持久化失败保内存态，下次触发重试。**但不再静默**——见 persistenceFailure。
+      const parsed = parsePublicError(e instanceof Error ? e.message : String(e))
+      persistenceFailure.value = { code: parsed.code }
+      return undefined
     }
   }
 
@@ -71,6 +99,11 @@ export const useDraftStore = defineStore('draft', () => {
     for (const d of state.drafts) next[d.conversationId] = d.text
     drafts.value = next
     scrollAnchors.value = { ...state.scrollAnchors }
+    // 启动水合是用户**第一个**能知道「本地保存已停用」的时刻（Main 在 load() 阶段就已降级）：
+    // 没有这一步，降级态只有等到用户下一次键入触发写入被拒、且 UI 会显示之后才可见。
+    persistenceFailure.value = state.persistenceDegraded === undefined
+      ? undefined
+      : { code: 'PERSISTENCE_DEGRADED', file: state.persistenceDegraded.file, reason: state.persistenceDegraded.reason }
     hydrated.value = true
   }
 
@@ -114,7 +147,7 @@ export const useDraftStore = defineStore('draft', () => {
   function dismissEviction(): void { evictionNotice.value = [] }
 
   return {
-    drafts, scrollAnchors, overLimit, hydrated, evictionNotice,
+    drafts, scrollAnchors, overLimit, hydrated, evictionNotice, persistenceFailure,
     saveDraft, clear, setScrollAnchor, hydrate, flush, flushAll, purge, removeConversations, dismissEviction
   }
 })

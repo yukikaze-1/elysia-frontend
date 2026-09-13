@@ -32,10 +32,21 @@ export const CacheMessagesInputSchema = z.object({
 
 export const OpenExternalInputSchema = z.object({ url: z.string() })
 
+/**
+ * 降级态投影（H-11b renderer 半边，2026-09-13）：`file` 为**基名**（`z.string().min(1)` 已是硬约束，
+ * 但基名不含分隔符这一条由 Main 保证），`reason` 来自封闭取值集合，二者都不含绝对路径。
+ * 上限刻意写得比真实值宽（文件名/标签都远小于此），只用于挡住畸形输入而非限长。
+ */
+export const PersistenceDegradedNoticeSchema = z.object({
+  file: z.string().min(1).max(260),
+  reason: z.string().min(1).max(200)
+})
+
 export const SessionPersistenceStateSchema = z.object({
   drafts: z.array(ConversationDraftSchema),
   scrollAnchors: z.record(z.string(), ScrollAnchorSchema),
   lastActiveConversationId: z.string().optional(),
   conversations: z.array(ConversationSchema),
-  messageSnapshots: z.record(z.string(), z.array(MessageSchema))
+  messageSnapshots: z.record(z.string(), z.array(MessageSchema)),
+  persistenceDegraded: PersistenceDegradedNoticeSchema.optional()
 })
