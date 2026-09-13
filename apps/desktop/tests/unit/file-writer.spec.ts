@@ -63,8 +63,18 @@ describe('createFileWriter 集成', () => {
     const dir = mkdtempSync(join(tmpdir(), 'cy-fw-t-'))
     const w = createFileWriter({ dir, baseName: 'app', mode: 'rotate', sync: false, flushIntervalMs: 30 })
     await w.append('line1')
-    await new Promise((r) => setTimeout(r, 150)) // 至少一个 flush 周期
-    expect(readFileSync(join(dir, 'app.log'), 'utf8')).toBe('line1\n')
+    // 原实现是「sleep 150ms 后一次性断言」——自建 Windows runner 实测偶发红于
+    // `expected '' to be 'line1\n'`（CI run 34735704341）：负载下定时器与异步写未必落在 150ms 内。
+    // 现改为**轮询到期限**：断言一字未改（仍是"不 close 也会周期落盘"），只是不再假设它发生在 150ms 内；
+    // 若周期落盘被移除，循环跑满 3s 后照样红。
+    const deadline = Date.now() + 3000
+    let content = ''
+    for (;;) {
+      content = existsSync(join(dir, 'app.log')) ? readFileSync(join(dir, 'app.log'), 'utf8') : ''
+      if (content === 'line1\n' || Date.now() >= deadline) break
+      await new Promise((r) => setTimeout(r, 25))
+    }
+    expect(content).toBe('line1\n')
     await w.close()
   })
 })

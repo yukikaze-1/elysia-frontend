@@ -167,7 +167,7 @@ const statusText = computed(() => {
             :disabled="!settings.live2d.enabled"
             @input="onSlider('scale', $event)"
           />
-          <span class="cy-l2d-field-value">{{ settings.live2d.scale.toFixed(2) }}</span>
+          <span class="cy-l2d-field-value" data-testid="live2d-scale-value">{{ settings.live2d.scale.toFixed(2) }}</span>
         </span>
       </label>
       <label class="cy-l2d-field">

@@ -125,7 +125,11 @@ export const ToolCallRecordSchema = z.object({
 }).strict()
 
 const CaptureSourceSchema = z.object({ sourceId: z.string(), sourceName: z.string(), thumbnailDataUrl: z.string() }).strict()
-const CapturePreviewSchema = z.object({ sourceId: z.string(), previewDataUrl: z.string() }).strict()
+// sourceName 必需（doc 03 §10「截图需要显示所选屏幕或窗口」）；width/height/bytes 可选（mock 注入面取不到尺寸）
+const CapturePreviewSchema = z.object({
+  sourceId: z.string(), sourceName: z.string(), previewDataUrl: z.string(),
+  width: z.number().int().positive().optional(), height: z.number().int().positive().optional(), bytes: z.number().int().nonnegative().optional()
+}).strict()
 
 export const PublicToolEventSchema = z.object({
   id: z.string(), desktopCallId: z.string().optional(), conversationId: z.string().optional(), toolName: z.string(), title: z.string(),

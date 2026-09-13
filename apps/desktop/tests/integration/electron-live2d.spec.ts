@@ -721,6 +721,9 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       await waitLive2dSettled(page)
       await openCharacterPane(page)
       // scale 滑块（表现组首个 range = 大小）→ 设置即时更新（Pane 字段值即刻变化）。
+      // 2026-09-13：**按 testid 取控件**，不再用 `.first()`/`.cy-l2d-field-value` 首个命中——「外观与 Live2D」
+      // 子页新增了字体大小滑杆（页首），位置假设当场失效：CI run 34737645766 的 B4 红于
+      // `expected '90%' to contain '1.50'`（读到的其实是字体缩放读数）。
       // B4 滑块以 evaluate 合成事件（直接置 value + dispatch input/change）驱动——headless SwiftShader 下
       // Playwright 的 range 真实拖拽（dragTo/键盘箭头）依赖可见指针命中测试且帧时序不可控，合成事件与真实
       // 滑块在 Vue 的 @input 绑定上等价（同一 setLive2d patch 路径），足够断言「即时预览 + 持久化」链路。
@@ -728,13 +731,13 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       // 必须显式 dispatch 'input' 才会走 onSlider → setLive2d 即时预览；② 'input' 与 'change' 是两个不同监听器：
       // 'input' 满足 @input（即时预览，onSlider），'change' 满足即时预览之外的持久化/失焦路径——两者都 dispatch 才能
       // 覆盖「即时生效」与「落盘持久化」两条链（单发 'input' 或单发 'change' 都会漏另一条链）。
-      await page.locator('.cy-l2d-pane input[type="range"]').first().evaluate((el) => {
+      await page.locator('[data-testid="live2d-scale-range"]').evaluate((el) => {
         const input = el as HTMLInputElement
         input.value = '1.5'
         input.dispatchEvent(new Event('input', { bubbles: true }))
         input.dispatchEvent(new Event('change', { bubbles: true }))
       })
-      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-l2d-pane .cy-l2d-field-value')?.textContent ?? ''), POLL).toContain('1.50')
+      await expect.poll(() => page.locator('[data-testid="live2d-scale-value"]').textContent(), POLL).toContain('1.50')
       // 帧率模式下拉 → 设置即时更新
       await page.locator('.cy-l2d-pane select').selectOption('balanced')
       await expect.poll(() => page.locator('.cy-l2d-pane select').inputValue(), POLL).toBe('balanced')
@@ -755,7 +758,7 @@ describe('阶段5批次B Live2D Electron 集成（B7：状态驱动/动作/设�
       const { page } = launched2
       await waitLive2dSettled(page)
       await openCharacterPane(page)
-      await expect.poll(() => page.evaluate(() => document.querySelector('.cy-l2d-pane .cy-l2d-field-value')?.textContent ?? ''), POLL).toContain('1.50')
+      await expect.poll(() => page.locator('[data-testid="live2d-scale-value"]').textContent(), POLL).toContain('1.50')
       await expect.poll(() => page.locator('.cy-l2d-pane select').inputValue(), POLL).toBe('balanced')
     } finally { await closeApp(launched2) }
   })

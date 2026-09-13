@@ -61,6 +61,26 @@ const durationText = computed(() => formatDuration(props.record.durationMs))
 
 // —— 折叠规则：用户手动切换（userExpanded）优先，未操作时按状态默认（含 capture 进行中）——
 const isCapture = computed(() => props.record.toolName === 'desktop.screen.capture')
+
+/**
+ * 预览元信息（尺寸 · 字节数）：doc 03 §10/PRD §12.3 要"说明截的是哪块屏/哪个窗"，
+ * 尺寸与大小是让用户判断"这一屏是不是我要传的"的直接依据。
+ * mock 注入面（CYRENE_MOCK_CAPTURE_SOURCES）没有真实缩略图 ⇒ 两字段都可能缺，缺则不显示该段。
+ */
+const previewMeta = computed(() => {
+  const p = toolStore.captureState?.preview
+  if (!p) return ''
+  const parts: string[] = []
+  if (p.width !== undefined && p.height !== undefined) parts.push(`${p.width}×${p.height}`)
+  if (p.bytes !== undefined) parts.push(formatBytes(p.bytes))
+  return parts.join(' · ')
+})
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
 const userExpanded = ref<boolean | null>(null)   // null = 尚未手动操作（跟随默认值，status 变化自动翻转）
 const defaultExpanded = computed(() => {
   if (['requested', 'awaiting_permission', 'running', 'failed'].includes(props.record.status)) return true
@@ -209,7 +229,15 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         </button>
       </div>
       <div v-else-if="toolStore.captureState.preview" class="cy-capture-preview">
+        <!-- doc 03 §10 / PRD §12.3：预览必须说明**截取的是哪个屏幕或窗口**，且上传前再次明确提醒 -->
+        <p class="cy-capture-preview-source" data-testid="capture-preview-source">
+          所选来源：<strong>{{ toolStore.captureState.preview.sourceName }}</strong>
+          <span v-if="previewMeta" class="cy-capture-preview-meta" data-testid="capture-preview-meta">{{ previewMeta }}</span>
+        </p>
         <img :src="toolStore.captureState.preview.previewDataUrl" alt="截图预览" />
+        <p class="cy-capture-preview-warning" data-testid="capture-preview-warning" role="note">
+          确认后将上传到已连接的后端，用于当前任务；截图可能包含屏幕上的其它窗口内容。取消则丢弃，不会上传。
+        </p>
         <button type="button" class="cy-btn cy-btn-approve" data-testid="capture-confirm" @click="emit('confirmUpload')">确认上传</button>
         <button type="button" class="cy-btn" @click="toolStore.cancel(record.desktopCallId ?? record.id)">取消</button>
       </div>
@@ -528,6 +556,28 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
   display: flex;
   flex-direction: column;
   gap: var(--cy-space-3);
+}
+
+/* doc 03 §10：预览内的"所选来源"与"上传前提醒"——用可读正文色，不做成灰字弱化（这是隐私告知） */
+.cy-capture-preview-source {
+  margin: 0;
+  color: var(--cy-text);
+  font-size: var(--cy-font-md);
+}
+
+.cy-capture-preview-meta {
+  margin-left: var(--cy-space-3);
+  color: var(--cy-muted);
+}
+
+.cy-capture-preview-warning {
+  margin: 0;
+  padding: var(--cy-space-3) var(--cy-space-4);
+  border-left: 3px solid var(--cy-warning);
+  border-radius: var(--cy-radius-3);
+  background: var(--cy-surface-soft);
+  color: var(--cy-text);
+  font-size: var(--cy-font-sm);
 }
 
 .cy-capture-preview img {

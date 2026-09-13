@@ -90,4 +90,23 @@ describe('阶段 6 批次 B Task 1：PublicToolEvent / ToolCallRecord.attachment
     expect(PublicToolEventSchema.safeParse({ ...ev, captureSources: [{ ...source, extra: 1 }] }).success).toBe(false)
     expect(PublicToolEventSchema.safeParse({ ...ev, captureSources: [{ sourceId: 's1', sourceName: '屏幕 1' }] }).success).toBe(false)
   })
+
+  // doc 03 §10 / PRD §12.3（2026-09-13）：「截图需要显示所选屏幕或窗口」⇒ 预览必须带 sourceName。
+  // 该字段是**必需**的：缺了它渲染层就只能显示 sourceId（`screen:0:0`），等于没告诉用户截的是哪块屏。
+  it('PublicToolEvent.capturePreview：sourceName 必需；width/height/bytes 可选；未知键仍被拒', () => {
+    const base = { sourceId: 's1', sourceName: '屏幕 1', previewDataUrl: 'data:image/png;base64,AA==' }
+    const ev: PublicToolEvent = { ...MINIMAL_EVENT, capturePreview: base }
+    const ok = PublicToolEventSchema.safeParse(ev)
+    expect(ok.success).toBe(true)
+    // 尺寸/大小可选（mock 注入面拿不到真实缩略图）
+    expect(PublicToolEventSchema.safeParse({ ...ev, capturePreview: { ...base, width: 1920, height: 1080, bytes: 2048 } }).success).toBe(true)
+    // 缺 sourceName ⇒ 拒（这正是本项要防的退化：预览说不出"是哪个屏/窗"）
+    const withoutName = { sourceId: base.sourceId, previewDataUrl: base.previewDataUrl }
+    expect(PublicToolEventSchema.safeParse({ ...ev, capturePreview: withoutName }).success).toBe(false)
+    // 未知键 ⇒ 拒（严格闭合，防悄悄扩大下发面）
+    expect(PublicToolEventSchema.safeParse({ ...ev, capturePreview: { ...base, extra: 1 } }).success).toBe(false)
+    // 尺寸非正整数 ⇒ 拒
+    expect(PublicToolEventSchema.safeParse({ ...ev, capturePreview: { ...base, width: 0 } }).success).toBe(false)
+    expect(PublicToolEventSchema.safeParse({ ...ev, capturePreview: { ...base, bytes: -1 } }).success).toBe(false)
+  })
 })

@@ -11,6 +11,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { reactive } from 'vue'
 import CyToolCard from '../../src/renderer/src/components/CyToolCard.vue'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { useToolStore } from '../../src/renderer/src/stores/tool.store'
 import { createDesktopApiMock } from './helpers/desktop-api'
 import type { ToolCallRecord } from '@shared/contracts/tool'
 
@@ -378,5 +379,49 @@ describe('CyToolCard 既有契约（重构前已锁定）', () => {
     expect(w.find('[data-testid="tool-cancel"]').exists()).toBe(true)
     expect(w.find('[data-testid="tool-path"]').exists()).toBe(false)
     w.unmount()
+  })
+
+  // —— doc 03 §10 / PRD §12.3（2026-09-13）：截图预览必须显示**所选屏幕或窗口**，且上传前再次明确提醒 ——
+  // 修复前的实测：预览只有一张图 + 「确认上传」，说不出截的是哪块屏/哪个窗，也没有任何上传前提醒。
+  describe('capture 预览：来源标识与上传前提醒（doc 03 §10）', () => {
+    function mountPreview(preview: { sourceId: string; sourceName: string; previewDataUrl: string; width?: number; height?: number; bytes?: number }) {
+      const w = mountCard(rec({ id: 'tc_cap', desktopCallId: 'call_1', toolName: 'desktop.screen.capture', status: 'running' }))
+      const store = useToolStore()
+      store.captureState = { callId: 'call_1', preview }
+      return w
+    }
+
+    it('显示所选来源名（不是 sourceId）+ 尺寸/大小', async () => {
+      const w = mountPreview({ sourceId: 'screen:0:0', sourceName: '屏幕 1', previewDataUrl: 'data:image/png;base64,AA==', width: 1920, height: 1080, bytes: 2048 })
+      await w.vm.$nextTick()
+      const source = w.get('[data-testid="capture-preview-source"]')
+      expect(source.text(), '必须显示人类可读的来源名').toContain('屏幕 1')
+      expect(source.text(), '不得把 sourceId 当作用户文案').not.toContain('screen:0:0')
+      expect(w.get('[data-testid="capture-preview-meta"]').text()).toBe('1920×1080 · 2.0 KB')
+      w.unmount()
+    })
+
+    it('上传前有明确提醒：说明会发到后端、可能含其它窗口内容、取消则丢弃', async () => {
+      const w = mountPreview({ sourceId: 'screen:0:0', sourceName: '屏幕 1', previewDataUrl: 'data:image/png;base64,AA==' })
+      await w.vm.$nextTick()
+      const warning = w.get('[data-testid="capture-preview-warning"]')
+      const text = warning.text()
+      expect(text).toContain('上传')
+      expect(text).toContain('后端')
+      expect(text).toContain('其它窗口')
+      expect(text).toContain('取消')
+      // 提醒必须排在「确认上传」之前（阅读顺序即确认顺序）
+      const panel = w.get('[data-testid="tool-capture-panel"]').element.innerHTML
+      expect(panel.indexOf('capture-preview-warning')).toBeLessThan(panel.indexOf('capture-confirm'))
+      w.unmount()
+    })
+
+    it('缺尺寸/大小（mock 注入面）→ 不显示该段，也不显示 undefined', async () => {
+      const w = mountPreview({ sourceId: 's1', sourceName: '屏幕 1', previewDataUrl: 'data:image/png;base64,AA==' })
+      await w.vm.$nextTick()
+      expect(w.find('[data-testid="capture-preview-meta"]').exists()).toBe(false)
+      expect(w.text()).not.toContain('undefined')
+      w.unmount()
+    })
   })
 })

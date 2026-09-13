@@ -147,6 +147,14 @@ describe('阶段 6 批次 B 工具流', () => {
     await expect.poll(() => page.getByTestId('capture-source').count(), POLL).toBe(1)
     await page.getByTestId('capture-source').click()
     await expect.poll(() => page.getByTestId('capture-confirm').count(), POLL).toBe(1)
+    // doc 03 §10 / PRD §12.3（2026-09-13）：预览必须说明**所选屏幕或窗口**，且上传前有明确提醒。
+    // 修复前预览只有一张图 + 「确认上传」——说不出截的是哪块屏，也没有任何上传前提示。
+    expect(await page.getByTestId('capture-preview-source').textContent()).toContain('屏幕 1')
+    expect(await page.getByTestId('capture-preview-source').textContent()).not.toContain('screen:0')
+    const warning = await page.getByTestId('capture-preview-warning').textContent()
+    expect(warning).toContain('上传')
+    expect(warning).toContain('后端')
+    expect(warning).toContain('其它窗口')
     await page.getByTestId('capture-confirm').click()
     await expect.poll(() => probeStatus(page), POLL).toBe('completed')
     await closeApp(launched)

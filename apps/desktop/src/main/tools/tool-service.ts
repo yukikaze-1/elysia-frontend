@@ -25,7 +25,7 @@ export interface ToolServiceDeps {
   audit: (ev: AuditEvent) => void
   pickFile?: (opts: FilePickerOptions) => Promise<{ canceled: boolean; path?: string }>
   enumerateSources?: () => Promise<CaptureSourceInfo[]>
-  renderPreview?: (sourceId: string) => Promise<{ previewDataUrl: string; bytes: Uint8Array }>   // capture picked 后（Task 4，A-2）
+  renderPreview?: (sourceId: string) => Promise<{ previewDataUrl: string; bytes: Uint8Array; width?: number; height?: number }>   // capture picked 后（Task 4，A-2；width/height 可选——mock 注入面没有真实缩略图）
   finalizeUpload?: (callId: string, bytes: Uint8Array) => Promise<void>                          // 上传前钩子（Task 4）
   submitStatus: (cmd: ToolStatusCommand) => Promise<void>
   uploadAttachment: (callId: string, bytes: Uint8Array, mime: string, label?: string) => Promise<ToolAttachment>
@@ -322,14 +322,23 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       const srcs = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1920, height: 1080 } })
       const s = srcs.find(x => x.id === sid)
       if (!s) throw new ToolServiceError('CAPTURE_STATE_INVALID', 'sourceId 不存在')
-      return { previewDataUrl: s.thumbnail.toDataURL(), bytes: s.thumbnail.toPNG() }
+      const size = s.thumbnail.getSize()   // doc 03 §10/PRD §12.3：预览要能说明"截的是哪块屏/哪个窗、多大"
+      return { previewDataUrl: s.thumbnail.toDataURL(), bytes: s.thumbnail.toPNG(), width: size.width, height: size.height }
     })
-    const { previewDataUrl, bytes } = await render(sourceId)
+    const { previewDataUrl, bytes, width, height } = await render(sourceId)
     sess.sourceId = sourceId; sess.bytes = bytes
-    const thumb = rec.captureSources?.find(s => s.sourceId === sourceId)?.thumbnailDataUrl
+    const source = rec.captureSources?.find(s => s.sourceId === sourceId)
+    const thumb = source?.thumbnailDataUrl
     const finalPreview = previewDataUrl.length > PREVIEW_DATA_URL_MAX ? (thumb ?? previewDataUrl) : previewDataUrl
     sess.previewDataUrl = finalPreview
-    rec.capturePreview = { sourceId, previewDataUrl: finalPreview }
+    // sourceName 取自**枚举快照**（不是再次枚举）——它必须与用户在缩略图网格里点的那个源逐字一致
+    rec.capturePreview = {
+      sourceId,
+      sourceName: source?.sourceName ?? sourceId,
+      previewDataUrl: finalPreview,
+      ...(width !== undefined && height !== undefined ? { width, height } : {}),
+      bytes: bytes.byteLength
+    }
     emit(rec)   // picked（preview 下发 → awaiting_confirm；TTL 定时器保持运行——picked 停留同样守卫，M1）
   }
   /** capture 子状态机 confirmUpload（D6B-16/M-5/A-2）：awaiting_confirm → 上传回填 → 终态清理 */

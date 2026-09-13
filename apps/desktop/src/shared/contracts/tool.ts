@@ -56,7 +56,10 @@ export interface PublicToolEvent {
   dataFlowNote?: string             // 注册表静态文案（「哪些数据发后端」）
   diff?: { lines: DiffLine[]; added: number; removed: number; truncated: boolean; totalLines: number; formatNote: string; isNewFile: boolean }   // totalLines（A-20/H2：接口与 schema/消费三方一致）
   captureSources?: Array<{ sourceId: string; sourceName: string; thumbnailDataUrl: string }>
-  capturePreview?: { sourceId: string; previewDataUrl: string }
+  /** 预览（picked 态，doc 03 §10 / PRD §12.3：「截图需要显示所选屏幕或窗口」）。
+   *  `sourceName` 是**必需**字段——它就是"所选屏/窗"的人类可读标识（枚举快照里已有，Main 直接带上）。
+   *  width/height/bytes 为可选（mock 注入面没有真实缩略图，取不到尺寸）。 */
+  capturePreview?: { sourceId: string; sourceName: string; previewDataUrl: string; width?: number; height?: number; bytes?: number }
   occurredAt: string
 }
 

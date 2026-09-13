@@ -17,7 +17,7 @@ interface ToolEv {
   conversationId?: string  // 阶段 6 联调收口：会话隔离贯通
   diff?: { isNewFile?: boolean; totalLines?: number }
   captureSources?: unknown[]
-  capturePreview?: { previewDataUrl: string }
+  capturePreview?: { sourceId?: string; sourceName?: string; previewDataUrl: string; width?: number; height?: number; bytes?: number }
   resultSummary?: string
 }
 /** 测试审计收集接口（按本文件断言字段最小建模；AuditEvent 可赋值） */
@@ -404,14 +404,17 @@ describe('capture 子状态机（D6B-16/M-5/A-2）', () => {
   })
   it('pick → 预览下发 → confirm → completed + wire result（running→result 时序）', async () => {
     const { svc, events, submitStatus } = mkService({
-      enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏', thumbnailDataUrl: 'data:image/png;base64,AA==' }],
-      renderPreview: async () => ({ previewDataUrl: 'data:image/png;base64,AA==', bytes: new Uint8Array([137, 80, 78, 71]) }),
+      enumerateSources: async () => [{ sourceId: 's1', sourceName: '屏幕 1', thumbnailDataUrl: 'data:image/png;base64,AA==' }],
+      renderPreview: async () => ({ previewDataUrl: 'data:image/png;base64,AA==', bytes: new Uint8Array([137, 80, 78, 71]), width: 1920, height: 1080 }),
     })
     await svc.handleRequest(mkReq({ toolName: 'desktop.screen.capture', arguments: {} }))
     await svc.decide('call_1', 'allow_once')
     expect(events.some(e => e.captureSources)).toBe(true)
     await svc.pickSource('call_1', 's1')
-    expect(events.at(-1)?.capturePreview).toBeDefined()
+    const preview = events.at(-1)?.capturePreview
+    // doc 03 §10（2026-09-13）：预览必须能说出"截的是哪个屏/窗"——sourceName 取自**枚举快照**逐字一致，
+    // 且带上尺寸/字节数供用户判断（mock 注入面没有尺寸时这两项缺省，见既有降级用例）
+    expect(preview).toMatchObject({ sourceId: 's1', sourceName: '屏幕 1', width: 1920, height: 1080, bytes: 4 })
     await svc.confirmUpload('call_1')
     expect(events.at(-1)?.status).toBe('completed')
     expect(submitStatus.mock.calls.map(c => c[0].status)).toEqual(['accepted', 'running', 'result'])
