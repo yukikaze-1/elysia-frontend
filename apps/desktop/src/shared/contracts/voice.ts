@@ -7,6 +7,7 @@
  */
 import type { Live2DSettings } from './live2d'
 import type { ToolsSettings } from './tool'
+import type { AppearanceSettings } from './appearance'
 
 /** 音频输入描述（wire 唯一支持 pcm_s16le/16000/1；缺省按默认处理）。本批 start 帧不带此字段（采集即默认格式），仅供契约文档 */
 export interface AudioInputDescriptor { codec: 'pcm_s16le'; sampleRate: 16000; channels: 1 }
@@ -55,8 +56,9 @@ export interface SettingsState {
   dictation: DictationSettings
   live2d: Live2DSettings   // 阶段 5 批次 A（D5A-10）：Live2D 本地设置（enabled/modelId）
   tools: ToolsSettings   // 阶段 6 批次 C（D6C-02）：目录授权子树
+  appearance: AppearanceSettings   // 外观（2026-09-13）：全局字体缩放；doc 03 §12.4 / doc 11 §7.2
 }
-export type SettingsPatch = Partial<{ voice: Partial<VoiceSettings>; dictation: Partial<DictationSettings>; live2d: Partial<Live2DSettings>; tools: Partial<ToolsSettings> }>
+export type SettingsPatch = Partial<{ voice: Partial<VoiceSettings>; dictation: Partial<DictationSettings>; live2d: Partial<Live2DSettings>; tools: Partial<ToolsSettings>; appearance: Partial<AppearanceSettings> }>
 
 /** 语音族错误码（D-P15）：real-backend 对这类错误额外 emit `voice.error`；connectionStore 对它们不展示全局连接错误横幅 */
 export const VOICE_ERROR_CODES = [

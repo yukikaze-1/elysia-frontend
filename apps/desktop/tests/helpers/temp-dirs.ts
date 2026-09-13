@@ -48,6 +48,7 @@ export const TEST_TEMP_PREFIXES: readonly string[] = [
   'cy-escape-out-',
   'cy-export-',
   'cy-f1-out-',
+  'cy-font-',
   'cy-fw-',
   'cy-fw-b-',
   'cy-fw-c-',

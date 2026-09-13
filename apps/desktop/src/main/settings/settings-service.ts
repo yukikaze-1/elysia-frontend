@@ -73,7 +73,8 @@ export class SettingsService {
       voice: { ...this.state.voice, ...patch.voice },
       dictation: { ...this.state.dictation, ...patch.dictation },
       live2d: { ...this.state.live2d, ...patch.live2d }, // 阶段 5 批次 A（D5A-10）：部分 patch（如 {enabled:false}）不丢 modelId
-      tools: { ...this.state.tools, ...patch.tools }   // 阶段 6 批次 C：tools 子树 merge（对齐 live2d 既有模式；patch.tools 缺省展开 no-op 保持现值）
+      tools: { ...this.state.tools, ...patch.tools },   // 阶段 6 批次 C：tools 子树 merge（对齐 live2d 既有模式；patch.tools 缺省展开 no-op 保持现值）
+      appearance: { ...this.state.appearance, ...patch.appearance }   // 外观（2026-09-13）：同款子树 merge（漏了它会把整棵外观子树替换掉）
     }
     const newState = SettingsStateSchema.parse(next)
     await atomicWriteFile(this.file, JSON.stringify(newState), { safeRoot: this.deps.safeRoot })

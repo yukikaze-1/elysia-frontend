@@ -292,9 +292,9 @@ watch(() => props.open, (open) => {
 .cy-character-picker-backdrop { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 20px; background: var(--cy-overlay); }
 .cy-character-picker { display: flex; flex-direction: column; width: min(520px, 94vw); max-height: min(680px, 90vh); min-height: 0; overflow: hidden; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-7); background: var(--cy-pane); box-shadow: var(--cy-shadow); }
 .cy-character-picker-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-6); padding: var(--cy-space-8) var(--cy-space-9) var(--cy-space-6); border-bottom: 1px solid var(--cy-border); }
-.cy-character-picker-header h2 { margin: 0; color: var(--cy-text); font-size: 16px; }
+.cy-character-picker-header h2 { margin: 0; color: var(--cy-text); font-size: calc(16px * var(--cy-user-font-scale)); }
 .cy-character-picker-header p { margin: var(--cy-space-2-5) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); line-height: 1.5; }
-.cy-picker-close { flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: 18px; line-height: 1; }
+.cy-picker-close { flex: 0 0 auto; width: 28px; height: 28px; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: calc(18px * var(--cy-user-font-scale)); line-height: 1; }
 .cy-picker-search { display: grid; gap: var(--cy-space-3); padding: var(--cy-space-6-5) var(--cy-space-9) var(--cy-space-4); }
 .cy-picker-search label { color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-picker-search-row { display: flex; gap: var(--cy-space-3-5); }
@@ -312,7 +312,7 @@ watch(() => props.open, (open) => {
 .cy-picker-card-title strong, .cy-picker-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cy-picker-card-title strong { font-size: var(--cy-font-lg); }
 .cy-picker-description { color: var(--cy-muted); font-size: var(--cy-font-sm); }
-.cy-picker-badge { padding: var(--cy-space-0-5) var(--cy-space-2-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); color: var(--cy-muted); font-size: 9px; }
+.cy-picker-badge { padding: var(--cy-space-0-5) var(--cy-space-2-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); color: var(--cy-muted); font-size: calc(9px * var(--cy-user-font-scale)); }
 .cy-picker-radio { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-circle); color: var(--cy-accent-strong); font-size: var(--cy-font-lg); }
 .cy-picker-card.is-selected .cy-picker-radio { border-color: var(--cy-accent-strong); background: var(--cy-accent); }
 .cy-picker-details { align-self: center; padding: var(--cy-space-3) var(--cy-space-4); white-space: nowrap; color: var(--cy-accent-strong); }

@@ -22,6 +22,7 @@ function state(over: Partial<SettingsState> = {}): SettingsState {
     dictation: { insertMode: 'append' },
     live2d: { ...DEFAULT_LIVE2D },
     tools: { grants: [] }, // 阶段 6 批次 C（D6C-02）：tools 空子树
+    appearance: { fontScale: 100 }, // 外观（2026-09-13）：字号缩放默认 100%
     ...over
   }
 }
@@ -29,13 +30,14 @@ function state(over: Partial<SettingsState> = {}): SettingsState {
 /** 模拟 Main SettingsService.save 的 patch-merge 语义：返回合并后 state（未提交字段保持现值） */
 function applyPatch(
   base: SettingsState,
-  patch: { voice?: Partial<SettingsState['voice']>; dictation?: Partial<SettingsState['dictation']>; live2d?: Partial<SettingsState['live2d']> }
+  patch: { voice?: Partial<SettingsState['voice']>; dictation?: Partial<SettingsState['dictation']>; live2d?: Partial<SettingsState['live2d']>; appearance?: Partial<SettingsState['appearance']> }
 ): SettingsState {
   return {
     ...base,
     voice: { ...base.voice, ...patch.voice },
     dictation: { ...base.dictation, ...patch.dictation },
-    live2d: { ...base.live2d, ...patch.live2d }
+    live2d: { ...base.live2d, ...patch.live2d },
+    appearance: { ...base.appearance, ...patch.appearance }
   }
 }
 
@@ -177,6 +179,48 @@ describe('settingsStore', () => {
     await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
     expect(mockApi.settingsSave).toHaveBeenCalledTimes(1) // 未被 if(!pending.live2d) 早退跳过
     expect(s.live2d.modelId).toBe('lil')
+  })
+
+  // —— 外观（2026-09-13，doc 03 §12.4 / doc 11 §7.2）：全局字体缩放子树 ——
+  it('hydrate 读回 appearance 段（fontScale 130）', async () => {
+    mockApi.settingsLoad.mockResolvedValue(state({ appearance: { fontScale: 130 } }))
+    const s = useSettingsStore()
+    await s.hydrate()
+    expect(s.appearance.fontScale).toBe(130)
+  })
+
+  it('setAppearance 本地立即生效 + 500ms 防抖持久化 appearance 子树', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setAppearance({ fontScale: 115 })
+    expect(s.appearance.fontScale).toBe(115) // 即时预览：本地先改（根变量由 main.ts 的 watch 落）
+    expect(mockApi.settingsSave).not.toHaveBeenCalled() // 防抖窗口内不写
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledWith({ appearance: { fontScale: 115 } })
+    expect(s.appearance.fontScale).toBe(115) // 回写 merge 结果
+  })
+
+  it('仅 appearance patch 时 persist 不早退（第四键早退条件）', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setAppearance({ fontScale: 90 })
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1) // 未被 if(!pending.appearance) 早退跳过
+    expect(s.appearance.fontScale).toBe(90)
+  })
+
+  it('跨子树累积：setVoice + setAppearance 同窗口 → 单次 save 含两棵子树', async () => {
+    vi.useFakeTimers()
+    mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))
+    const s = useSettingsStore()
+    s.setVoice({ autoReadReply: false })
+    s.setAppearance({ fontScale: 130 })
+    await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+    expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)
+    expect(mockApi.settingsSave).toHaveBeenCalledWith({ voice: { autoReadReply: false }, appearance: { fontScale: 130 } })
+    expect(s.appearance.fontScale).toBe(130)
   })
 })
 

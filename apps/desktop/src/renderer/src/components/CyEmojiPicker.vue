@@ -53,7 +53,7 @@ const orderedEmoji = computed(() => [...recent.value, ...COMMON_EMOJI.filter((e)
 .cy-emoji-tabs button { padding: var(--cy-space-2) var(--cy-space-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: var(--cy-font-md); }
 .cy-emoji-tabs button.active { background: var(--cy-accent); color: var(--cy-accent-text); }
 .cy-emoji-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: var(--cy-space-2); overflow-y: auto; }
-.cy-emoji-cell { padding: var(--cy-space-2); border: 0; border-radius: var(--cy-radius-3); background: transparent; font-size: 20px; line-height: 1.4; }
+.cy-emoji-cell { padding: var(--cy-space-2); border: 0; border-radius: var(--cy-radius-3); background: transparent; font-size: calc(20px * var(--cy-user-font-scale)); line-height: 1.4; }
 .cy-emoji-cell:hover { background: var(--cy-surface-hover); }
 button:focus-visible { outline: 2px solid var(--cy-accent-strong); outline-offset: 1px; }
 </style>

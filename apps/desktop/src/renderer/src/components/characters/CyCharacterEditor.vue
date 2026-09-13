@@ -347,7 +347,7 @@ onMounted(() => {
 <style scoped>
 .cy-character-editor { display: flex; min-width: 0; flex-direction: column; gap: var(--cy-space-6); }
 .cy-editor-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-7); }
-.cy-editor-heading h2 { margin: var(--cy-space-1-5) 0 0; color: var(--cy-text); font-size: 18px; }
+.cy-editor-heading h2 { margin: var(--cy-space-1-5) 0 0; color: var(--cy-text); font-size: calc(18px * var(--cy-user-font-scale)); }
 .cy-editor-heading p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-sm); }
 .cy-back { padding: 0; border: 0; background: transparent; color: var(--cy-accent-strong); }
 .cy-editor-status { display: grid; justify-items: end; gap: var(--cy-space-1-5); color: var(--cy-muted); font-size: var(--cy-font-xs); text-align: right; }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { TokenUsageSchema } from './events'
 import { BackendFeatureFlagsSchema, CharacterBindingSnapshotSchema, CharacterGenerationRefSchema, CharacterIdSchema } from './character'
-import type { ActiveModelSelection, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2dModelFileResult, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
+import type { ActiveModelSelection, AppearanceSettings, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2dModelFileResult, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 import type { CreateConversationInput } from '@shared/contracts/conversation'
 import { DIAGNOSTICS_PREVIEW_MAX, DIAGNOSTICS_TYPE_MAX } from '@shared/contracts'
 
@@ -373,27 +373,42 @@ export const DEFAULT_LIVE2D: Live2DSettings = {
   mouseTracking: true, autoMotions: true, lipSync: true,
   performanceMode: 'auto', reduceMotion: false
 }
+/** 默认外观设置（2026-09-13）：100 = 不缩放。范围与 utils/appearance.ts 的常量同源（此处是**入口校验**，
+ *  运行时 clamp 仍在渲染层，避免手改 settings.json 越界后把 UI 撑坏）。 */
+export const DEFAULT_APPEARANCE: AppearanceSettings = { fontScale: 100 }
+export const AppearanceSettingsSchema = z.object({
+  fontScale: z.number().int().min(90).max(130).default(100)
+}).default(DEFAULT_APPEARANCE)
+// IP-1 同款：patch 子 schema 无 default（防单字段 patch 注入默认值 clobber 已持久化的非默认值）
+export const AppearanceSettingsPatchSchema = z.object({
+  fontScale: z.number().int().min(90).max(130).optional()
+})
+
 export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
   version: z.literal(1), voice: VoiceSettingsSchema, dictation: DictationSettingsSchema,
   live2d: Live2DSettingsSchema.default(DEFAULT_LIVE2D),
-  tools: ToolsSettingsSchema // 阶段 6 批次 C（D6C-02）：目录授权子树（自带 .default({grants:[]})——旧文件无 tools 段兼容，不 corrupt）
+  tools: ToolsSettingsSchema, // 阶段 6 批次 C（D6C-02）：目录授权子树（自带 .default({grants:[]})——旧文件无 tools 段兼容，不 corrupt）
+  appearance: AppearanceSettingsSchema // 外观（2026-09-13）：自带 .default——旧 settings.json 无该段时不 corrupt、不 bump version
 })
 /** 局部更新（settings:save 入参；patch 后 merge 才落盘，未提交字段保持现值） */
 export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
   voice: VoiceSettingsSchema.partial().optional(),
   dictation: DictationSettingsSchema.partial().optional(),
   live2d: Live2DSettingsPatchSchema.optional(), // IP-1：patch 路径用无默认子 schema，防单字段 patch clobber 已持久化非默认字段
-  tools: ToolsSettingsPatchSchema.optional() // IP-1：patch 子 schema 无 default，防单字段 patch 注入默认 grants
+  tools: ToolsSettingsPatchSchema.optional(), // IP-1：patch 子 schema 无 default，防单字段 patch 注入默认 grants
+  appearance: AppearanceSettingsPatchSchema.optional() // 同 IP-1：外观 patch 无 default
 })
 
 /** 默认设置（M-7 修复）：enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/insertMode；micDeviceId/sttProfileId 缺省 undefined；
- *  阶段 5 批次 A：live2d 引用 DEFAULT_LIVE2D（enabled:true/modelId:null）；阶段 6 批次 C：tools 引用 DEFAULT_TOOLS（空 grants） */
+ *  阶段 5 批次 A：live2d 引用 DEFAULT_LIVE2D（enabled:true/modelId:null）；阶段 6 批次 C：tools 引用 DEFAULT_TOOLS（空 grants）；
+ *  2026-09-13：appearance 引用 DEFAULT_APPEARANCE（fontScale 100） */
 export const DEFAULT_SETTINGS: SettingsState = {
   version: 1,
   voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
   dictation: { insertMode: 'append' },
   live2d: DEFAULT_LIVE2D,
-  tools: DEFAULT_TOOLS
+  tools: DEFAULT_TOOLS,
+  appearance: DEFAULT_APPEARANCE
 }
 
 // —— 阶段 5 批次 A：Live2D 模型摘要出参 schema（严格镜像 contracts/live2d.ts，D5A-07；preload 与 Main handler 共用）——

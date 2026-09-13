@@ -171,7 +171,7 @@ async function removeDraft(key: string): Promise<void> {
 <style scoped>
 .cy-character-catalog { display: flex; flex-direction: column; gap: var(--cy-space-6-5); min-width: 0; }
 .cy-catalog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-7); }
-.cy-catalog-heading h2 { margin: 0; color: var(--cy-text); font-size: 17px; }
+.cy-catalog-heading h2 { margin: 0; color: var(--cy-text); font-size: calc(17px * var(--cy-user-font-scale)); }
 .cy-catalog-heading p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.55; }
 .cy-catalog-heading-actions { display: flex; align-items: center; gap: var(--cy-space-4); }
 .cy-catalog-heading-actions > span { flex: 0 0 auto; color: var(--cy-muted); font-size: var(--cy-font-sm); }

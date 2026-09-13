@@ -88,10 +88,10 @@ function onClick(e: MouseEvent): void {
   line-height: 1.35;
 }
 .cy-markdown :deep(h1) {
-  font-size: 17px;
+  font-size: calc(17px * var(--cy-user-font-scale));
 }
 .cy-markdown :deep(h2) {
-  font-size: 16px;
+  font-size: calc(16px * var(--cy-user-font-scale));
 }
 .cy-markdown :deep(h3) {
   font-size: var(--cy-font-xl);

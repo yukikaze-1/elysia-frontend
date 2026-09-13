@@ -144,7 +144,8 @@ const settingsState = {
     enabled: false, modelId: null, scale: 1, offsetX: 0, offsetY: 0, mouseTracking: false,
     autoMotions: false, lipSync: false, performanceMode: 'auto', reduceMotion: false
   },
-  tools: { grants: [] }
+  tools: { grants: [] },
+  appearance: { fontScale: 100 } // 外观（2026-09-13）：默认字号缩放
 } satisfies SettingsState
 
 /** 默认实现表：键集必须与 DesktopApiLike 完全一致（`DesktopApiMock` 的 `-?` 使遗漏立即报错）。 */

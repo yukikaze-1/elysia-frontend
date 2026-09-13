@@ -6,7 +6,7 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } fro
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsService, SETTINGS_FILE_NAME } from '../../src/main/settings/settings-service'
-import { DEFAULT_LIVE2D, DEFAULT_SETTINGS, SettingsStateSchema } from '../../src/shared/schemas'
+import { DEFAULT_APPEARANCE, DEFAULT_LIVE2D, DEFAULT_SETTINGS, SettingsStateSchema } from '../../src/shared/schemas'
 import type { SettingsPatch } from '../../src/shared/contracts'
 import { createIpcHandler } from '../../src/main/ipc/executor'
 import { settingsLoadSchema, settingsSaveSchema } from '../../src/main/ipc/channels'
@@ -141,6 +141,47 @@ describe('SettingsService', () => {
     await expect(svc.save({ voice: { enabled: 'yes' as unknown as boolean } })).rejects.toThrow()
     await expect(svc.save({ dictation: { insertMode: 'prepend' as unknown as 'append' } })).rejects.toThrow()
     await expect(svc.save({ version: 9 } as unknown as SettingsPatch)).rejects.toThrow() // 版本非 1 拒绝（save 兜底 parse）
+  })
+
+  // —— 外观（2026-09-13，doc 03 §12.4 / doc 11 §7.2）：全局字体缩放子树 ——
+  it('外观：无 appearance 段的旧 file 正常加载（补默认 100%，不动 version、不走 corrupt）', async () => {
+    const { dir, safeRoot } = makeDir()
+    // 本项落地前的老 settings.json：有 tools 段但**没有** appearance 段
+    const oldFile = {
+      version: 1,
+      voice: DEFAULT_SETTINGS.voice,
+      dictation: DEFAULT_SETTINGS.dictation,
+      live2d: { ...DEFAULT_LIVE2D, modelId: 'haru' },
+      tools: { grants: [] }
+    }
+    writeFileSync(settingsPath(dir), JSON.stringify(oldFile), { mode: 0o600 })
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
+    const state = await svc.load()
+    expect(state.version).toBe(1)                       // 不动 version（旧文件不是新版本）
+    expect(state.appearance).toEqual(DEFAULT_APPEARANCE) // .default(DEFAULT_APPEARANCE) 补齐 = 100%
+    expect(state.live2d.modelId).toBe('haru')           // 既有子树保留
+    expect(readdirSync(dir).some((n) => n.startsWith('settings.json.corrupt-settings-'))).toBe(false)
+  })
+
+  it('外观：patch merge 不丢兄弟字段（第四 merge 行）+ 越界/非整数被拒', async () => {
+    const { dir, safeRoot } = makeDir()
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
+    await svc.load()
+    // 先落一个非默认字号
+    const s1 = await svc.save({ appearance: { fontScale: 130 } })
+    expect(s1.appearance.fontScale).toBe(130)
+    // 只动别的子树 → 字号必须保持现值（漏了 merge 行会被整棵子树替换回默认）
+    const s2 = await svc.save({ voice: { autoReadReply: false } })
+    expect(s2.appearance.fontScale).toBe(130)
+    // 只动字号 → 兄弟字段（voice/live2d）保持现值
+    const s3 = await svc.save({ appearance: { fontScale: 90 } })
+    expect(s3.appearance.fontScale).toBe(90)
+    expect(s3.voice.autoReadReply).toBe(false)
+    // 越界与非法类型：schema 在落盘前拒绝（范围与 utils/appearance.ts 的 clamp 同源）
+    await expect(svc.save({ appearance: { fontScale: 200 } })).rejects.toThrow()
+    await expect(svc.save({ appearance: { fontScale: 50 } })).rejects.toThrow()
+    await expect(svc.save({ appearance: { fontScale: 100.5 } })).rejects.toThrow()
+    await expect(svc.save({ appearance: { fontScale: 'big' as unknown as number } })).rejects.toThrow()
   })
 
   it('save 前未 load → 自装载后 merge（不覆盖已有落盘值）', async () => {

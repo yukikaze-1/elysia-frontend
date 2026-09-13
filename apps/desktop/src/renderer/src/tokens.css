@@ -7,8 +7,14 @@
 :root {
   color-scheme: light dark;
 
-  --cy-font-base: 14px;
+  /* 用户字号缩放（外观设置，2026-09-13；doc 03 §12.4 / doc 11 §7.2 的「全局字体缩放」）。
+     本变量由 `utils/appearance.ts` 写在根节点内联样式上（默认即下面的 1，等于 100%）。
+     下面整条字号阶梯**乘**它，因此"改一处 ⇒ 全部 `var(--cy-font-*)` 引用与 14 处字面量字号一起缩放"。
+     ⚠ 不得在任何地方再乘一次本变量：`body` 的 font-size 直接用 `--cy-font-base`（见文件末），
+     双重缩放是本项最容易踩的坑，`tests/unit/font-scale-tokens.spec.ts` 把它钉成了门禁。
+     范围/默认值与 clamp 在 `utils/appearance.ts`（100 = 1），settings schema 同步校验。 */
   --cy-user-font-scale: 1;
+  --cy-font-base: calc(14px * var(--cy-user-font-scale));
 
   /* Cyrene brand palette: blue-violet function color + restrained sakura warmth. */
   --cy-window: light-dark(#eef4ff, #111824);
@@ -124,12 +130,13 @@
   --cy-radius-circle: 50%;  /* 正圆：头像、单选点、加载环（13 处） */
 
   /* 字号阶梯。注意 --cy-font-base（14px）是既有的「用户字号缩放根」，
-     不并入本阶梯、也不改名；组件里显式写的 14px 直接引用它。 */
-  --cy-font-xs: 10px;  /* 极小：角标、时间戳等密度最高的辅助信息（29 处） */
-  --cy-font-sm: 11px;  /* 辅助说明、字段标签、次要元信息（93 处） */
-  --cy-font-md: 12px;  /* 次常用档——多数控件正文、列表副标题（106 处） */
-  --cy-font-lg: 13px;  /* 控件正文、卡片标题（56 处） */
-  --cy-font-xl: 15px;  /* 小标题：markdown h3、区块标题（10 处） */
+     不并入本阶梯、也不改名；组件里显式写的 14px 直接引用它。
+     全阶梯都乘 --cy-user-font-scale（理由与"不得二次相乘"的告诫见文件开头的 token 注释）。 */
+  --cy-font-xs: calc(10px * var(--cy-user-font-scale));  /* 极小：角标、时间戳等密度最高的辅助信息（29 处） */
+  --cy-font-sm: calc(11px * var(--cy-user-font-scale));  /* 辅助说明、字段标签、次要元信息（93 处） */
+  --cy-font-md: calc(12px * var(--cy-user-font-scale));  /* 次常用档——多数控件正文、列表副标题（106 处） */
+  --cy-font-lg: calc(13px * var(--cy-user-font-scale));  /* 控件正文、卡片标题（56 处） */
+  --cy-font-xl: calc(15px * var(--cy-user-font-scale));  /* 小标题：markdown h3、区块标题（10 处） */
 
   /* 动效时长：只收 transition（交互反馈，属皮肤语义）。animation 的 0.8s 旋转、
      1s/1.2s 呼吸闪烁是元素自身的节奏，与皮肤无关，保留硬编码。 */
@@ -180,7 +187,8 @@ body {
   color: var(--cy-text);
   background: var(--cy-window);
   font-family: 'Microsoft YaHei', 'PingFang SC', Inter, 'Segoe UI', sans-serif;
-  font-size: calc(var(--cy-font-base) * var(--cy-user-font-scale));
+  /* 直接用 --cy-font-base（它已乘过 --cy-user-font-scale）；此处**不得**再乘一次。 */
+  font-size: var(--cy-font-base);
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   user-select: none;

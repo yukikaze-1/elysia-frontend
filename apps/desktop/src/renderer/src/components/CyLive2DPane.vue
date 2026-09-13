@@ -16,6 +16,7 @@ import { computed } from 'vue'
 import { LIVE2D_PATH_PREFIX, type Live2DModelSummary, type PerformanceMode } from '@shared/contracts'
 import { useSettingsStore } from '../stores/settings.store'
 import { useLive2dStore } from '../stores/live2d.store'
+import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN, FONT_SCALE_STEP } from '../utils/appearance'
 import CySwitch from './CySwitch.vue'
 
 const settings = useSettingsStore()
@@ -67,8 +68,16 @@ function onPerformanceMode(e: Event): void {
   settings.setLive2d({ performanceMode: (e.target as HTMLSelectElement).value as PerformanceMode })
 }
 
+/** 外观（2026-09-13）：全局字体缩放（doc 03 §12.4 / doc 11 §7.2）。本地即改 ⇒ 组合根 watch 落根变量
+ *  ⇒ 即时预览（无需重载）；持久化沿用 settingsStore 的 500ms 防抖。 */
+function onFontScale(e: Event): void {
+  settings.setAppearance({ fontScale: Number((e.target as HTMLInputElement).value) })
+}
+
 function restoreDefaults(): void {
   void live2d.restoreDefaults() // Task5 M2（批次 C）：restore 置 modelId:null 后若已加载 ≠ 首个可用 → switchModel 首个可用
+  // 外观（2026-09-13）：本按钮同时承担 doc 03 §12.4 的「恢复默认外观」——只重置字号，不碰 Live2D 子树
+  settings.setAppearance({ fontScale: FONT_SCALE_DEFAULT })
 }
 
 const statusText = computed(() => {
@@ -86,6 +95,28 @@ const statusText = computed(() => {
 <template>
   <section class="cy-l2d-pane" aria-label="角色与外观（Live2D）">
     <h3 class="cy-l2d-title">角色与外观</h3>
+
+    <!-- 外观（2026-09-13）：doc 11 §1 的「角色与外观 ├── Live2D 切换 ├── 字体 ─…」把字体列在 Live2D 之后，
+         但本页其余分组全是 Live2D，字号若排在其后会埋到最底部；字号是这里最高频的通用项，
+         故置于页首并独立成组。顺序属呈现细节，记录在批次决策记录里。 -->
+    <div class="cy-l2d-group">
+      <h4 class="cy-l2d-sub">外观</h4>
+      <label class="cy-l2d-field">
+        <span class="cy-l2d-field-label">字体大小</span>
+        <span class="cy-l2d-field-control">
+          <input
+            type="range"
+            data-testid="font-scale-range"
+            :min="FONT_SCALE_MIN" :max="FONT_SCALE_MAX" :step="FONT_SCALE_STEP"
+            :value="settings.appearance.fontScale"
+            aria-label="字体大小"
+            @input="onFontScale"
+          />
+          <span class="cy-l2d-field-value" data-testid="font-scale-value">{{ settings.appearance.fontScale }}%</span>
+        </span>
+      </label>
+      <p class="cy-l2d-hint">聊天、设置与工具卡片统一缩放（{{ FONT_SCALE_MIN }}%–{{ FONT_SCALE_MAX }}%，默认 {{ FONT_SCALE_DEFAULT }}%）</p>
+    </div>
 
     <div class="cy-l2d-group">
       <label class="cy-l2d-row">
@@ -130,6 +161,7 @@ const statusText = computed(() => {
         <span class="cy-l2d-field-control">
           <input
             type="range"
+            data-testid="live2d-scale-range"
             min="0.5" max="3" step="0.05"
             :value="settings.live2d.scale"
             :disabled="!settings.live2d.enabled"
@@ -143,6 +175,7 @@ const statusText = computed(() => {
         <span class="cy-l2d-field-control">
           <input
             type="range"
+            data-testid="live2d-offsetx-range"
             min="-2" max="2" step="0.05"
             :value="settings.live2d.offsetX"
             :disabled="!settings.live2d.enabled"
@@ -156,6 +189,7 @@ const statusText = computed(() => {
         <span class="cy-l2d-field-control">
           <input
             type="range"
+            data-testid="live2d-offsety-range"
             min="-2" max="2" step="0.05"
             :value="settings.live2d.offsetY"
             :disabled="!settings.live2d.enabled"
@@ -223,7 +257,7 @@ const statusText = computed(() => {
     </div>
 
     <div class="cy-l2d-group cy-l2d-foot">
-      <button class="cy-l2d-btn" :disabled="!settings.live2d.enabled" @click="restoreDefaults">恢复默认设置</button>
+      <button class="cy-l2d-btn" @click="restoreDefaults">恢复默认设置</button>
       <span class="cy-l2d-foot-note">修改即时预览，500ms 自动保存</span>
     </div>
   </section>

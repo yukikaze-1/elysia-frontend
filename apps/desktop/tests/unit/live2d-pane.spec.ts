@@ -132,23 +132,26 @@ describe('CyLive2DPane：scale/offset 滑块 + performanceMode 下拉', () => {
   it('scale/offsetX/offsetY 滑块 → setLive2d patch（range min/max 即安全钳制）', async () => {
     const settings = useSettingsStore()
     const wrapper = mountPane()
-    const ranges = wrapper.findAll('input[type="range"]')
-    expect(ranges).toHaveLength(3)
+    // 2026-09-13：外观（字体大小）也是 range 且**不受 Live2D 开关门控**，故按 testid 逐项取，
+    // 不用"第 N 个 range"这种与页内顺序耦合的写法。
+    const scale = wrapper.find('[data-testid="live2d-scale-range"]')
+    const offsetX = wrapper.find('[data-testid="live2d-offsetx-range"]')
+    const offsetY = wrapper.find('[data-testid="live2d-offsety-range"]')
 
-    await ranges[0].setValue('2.5')
+    await scale.setValue('2.5')
     expect(settings.live2d.scale).toBe(2.5)
 
-    await ranges[1].setValue('-1.5')
+    await offsetX.setValue('-1.5')
     expect(settings.live2d.offsetX).toBe(-1.5)
 
-    await ranges[2].setValue('0.75')
+    await offsetY.setValue('0.75')
     expect(settings.live2d.offsetY).toBe(0.75)
 
     // 控件 min/max 即 D5B-08 钳制（scale∈[0.5,3]、offset∈[-2,2]）
-    expect((ranges[0].element as HTMLInputElement).min).toBe('0.5')
-    expect((ranges[0].element as HTMLInputElement).max).toBe('3')
-    expect((ranges[1].element as HTMLInputElement).min).toBe('-2')
-    expect((ranges[2].element as HTMLInputElement).max).toBe('2')
+    expect((scale.element as HTMLInputElement).min).toBe('0.5')
+    expect((scale.element as HTMLInputElement).max).toBe('3')
+    expect((offsetX.element as HTMLInputElement).min).toBe('-2')
+    expect((offsetY.element as HTMLInputElement).max).toBe('2')
     wrapper.unmount()
   })
 
@@ -191,13 +194,55 @@ describe('CyLive2DPane：恢复默认 + 状态/错误展示', () => {
   })
 })
 
+describe('CyLive2DPane：外观（字体大小，2026-09-13；doc 03 §12.4 / doc 11 §7.2）', () => {
+  it('字体大小滑杆 → setAppearance patch；min/max/step 与 utils/appearance 常量同源', async () => {
+    const settings = useSettingsStore()
+    const wrapper = mountPane()
+    const range = wrapper.find('[data-testid="font-scale-range"]')
+    const el = range.element as HTMLInputElement
+
+    expect(el.min).toBe('90')
+    expect(el.max).toBe('130')
+    expect(el.step).toBe('5')
+    expect(el.value).toBe('100') // 默认 = 不缩放
+
+    await range.setValue('130')
+    expect(settings.appearance.fontScale).toBe(130)
+    expect(wrapper.find('[data-testid="font-scale-value"]').text()).toBe('130%')
+
+    await range.setValue('90')
+    expect(settings.appearance.fontScale).toBe(90)
+    expect(wrapper.find('[data-testid="font-scale-value"]').text()).toBe('90%')
+    wrapper.unmount()
+  })
+
+  it('字体大小不受 Live2D 开关门控（enabled=false 时仍可调——它管的是整个界面）', () => {
+    const settings = useSettingsStore()
+    settings.live2d.enabled = false
+    const wrapper = mountPane()
+    expect((wrapper.find('[data-testid="font-scale-range"]').element as HTMLInputElement).disabled).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('「恢复默认设置」同时复位两个字树：字号回 100%、Live2D 回 DEFAULT_LIVE2D', async () => {
+    const settings = useSettingsStore()
+    settings.setAppearance({ fontScale: 130 })
+    settings.live2d.scale = 2
+    const wrapper = mountPane()
+    await wrapper.findAll('button').find((b) => b.text().includes('恢复默认'))?.trigger('click')
+    expect(settings.appearance.fontScale).toBe(100)
+    expect(settings.live2d).toEqual({ ...DEFAULT_LIVE2D })
+    wrapper.unmount()
+  })
+})
+
 describe('CyLive2DPane：enabled=false 禁用交互', () => {
   it('enabled 关闭 → 滑块/下拉/模型选择禁用（模型仍列但不可点）', async () => {
     useLive2dStore().models = [MODEL_AVAILABLE]
     const settings = useSettingsStore()
     settings.live2d.enabled = false
     const wrapper = mountPane()
-    expect((wrapper.findAll('input[type="range"]')[0].element as HTMLInputElement).disabled).toBe(true)
+    expect((wrapper.find('[data-testid="live2d-scale-range"]').element as HTMLInputElement).disabled).toBe(true)
     expect((wrapper.find('select').element as HTMLSelectElement).disabled).toBe(true)
     expect((wrapper.findAll('.cy-l2d-model')[0].element as HTMLButtonElement).disabled).toBe(true)
     wrapper.unmount()

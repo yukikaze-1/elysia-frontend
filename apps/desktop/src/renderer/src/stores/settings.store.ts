@@ -4,14 +4,14 @@
 // hydrate/scheduleSave/persist 三处接线（缺则静默丢 live2d 持久化；500ms 防抖窗口内 voice/dictation/live2d
 // 混改时 pending 三键累积合并，不丢任何子树）。
 // - hydrate() 启动装载：成功覆盖 state + loaded=true；失败 fail-open 保留默认（不阻塞启动）；
-// - setVoice/setDictation/setLive2d：本地改 + 500ms 防抖 api.settingsSave(patch)（patch 累积合并，防窗口内丢更新）；
+// - setVoice/setDictation/setLive2d/setAppearance：本地改 + 500ms 防抖 api.settingsSave(patch)（patch 累积合并，防窗口内丢更新）；
 //   saveError 置位失败；saved 供 UI 展示「已保存」态；
 // - applyDictationInsert（D-P4）：转写 final 插入草稿——insertMode='replace_selection' 且有选区 → 替换区间，
 //   否则追加草稿末尾；纯函数 insertDictationText 导出供单测。无活动会话 no-op。
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { DictationSettings, Live2DSettings, SettingsPatch, VoiceSettings } from '@shared/contracts'
-import { DEFAULT_LIVE2D, DEFAULT_SETTINGS } from '@shared/schemas'
+import type { AppearanceSettings, DictationSettings, Live2DSettings, SettingsPatch, VoiceSettings } from '@shared/contracts'
+import { DEFAULT_APPEARANCE, DEFAULT_LIVE2D, DEFAULT_SETTINGS } from '@shared/schemas'
 import { api } from './desktop-api'
 import { getCurrentConversationId } from './session'
 import { useDraftStore } from './draft.store'
@@ -44,6 +44,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const voice = ref<VoiceSettings>({ ...DEFAULT_SETTINGS.voice })
   const dictation = ref<DictationSettings>({ ...DEFAULT_SETTINGS.dictation })
   const live2d = ref<Live2DSettings>({ ...DEFAULT_LIVE2D }) // 阶段 5 批次 A（D5A-10）
+  const appearance = ref<AppearanceSettings>({ ...DEFAULT_APPEARANCE }) // 外观（2026-09-13）：全局字体缩放
   const loaded = ref(false)
   const saveError = ref<string>()
   const saved = ref(false)
@@ -59,6 +60,7 @@ export const useSettingsStore = defineStore('settings', () => {
         voice.value = { ...state.voice }
         dictation.value = { ...state.dictation }
         live2d.value = { ...state.live2d } // ① 接线：读 state.live2d（缺 live2d 段时 SettingsStateSchema.default 已补默认）
+        appearance.value = { ...state.appearance } // 外观：同上（缺 appearance 段时 schema.default 补 {fontScale:100}）
       }
     } catch {
       // fail-open：装载失败保留默认（C1 同款），不阻塞启动
@@ -73,7 +75,8 @@ export const useSettingsStore = defineStore('settings', () => {
     pending = {
       voice: patch.voice ? { ...pending.voice, ...patch.voice } : pending.voice,
       dictation: patch.dictation ? { ...pending.dictation, ...patch.dictation } : pending.dictation,
-      live2d: patch.live2d ? { ...pending.live2d, ...patch.live2d } : pending.live2d
+      live2d: patch.live2d ? { ...pending.live2d, ...patch.live2d } : pending.live2d,
+      appearance: patch.appearance ? { ...pending.appearance, ...patch.appearance } : pending.appearance
     }
     saved.value = false
     if (saveTimer !== undefined) clearTimeout(saveTimer)
@@ -81,7 +84,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   async function persist(): Promise<void> {
-    if (!pending.voice && !pending.dictation && !pending.live2d) return // ③ 早退条件含 live2d
+    if (!pending.voice && !pending.dictation && !pending.live2d && !pending.appearance) return // ③ 早退条件含 live2d / 外观
     const patch = pending
     pending = {}
     try {
@@ -90,6 +93,7 @@ export const useSettingsStore = defineStore('settings', () => {
         voice.value = { ...state.voice }
         dictation.value = { ...state.dictation }
         live2d.value = { ...state.live2d } // ③ 回写：post-save 镜像 Main merge 结果
+        appearance.value = { ...state.appearance } // 外观：同上
       }
       saveError.value = undefined
       saved.value = true
@@ -124,6 +128,12 @@ export const useSettingsStore = defineStore('settings', () => {
     scheduleSave({ live2d: patch })
   }
 
+  /** 外观（2026-09-13）：全局字体缩放局部更新——本地改（即时预览）+ 防抖持久化 appearance 子树 */
+  function setAppearance(patch: Partial<AppearanceSettings>): void {
+    appearance.value = { ...appearance.value, ...patch }
+    scheduleSave({ appearance: patch })
+  }
+
   /** D-P4：转写 final 插入草稿——当前会话草稿末尾追加或替换选区；无活动会话 no-op */
   function applyDictationInsert(text: string, selection?: DictationSelection): void {
     // 会话身份从单例读取（解环，2026-09-10）：此前读 useConversationStore().currentId，
@@ -137,7 +147,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   return {
-    voice, dictation, live2d, loaded, saveError, saved,
-    hydrate, setVoice, setDictation, setLive2d, applyDictationInsert, flush
+    voice, dictation, live2d, appearance, loaded, saveError, saved,
+    hydrate, setVoice, setDictation, setLive2d, setAppearance, applyDictationInsert, flush
   }
 })

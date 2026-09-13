@@ -182,10 +182,10 @@ async function setDefault(): Promise<void> {
 .cy-detail-state.error, .cy-detail-notice.error { color: var(--cy-danger); border-style: dashed; border-color: color-mix(in srgb, var(--cy-danger) 55%, var(--cy-border)); }
 .cy-detail-notice.success { color: var(--cy-success); }
 .cy-detail-header { display: flex; align-items: flex-start; gap: var(--cy-space-6-5); min-width: 0; }
-.cy-detail-avatar { display: grid; flex: 0 0 54px; width: 54px; height: 54px; place-items: center; border: 1px solid var(--cy-border); border-radius: 16px; background: var(--cy-accent); color: var(--cy-accent-text); font-size: 18px; font-weight: 650; }
+.cy-detail-avatar { display: grid; flex: 0 0 54px; width: 54px; height: 54px; place-items: center; border: 1px solid var(--cy-border); border-radius: 16px; background: var(--cy-accent); color: var(--cy-accent-text); font-size: calc(18px * var(--cy-user-font-scale)); font-weight: 650; }
 .cy-detail-title { flex: 1 1 auto; min-width: 0; }
 .cy-detail-title > div { display: flex; align-items: center; gap: var(--cy-space-3-5); flex-wrap: wrap; }
-.cy-detail-title h2 { margin: 0; color: var(--cy-text); font-size: 18px; }
+.cy-detail-title h2 { margin: 0; color: var(--cy-text); font-size: calc(18px * var(--cy-user-font-scale)); }
 .cy-detail-title span { padding: var(--cy-space-0-5) var(--cy-space-3-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-pill); color: var(--cy-muted); font-size: var(--cy-font-xs); }
 .cy-detail-title p { margin: var(--cy-space-3-5) 0 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.55; overflow-wrap: anywhere; }
 .cy-detail-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--cy-space-3); flex-wrap: wrap; justify-content: flex-end; }

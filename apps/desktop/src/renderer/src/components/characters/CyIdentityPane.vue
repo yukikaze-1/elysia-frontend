@@ -220,7 +220,7 @@ function retryCandidateCatalog(): void {
 <style scoped>
 .cy-identity-pane { display: flex; flex-direction: column; gap: var(--cy-space-7); min-width: 0; }
 .cy-pane-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--cy-space-8); }
-.cy-pane-heading h2 { margin: 0; color: var(--cy-text); font-size: 17px; }
+.cy-pane-heading h2 { margin: 0; color: var(--cy-text); font-size: calc(17px * var(--cy-user-font-scale)); }
 .cy-pane-heading p, .cy-onboarding p, .cy-form-actions p { margin: var(--cy-space-2) 0 0; color: var(--cy-muted); font-size: var(--cy-font-md); line-height: 1.55; }
 .cy-status-chip { flex: 0 0 auto; padding: var(--cy-space-1-5) var(--cy-space-4-5); border: 1px solid color-mix(in srgb, var(--cy-success) 45%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-success); font-size: var(--cy-font-sm); }
 .cy-status-chip.warning { color: var(--cy-warning); border-color: color-mix(in srgb, var(--cy-warning) 45%, transparent); }

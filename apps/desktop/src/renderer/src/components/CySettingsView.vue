@@ -193,8 +193,8 @@ onBeforeUnmount(() => { triggerElement = null })
   background: var(--cy-surface-glass);
 }
 .cy-settings-title { display: flex; align-items: baseline; gap: var(--cy-space-4); }
-.cy-settings-title strong { font-size: 20px; }
-.cy-close-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: 18px; }
+.cy-settings-title strong { font-size: calc(20px * var(--cy-user-font-scale)); }
+.cy-close-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: calc(18px * var(--cy-user-font-scale)); }
 .cy-settings-layout { flex: 1 1 0; display: flex; min-height: 0; }
 .cy-settings-nav {
   flex: 0 0 216px;
@@ -224,7 +224,7 @@ onBeforeUnmount(() => { triggerElement = null })
 .cy-settings-nav-icon { display: inline-grid; flex: 0 0 22px; place-items: center; color: currentColor; }
 .cy-settings-nav-icon svg { width: 20px; height: 20px; }
 .cy-settings-nav-copy { min-width: 0; }
-.cy-nav-mark { margin-left: auto; padding: var(--cy-space-0-5) var(--cy-space-3); border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-warning); font-size: 9px; }
+.cy-nav-mark { margin-left: auto; padding: var(--cy-space-0-5) var(--cy-space-3); border: 1px solid color-mix(in srgb, var(--cy-warning) 50%, transparent); border-radius: var(--cy-radius-pill); color: var(--cy-warning); font-size: calc(9px * var(--cy-user-font-scale)); }
 .cy-settings-nav-item.active .cy-nav-mark { color: currentColor; border-color: currentColor; }
 .cy-settings-body {
   flex: 1 1 0;

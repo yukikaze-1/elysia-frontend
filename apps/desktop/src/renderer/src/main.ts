@@ -22,6 +22,7 @@ import { useCharacterRuntimeStore } from './stores/character-runtime.store'
 import { createCharacterRuntimeCoordinator } from './stores/character-runtime-coordinator'
 import { createRendererBootstrap } from './bootstrap'
 import { createReduceMotionGate, REDUCE_MOTION_QUERY } from './utils/reduce-motion'
+import { applyFontScale } from './utils/appearance'
 
 const app = createApp(App)
 app.use(createPinia())
@@ -55,6 +56,14 @@ const reduceMotionGate = createReduceMotionGate({
 })
 reduceMotionGate.sync()
 watch(() => settingsStore.live2d.reduceMotion, () => { reduceMotionGate.sync() })
+
+// 外观（2026-09-13）：全局字体缩放（doc 03 §12.4 / doc 11 §7.2）。把百分比写到根节点的
+// `--cy-user-font-scale` 上，`tokens.css` 的整条字号阶梯乘它 ⇒ 一次改动覆盖全部字号引用。
+// 与"减少动态"同款：mount 之前先同步一次（首帧即生效，避免先按 100% 画一帧再跳），
+// settings 异步水合完成后由 watch 兜住（= doc 11 §7.2 要的"即时预览"，无需重载）。
+const syncFontScale = (): void => { applyFontScale(document.documentElement, settingsStore.appearance.fontScale) }
+syncFontScale()
+watch(() => settingsStore.appearance.fontScale, syncFontScale)
 
 // P2-1 + R3:Pinia install 之后接线(Pinia 已 setActivePinia,use*Store() 才可用)——注入 api + 常驻订阅(store 级,组件卸载无关)。
 // P0-01:订阅与启动 snapshot 水合编排收敛到 bootstrap(epoch 防迟到 snapshot 覆盖新 push)。
