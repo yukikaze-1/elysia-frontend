@@ -70,6 +70,7 @@ export const TEST_TEMP_PREFIXES: readonly string[] = [
   'cy-safe-open-symlink-probe-',
   'cy-settings-',
   'cy-settings-tools-',
+  'cy-table-',
   'cy-tail-',
   'cy-tmpdirs-sandbox-',
   'cy-tools-',

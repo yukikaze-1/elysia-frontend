@@ -138,7 +138,20 @@ function onClick(e: MouseEvent): void {
   border: 0;
   border-top: 1px solid var(--cy-border);
 }
+/* 表格在窄窗口内横向滚动（doc 03 §7.4）。
+   修复前：表格是默认的 `display: table` + `width: auto`，列数一多其 used width 就等于
+   min-content 宽度并**直接超出消息列**，再被 `.cy-messages` 的 `overflow-x: hidden` 切掉——
+   右侧列既看不见也够不到（真机实测：24 列时表盒右边缘超出消息列 278px、`scrollLeft` 恒 0）。
+   现让表格自身成为滚动容器（`overflow-x: auto`）：行仍是表格布局（`tr` 生成匿名 table 盒，
+   `border-collapse` 可继承，故折叠边框不受影响），但盒宽被 `max-width: 100%` 钉在可用宽度内，
+   溢出部分横向可滚、可达。
+   为什么不在 HTML 里包一层 `<div class="…">`：本组件是「消毒后的 HTML」，注入 wrapper 会把 UI 结构
+   与 CSS 类名塞进功能层（`utils/markdown.ts` 头注记录的正是上一轮刚拆掉的分工），且 `div` 在消毒
+   白名单内、会与用户内容自带的 div 混为一谈。纯 CSS 方案不动 HTML，消毒链零改动。 */
 .cy-markdown :deep(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   margin: 0 0 var(--cy-space-4);
   border-collapse: collapse;
 }
