@@ -328,13 +328,36 @@ describe('真实 Electron 语音链路（阶段 4 批次 B，Task 15）', () => 
       await openSettings(page)
       await openVoicePane(page)
       const box = await page.evaluate(() => {
-        const r = document.querySelector<HTMLElement>('.cy-voice-pane')!.getBoundingClientRect()
-        return { top: r.top, left: r.left, right: r.right, bottom: r.bottom, vw: window.innerWidth, vh: window.innerHeight }
+        const pane = document.querySelector<HTMLElement>('.cy-voice-pane')!
+        const r = pane.getBoundingClientRect()
+        const scroller = pane.closest<HTMLElement>('.cy-settings-body')
+        return {
+          top: r.top, left: r.left, right: r.right, bottom: r.bottom,
+          vw: window.innerWidth, vh: window.innerHeight,
+          scrollable: scroller ? scroller.scrollHeight > scroller.clientHeight + 1 : false
+        }
       })
       expect(box.top).toBeGreaterThanOrEqual(0)
       expect(box.left).toBeGreaterThanOrEqual(0)
       expect(box.right).toBeLessThanOrEqual(box.vw)
-      expect(box.bottom).toBeLessThanOrEqual(box.vh)
+      // 2026-09-13：不再要求整页底边 ⊆ 视口。语音子页新增「语音活动检测 / 静音结束」分组后比 800px 视口高约 90px
+      // （CI run 34740144774 红于 `expected 889.390625 to be less than or equal to 800`），而设置体
+      // （`.cy-settings-body`）本来就是**内部滚动**容器——其它子页同样高于视口，旧断言只是"刚好放得下"。
+      // 改判"可滚动到全部内容可见"：这条**更强**——滚到底后底边必须进入视口，真被裁掉仍会红。
+      if (box.bottom > box.vh) {
+        expect(box.scrollable, '子页高于视口时设置体必须可滚动（否则内容被永久裁掉）').toBe(true)
+        await page.evaluate(() => {
+          const scroller = document.querySelector<HTMLElement>('.cy-settings-body')!
+          scroller.scrollTop = scroller.scrollHeight
+        })
+        await expect.poll(() => page.evaluate(() => {
+          const pane = document.querySelector<HTMLElement>('.cy-voice-pane')!
+          return Math.round(pane.getBoundingClientRect().bottom)
+        }), POLL).toBeLessThanOrEqual(box.vh)
+        await page.evaluate(() => { document.querySelector<HTMLElement>('.cy-settings-body')!.scrollTop = 0 })   // 复位，后续断言按原滚动位置
+      } else {
+        expect(box.bottom).toBeLessThanOrEqual(box.vh)
+      }
       // 开关交互：翻「显示直接语音字幕」
       const cb = page.locator('.cy-vp-row', { hasText: '显示直接语音字幕' }).locator('input[type="checkbox"]')
       await cb.uncheck()

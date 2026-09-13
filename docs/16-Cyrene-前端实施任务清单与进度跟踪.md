@@ -161,8 +161,7 @@
 **本批变异验证共 10 次**（每次均确认"变异真的改变了代码路径"、且红在预期断言上）：②-1 一次、②-2 两次、
 ②-3 两次、②-4 一次、②-6 两次、②-7 一次；②-5 的三处问题由集成用例直接暴露（见决策记录 §4.5）。
 
-**本批被既有门禁/CI 抓到的三件事（都不是我复查出来的）**：① `settings-tools`＋`voice-handlers` 抓到
-**IP-1 缺陷类**——给 `VoiceSettingsSchema` 加字段级 default 后 `.partial()` 不剥 default，单字段 patch 会把
+**本批被既有门禁/CI 抓到的三件事（都不是我复查出来的）**：① `settings-tools`＋`voice-handlers` 抓到**IP-1 缺陷类**——给 `VoiceSettingsSchema` 加字段级 default 后 `.partial()` 不剥 default，单字段 patch 会把
 静音时长等非默认值改回默认（已拆出无默认的 `VoiceSettingsPatchSchema`）；② CI run `34737645766` 抓到
 `electron-live2d` B4 红于 `expected '90%' to contain '1.50'`——我新增的字体滑杆成了该页第一个 range／第一个读数，
 该用例的 `.first()` 位置假设当场失效（已改为按 testid 取）；③ 两处**门禁/测试自身**的 flake 已修：
@@ -172,6 +171,19 @@
 （7 个被整体重写、`const`→`oonst` 之类真实损坏）。已 `git checkout` 还原并改用编辑工具逐处重做，
 以 `git diff --numstat` 确认每处只 1–2 行。这是本仓库第三次同类事故（前两次：子代理 PowerShell 重写、
 我用 `Get-Content` 读回造成中文乱码）——**"仓库文件不要用 shell 读改写"没有例外**。
+
+**首次 CI 实测（run `34740144774`，8 job 中 6 绿）红两处，处置如下**：
+- `electron-voice` #7（**我的 UI 改动导致**）：`expected 889.390625 to be less than or equal to 800`——
+  语音子页新增「语音活动检测」分组后比 800px 视口高约 90px，而该用例当时断言**整页 ⊆ 视口**。
+  设置体（`.cy-settings-body`）本来就是内部滚动容器、其它子页同样高于视口，故把断言改为**更强**的
+  「可滚动到全部内容可见」（滚到底后底边必须进入视口，真被裁掉仍会红）。本地复验 `electron-voice` **16/16**。
+- `message-list-follow-bottom` ④（**既有 CI 偶发族，非本批改动**）：自诊断首次打出
+  `median=78px max=3341px within=19/25` 与 **`settledGap=3856px`**——按该用例自己写下的判据，
+  这是"永不收敛"那一支（缺陷形态），而不是"机器慢跟不上"。**但本地同 spec 三次全绿且贴底极稳**
+  （`median=0px max=124px within=25/25 settledGap=0px`），且该用例在**文档-only 提交**上也红过
+  （§1 已记）；本批未触碰跟随逻辑，上一轮 run（含 ②-4 的气泡改动）该文件亦为绿。
+  故**定性待定，不计作本批回归**，也不以调阈值换绿：下一轮 CI 若再现，应按"永不收敛"这一支查
+  （先复现 CI 等价小视口 + 负载）。数据点记此以免丢失。
 
 
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
