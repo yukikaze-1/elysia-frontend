@@ -151,12 +151,12 @@
 | 类型检查 | `pnpm typecheck` | PASS（exit 0；本批 4 次扩字段后各跑一遍） |
 | Lint | `pnpm lint` | PASS（exit 0；抓到 1 处未使用的解构变量，已改） |
 | 文档结构 | `pnpm docs:check` | PASS（20 core / **80** review / 40 superpowers / 42 archived） |
-| 单元测试 | `pnpm test` | PASS（**253 文件 / 3059 通过** + 6 expected-fail + 22 skipped；本批新增 6 个 spec 文件、约 45 条） |
+| 单元测试 | `pnpm test` | PASS（**253 文件 / 3059 通过** + 6 expected-fail + 22 skipped；本批新增 6 个 spec 文件、约 45 条）<br>**2026-09-13 数字校正：文件数 253 有误**——同一命令（`vitest.config.mts` 的 `include` 只含 `tests/unit/**/*.spec.ts`）在本批结束时实测 HEAD 上该 glob 恰为 **250** 个文件，且此后无任何单元 spec 被删除（`git log --diff-filter=D` 无命中）。**通过数 3059 经复核正确**：下一批新增 16 条后实测 3075 = 3059 + 16，逐条对得上；错的只是文件数一栏 |
 | 集成测试（新增 6 个 spec） | `pnpm test:integration` | PASS（逐文件实跑：`markdown-table-scroll`／`chat-drop-zone`／`font-scale`／`message-actions`／`context-menu`／`voice-silence-autostop`；回归确认 `electron-live2d` **28/28**、`electron-tools` **13/13**） |
 | 构建 | `pnpm build`（`electron-vite build`） | PASS |
 | 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动）——②-7 的「语言项不做」正是因为 wire 没有该字段 |
 | 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | **PASS（`f47988a` / [run 34741071616](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34741071616)：8/8 job 全绿）**。前三轮的红与处置见本表下方（`34740144774` 两红、`34740592698` 一红、`34741071616` 全绿——**同一批代码三轮内第 3 轮才全绿，其中 ④ 前两轮红、第 3 轮绿**） |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS（`f47988a` / [run 34741071616](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34741071616)：8/8 job 全绿）**。前三轮的红与处置见本表下方（`34740144774` 两红、`34740592698` 一红、`34741071616` 全绿——**同一批代码三轮内第 3 轮才全绿，其中 ④ 前两轮红、第 3 轮绿**）。其后的**纯文档提交** `db8cc56` / [run 34741444622](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34741444622) 同样 **8/8 全绿**（6m37s） |
 
 **本批变异验证共 10 次**（每次均确认"变异真的改变了代码路径"、且红在预期断言上）：②-1 一次、②-2 两次、
 ②-3 两次、②-4 一次、②-6 两次、②-7 一次；②-5 的三处问题由集成用例直接暴露（见决策记录 §4.5）。
@@ -203,8 +203,36 @@
 （X99 当时不在线，见 §5.12 的运维耦合），Windows job 则立即执行。**"静默窗口模式无需改 CI"由此条实证**——
 Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的静默模式。
 
-CI 历史（本表 CI 行只记当前批次，历史见下）：
+**2026-09-13 H-11b renderer 半边批次（持久化降级对用户可见）门禁记录**——用户同日从「还剩什么」清单里选定三批（① 运行时取证／② 小项清偿／⑤ H-11b renderer 半边），本行只记 ⑤；② 见下方同批次小节。完整决策、刻意没做的五项与过程发现见[决策记录](review/2026-09-13-H-11b-renderer半边-持久化降级对用户可见-决策记录.md)。
 
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（exit 0；扩契约字段后各跑一遍，含 4 次变异后的复跑） |
+| Lint | `pnpm lint` | PASS（exit 0） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / **81** review / 40 superpowers / 42 archived；本批新增 1 份决策记录，`docs:index` 已重生成） |
+| 单元测试 | `pnpm test` | PASS（**251 文件 / 3075 通过** + 6 expected-fail + 22 skipped；本批净增 16 条 = `session-store` +5、`draft.store` +5、`cy-persistence-banner` 5、`orphan-apps` +1——与上一批记录的 3059 逐条对得上，见上一批单元行的校正） |
+| 集成测试（新增 1 个 spec） | `pnpm test:integration` | PASS（`persistence-degraded` 2/2：本机以 **Windows 目录 junction** 形态跑通降级全链路；Linux 侧走**文件 symlink** 形态，断言更强——外部目标文件逐字节未变） |
+| 构建 | `pnpm build` | PASS |
+| 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动） |
+| 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
+| GitHub CI | `.github/workflows/ci.yml` | 见下方本批 CI 行 |
+
+**本批变异验证 4 次**（每次确认变异真的改了代码路径）：M1 摘掉 `App.vue` 的横幅 → 集成 ① 红（阳性对照仍绿）；M2 `assertWritable` 的码改回 `UNKNOWN` → 集成 ③′ 红，且打出修复前原样报文 `[UNKNOWN] 持久化已降级（…）`；M3 `persistNow` 的 catch 不再置位 → 单测/组件 **4 条红**；M4 `hydrate` 忽略 `persistenceDegraded` → 集成 ① 红（`expected +0 to be 1`），**证明"随水合告知"这条路径必要**。
+
+**本批两个值得记住的过程事实**：① **Windows 未开开发者模式时 `symlinkSync` 建文件 symlink 直接 EPERM**，第一版集成用例因此整组跳过——本机拿不到任何端到端证据、只有 CI 能验；探针实测发现**目录 junction 在 Windows 上免特权**且 `lstat().isSymbolicLink() === true`、`realpath` 解析到外部，**触发与文件 symlink 完全相同的降级路径**，故用例按可用形态择一（两种形态的 `trigger` 实测都是 `read-failed:unknown`），两条平台都能跑真链路。②「键入后外部文件未变」在"键入根本没触发写入"时**同样成立**，是假绿——故加了一条**常驻阳性对照**（健康应用走同一条键入路径，证明真的写了盘，且此时不显示横幅）。
+
+**2026-09-13 小项清偿批次（同一次会话的第 ② 批）**——用户在「还剩什么」清单里选的第二批，四项都不需要产品决定：
+
+| # | 小项 | 处置与证据 |
+|---|---|---|
+| ②-1 | `orphan-apps` 的 `electronCount` **误报**（决策记录 §6 第 3 条） | 字段注释写「进程表里所有 **electron** 进程数量」，实现却是 `table.entries.length`。Windows 侧无感（CIM 查询已按 `Name='electron.exe'` 过滤），**Linux 侧走 `/proc` 全表** ⇒ 每轮 CI 打印「检测到 43 个非本套件的 Electron 进程」，**稀释真实孤儿告警的可信度**。修法：把 `carriesTestAppSignature` 里内联的 electron 二进制判据提取为具名谓词 `isElectronProcess`，`electronCount` 改为过滤后计数（判据本身一字未改，两处共用同一谓词）。变异：改回 `table.entries.length` → 新用用例红于 `expected 5 to be 2` |
+| ②-2 | 用户可见文案的**半角逗号**（台账 doc 03 §5.3 行） | 只读扫描（剥离注释后匹配「CJK 后半角逗号」）命中 14 处：**用户可见 8 处已改全角**——`CyChatInput.vue` 断线横幅 1 处 + `real-backend.ts`／`frame-mapper.ts` **7 条会经 IPC 原文展示给用户的 `CyreneError` 文案**（`NOT_CONNECTED`／`PROTOCOL_MISMATCH` 都不在 `error-message.ts` 的映射表里 ⇒ 走回退链 ③ 原文显示）。**日志 5 处刻意不改**（`this.warn` 只进日志、用户看不到；注释/日志用半角是本仓既有惯例）。无新门禁：判据（"哪些字符串算用户可见"）需要人工分类，做成扫描门禁必然要开 allowlist，反而更脆 |
+| ②-3 | doc 03 §15「窄窗口下 Live2D 和会话栏可折叠」**口径修正** | 台账建议的「文档修正」已就地落地：清单行内直接写明**当前不可验收**＋1100 以上固定布局＋<1100 属已知产品缺口＋**不得读作"已实现"或"待回归"**，并指向 §3.1 的范围修正；§9 末尾的注记同步指向行内改写 |
+| ②-4 | doc 16 补 7 项批次**纯文档提交**的 CI 行 | `db8cc56` / [run 34741444622](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34741444622) **8/8 全绿**（6m37s）——即"三次才全绿"那批代码之后的文档提交同样首跑即绿 |
+
+**门禁**：`typecheck`／`lint`／`unit`（`orphan-apps` 28 passed + 1 skipped）全 PASS；②-1 过变异验证；②-2 的扫描是**只读**脚本（临时目录，未入库）。两项文档改动经 `pnpm docs:index` + `docs:check`。
+
+CI 历史（本表 CI 行只记当前批次，历史见下）：
 - `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
 - `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。
@@ -501,12 +529,22 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
     - ① 取得 `windows-runtime` 与 `linux-runtime` 的**首次完整**结果：两者均为 `workflow_dispatch` + **每周定时**（周日 20:00／21:00 UTC），不手动也会自动跑。现状：`linux-runtime` 已 dispatch 过一次（`34685789785`，红于当时尚未定位的 `/proc/<pid>/exe` OOM 缺陷，该缺陷已由 `5261a82` 修复）；`windows-runtime` 修好 invalid workflow 与无代理两处后**尚未取得过完整结果**。**在此之前「Windows 能跑全量集成」只是本机 Session 1 的证据、「自建 Linux 更快」只是推算，均不得当作 CI 事实**。
     - ② 记录 self-hosted `windows` job 的首次冷启动耗时（服务账号 profile 为空）与转暖后的稳定值。
     - ③ 若 `windows-runtime` 在观察窗口内持续绿，再决定是否提升为必过门禁；提升前必须先处置 `protocol-handler` 两条 symlink 用例的跳过缺口，否则「少测两条安全边界」会被绿光掩盖。
-    - ④ 与平台无关的 CI 时长优化（integration 分片、`unit`/`windows` 两 job 的 Electron 二进制重复下载、`orphan-apps` 的 `electronCount` 误报）见[决策记录 §6](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md)，**尚未实施**。
+    - ④ 与平台无关的 CI 时长优化见[决策记录 §6](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md)。**2026-09-13 逐条复核**：
+      - integration 分片**已实施**（同决策记录 §9.3，`ci.yml` 现为三分片 + live2d 独占）。
+      - `unit`/`windows` 两 job 的 Electron 二进制重复下载：两 job 现均跑在**自建 runner**上，`~/.cache/electron` 跨 run 持久（`ci.yml` 头部明确不加 `actions/cache`：走缓存服务反而每 run 多传约 120MB），故**代价只在首次冷启动**。
+        另记一处**前提失效**：原文指的 `tool-executors.ts:5` 直接 `import { dialog } from 'electron'` 已在静默窗口批次改为经 `defaultDialogService`，故"unit 每次触发懒下载"这一条**需要重新实测，本轮未测**。
+      - **`orphan-apps` 的 `electronCount` 误报已于 2026-09-13 修复**（`table.entries.length` → 按 `isElectronProcess` 过滤，见下方小项批次行）。
     - ⑤ ~~Linux 侧 `yomu-X99` 仍为 offline、需先 `svc.sh install/start`~~ **已被 `257f66d` 及其后的 run 推翻**：三个实例已装成 systemd 服务（`enable --now`）、CPU 亲和写进 drop-in（`4-13`／`14-23`／`0-3`，实测三个 listener 亲和列表一致）、xvfb 与 Playwright 系统依赖已就位，标签分离为 `fe-linux`（实例 1、2，重型）与 `fe-light`（实例 3，轻型）。同 OS 基线已取（非 live2d `26 files / 129 tests`、267s；`electron-live2d` 182.3s），不再需要「由 ① 取基线」。
 5.1 **H-06／H-07 侦察已定案（2026-09-11，只读复核）**，两处与评审措辞不符，修前须知：① 评审称公开状态卡片「既不自愈也不报错」**不准确**——实际会显示「读取失败 + 重试」并给出错误码，只是**不会自动恢复**（`loadState` 只有两个调用方，无轮询/重订阅）；② 更严重的是侦察发现的**确定性缺陷**（**已由 `07c71dd` 修复，见 §3.1**）：mock 模式下 `createCharacter`／`cloneCharacter` **从不创建 `states` 条目**，故**每一个用户自建角色**的公开状态卡片在 mock 下永久报 `CHARACTER_INSTANCE_NOT_FOUND`（全仓无 `instance-custom*` 用例，从未被覆盖）。修法方向：让读路径携带 revision（`getCharacterState(instanceId, expectedRevision)`），由 Main 在一个键空间上做唯一栅栏，并删掉组件层第三份重复规则；同时修 mock 的 state 映射。
 5. **H-01 的取舍已按推荐定案**：采用完整默认黑名单，`/tmp` 与 `%TEMP%` 下的附件会被拒——理由是这两个目录的同用户临时文件同样可能含密钥，而附件链是 Renderer 唯一能用字符串指认本地文件的地方；代价明确且**改一处即可放开**。H-12 的两处取舍亦已定案：`uncaughtException` 接管 fail-safe（弹窗 + 退出），`unhandledRejection` 只留痕不终止。
 6. H-01 的**结构性修法未做**：Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造（需改 preload↔Main 附件契约，复杂度 L）。
-7. H-11b 的降级故障只到「Main 拒绝写入 + 日志/诊断计数 + `getLastError()`」；**renderer 侧仍不会向用户显示持久化故障**（`draft.store` 的持久化失败是 fail-open 吞掉的），属 M-19 一类。
+7. ~~H-11b 的降级故障只到「Main 拒绝写入 + 日志/诊断计数 + `getLastError()`」；**renderer 侧仍不会向用户显示持久化故障**（`draft.store` 的持久化失败是 fail-open 吞掉的），属 M-19 一类。~~
+   **已完成（2026-09-13，本会话）**：
+   - 降级态随**启动水合**告知 Renderer（`SessionPersistenceState.persistenceDegraded`）、`CyPersistenceBanner` **全局**挂载（任何视图可见）；
+   - 错误码拆为 `PERSISTENCE_DEGRADED`／`PERSISTENCE_WRITE_FAILED`（此前都兜底成 `UNKNOWN/内部错误`），跨 IPC 的只有**无路径投影**（基名 + 封闭触发标签）；
+   - **拒绝写入语义与操作级 fail-open 均未变**；这一条同时兑现了 doc 06 §12 一直写着却从未实现的「**提示用户**」；
+   - 变异 4 次；集成用例在本机（Windows **junction** 形态）与 CI（Linux **symlink** 形态）都能跑真链路，见 §3.1。
+   **M-19（设置保存失败不可见）仍是独立未修项**（属产品决定），见决策记录 §3 与残余小节。
 8. ~~M-20 其余 6 处 `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）未动、待用户决定~~ **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`，见 §3.1）：这 6 处改用配对文本 token `--cy-accent-text`（`tokens.css:33`，明暗两套；评审建议的 `--cy-accent-strong` 在浅色下仍 <4.5:1，故未采用）。本轮复测：`color: var(--cy-accent)` 在 `src/renderer/src` 下 **0 命中**，配对 token 有 29 处使用。此项因此不再需要用户决定。
 9. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
 10. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
@@ -525,11 +563,11 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 | doc 03 §7.4 | 表格横向滚动不被裁切 | 未实现 | **做**（纯 CSS） |
 | doc 11 §3.3 | 语音 VAD／静音结束／语言设置项 | **部分实现（2026-09-13）**：语音活动检测（静音自动结束录音）+ 静音结束时长（1–5s，默认关闭）已落地并有端到端证据（静音 WAV 假麦克风）。**「语言」未做**：wire 的 `voice.record.start` 只有 `{recordingId, audio?}`，无 language 字段——做一个不抵达后端的下拉框等于假装交付 | **做（低优先）**：VAD/静音结束已完成；语言需后端支持后另立 |
 | doc 03 §5.2 | 加载更多／失败重试 | 未实现（现有懒加载＋错误态已覆盖功能面） | **建议砍／降级**（观感增强） |
-| doc 03 §5.3 | 骨架屏＋创建引导 | 未实现；另：空态文案含半角逗号 | **建议砍**（骨架屏）；半角逗号属可随手修的小 bug |
+| doc 03 §5.3 | 骨架屏＋创建引导 | 未实现；另：空态文案含半角逗号 —— **半角逗号已修（2026-09-13）**：只读扫描 `src/**` 的「注释外 CJK 后半角逗号」命中 14 处，其中**用户可见文本 8 处已改全角**（`CyChatInput` 断线横幅 1 处 + `real-backend` 7 条会经 IPC 原文展示的 `CyreneError` 文案），**日志文本 6 处刻意不改**（`this.warn` 只进日志、用户看不到；日志/注释的半角是本仓既有惯例） | **建议砍**（骨架屏）；半角逗号**已完成** |
 | doc 03 §12.3 | 发送快捷键／自动滚动 | 未实现（Enter 发送已有） | **建议先澄清规格**（"快捷键可配"与"自动滚动开关"语义未定） |
 | doc 11 §9 | 未同步／同步中／已同步／错误 四态 | `同步中`／`已同步` **0 命中** | **建议砍或改写规格**（当前不存在"跨端同步"概念） |
 | 评审 §18／进度条 | 进度反馈 | `role="progressbar"` **0 命中** | **建议砍**（无明确消费者） |
-| doc 03 §15 验收项 | 「窄窗口下 Live2D 和会话栏可折叠」 | 窗口硬最小宽度 **1100** ⇒ <1100 不可达，该项**当前不可验收** | **文档修正**（改为"1100 以下不可达；1100 以上固定布局"） |
+| doc 03 §15 验收项 | 「窄窗口下 Live2D 和会话栏可折叠」 | 窗口硬最小宽度 **1100** ⇒ <1100 不可达，该项**当前不可验收** | **文档修正**：**已按建议就地改写口径（2026-09-13）**——清单行内直接写明「当前不可验收、1100 以上固定布局、<1100 属已知产品缺口、不得读作已实现或待回归」，并指向 §3.1 的范围修正 |
 
 ## 6. 状态维护规则
 
