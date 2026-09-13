@@ -31,7 +31,11 @@ const props = defineProps<{
   characterBinding?: CharacterBindingSnapshot
   revisionIdentity?: RevisionIdentityDisplay
   userDisplayName?: string
+  /** 生成中/发送中：操作行里的重发与重新生成此刻不可用（与输入区禁用发送同一口径）。
+   *  动作本身由父层（CyMessageList）执行——本组件不 import store，保持"展示 + 交互"职责。 */
+  busy?: boolean
 }>()   // UI 问题 1 修复：不再按 visible 延迟渲染——虚拟窗口/overscan 内全量渲染真实内容，消除「完整↔骨架」几何切跳
+const emit = defineEmits<{ resend: [messageId: string]; regenerate: [messageId: string] }>()
 
 // —— UII-QQ 时间戳批次：每条 Message 只显示一次时间（inner_voice/public_reply/工具卡/emotion 共用）——
 // 默认可见内容仅本地 HH:mm（h23）；<time datetime> 保留原始 createdAt，title/aria-label 为完整本地时间；
@@ -147,6 +151,15 @@ async function onCopy(): Promise<void> {
 }
 // 虚拟列表会频繁挂载/卸载行——定时器必须随组件销毁清理，否则卸载后仍写 ref
 onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
+
+// —— doc 03 §7.5（2026-09-13）：重发 / 重新生成 的**可用性**判据 ——
+// 有正文、且没有附件/贴图（重发要重走上传与贴图校验，属独立范围）才给「重新发送」；
+// 「重新生成」只对含正文的助手回复给出。
+const canResend = computed(() => isUser.value
+  && (props.message.content ?? '').length > 0
+  && (props.message.attachments?.length ?? 0) === 0
+  && !props.message.stickerId)
+const busy = computed(() => props.busy === true)
 </script>
 
 <template>
@@ -166,9 +179,19 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <CyAttachmentMedia :kind="a.kind" :attachment-id="a.attachmentId" :media-type="a.mediaType" :name="a.name" :size="a.size" />
       </div>
       <span v-if="message.status === 'failed'" class="cy-user-error-badge" title="发送失败">发送失败</span>
-      <!-- H-02：消息操作行（右对齐随 user 列） -->
+      <!-- H-02：消息操作行（右对齐随 user 列）；doc 03 §7.5（2026-09-13）补「重新发送」 -->
       <div v-if="copyableText" class="cy-msg-actions">
         <button type="button" class="cy-msg-action" data-testid="message-copy" :aria-label="copied ? '已复制' : '复制消息'" @click="onCopy">{{ copied ? '已复制' : '复制' }}</button>
+        <button
+          v-if="canResend"
+          type="button"
+          class="cy-msg-action"
+          data-testid="message-resend"
+          :disabled="busy"
+          :title="busy ? '生成中，暂不可重新发送' : undefined"
+          aria-label="重新发送"
+          @click="emit('resend', message.messageId)"
+        >重新发送</button>
       </div>
     </div>
     <span class="cy-avatar cy-avatar-user" role="img" :title="userDisplayName" :aria-label="userDisplayName">我</span>
@@ -225,9 +248,18 @@ onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
         <span v-if="message.usage">{{ message.usage.total }} tokens</span>
       </div>
       <span v-if="terminalNote" class="cy-status-note">{{ terminalNote }}</span>
-      <!-- H-02：消息操作行（复制回答——本产品最高频操作，此前三条路全断） -->
+      <!-- H-02：消息操作行（复制回答——本产品最高频操作，此前三条路全断）；doc 03 §7.5（2026-09-13）补「重新生成」 -->
       <div v-if="copyableText" class="cy-msg-actions">
         <button type="button" class="cy-msg-action" data-testid="message-copy" :aria-label="copied ? '已复制' : '复制回答'" @click="onCopy">{{ copied ? '已复制' : '复制' }}</button>
+        <button
+          type="button"
+          class="cy-msg-action"
+          data-testid="message-regenerate"
+          :disabled="busy"
+          :title="busy ? '生成中，暂不可重新生成' : undefined"
+          aria-label="重新生成"
+          @click="emit('regenerate', message.messageId)"
+        >重新生成</button>
       </div>
     </div>
   </div>

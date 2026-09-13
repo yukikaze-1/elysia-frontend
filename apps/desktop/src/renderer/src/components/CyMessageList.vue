@@ -143,6 +143,19 @@ const pendingLoadAnchor = ref<ReturnType<typeof captureAnchor>>()
 const isStreaming = computed(() => !!messageStore.activeGenerationId)
 const isEmpty = computed(() => items.value.length === 0)
 
+/** doc 03 §7.5（2026-09-13）：重发/重新生成的可用性——与输入区禁用发送同一口径 */
+const actionBusy = computed(() => messageStore.sending || isStreaming.value)
+
+/** 重新发送一条用户消息（不新增气泡；判定与拒绝理由见 message.store.resendUserMessage） */
+function onResend(messageId: string): void {
+  void messageStore.resendUserMessage(messageId)
+}
+
+/** 重新生成：以该回复之前最近的一条用户消息重发一次（新 clientRequestId ⇒ 新一代回复） */
+function onRegenerate(messageId: string): void {
+  void messageStore.regenerateFrom(messageId)
+}
+
 /** UII-QQ 轮次分组（纯展示）：与前一条「非 tool」消息角色不同的行为「轮首」。
  *  tool 行是空占位（assistant→tool→assistant 是同一工具调用轮次），跳过不计轮；
  *  预计算 Set（每 items 变化一次），模板按全局 index 查询——不加 class 不改虚拟列表数学
@@ -456,6 +469,9 @@ onMounted(() => {
           :character-binding="conversationStore.currentCharacter"
           :revision-identity="revisionIdentityFor(messageStore.byId[id])"
           :user-display-name="userDisplayName"
+          :busy="actionBusy"
+          @resend="onResend"
+          @regenerate="onRegenerate"
         />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>

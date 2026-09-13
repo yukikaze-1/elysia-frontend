@@ -17,9 +17,9 @@ function baseMsg(partial: Partial<Message>): Message {
   return { messageId: 'm1', conversationId: 'c1', role: 'user', content: 'hello', status: 'completed', createdAt: CREATED_AT, ...partial }
 }
 
-function mountBubble(message: Message) {
+function mountBubble(message: Message, props: Record<string, unknown> = {}) {
   return mount(CyMessageBubble, {
-    props: { message },
+    props: { message, ...props },
     global: { stubs: { CyMarkdown: true, CyAttachmentMedia: true, CyToolCard: true } },
   })
 }
@@ -239,5 +239,57 @@ describe('CyMessageBubble 复制按钮（H-02）', () => {
     const w = mountBubble(baseMsg({ role: 'tool', content: undefined }))
     expect(w.find('[data-testid="message-copy"]').exists()).toBe(false)
     w.unmount()
+  })
+})
+
+// —— doc 03 §7.5（2026-09-13）：消息操作行补「重新发送」/「重新生成」——
+// 本组件只负责**可用性与事件**（动作本身由 CyMessageList 调 store；理由见组件内注释）。
+describe('CyMessageBubble 重发/重新生成入口（doc 03 §7.5）', () => {
+  it('user 消息：复制 + 重新发送；不带重新生成', () => {
+    const w = mountBubble(baseMsg({ role: 'user', content: '我的问题' }))
+    expect(w.find('[data-testid="message-copy"]').exists()).toBe(true)
+    expect(w.find('[data-testid="message-resend"]').exists()).toBe(true)
+    expect(w.find('[data-testid="message-regenerate"]').exists(), '重新生成只属于助手回复').toBe(false)
+    w.unmount()
+  })
+
+  it('assistant 消息：复制 + 重新生成；不带重新发送', () => {
+    const w = mountBubble(baseMsg({ role: 'assistant', content: undefined, assistantSegments: [{ segmentId: 'p1', segmentIndex: 0, channel: 'public_reply', kind: 'text', text: '回答', completed: true }] }))
+    expect(w.find('[data-testid="message-copy"]').exists()).toBe(true)
+    expect(w.find('[data-testid="message-regenerate"]').exists()).toBe(true)
+    expect(w.find('[data-testid="message-resend"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('点击各发各的事件，且带本条 messageId（父层据此定位）', async () => {
+    const user = mountBubble(baseMsg({ role: 'user', content: 'x', messageId: 'u-42' }))
+    await user.find('[data-testid="message-resend"]').trigger('click')
+    expect(user.emitted('resend')).toEqual([['u-42']])
+    user.unmount()
+
+    const assistant = mountBubble(baseMsg({ role: 'assistant', content: undefined, messageId: 'a-42', assistantSegments: [{ segmentId: 'p1', segmentIndex: 0, channel: 'public_reply', kind: 'text', text: '答', completed: true }] }))
+    await assistant.find('[data-testid="message-regenerate"]').trigger('click')
+    expect(assistant.emitted('regenerate')).toEqual([['a-42']])
+    assistant.unmount()
+  })
+
+  it('生成中（busy）：两个动作都禁用并给出原因（不做静默 no-op）', () => {
+    const w = mountBubble(baseMsg({ role: 'user', content: 'x' }), { busy: true })
+    const btn = w.find('[data-testid="message-resend"]').element as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(btn.title).toContain('生成中')
+    // 复制不受 busy 影响（它不触碰生成链）
+    expect((w.find('[data-testid="message-copy"]').element as HTMLButtonElement).disabled).toBe(false)
+    w.unmount()
+  })
+
+  it('带附件或贴图的用户消息不提供重新发送（重发要重走上传/贴图校验，属独立范围）', () => {
+    const withAttachment = mountBubble(baseMsg({ role: 'user', content: 'x', attachments: [{ attachmentId: 'att-1', kind: 'image', mediaType: 'image/png' }] }))
+    expect(withAttachment.find('[data-testid="message-resend"]').exists()).toBe(false)
+    withAttachment.unmount()
+
+    const withSticker = mountBubble(baseMsg({ role: 'user', content: '', stickerId: 'st-1' }))
+    expect(withSticker.find('[data-testid="message-resend"]').exists()).toBe(false)
+    withSticker.unmount()
   })
 })

@@ -880,6 +880,134 @@ export const useMessageStore = defineStore('message', () => {
     }
   }
 
+  // —— 消息操作行（doc 03 §7.5，2026-09-13）：重新发送 / 重新生成 ——
+  //
+  // 两者共用一条**不新增气泡**的发送路径，理由是把 doc 12 C-03 的验收原话当硬约束：
+  // 「重发同一请求不会创建两条用户消息」。若照搬 send()（它总是先插一条 `local-*` 乐观消息），
+  // 重发一次界面上就会出现两条一模一样的用户消息——正是该验收要排除的形态。
+  //
+  // 与真实后端的语义（doc 02 §19）：同一 clientRequestId + 同内容摘要 → 返回原 ACK、**不重复生成**；
+  // 中断后要重新生成则必须用**新** clientRequestId（doc 02 §16.2）。故：
+  //   - 已确认（acknowledged）的消息重发 → **复用**原 clientRequestId（幂等重试：ACK 丢了也不会造第二条）；
+  //   - 发送失败（failed）的消息重发 → 铸**新** id（旧 id 从未到达后端）并把乐观 key 迁到 serverMessageId；
+  //   - 重新生成 → 恒铸新 id（要的就是新一代）。
+  // ⚠ mock 与 real 在这里语义不同：mock 不按 clientRequestId 去重（每次发送都新起一代），
+  //   故"复用 id ⇒ 不重复生成"这条只能在真实后端上验证，集成用例只断言两侧都成立的用户可见不变量
+  //   （用户消息条数不变）。
+
+  /** 生成中/发送中：与输入区禁用发送同一口径，避免重发与在途请求争同一个 accumulator */
+  function busy(): boolean {
+    return sending.value || activeGenerationId.value !== undefined
+  }
+
+  /**
+   * 重新发送一条用户消息（doc 03 §7.5「用户消息：复制、重新发送」）。
+   * 不新增气泡：就地改本条消息的状态（pending → acknowledged / failed）。
+   * 带附件或贴图的消息不在此路径内（重发要重走上传/贴图校验，属独立范围）——调用方据此隐藏入口。
+   */
+  async function resendUserMessage(messageId: string): Promise<boolean> {
+    const msg = byId.value[messageId]
+    if (!msg || msg.role !== 'user') return false
+    const text = msg.content ?? ''
+    if (!text) return false
+    if ((msg.attachments?.length ?? 0) > 0 || msg.stickerId) return false
+    if (busy()) return false
+    const conversationId = msg.conversationId
+    syncConnectionSessionFromStore()
+    const capturedSession: GenerationSessionIdentity = {
+      conversationId,
+      connectionEpoch: connectionEpoch.value,
+      connectionSignature
+    }
+    const owner = Symbol('resend')
+    sendingOwner = owner
+    lastError.value = undefined
+    // 幂等重试 vs 新请求：见上方注释块
+    const reuse = msg.status !== 'failed' ? msg.clientMessageId : undefined
+    const clientRequestId = reuse ?? crypto.randomUUID()
+    msg.clientMessageId = clientRequestId
+    const prevStatus = msg.status
+    msg.status = 'pending'
+    sending.value = true
+    try {
+      const ref = await api.send({ conversationId, text, clientRequestId })
+      if (!sendRequestIsCurrent(owner, capturedSession)) return false
+      if (ref?.serverMessageId) migrateKey(msg.messageId, ref.serverMessageId, msg)
+      msg.status = 'acknowledged'
+      void useCacheStore().pushMessages(conversationId, [msg], nowIso(), {
+        guard: () => {
+          syncConnectionSessionFromStore()
+          return generationSessionMatches(capturedSession)
+        }
+      })
+      return true
+    } catch (e) {
+      if (!sendRequestIsCurrent(owner, capturedSession)) return false
+      msg.status = 'failed'
+      lastError.value = parsePublicError(messageOf(e))
+      return false
+    } finally {
+      // 被会话/连接栅栏挡下时不要把状态留在 pending（否则气泡永远显示"发送中"）
+      if (msg.status === 'pending') msg.status = prevStatus
+      if (sendingOwner === owner) {
+        sendingOwner = undefined
+        sending.value = false
+      }
+    }
+  }
+
+  /**
+   * 重新生成：以**目标助手回复之前最近的一条用户消息**为输入重发一次（恒用新 clientRequestId，
+   * doc 02 §16.2 对中断场景的规定），不新增用户气泡、也不改动既有回复。
+   *
+   * 为什么旧回复保留而不是原位替换：一次生成对应一个 responseId，重生成得到的是**新的** responseId
+   * ——即 doc 03 §7.2「同一 responseId 只显示一次操作区」意义上的新回复组。原位替换会伪造"同一条回复
+   * 被改写"的语义，且与回放/缓存里的既有快照冲突。旧回复因此留在历史里（doc 12 C-11 的撤回/分支
+   * 属另一项、未在本轮范围）。
+   */
+  async function regenerateFrom(assistantMessageId: string): Promise<boolean> {
+    const target = byId.value[assistantMessageId]
+    if (!target || target.role !== 'assistant') return false
+    const idx = order.value.indexOf(assistantMessageId)
+    if (idx < 0) return false
+    // 向前找最近的一条**有正文的**用户消息（同会话）
+    let prompt: Message | undefined
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      const candidate = byId.value[order.value[i]!]
+      if (candidate?.role === 'user' && candidate.conversationId === target.conversationId && (candidate.content ?? '')) {
+        prompt = candidate
+        break
+      }
+    }
+    if (!prompt) return false
+    if (busy()) return false
+    const conversationId = target.conversationId
+    syncConnectionSessionFromStore()
+    const capturedSession: GenerationSessionIdentity = {
+      conversationId,
+      connectionEpoch: connectionEpoch.value,
+      connectionSignature
+    }
+    const owner = Symbol('regenerate')
+    sendingOwner = owner
+    lastError.value = undefined
+    sending.value = true
+    try {
+      await api.send({ conversationId, text: prompt.content ?? '', clientRequestId: crypto.randomUUID() })
+      if (!sendRequestIsCurrent(owner, capturedSession)) return false
+      return true
+    } catch (e) {
+      if (!sendRequestIsCurrent(owner, capturedSession)) return false
+      lastError.value = parsePublicError(messageOf(e))
+      return false
+    } finally {
+      if (sendingOwner === owner) {
+        sendingOwner = undefined
+        sending.value = false
+      }
+    }
+  }
+
   /**
    * H-10：停止生成——**乐观**取消。
    *
@@ -1202,6 +1330,8 @@ export const useMessageStore = defineStore('message', () => {
     applyEvent,
     send,
     sendVoiceCommit,
+    resendUserMessage,
+    regenerateFrom,
     cancel,
     setHighlight,
     clearHighlight,
