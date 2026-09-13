@@ -14,7 +14,6 @@ import { useVoiceStore } from '../stores/voice.store'
 import { useSettingsStore } from '../stores/settings.store'
 import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import CyAttachmentQueue from './CyAttachmentQueue.vue'
-import CyDropOverlay from './CyDropOverlay.vue'
 import CyEmojiPicker from './CyEmojiPicker.vue'
 import CyVoicePending from './CyVoicePending.vue'
 import CyRealtimeBar from './CyRealtimeBar.vue'
@@ -31,8 +30,6 @@ const voiceStore = useVoiceStore()
 const settingsStore = useSettingsStore()
 const historyStore = useHistoryViewerStore()   // UII-QQ IA：聊天记录/资源入口移入 Composer 工具栏（离线可用，不 gating）
 const fileInput = ref<HTMLInputElement>()
-const dragActive = ref(false)
-let dragDepth = 0
 
 // 多套 UI 基础：错误文案统一走映射器（store 只产 code）
 const sendErrorText = computed(() => errorMessage(messageStore.lastError, '发送失败，请重试。'))
@@ -294,25 +291,13 @@ function stop(): void {
   void messageStore.cancel()
 }
 
-// —— G3 附件收集（点击/拖拽/粘贴仅 source 不同；拖拽/粘贴只建条目，不自动上传/发送，spec §4.3）——
+// —— G3 附件收集（点击/粘贴仅 source 不同；粘贴只建条目，不自动上传/发送，spec §4.3）——
+// 拖拽入聊天区的落区**不在这里**：docs/03 §8.3 要求落区是整个聊天区域，故归 CyChatView 的 .cy-chat
+// 根（原先只有本 footer 收拖拽 ⇒ 往消息列表里拖没有任何反馈）。附件状态机仍是同一条。
 function onFilePick(e: Event): void {
   const input = e.target as HTMLInputElement
   if (input.files) attachmentStore.addFiles(Array.from(input.files).map((f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'picker', file: f })))
   input.value = ''
-}
-function onDrop(e: DragEvent): void {
-  dragActive.value = false
-  dragDepth = 0
-  if (e.dataTransfer?.files?.length) {
-    attachmentStore.addFiles(Array.from(e.dataTransfer.files).map((f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'drag_drop', file: f })))
-  }
-}
-function onDragEnter(e: DragEvent): void {
-  if (e.dataTransfer?.types?.includes('Files')) { dragDepth += 1; dragActive.value = true }
-}
-function onDragLeave(): void {
-  dragDepth = Math.max(0, dragDepth - 1)
-  if (dragDepth === 0) dragActive.value = false
 }
 async function onPaste(e: ClipboardEvent): Promise<void> {
   const files = Array.from(e.clipboardData?.files ?? [])
@@ -328,10 +313,6 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
 <template>
   <footer
     class="cy-composer"
-    @dragenter="onDragEnter"
-    @dragleave="onDragLeave"
-    @dragover.prevent
-    @drop.prevent="onDrop"
     @paste="onPaste"
   >
     <!-- 断线横幅(重连/错误时提示;connected 时隐藏) -->
@@ -387,10 +368,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
       <span>{{ attachmentStore.canSend.blockReason }}</span>
     </div>
 
-    <!-- G3 待发送附件队列 + 拖拽覆盖层 -->
+    <!-- G3 待发送附件队列（拖拽覆盖层已上移到聊天区根：docs/03 §8.3 的落区是整个聊天区域） -->
     <template v-if="!isRealtime">
       <CyAttachmentQueue />
-      <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" @leave="dragActive = false" />
 
       <!-- UII-QQ：单一 Composer 容器——上工具栏（＋/😊/🎙️）/ 中 textarea 自适应 / 底栏（实时语音 | 提示+转写+停止+发送）。
            所有事件函数、disabled 条件、录音计时、按住转写、上滑取消语义不变（红线：业务行为不回退） -->

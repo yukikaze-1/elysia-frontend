@@ -3,20 +3,49 @@
 // conversationStore 激活/新建(F1:create 不 reset messageStore,新建后须显式 activate(c.id))。
 // UII-QQ IA 调整：头部只保留会话标题——聊天记录/资源移入 Composer 工具栏（CyChatInput），
 // 连接状态移入 NavRail 底部（CyConnectionPanel），角色开关改为聊天区右缘折叠把手（仅面板隐藏时显示）。
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useConversationStore } from '../stores/conversation.store'
 import { useMessageStore } from '../stores/message.store'
 import { useLayoutStore } from '../stores/layout.store'
 import { useAppStore } from '../stores/app.store'
+import { useAttachmentStore } from '../stores/attachment.store'
 import CyMessageList from './CyMessageList.vue'
 import CyChatInput from './CyChatInput.vue'
 import CyTtsPlayer from './CyTtsPlayer.vue'
 import CyLiveToolCards from './CyLiveToolCards.vue'   // 阶段 6 批次 B（Task 7）：工具实时区（消息列表与输入区之间）
+import CyDropOverlay from './CyDropOverlay.vue'
 
 const conversationStore = useConversationStore()
 const messageStore = useMessageStore()
 const layout = useLayoutStore()
 const appStore = useAppStore()
+const attachmentStore = useAttachmentStore()
+
+// —— docs/03 §8.3：投放落区是**整个聊天区域**（消息列表 + 工具实时区 + 输入区），不只是输入条 ——
+// 迁自 CyChatInput（原先只有 footer 收拖拽，往消息列表里拖没有任何反馈）。落地仍走**同一附件状态机**：
+// 只创建待发送附件条目，不自动上传、不自动发送（§8.3 与 §15 验收项）。
+const dragActive = ref(false)
+let dragDepth = 0
+function onDragEnter(e: DragEvent): void {
+  if (e.dataTransfer?.types?.includes('Files')) { dragDepth += 1; dragActive.value = true }
+}
+function onDragLeave(): void {
+  dragDepth = Math.max(0, dragDepth - 1)
+  if (dragDepth === 0) dragActive.value = false
+}
+function onDrop(e: DragEvent): void {
+  dragActive.value = false
+  dragDepth = 0
+  if (e.dataTransfer?.files?.length) {
+    attachmentStore.addFiles(Array.from(e.dataTransfer.files).map((f) => ({
+      name: f.name,
+      size: f.size,
+      mediaType: f.type || 'application/octet-stream',
+      source: 'drag_drop' as const,
+      file: f,
+    })))
+  }
+}
 
 const convTitle = computed(() => {
   const c = conversationStore.items.find((i) => i.id === conversationStore.currentId)
@@ -36,7 +65,14 @@ function openCharacterDetails(): void {
 </script>
 
 <template>
-  <section class="cy-chat" :class="{ 'cy-live2d-off': !layout.effective.live2dShown }">
+  <section
+    class="cy-chat"
+    :class="{ 'cy-live2d-off': !layout.effective.live2dShown }"
+    @dragenter="onDragEnter"
+    @dragleave="onDragLeave"
+    @dragover.prevent
+    @drop.prevent="onDrop"
+  >
     <header class="cy-chat-header" :class="{ 'is-compact': compactHeader }">
       <!-- UII-QQ IA：头部仅会话标题（左对齐可省略）。全局连接状态在 NavRail 底部；
            聊天记录/资源在 Composer 工具栏；角色开关在右缘把手（面板隐藏时显示） -->
@@ -57,6 +93,9 @@ function openCharacterDetails(): void {
     <CyChatInput />
     <!-- P4-B TTS 播放宿主：隐藏 <audio>，由 voiceStore.tts.url 驱动（spec §5.12 / D-P8） -->
     <CyTtsPlayer />
+
+    <!-- docs/03 §8.3：覆盖式虚线投放区覆盖整个聊天区域（绝对定位锚点见 .cy-chat 的 position: relative） -->
+    <CyDropOverlay :active="dragActive" :count="attachmentStore.order.length" />
 
     <!-- UII-QQ IA：角色栏折叠把手——仅面板隐藏时显示；点击 toggleLive2d（layoutStore 语义不变）。
          位于聊天区右缘，.cy-live2d-off 时消息区让出 16px 边条，不遮挡滚动条/回到底部/输入区 -->
