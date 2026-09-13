@@ -239,6 +239,7 @@
 
 
   **④ 已在 CI 机器上复现（2026-09-13，同日最后一轮）——复现配方与冻结曲线见下方本批记录。** 冻结曲线第一次真的用上，结论是**它不是"慢"，而是"停住且不恢复"**：`top` 冻在 8139 而 `height` 从 8882 涨到 12568，流式结束后三次 5s 重采样**全是 3856px**（明确不收敛），且与 CI `34740144774` 的数值逐像素相同。
+  **④ 第二轮（同日追加）：根因分支已确认**——加了只读探针（`data-follow-intent`/`data-at-bottom`）后在 X99 第 5 轮命中：`intent=11000…`（跟随意图在第 3 个采样后**被清**）、`atb` 同步变 0、此后 `top` 连续 23 个采样不变而 `height` 持续增长、重采样 3 次全不变。按几何量反推，那一刻距底只比 `BOTTOM_EPS=40` 大几像素 ⇒ **一次约 40–50px 的瞬时下移就足以把"跟随"判成"用户上翻"且永不恢复**。**修复未做**（该处滚动语义"防误清"曾试过一次并被既有测试反驳，属独立批次），方案与约束见[决策记录 §4bis](review/2026-09-13-持久化失败可见性收口与follow-bottom复现-决策记录.md)。
 
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
 `unit tests` 1m16s、`integration (shard 1/3)` 3m16s、`(2/3)` 2m09s、`(3/3)` 1m09s、`integration (live2d)` 3m38s、
@@ -322,6 +323,27 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 **两处被既有门禁/用例抓到的真问题**：① `voice-handlers.spec` 的 settings 替身缺 `getLastError()`（handler 依赖面变了）当场变红，已按其真实契约补齐；② **我第一版"判别用例"是假判别**——用 safeRoot 不匹配造降级时 `assertStorageRoot` 本来就会拦住写，"覆写"发生不了，红的只是错误码不同；已改为"正确 safeRoot + 注入 isolate 失败"的真实形态。
 
 **④ 复现（本批最大产出）**：在 CI 机器 `yomu-X99`（本机可免密 `ssh 192.168.1.18`）上建临时工作树、按分片 CPU 亲和（`taskset -c 14-23`）跑同一条用例 **8 轮，1 轮冻结**（`median=78px settledGap=3856px`），拿到冻结曲线：`top` 冻在 8139 而 `height` 8882→12568，**流式结束后三次 5s 重采样全为 3856px（明确不收敛，不是"慢"）**，并与 CI `34740144774` 数值逐像素相同。配方、探针方案与残余见决策记录 §4。**判据未改**。
+
+**2026-09-13 B 类清单批次（`88aced4`／`6b2a14e`／本提交）门禁记录**——用户选定「做 B 的那些」（doc 16 §5 的"现在就能做、不需要新决策"清单）。逐条状态：
+
+| B 项 | 状态 | 证据/说明 |
+|---|---|---|
+| ④ follow-bottom 收口 | **根因分支已确认，修复未做** | 只读探针 + X99 配方第 5 轮命中：`intent` 1→0、`atb` 同步 0、`top` 连续 23 采样不变、重采样全不变；反推"一次约 40–50px 的瞬时下移即清意图"。**修复属独立批次**（理由见决策记录 §4bis.3） |
+| 单测不得触发 Electron 懒下载（原设想为门禁） | **改为实测修正 + 串行化 ensure** | 扫描实测**否掉了门禁方案**：252 个 unit spec 里 **50 个**合法到达 `from 'electron'`（dialog-service 32／registry 8／safe-storage 2…）。真问题是干净工作区里多 worker **首次解包并发** ⇒ `os error 183`。`pnpm test` 改为先 `ensure:electron`（与 integration 脚本同款），并更正 `ci.yml` 那段错误注释（含实测数字） |
+| 两条 flake | **一条已修，一条已定位未修** | ① `window-presentation` 的固定 80ms 等待 → 改 `vi.waitFor` 等同终态条件（断言未放宽）；② `real-backend-search`（真实 HTTP server + ws，`restFailure`）在重负载下偶发，**只取到一次现场**，未猜修 |
+| 清理临时物 | **已完成** | 本机 `x99` remote 已删；X99 工作树/分支/临时日志已清（Electron 缓存保留） |
+| 设置域降级可见性口径 | **已落定（保持设置页内）** | 影响面限于设置页；全局横幅留给草稿/缓存域。若要全局可见需再决策 |
+| M-26 录音 PCM 缓冲／type-aware lint 全集＋测试目录／H-01 `fileRef` 结构性修法／H-06·H-07 IPC 级读 | **本轮未做** | 三者都是独立批次（分别为：音频热路径、1171 条风格规则、复杂度 L 的契约改造），不在"一轮内安全落地"的范围 |
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查／Lint | `pnpm typecheck`／`pnpm lint` | PASS（exit 0） |
+| 单元测试 | `pnpm test` | PASS（**252 文件 / 3098 通过** + 6 expected-fail + 22 skipped；本批无新增用例，改的是等待方式与启动前串行 ensure） |
+| 集成测试 | `pnpm test:integration` | PASS（`message-list-follow-bottom` 4/4，含新增探针输出；**本机健康态实测 `intent=111…1` 而 `atb` 会闪 0**——正是"意图/位置分离"要挡的那件事） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / **84** review / 40 superpowers / 42 archived） |
+| GitHub CI | `.github/workflows/ci.yml` | `88aced4`／`6b2a14e` 的 run 见下方本批 CI 行（`pnpm test` 改动影响 unit job；探针只加两个 DOM 属性） |
+
+**本批变异/反证 2 次**：① **我的冻结判定第一版被自己的复现证伪**（单点重复 ⇒ 假阳性，X99 run2 `intent` 全程 1、用例通过）；② **我原打算立的"单测不得 import electron"门禁被扫描实测否掉**（50 个 spec 合法依赖）。两次都是"先量再改"救回来的。
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
