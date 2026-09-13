@@ -138,6 +138,42 @@
 | 产物校验 | `pnpm verify:artifact` | **本机未执行**：本轮未触碰打包链；`--smoke` 已显式改为静默启动（`CYRENE_WINDOW_MODE=silent`）。**CI 侧已跑并绿**：`packaged artifact smoke` job（含真实启动冒烟）通过，见本表下方 CI 行 |
 | GitHub CI | `.github/workflows/ci.yml` | **PASS（已推送并复核）**：`3b60bc0`（同一次 push 含 `e21f98c` 的全部代码改动）/ [run 34716921956](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34716921956) **8/8 job 全绿**；逐 job 耗时与"静默默认无需改 CI"的结论见本表下方 |
 
+**2026-09-13 规格漂移台账「建议做」七项批次（`4514e1d`／`280830a`／`fa114e3`／`6e7e122`／`bb23706`／`4d0ba5e`／`e09f486`／`714a656`）门禁记录**——
+
+用户 2026-09-13 确认「先做 ① 文档同步 + ② 台账里建议做的 7 条」。7/7 已落地，每条按「修 → 测试 → 变异验证 → 全门禁 → 提交」；
+完整决策、取舍、**刻意没做的四件事**与过程事故见[决策记录](review/2026-09-13-规格漂移台账七项落地-决策记录.md)。逐项：
+②-1 表格横向滚动（doc 03 §7.4）、②-2 拖入聊天区（§8.3）、②-3 全局字体缩放 + 即时预览（§12.4／doc 11 §7.2）、
+②-4 消息重发 + 重新生成（§7.5）、②-5 会话/消息右键菜单（§5.1）、②-6 截图预览显示所选屏窗 + 上传前提醒（§10）、
+②-7 语音活动检测/静音结束（doc 11 §3.3；**「语言」未做**——wire 无 language 字段）。
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（exit 0；本批 4 次扩字段后各跑一遍） |
+| Lint | `pnpm lint` | PASS（exit 0；抓到 1 处未使用的解构变量，已改） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / **80** review / 40 superpowers / 42 archived） |
+| 单元测试 | `pnpm test` | PASS（**253 文件 / 3059 通过** + 6 expected-fail + 22 skipped；本批新增 6 个 spec 文件、约 45 条） |
+| 集成测试（新增 6 个 spec） | `pnpm test:integration` | PASS（逐文件实跑：`markdown-table-scroll`／`chat-drop-zone`／`font-scale`／`message-actions`／`context-menu`／`voice-silence-autostop`；回归确认 `electron-live2d` **28/28**、`electron-tools` **13/13**） |
+| 构建 | `pnpm build`（`electron-vite build`） | PASS |
+| 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动）——②-7 的「语言项不做」正是因为 wire 没有该字段 |
+| 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
+| GitHub CI | `.github/workflows/ci.yml` | 见本表下方（推送后取回） |
+
+**本批变异验证共 10 次**（每次均确认"变异真的改变了代码路径"、且红在预期断言上）：②-1 一次、②-2 两次、
+②-3 两次、②-4 一次、②-6 两次、②-7 一次；②-5 的三处问题由集成用例直接暴露（见决策记录 §4.5）。
+
+**本批被既有门禁/CI 抓到的三件事（都不是我复查出来的）**：① `settings-tools`＋`voice-handlers` 抓到
+**IP-1 缺陷类**——给 `VoiceSettingsSchema` 加字段级 default 后 `.partial()` 不剥 default，单字段 patch 会把
+静音时长等非默认值改回默认（已拆出无默认的 `VoiceSettingsPatchSchema`）；② CI run `34737645766` 抓到
+`electron-live2d` B4 红于 `expected '90%' to contain '1.50'`——我新增的字体滑杆成了该页第一个 range／第一个读数，
+该用例的 `.first()` 位置假设当场失效（已改为按 testid 取）；③ 两处**门禁/测试自身**的 flake 已修：
+`file-writer` 定时 flush（run `34735704341` 的 windows job 红）与 `temp-dirs` 前缀扫描超时（断言均未放宽，只改等待方式/预算）。
+
+**一处自伤事故（记录在案）**：批量补测试夹具字段时用 PowerShell 读改写仓库文件，**损坏了 8 个测试文件**
+（7 个被整体重写、`const`→`oonst` 之类真实损坏）。已 `git checkout` 还原并改用编辑工具逐处重做，
+以 `git diff --numstat` 确认每处只 1–2 行。这是本仓库第三次同类事故（前两次：子代理 PowerShell 重写、
+我用 `Get-Content` 读回造成中文乱码）——**"仓库文件不要用 shell 读改写"没有例外**。
+
+
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
 `unit tests` 1m16s、`integration (shard 1/3)` 3m16s、`(2/3)` 2m09s、`(3/3)` 1m09s、`integration (live2d)` 3m38s、
 `packaged artifact smoke` 47s（含真实启动冒烟）、`windows build-level` 3m44s。
@@ -419,7 +455,13 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 
 ## 5. 下一步
 
-1. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
+1. **规格漂移台账「建议做」七项已全部落地（2026-09-13）**：②-1 表格横向滚动、②-2 拖入聊天区、
+   ②-3 全局字体缩放（即时预览、全阶梯跟随）、②-4 消息重发/重新生成、②-5 会话与消息右键菜单、
+   ②-6 截图预览显示所选屏窗 + 上传前提醒、②-7 语音活动检测/静音结束。**四项刻意没做**（决策记录 §3）：
+   语言设置项（wire 无 language 字段）、消息右键"Edit 菜单"的两种读法、代码字体大小/强调色/主题、
+   doc 04 §8.4 注记里 result 含尺寸/格式的漂移。台账剩余 6 条是"建议砍／改文档"，需产品决定。
+   详见[决策记录](review/2026-09-13-规格漂移台账七项落地-决策记录.md)与 §3.1 的本批次门禁行。
+2. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
 4. 全量评审建议的 P0 批次**已全部完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；**P0-7 的 `EXT-01` 半边已解除**（2026-09-12：使用范围限定为个人自用 ⇒ 该约束面没有实例，见 §4 与对应决策记录）。Windows 打包进 CI（P2-4）**已完成**：`ci.yml` 的 windows job 跑 `electron-builder --dir` 与静态 `verify:artifact`（L388／L392 实测）。
