@@ -85,14 +85,21 @@ jobs:
 
       # Windows 无 xvfb（也不需要）：直接跑 test:integration（内含 electron-vite build --mode test + vitest）
       # 不写 `shell: pwsh`：本机**没装 PowerShell 7**，写了反而会因找不到 pwsh 而失败（托管 runner 才预装）。
-      # 默认 shell（Windows PowerShell 5.1）下要保住两件事：
-      #   ① `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }` 不可省——PowerShell 管道的退出码取自最后一条
-      #      命令（Tee-Object 恒为 0），少了它会把失败伪装成通过（这正是本 workflow 头部要避免的假绿）；
-      #      用 `if` 而不是 `exit $LASTEXITCODE` 是因为后者在 5.1 下不会被解析成"条件退出"。
-      #   ② Tee-Object 在 5.1 下可用，日志仍会落盘并作为 artifact 上传。
+      #
+      # 2026-09-13 修复（**首次真实执行的实测教训**）：原先写的是
+      #   `pnpm ... test:integration 2>&1 | Tee-Object -FilePath windows-runtime.log`
+      # 结果 run `34742115780`（本 workflow 首次真正跑起来的一次）**只上传了 1 个文件**——
+      # `windows-runtime-sha.txt`，证据 artifact 大小 219 字节，**测试日志一个字都没留下**：
+      # PowerShell 5.1 下这条管道的 stdout 全被缓冲到进程结束，而结束时的输出走的是 native stderr
+      # 错误记录，`Tee-Object` 因此从未收到输入、也就从未创建文件（本机复现：同一构造对会正常输出
+      # 的命令能建文件，对"输出只在退出瞬间出现"的长命令不建）。**红在哪一条**恰恰是本 job 一半的价值，
+      # 所以不修这个就等于白跑 26 分钟。
+      # 现改为让 **cmd 自己重定向**（重定向文件由 cmd 创建，必然存在，哪怕是空的），退出码经
+      # `$LASTEXITCODE` 原样传出；并给上传步骤加 `if-no-files-found: error`——证据缺失必须变红，
+      # 不能再出现"artifact 只有 219 字节却算上传成功"。
       - name: Integration tests (Windows, no xvfb)
         run: |
-          pnpm --filter @cyrene/desktop test:integration 2>&1 | Tee-Object -FilePath windows-runtime.log
+          cmd /c "pnpm --filter @cyrene/desktop test:integration > windows-runtime.log 2>&1"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record commit SHA (runtime evidence)
@@ -105,6 +112,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-runtime-evidence
+          if-no-files-found: error
           path: |
             windows-runtime.log
             windows-runtime-sha.txt
