@@ -57,7 +57,10 @@ const WS_V2_FRAME_TYPES = [
   'character.state.changed', 'character.catalog.changed'
 ]
 const RAW_SCHEMAS = new URL('../src/main/transport/protocol-v2/raw-schemas.ts', import.meta.url)
-// 未纳帧(capabilities/transcription/command/wake/service_mode_result):前端有意滞后,只 warn 不报错(F2 白名单)
+// 未纳帧(2026-09-14 对权威后端实测,6 型):capabilities / command / live2d.directive /
+// service_mode_result / transcription / wake——前端有意滞后,只 warn 不报错(F2 白名单)。
+// 原注释只列了 5 型且漏掉 live2d.directive(后端 ServerMessage 现已含该帧;doc 02 §19.1 的
+// "数据来源与记录"注记曾据此写成"后端未含",已一并更正)。名单与口径见 doc 02 §19.2;改白名单时同步更新该表。
 
 /**
  * 后端仓库未挂载（CI / 他人机器 / Windows 开发机未配 CYRENE_FRONTEND_CONTRACT_DIR）：

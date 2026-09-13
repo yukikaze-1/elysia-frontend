@@ -995,7 +995,27 @@ idle → connecting → connected
 | D-9 | `generation.completed.finishReason` 限 stop/tool_calls | 前端消息状态 completed | 取消/错误统一走 `generation.failed`，前端不得从 `state idle` 推断完成 |
 | D-10 | `server_info.features` / `services` | 连接能力快照 | 各 feature 如实声明；前端据 `features` 门控 UI，不超前实现 |
 
-**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧 `556117a` 已为 `dictation.start` 增加 `sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），**D-8 关闭（契约已确认）**；无剩余待后端确认项。**批次 C 注记：** `live2d.directive` 为**前端超集帧**（后端 `frontend_contract` 当前未含该帧类型，`check:contract` WS 28/28 通过不触发报错）；契约为前端冻结（raw 帧类型 + 前端事件字段映射见上表），后端实发时按冻结契约对齐即可。E-03 凭据所有权契约已确认（后端 Secret Store `data/secrets/` + `credentialConfigured` 只读；desktop/local 凭据归 Electron），可按「已开发、未联调」推进阶段 1。
+**数据来源与记录：** 交接包 `frontend-handoff-v2` 批次 7（`docs/electron-backend-protocol-v2.md` v0.6、`frontend_contract/`、`traces/ws-v2-*.jsonl`）；后端侧 `556117a` 已为 `dictation.start` 增加 `sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT），**D-8 关闭（契约已确认）**；无剩余待后端确认项。**批次 C 注记（2026-09-14 更正）：** `live2d.directive` **已不是"前端超集帧"**——对权威后端实测，该帧**已在后端 `ServerMessage` 判别联合内**（属前端有意滞后、只 warn 不报错的 6 型之一，见 §19.2）。本句原文"后端 `frontend_contract` 当前未含该帧类型"依据的是**过期读数**，且所引"`check:contract` WS 28/28 通过"是批次 7 时点的数字——**口径本身也是错的**：该门禁只核对"前端已认的帧型"，**结构上不可能发现"后端新增、前端未认"的帧**，故"通过"不能用来论证后端未含某帧。契约为前端冻结（raw 帧类型 + 前端事件字段映射见上表），后端实发时按冻结契约对齐即可。E-03 凭据所有权契约已确认（后端 Secret Store `data/secrets/` + `credentialConfigured` 只读；desktop/local 凭据归 Electron），可按「已开发、未联调」推进阶段 1。
+
+### 19.2 帧类型覆盖清单（契约门禁的观测口径）
+
+**基线：** 2026-09-14 对权威后端实测（后端 `fc57b16d`，经 X99 取回 `frontend_contract/` + `traces/ws-v2-*.jsonl`），命令与口径见 [决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md)。**建立本表的直接动因**：这三处此前在本文档**一次都没出现**——`typing`、`character.state.changed`、`character.catalog.changed`（全文检索 0 命中），即"代码已认、文档未记"的静默漂移。
+
+后端 `ServerMessage` 判别联合实测 **42 型**。前端口径分三块：
+
+| 类别 | 型数 | 说明 |
+|---|---|---|
+| 门禁核对面（前端已认且后端实有） | **36** | `check:contract` 实测 `36/36`，且 `traces/` 内 14 个 `ws-v2-*.jsonl` 共 **88 条帧**解析后逐字段相等 |
+| 前端已认、后端 `ServerMessage` 未检出 | **1** | `character.catalog.changed`（多角色 FE-A 为"两侧任一就绪即可对拍"预先入白名单；门禁只做子集判定，故**不会**因前端多认而报错） |
+| 后端有、前端有意滞后（只 warn） | **6** | `capabilities`、`command`、`live2d.directive`、`service_mode_result`、`transcription`、`wake` |
+
+另有三型**不在** `ServerMessage` 联合内，故不计入上述 42 型，但**仍被前端白名单接纳**，一并记录于此以免再次漏记：`typing`（兼容帧）、`character.state.changed`（多角色角色状态帧）、`character.catalog.changed`（见上表第 2 类）。
+
+**三条必须与上表同时读的口径：**
+
+1. **两边都取不到 ≠ 通过。** 门禁是**子集判定**：`36/36` 只证明"前端已认的 36 型在后端仍存在且逐字段未变"，**证明不了**"后端没有新增帧"。新增帧会先落进上表第 3 类的 warn 口径。
+2. **前 6 型的名单本身也会漂移。** 这 6 型是从后端判别联合现算的；`live2d.directive` 就是**新增进来的**——原脚本注释只列了 5 型且漏掉它，本节"数据来源与记录"注记还据此写成"后端未含该帧"（2026-09-14 已更正）。改白名单时须同步本表。
+3. **"文档 ↔ 代码"这一段没有被任何门禁守着。** 现有 `check:contract` 是"代码 ↔ 后端"；本表覆盖的三型漂移正是从这个缺口里长出来的。本文档的帧型口径**由人工与本表对拍**，改动 `raw-schemas.ts` 或白名单时需一并复核。
 
 完成这张表并通过真实事件联调后，才可以把本文状态从“待与现有后端核对”改为“已对齐 / 可作为工程契约基线”。
 

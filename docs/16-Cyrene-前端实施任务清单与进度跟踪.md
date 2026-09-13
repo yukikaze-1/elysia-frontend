@@ -120,6 +120,8 @@
 | 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 | **未执行**：本轮未触碰打包链 |
 | GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） | **PASS**（`da64667` / [run 34562266876](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34562266876)：5 个 job 全绿，首跑即绿） |
 
+**单行注记（2026-09-14，勿合并进本表）：** 本表「跨仓契约」行的多列 `NOT VERIFIED` **仍然有效**（它们各自记录的批次当时确实没跑，历史不改写）；**但"本机核验不到后端"这一前提已被取代**——2026-09-14 对权威后端 `fc57b16d` 取得可复现的 **PASS**（WS v2 36/36 + 88 条帧逐字段相等 + REST 16/16，exit 0），方法、假绿教训与纪律见本小节末尾的 2026-09-14 批次块与[决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md)。**该行不予改写**：本表逐列对应历史批次，改写会让"哪一批真跑过"失真。
+
 **2026-09-12 测试静默窗口模式批次（`e21f98c`／`3b60bc0`，已推送）门禁记录**——主表里"单元测试/集成测试"两行的行宽已到
 `docs:check` 的 500 字符上限（该检查逐行生效），故本批**不追加列**，单列于此：
 
@@ -391,6 +393,23 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | flake 复核 | 全量单测**连跑 10 次** | **10/10 绿**（修复前同口径 15 轮 2 红，另 10 轮 1 红） |
 | X99 配方（④） | 16 轮 | **16/16 绿**（第三轮修复后的第二次独立复核） |
 | GitHub CI | `.github/workflows/ci.yml` | **PASS**：[run 34774556848](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34774556848)（`f7ce3ea`）**8/8 首跑即绿**——含"测试目录 type-aware 全集"生效后的 `typecheck + lint`，以及带新增 ④c 断言的全部集成分片 |
+
+**2026-09-14 契约核验与文档漂移收口批次（`A-1`＋`A-2`，纯文档 + 一处脚本注释）**——用户选定「做 A-1 + A-2」，并明确「不用跑 ci 和测试，文档类更新不用这么麻烦」。完整决策、被自己纪律拦下的假绿、刻意没做的五件事见[决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md)。
+
+| 项 | 状态 | 证据/说明 |
+|---|---|---|
+| A-1 `check:contract` 核验口径与实测 | **已取得可复现的 PASS** | 权威后端在 X99（`fc57b16d`，2026-09-14）；按既有先例取回到**临时目录**核验、仓库零改动：**WS v2 36/36 型**、12 个契约文件 /**88 条帧**逐字段相等、**REST 16/16**、**exit 0**。doc 16 §3.1 的该行由此从"未重跑"改为有日期的实测 |
+| 　└ 一条新纪律（本批最重要产出） | **已确立** | 我图省事把 `CYRENE_FRONTEND_CONTRACT_DIR` 指向**本机** `~/Desktop/elysia-agent`，得到一份 **`36/36` + `16/16` 的假绿**——而那份克隆停在 `5669ed32`、**没有 `contract.schema.json`、没有真实轨迹**（字段级比对已降级为合成探针）。它比 `NOT VERIFIED` 危险：数字行与真通过**逐字相同**，只有中间的"(0 条来自后端契约文件)"与 exit 2 能揭示。**纪律：本机后端克隆一律不得作为契约核验的权威来源**；读数必须连同 exit code 与最后一行一起看 |
+| A-2 doc 02 帧型覆盖清单 | **已补 §19.2** | 后端 `ServerMessage` 实测 **42 型**：**36** 为门禁核对面；**6 型后端有、前端有意滞后**（`capabilities`／`command`／`live2d.directive`／`service_mode_result`／`transcription`／`wake`）；前端白名单 **37** 条里 **1 条**（`character.catalog.changed`）后端未检出。另记三型**不在** `ServerMessage` 内但被前端接纳——`typing`／`character.state.changed`／`character.catalog.changed`，`git show HEAD` 全文检索**各 0 命中**，即"代码已认、文档未记"的静默漂移 |
+| 　└ 更正一处与实测相反的主张 | **已就地更正（doc 02 §19 末）** | 原文称 `live2d.directive` 是"前端超集帧（后端当前未含）"、并以"`check:contract` WS 28/28 通过"为据。**事实层错**（该帧已在后端 `ServerMessage` 内）＋**论证层错**（该门禁是子集判定，**结构上不可能发现"后端新增、前端未认"的帧**，故"通过"对此命题零信息量） |
+| 　└ 脚本注释更正 | **已改（纯注释，逻辑未动）** | `check-backend-contract.mjs` 原注释只列 **5** 型且**漏掉 `live2d.directive`**；改为实测 6 型并注明"改白名单时同步 doc 02 §19.2" |
+| **"文档 ↔ 代码"仍无门禁** | **只记录，未建守护** | `check:contract` 是"代码 ↔ 后端"；本批把当前状态**记准**了，但下次漂移仍不会被自动发现。可选形态（从白名单 + `raw-schemas.ts` 校验 doc 02 清单，可离线）属独立决策 |
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 跨仓契约 | `CYRENE_FRONTEND_CONTRACT_DIR=<临时目录> pnpm -F @cyrene/desktop check:contract` | **PASS（exit 0）**：对权威后端 `fc57b16d`，WS v2 36/36 + 88 条帧逐字段相等 + REST 16/16（CI 侧仍为 NOT VERIFIED：CI 无后端仓库，本批未改其行为） |
+| 文档结构 | `pnpm docs:index`＋`pnpm docs:check` | 见本行下方（本批为纯文档 + 脚本注释，按用户指示**未跑** `typecheck`／`lint`／`test`／`test:integration`） |
+| 产品代码 | — | **零改动**：`typing`／`character.*` 三型的**实现早已存在**，缺的只是文档记录；wire 行为未触碰 |
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
