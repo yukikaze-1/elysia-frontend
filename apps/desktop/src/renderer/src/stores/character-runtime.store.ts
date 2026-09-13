@@ -7,6 +7,7 @@ import type {
 } from '@shared/contracts'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { toRejection } from '../utils/rejection'
 import { characterIdentityMismatch } from '../utils/character-identity'
 import { cloneValue } from '@shared/domain'
 
@@ -168,7 +169,14 @@ export const useCharacterRuntimeStore = defineStore('character-runtime', () => {
     if (next <= connectionEpoch.value) return
     connectionEpoch.value = next
     const pendingInstances = [...new Set([...pending.keys()].flatMap((key) => {
-      try { return [JSON.parse(key)[0] as string] } catch { return [] }
+      // 绑定键是 JSON 数组（[instanceId, revision]）：解析结果先落 unknown 再判型，
+      // 原写法 `JSON.parse(key)[0]` 直接在 any 上取下标（2026-09-13 type-aware 全集）。
+      try {
+        const parsed: unknown = JSON.parse(key)
+        if (!Array.isArray(parsed)) return []
+        const first: unknown = parsed[0]
+        return typeof first === 'string' ? [first] : []
+      } catch { return [] }
     }))]
     pending.clear()
     const instances = new Set([...bindingKeysByInstance.keys(), ...Object.keys(statesByInstanceId.value), ...pendingInstances])
@@ -262,12 +270,13 @@ export const useCharacterRuntimeStore = defineStore('character-runtime', () => {
     }
     requests.set(key, owner.request)
     markKeyStatus(instanceId, key, 'loading')
-    const getter = api && api.getCharacterState
+    // `.bind(api)`：显式摘取方法（`unbound-method`，2026-09-13 type-aware 全集）
+    const getter = api ? api.getCharacterState?.bind(api) : undefined
     let operation: Promise<CharacterPublicState>
     try {
       operation = getter ? Promise.resolve(getter(instanceId)) : Promise.reject<CharacterPublicState>(missingApiError())
     } catch (cause) {
-      operation = Promise.reject(cause)
+      operation = Promise.reject(toRejection(cause))
     }
     const task = operation
       .then((state) => {

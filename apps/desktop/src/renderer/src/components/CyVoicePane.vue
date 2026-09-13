@@ -87,7 +87,6 @@ function waitForRecording(): Promise<boolean> {
     if (voiceStore.mode === 'idle' && !voiceStore.consentPending && !voiceStore.confirmDispatching) { resolve(false); return }
 
     let settled = false
-    let stopWatch: (() => void) | undefined
     const settle = (v: boolean): void => {
       if (settled) return
       settled = true
@@ -95,7 +94,11 @@ function waitForRecording(): Promise<boolean> {
       stopWatch?.()
       resolve(v)
     }
-    stopWatch = watch(
+    // prefer-const（2026-09-13，type-aware 全集把核心规则一并带进 `.vue`）：原写法是
+    // `let stopWatch: (() => void) | undefined` 之后再赋值，但该变量只被赋值一次；
+    // 改 const 后 `settle` 引用的是**已初始化**的它——`watch` 无 `immediate`，
+    // 回调不会在注册时同步触发，故不存在"注册过程中调用 settle 命中 TDZ"的路径。
+    const stopWatch = watch(
       () => [voiceStore.mode, voiceStore.consentPending, voiceStore.confirmDispatching] as const,
       ([mode, pending, confirming]) => {
         if (mode === 'recording') { settle(true); return }

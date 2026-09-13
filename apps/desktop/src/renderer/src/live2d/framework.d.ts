@@ -132,3 +132,64 @@ declare module '@framework/rendering/cubismrenderer_webgl' {
     release(): void
   }
 }
+
+// —— 2026-09-13（type-aware lint 全集批次）补的五个模块 ——
+//
+// 这五个模块此前只落在 `@framework/*` 通配（模块整体 `any`），于是 adapter 里
+// `new CubismMotionManager()` / `CubismMotion.create(...)` / `mvp.setupFromLayout(...)` 全部是
+// "unsafe call/construction/member access"（实测 6 条）。按本文件既定的做法（第 10-12 行：
+// 「对实际用到的模块以同模块名 + 显式导出面覆盖，收紧型面」）补齐——**不加 any、不加 eslint-disable**。
+// 签名逐条对照 vendored 源码：cubismmotionmanager.ts:62（startMotionPriority，priority: number）、
+// cubismmotionqueuemanager.ts:56（startMotion，userTimeSeconds 可选）与 :152（stopAllMotions）、
+// cubismmotionmanager.ts:84 与 cubismexpressionmotionmanager.ts:107（updateMotion → boolean）、
+// cubismmotion.ts:327 与 cubismexpressionmotion.ts:42（static create(buffer, size)）、
+// cubismmodelmatrix.ts:22（constructor(w?, h?)）与 :160（setupFromLayout(Map<string, number>)）。
+
+declare module '@framework/motion/cubismmotion' {
+  import type { CubismModel } from '@framework/model/cubismmodel'
+  /** 对照 motion/cubismmotion.ts：本项目只消费 `create` 与"可被 manager 接管"这一身份 */
+  export class CubismMotion {
+    static create(buffer: ArrayBuffer, size: number): CubismMotion
+    updateParameters(model: CubismModel, userTimeSeconds: number): boolean
+  }
+}
+
+declare module '@framework/motion/cubismexpressionmotion' {
+  export class CubismExpressionMotion {
+    static create(buffer: ArrayBuffer, size: number): CubismExpressionMotion
+  }
+}
+
+declare module '@framework/motion/cubismmotionmanager' {
+  import type { CubismModel } from '@framework/model/cubismmodel'
+  import type { CubismMotion } from '@framework/motion/cubismmotion'
+  export class CubismMotionManager {
+    constructor()
+    /** 返回本次开始的识别号；开始不了时为 -1（cubismmotionmanager.ts:62-74） */
+    startMotionPriority(motion: CubismMotion, autoDelete: boolean, priority: number): number
+    stopAllMotions(): void
+    /** 推进一帧；返回"本帧是否有动作被更新"（cubismmotionmanager.ts:84） */
+    updateMotion(model: CubismModel, deltaTimeSeconds: number): boolean
+  }
+}
+
+declare module '@framework/motion/cubismexpressionmotionmanager' {
+  import type { CubismModel } from '@framework/model/cubismmodel'
+  import type { CubismExpressionMotion } from '@framework/motion/cubismexpressionmotion'
+  export class CubismExpressionMotionManager {
+    constructor()
+    /** 继承自 CubismMotionQueueManager.startMotion（cubismmotionqueuemanager.ts:56） */
+    startMotion(motion: CubismExpressionMotion, autoDelete: boolean, userTimeSeconds?: number): number
+    stopAllMotions(): void
+    updateMotion(model: CubismModel, deltaTimeSeconds: number): boolean
+  }
+}
+
+declare module '@framework/math/cubismmodelmatrix' {
+  /** 对照 math/cubismmodelmatrix.ts:15（extends CubismMatrix44）——本项目只消费构造与 Layout 装配 */
+  export class CubismModelMatrix {
+    constructor(w?: number, h?: number)
+    setupFromLayout(layout: Map<string, number>): void
+    getArray(): Float32Array
+  }
+}

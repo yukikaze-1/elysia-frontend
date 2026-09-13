@@ -31,7 +31,7 @@ export interface CharacterDraftStoreDeps {
   appCache: string
   safeRoot: string
   logger: Logger
-  countDiagnostic(code: string): void
+  countDiagnostic: (code: string) => void
   /** 单测可注入原子 writer；生产默认使用 atomicWriteFile。 */
   writer?: typeof atomicWriteFile
 }

@@ -1,7 +1,7 @@
 // src/main/transport/protocol-v2/content-part.ts
 // 阶段 3 G3（spec §4.4/§4.5，D7）：媒体 ContentPart 建模——schema 保持 content:unknown，
 // 建模在映射层（两 schema content 为 z.unknown().optional()，媒体本可过 .strict() 解析，真实缺口是映射层丢媒体）。
-import type { AttachmentKind, MessageAttachment } from '@shared/contracts/message'
+import type { MessageAttachment } from '@shared/contracts/message'
 import { STICKER_ID_PATTERN, stickerIdFromResourceUrl } from '@shared/domain'
 export { STICKER_ID_PATTERN }   // P0-03：main 层门面 re-export（media-service 代理白名单 import 复用，免第三份拷贝）
 
@@ -117,7 +117,7 @@ export function mapContentMedia(content: unknown): MessageAttachment[] {
     if (!m.attachmentId) continue
     attachments.push({
       attachmentId: m.attachmentId,
-      kind: m.kind as AttachmentKind,
+      kind: m.kind,
       mediaType: m.mediaType ?? 'application/octet-stream',
       ...(m.name ? { name: m.name } : {}),
       ...(m.size !== undefined ? { size: m.size } : {}),

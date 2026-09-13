@@ -13,7 +13,6 @@ import { useSettingsStore } from '../stores/settings.store'
 import { useAppStore } from '../stores/app.store'
 import { LIVE2D_MAX_WIDTH, LIVE2D_MIN_WIDTH } from '../layout/constants'
 import type { CharacterState } from '../live2d/state-machine'
-import type { PerformanceMode } from '@shared/contracts'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
 import { documentVisible } from '../utils/document-visibility'
 import CyCharacterPublicState from './CyCharacterPublicState.vue'
@@ -254,7 +253,7 @@ function forwardView(): void {
 }
 watch(() => settings.live2d.autoMotions, (v) => store.setAutoMotions(v), { immediate: true })
 watch(() => settings.live2d.lipSync, (v) => store.setLipSync(v), { immediate: true })
-watch(() => settings.live2d.performanceMode, (v) => store.setPerformanceMode(v as PerformanceMode), { immediate: true })
+watch(() => settings.live2d.performanceMode, (v) => store.setPerformanceMode(v), { immediate: true })
 watch(() => settings.live2d.scale, () => forwardView(), { immediate: true })
 watch(() => settings.live2d.offsetX, () => forwardView(), { immediate: true })
 watch(() => settings.live2d.offsetY, () => forwardView(), { immediate: true })

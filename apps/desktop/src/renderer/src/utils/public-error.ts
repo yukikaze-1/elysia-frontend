@@ -47,7 +47,12 @@ export function parsePublicError(message: string): PublicError {
             if ((issue.severity !== 'error' && issue.severity !== 'warning') || typeof issue.code !== 'string' || typeof issue.path !== 'string' || typeof issue.message !== 'string') return []
             if (issue.code.length > 80 || issue.path.length > 300 || issue.message.length > 500) return []
             if (!issue.path.startsWith('/') || issue.path.includes('\\') || issue.path.includes('://') || /^\/[a-zA-Z]:/.test(issue.path)) return []
-            return [{ severity: issue.severity as 'error' | 'warning', code: issue.code, path: issue.path, message: issue.message }]
+            // 2026-09-13（type-aware 全集）：`issue.severity` 已被上面的守卫收窄成字面量联合，但对象字面量
+            // 本身没有上下文类型 ⇒ 属性会被拓宽回 `string`。原来靠 `as 'error' | 'warning'` 压住，而那正是
+            // `no-unnecessary-type-assertion` 判为"多余"并**自动删掉**的地方（删掉后 typecheck 立刻红）。
+            // 改为显式标注的中间量：不再需要断言，也不靠拓宽。
+            const severity: 'error' | 'warning' = issue.severity
+            return [{ severity, code: issue.code, path: issue.path, message: issue.message }]
           })
           if (issues.length === decoded.length && issues.length) out.issues = issues
         }

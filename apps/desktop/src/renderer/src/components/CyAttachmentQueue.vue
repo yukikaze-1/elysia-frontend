@@ -2,7 +2,6 @@
 // CyAttachmentQueue:输入区上方待发送队列（spec §4.3/§4.6）。附件条目显示图标/名称/大小/类型/状态/错误原因/移除；
 // validating/uploading 显示不确定 spinner；G4 PendingSticker 经 __cyrene-media/sticker/{stickerId} 显示图片（§2 边界）。
 import { computed } from 'vue'
-import type { PendingAttachment, PendingSendItem } from '@shared/contracts'
 import { useAttachmentStore } from '../stores/attachment.store'
 import { formatFileSize } from '../utils/media'
 import { mediaUrlFor } from '../utils/media-url'
@@ -11,8 +10,8 @@ const store = useAttachmentStore()
 const STATUS_TEXT: Record<string, string> = {
   selected: '待校验', validating: '校验中', ready: '就绪', uploading: '上传中', failed: '校验失败', cancelled: '已取消'
 }
-const atts = computed(() => store.items.filter((i) => i.kind === 'attachment') as PendingAttachment[])
-const stickers = computed(() => store.items.filter((i) => i.kind === 'sticker') as Extract<PendingSendItem, { kind: 'sticker' }>[])
+const atts = computed(() => store.items.filter((i) => i.kind === 'attachment'))
+const stickers = computed(() => store.items.filter((i) => i.kind === 'sticker'))
 </script>
 
 <template>

@@ -225,11 +225,11 @@ export function parseMockToolFlowEnv(env: string | undefined): MockToolFlow | un
     if (v && typeof v === 'object' && v.kind === 'backend' && v.started && v.completed) {
       const s = v.started as Record<string, unknown>
       const c = v.completed as Record<string, unknown>
-      return { kind: 'backend', started: { toolName: String(s.toolName ?? 'get_time'), ...(typeof s.inputSummary === 'string' ? { inputSummary: s.inputSummary } : {}) }, completed: { success: c.success !== false, ...(typeof c.outputSummary === 'string' ? { outputSummary: c.outputSummary } : {}), ...(typeof c.errorType === 'string' ? { errorType: c.errorType } : {}), ...(typeof c.durationMs === 'number' ? { durationMs: c.durationMs } : {}) } }
+      return { kind: 'backend', started: { toolName: typeof s.toolName === 'string' ? s.toolName : 'get_time', ...(typeof s.inputSummary === 'string' ? { inputSummary: s.inputSummary } : {}) }, completed: { success: c.success !== false, ...(typeof c.outputSummary === 'string' ? { outputSummary: c.outputSummary } : {}), ...(typeof c.errorType === 'string' ? { errorType: c.errorType } : {}), ...(typeof c.durationMs === 'number' ? { durationMs: c.durationMs } : {}) } }
     }
     if (v && typeof v === 'object' && v.kind === 'desktop' && v.request) {
       const r = v.request as Record<string, unknown>
-      return { kind: 'desktop', request: { toolName: String(r.toolName ?? 'desktop.file.read'), ...(typeof r.arguments === 'object' && r.arguments !== null ? { arguments: r.arguments as Record<string, unknown> } : {}), ...(typeof r.reason === 'string' ? { reason: r.reason } : {}), ...(typeof r.riskLevel === 'string' ? { riskLevel: r.riskLevel } : {}), ...(typeof r.permissionRequired === 'boolean' ? { permissionRequired: r.permissionRequired } : {}) } }
+      return { kind: 'desktop', request: { toolName: typeof r.toolName === 'string' ? r.toolName : 'desktop.file.read', ...(typeof r.arguments === 'object' && r.arguments !== null ? { arguments: r.arguments as Record<string, unknown> } : {}), ...(typeof r.reason === 'string' ? { reason: r.reason } : {}), ...(typeof r.riskLevel === 'string' ? { riskLevel: r.riskLevel } : {}), ...(typeof r.permissionRequired === 'boolean' ? { permissionRequired: r.permissionRequired } : {}) } }
     }
     return undefined
   } catch { return undefined }
@@ -442,8 +442,15 @@ export class MockBackend implements BackendAdapter {
   private readonly characterBindingResolver?: (characterId: string) => CharacterBindingSnapshot | undefined
 
   // —— 阶段 4 P4-A 模型服务（三类内置 + custom CRUD + voices/preview/setVoice；与 real 语义镜像）——
-  /** 内置 provider 表（<service> → <provider> → 元数据）；capabilities 键名展开为稳定排序数组 */
-  private readonly mockProviders = {
+  /** 内置 provider 表（<service> → <provider> → 元数据）；capabilities 键名展开为稳定排序数组。
+   *  2026-09-13（type-aware 全集）：显式给出类型——原先靠字面量推断，`Object.entries(this.mockProviders[s])`
+   *  在三个 service 的形状并集上退化成 `any`，`entry.models`/`entry.runtime` 等访问全部落在 any 上。 */
+  private readonly mockProviders: Record<ModelServiceType, Record<string, {
+    models: string[]
+    credentialConfigured: boolean
+    runtime?: ModelExecutionLocation
+    capabilities: Record<string, string>
+  }>> = {
     llm: {
       deepseek: { models: ['deepseek-v4-flash', 'deepseek-r1'], credentialConfigured: true, runtime: 'backend', capabilities: { auth: 'api_key' } },
       // Task 10 集成测试夹具：local_worker 执行位置行（徽标「不可用·待配置」+ 无调用按钮；P4-A 仅展示）
@@ -778,7 +785,7 @@ export class MockBackend implements BackendAdapter {
     for (const s of services) {
       for (const [name, entry] of Object.entries(this.mockProviders[s])) {
         for (const m of (entry.models.length ? entry.models : [name])) {
-          out.push({ id: `${name}/${m}`, type: s, displayName: name, source: 'built_in', provider: name, model: m, models: entry.models, executionLocation: (entry.runtime ?? 'backend') as ModelExecutionLocation, credentialStatus: entry.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(entry.capabilities).sort(), builtIn: true })
+          out.push({ id: `${name}/${m}`, type: s, displayName: name, source: 'built_in', provider: name, model: m, models: entry.models, executionLocation: entry.runtime ?? 'backend', credentialStatus: entry.credentialConfigured ? 'configured' : 'missing', enabled: true, capabilities: Object.keys(entry.capabilities).sort(), builtIn: true })
         }
       }
       for (const c of this.customProviders[s]) {

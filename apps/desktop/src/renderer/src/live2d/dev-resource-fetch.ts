@@ -77,5 +77,5 @@ export function createDevLive2dFetch(read: Live2dModelFileReader): typeof fetch 
     // 该拷贝无实际代价；换来的是不写类型断言。
     return new Response(new Uint8Array(res.bytes), { status: 200, headers: { 'Content-Type': res.mime } })
   }
-  return devFetch as typeof fetch
+  return devFetch
 }

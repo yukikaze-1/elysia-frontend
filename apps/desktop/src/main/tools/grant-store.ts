@@ -61,7 +61,7 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
 
   async function persist(next: PermissionGrant[]): Promise<void> {
     grants = next
-    try { await deps.settings.save({ tools: { grants: next } } as never) }
+    try { await deps.settings.save({ tools: { grants: next } }) }
     catch (e) { deps.logger?.warn('grant:save-failed', { message: e instanceof Error ? e.message : String(e) }) }   // C-10：非 Error 抛掷归一；fail-open
   }
 

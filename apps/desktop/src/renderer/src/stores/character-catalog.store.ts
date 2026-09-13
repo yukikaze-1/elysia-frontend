@@ -22,6 +22,7 @@ import type {
 } from '@shared/contracts'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { toRejection } from '../utils/rejection'
 import { useIdentityStore } from './identity.store'
 import { useCharacterEditorStore } from './character-editor.store'
 import { cloneValue } from '@shared/domain'
@@ -188,12 +189,14 @@ export const useCharacterCatalogStore = defineStore('character-catalog', () => {
     status.value = append ? 'loading' : 'loading'
     error.value = undefined
     if (!append) lastQuery.value = { ...input }
-    const getter = api && api.listCharacters
+    // `.bind(api)`：显式摘取方法（`unbound-method`，2026-09-13 type-aware 全集）——接口把它声明为方法，
+    // 脱离对象后 `this` 不再有保证；绑定后与直接调用等价。
+    const getter = api ? api.listCharacters?.bind(api) : undefined
     let operation: Promise<Page<CharacterSummary>>
     try {
       operation = getter ? Promise.resolve(getter(requestInput)) : Promise.reject<Page<CharacterSummary>>(missingApiError())
     } catch (cause) {
-      operation = Promise.reject(cause)
+      operation = Promise.reject(toRejection(cause))
     }
     const task = operation
       .then((result) => {
@@ -239,12 +242,12 @@ export const useCharacterCatalogStore = defineStore('character-catalog', () => {
     const request = (detailRequests.get(characterId) ?? 0) + 1
     detailRequests.set(characterId, request)
     detailStatus.value[characterId] = 'loading'
-    const getter = api && api.getCharacter
+    const getter = api ? api.getCharacter?.bind(api) : undefined
     let operation: Promise<CharacterDetail>
     try {
       operation = getter ? Promise.resolve(getter(characterId)) : Promise.reject<CharacterDetail>(missingApiError())
     } catch (cause) {
-      operation = Promise.reject(cause)
+      operation = Promise.reject(toRejection(cause))
     }
       const task = operation
       .then((detail) => {
@@ -291,12 +294,12 @@ export const useCharacterCatalogStore = defineStore('character-catalog', () => {
     const request = (revisionRequests.get(key) ?? 0) + 1
     revisionRequests.set(key, request)
     revisionStatus.value[key] = 'loading'
-    const getter = api && api.listCharacterRevisions
+    const getter = api ? api.listCharacterRevisions?.bind(api) : undefined
     let operation: Promise<Page<CharacterRevisionSummary>>
     try {
       operation = getter ? Promise.resolve(getter(cloneValue(input))) : Promise.reject<Page<CharacterRevisionSummary>>(missingApiError())
     } catch (cause) {
-      operation = Promise.reject(cause)
+      operation = Promise.reject(toRejection(cause))
     }
     const task = operation
       .then((result) => {
@@ -502,7 +505,7 @@ export const useCharacterCatalogStore = defineStore('character-catalog', () => {
   function requireApi<K extends 'createCharacter' | 'updateCharacter' | 'cloneCharacter' | 'archiveCharacter' | 'rollbackCharacter' | 'validateCharacter' | 'previewCharacter'>(name: K): NonNullable<(typeof api)[K]> {
     const method = api && api[name]
     if (!method) throw missingApiError()
-    return method as NonNullable<(typeof api)[K]>
+    return method
   }
 
   function runMutation<T>(key: string, operation: () => Promise<T>, apply: (result: T) => void): Promise<T | undefined> {

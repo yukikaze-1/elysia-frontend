@@ -28,7 +28,11 @@ export type CharacterEditorOperationStatus = 'idle' | 'loading' | 'success' | 'e
 export type CharacterEditorSaveStatus = 'idle' | 'saving' | 'success' | 'error' | 'conflict'
 
 export interface CharacterEditorConflict {
-  backendCode: 'CHARACTER_REVISION_CONFLICT' | 'CHARACTER_STATE_CONFLICT' | string
+  /** 已知两种冲突码：`CHARACTER_REVISION_CONFLICT`／`CHARACTER_STATE_CONFLICT`。
+   *  原写成 `'A' | 'B' | string` —— 字面量被 `string` 吞掉，属冗余类型成分
+   *  （`no-redundant-type-constituents`，2026-09-13 type-aware 全集）；已知取值写在注释里，
+   *  判据（是否冲突、走哪条提示）由消费侧按值比较，不靠类型面。 */
+  backendCode: string
   currentRevision?: number
   message: string
 }
@@ -440,7 +444,9 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
 
   async function persistSnapshot(snapshot: CharacterEditorSnapshot, sequence: number): Promise<boolean> {
     if (!isPersistSnapshotCurrent(snapshot, sequence)) return false
-    const saver = api?.saveCharacterDraft
+    // `.bind(api)`：把这几个方法从 `api` 对象上**显式**摘下来（`unbound-method`，2026-09-13 type-aware 全集）。
+    // 这些方法声明在接口上是「方法」，脱离对象引用时 `this` 不再保证指向 `api`；绑定后语义与直接调用一致。
+    const saver = api?.saveCharacterDraft?.bind(api)
     if (!saver) {
       if (isPersistSnapshotCurrent(snapshot, sequence)) {
         persistenceStatus.value = 'error'
@@ -559,7 +565,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
 
   async function listDrafts(): Promise<CharacterDraftSummary[]> {
     const request = ++recoverySequence
-    const lister = api?.listCharacterDrafts
+    const lister = api?.listCharacterDrafts?.bind(api)
     recoveryStatus.value = 'loading'
     recoveryError.value = undefined
     if (!lister) {
@@ -593,7 +599,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
     const capturedEditorGeneration = editorGeneration
     const capturedDraftGeneration = draftGeneration
     const capturedKey = draftKey.value
-    const getter = api?.getCharacterDraft
+    const getter = api?.getCharacterDraft?.bind(api)
     recoveryStatus.value = 'loading'
     recoveryError.value = undefined
     if (!CharacterDraftKeySchema.safeParse(key).success) {
@@ -654,7 +660,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
       persistenceError.value = { code: 'SCHEMA_VALIDATION_FAILED', message: 'LOCAL:draft_key_invalid' }
       return false
     }
-    const deleter = api?.deleteCharacterDraft
+    const deleter = api?.deleteCharacterDraft?.bind(api)
     if (!deleter) {
       persistenceStatus.value = 'error'
       persistenceError.value = publicError(missingApiError('草稿删除'))
@@ -717,7 +723,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
   const handleCharacterArchived = clearArchivedCharacterDrafts
 
   async function requestValidation(snapshot: CharacterEditorSnapshot, sequence: number, owner: 'standalone' | 'save'): Promise<CharacterValidationResult | undefined> {
-    const validator = api?.validateCharacter
+    const validator = api?.validateCharacter?.bind(api)
     const current = () => owner === 'standalone' ? isValidationCurrent(snapshot, sequence) : isSaveValidationCurrent(snapshot, sequence)
     const exact = () => owner === 'standalone' ? isValidationCurrent(snapshot, sequence) : isSaveValidationSnapshotCurrent(snapshot, sequence)
     if (exact()) {
@@ -769,7 +775,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
       userMessage: typeof input === 'string' ? input : input.userMessage
     }
     const sequence = ++previewSequence
-    const previewer = api?.previewCharacter
+    const previewer = api?.previewCharacter?.bind(api)
     if (!remoteAvailable.value) {
       const error = offlineError()
       if (isPreviewCurrent(snapshot, sequence)) { previewStatus.value = 'error'; previewError.value = publicError(error) }
@@ -876,7 +882,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
       if (snapshot.mode === 'edit') {
         if (!snapshot.characterId || snapshot.baseRevision === undefined) throw new Error('[INVALID_INPUT] 编辑草稿缺少 revision 基线')
         const command: UpdateCharacterCommand = { characterId: snapshot.characterId, expectedRevision: snapshot.baseRevision, statePolicy: snapshot.statePolicy, draft: cloneValue(snapshot.draft) }
-        saved = await Promise.resolve().then(() => api!.updateCharacter!(command))
+        saved = await Promise.resolve().then(() => api.updateCharacter!(command))
       } else {
         if (!api?.createCharacter) throw missingApiError('创建')
         saved = await Promise.resolve().then(() => api.createCharacter!(/* clone avoids reactive payload */ { draft: cloneValue(snapshot.draft) }))

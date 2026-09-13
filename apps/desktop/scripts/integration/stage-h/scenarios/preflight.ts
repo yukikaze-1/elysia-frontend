@@ -32,7 +32,10 @@ export const runPreflight: StageHScenario = async ({ config, page }) => {
 
   let endpointMatches = false
   try {
-    endpointMatches = normalizeEndpointForComparison(String(connection.serverUrl ?? '')) === normalizeEndpointForComparison(config.backendUrl)
+    // `connection.serverUrl` 是 unknown：非字符串（含对象）一律按"不匹配"处理，
+    // 不再 `String(对象)` 得到 '[object Object]'（`no-base-to-string`，2026-09-13 type-aware 全集）
+    const serverUrl = typeof connection.serverUrl === 'string' ? connection.serverUrl : ''
+    endpointMatches = normalizeEndpointForComparison(serverUrl) === normalizeEndpointForComparison(config.backendUrl)
   } catch {
     endpointMatches = false
   }

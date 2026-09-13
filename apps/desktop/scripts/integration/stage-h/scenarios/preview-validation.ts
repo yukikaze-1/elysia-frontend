@@ -1,5 +1,6 @@
 import { safeError } from '../lib/redact.ts'
 import type { StageHScenario } from './types.ts'
+import type { CharacterDraft } from '@shared/contracts'
 
 type AnyRecord = Record<string, unknown>
 
@@ -19,6 +20,18 @@ function draftFrom(detail: AnyRecord): AnyRecord {
     presentation: clone(current.presentation),
     ...(current.openingMessage === undefined ? {} : { openingMessage: current.openingMessage })
   }
+}
+
+/**
+ * 从角色详情里取必需字段：缺了就**抛**，不兜底。
+ * 2026-09-13（type-aware lint 全集批次）：本文件此前不在任何 tsconfig 的 include 里，
+ * `as AnyRecord` 之后的 `setup.detail` 一直是隐式 any 也没人报；接入 projectService 后
+ * 17 处收窄错误一次性暴露。这里对所有必需字段统一取"缺失即失败"的口径——
+ * 这是验收 harness，静默兜底会把"取不到数据"伪装成"检查通过"。
+ */
+function requireNumber(value: unknown, what: string): number {
+  if (typeof value !== 'number') throw new Error(`角色详情缺少 ${what}，无法构造该场景的命令`)
+  return value
 }
 
 function asRecord(value: unknown): AnyRecord {
@@ -64,37 +77,44 @@ export const runPreviewValidation: StageHScenario = async ({ config, page }) => 
     }
   }, { characterId: selectedCharacterId, conversationId: config.conversationId, characterInstanceId: config.characterInstanceId }) as AnyRecord
 
-  const draft = draftFrom(setup.detail)
-  const validation = await page.evaluate(async (value) => window.desktopApi.validateCharacter(value), draft) as AnyRecord
+  // 逐层收窄（见 requireNumber 的注释）：`setup` 是按字段名用的记录，故每条路径显式取一次
+  const setupDetail = asRecord(setup.detail)
+  const setupCurrent = asRecord(setupDetail.current)
+  const setupInstanceId = typeof setup.instanceId === 'string' ? setup.instanceId : null
+
+  const draft = draftFrom(setupDetail)
+  const validation = await page.evaluate(async (value) => window.desktopApi.validateCharacter(value), draft as unknown as CharacterDraft) as unknown as AnyRecord
   const preview = await page.evaluate(async (input) => window.desktopApi.previewCharacter(input), {
-    draft,
+    draft: draft as unknown as CharacterDraft,
     userMessage: `Stage H preview ${config.marker}：请用一句简短的话介绍自己。`
-  }) as AnyRecord
+  }) as unknown as AnyRecord
 
   const afterPreview = await page.evaluate(async (input) => {
     const detail = await window.desktopApi.getCharacter(input.characterId)
     const conversations = await window.desktopApi.listConversations({ limit: 100 })
     const state = input.instanceId ? await window.desktopApi.getCharacterState(input.instanceId) : null
     return { detail, conversationCount: conversations.items.length, state }
-  }, { characterId: setup.characterId, instanceId: setup.instanceId }) as AnyRecord
+  }, { characterId: selectedCharacterId, instanceId: setupInstanceId }) as unknown as AnyRecord
 
   const invalidDraft = clone(draft)
-  const currentPersonality = typeof invalidDraft.promptProfile.corePersonality === 'string'
-    ? invalidDraft.promptProfile.corePersonality
-    : ''
-  invalidDraft.promptProfile.corePersonality = `${currentPersonality}\n<conflict_rules>`
-  const invalidValidation = await page.evaluate(async (value) => window.desktopApi.validateCharacter(value), invalidDraft) as AnyRecord
+  const invalidProfile = asRecord(invalidDraft.promptProfile)
+  const currentPersonality = typeof invalidProfile.corePersonality === 'string' ? invalidProfile.corePersonality : ''
+  invalidProfile.corePersonality = `${currentPersonality}\n<conflict_rules>`
+  invalidDraft.promptProfile = invalidProfile
+  const invalidValidation = await page.evaluate(async (value) => window.desktopApi.validateCharacter(value), invalidDraft as unknown as CharacterDraft) as unknown as AnyRecord
   const invalidSave = await capture(() => page.evaluate(async (input) => window.desktopApi.updateCharacter(input), {
-    characterId: setup.characterId,
-    expectedRevision: setup.detail.current.revision,
-    statePolicy: 'preserve',
-    draft: invalidDraft
+    characterId: selectedCharacterId,
+    expectedRevision: requireNumber(setupCurrent.revision, 'current.revision'),
+    // `statePolicy` 是字面量联合（`'preserve' | 'reset_evolution'`）：不加 `as const` 会被
+    // 拓宽成 string，而这里的参数对象不在 `updateCharacter` 的上下文类型里（它是 evaluate 的实参）。
+    statePolicy: 'preserve' as const,
+    draft: invalidDraft as unknown as CharacterDraft
   }))
-  const finalDetail = await page.evaluate(async (id) => window.desktopApi.getCharacter(id), setup.characterId) as AnyRecord
-  const issues = Array.isArray(invalidValidation.issues) ? invalidValidation.issues : []
+  const finalDetail = await page.evaluate(async (id) => window.desktopApi.getCharacter(id), selectedCharacterId) as unknown as AnyRecord
+  const issues = records(invalidValidation.issues)
   const previewDetails = asRecord(preview)
   const afterDetail = asRecord(afterPreview.detail)
-  const beforeCurrent = asRecord(setup.detail.current)
+  const beforeCurrent = setupCurrent
   const afterCurrent = asRecord(afterDetail.current)
   const beforeState = setup.state ? asRecord(setup.state) : null
   const afterState = afterPreview.state ? asRecord(afterPreview.state) : null

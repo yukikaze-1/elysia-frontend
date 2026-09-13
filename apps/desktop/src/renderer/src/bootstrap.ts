@@ -264,7 +264,7 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
         // 阶段 6 批次 B（Task 7）：tool 事件旁路到 toolStore（判别键 event，代码 H5；live2d 旁路先例）。
         // 工具事件完全由 toolStore 消费，不产生消息副作用；tools 未接线时照常落 messageStore 默认忽略。
         if (kind === 'tool.request' || kind === 'tool.started' || kind === 'tool.completed') {
-          if (stores.tools) { stores.tools.applyBackendEvent(e as BackendEvent); return }
+          if (stores.tools) { stores.tools.applyBackendEvent(e); return }
         } else if (kind === 'generation.started') {
           // 完整 M6：generation.started 先于 applyEvent 清工具实时区终态（A9 只清终态，awaiting 跨代保留）；
           // 消息 store 仍需消费 generation.started（本事件自带 conversationId），此处只做旁路钩子不 return。

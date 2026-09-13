@@ -1,6 +1,6 @@
 import type { BackendEvent, CharacterCatalogChangedEvent, CharacterEventIdentity, CharacterStateChangedEvent, ExpressionEvent, Live2DDirectiveEvent, ToolRequestEvent, ToolStartedEvent, ToolCompletedEvent } from '@shared/contracts/events'
 import type { CharacterPublicStateView } from '@shared/contracts/character'
-import type { ConversationTokenUsage, SegmentChannel, SegmentKind, TokenUsage } from '@shared/contracts/message'
+import type { ConversationTokenUsage, TokenUsage } from '@shared/contracts/message'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { ProtocolWarningCode } from '@shared/contracts/protocol'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
@@ -186,8 +186,8 @@ export class FrameMapper {
       generationId: frame.generationId,
       segmentId: frame.segmentId,
       segmentIndex: frame.segmentIndex,
-      channel: frame.channel as SegmentChannel,
-      kind: frame.kind as SegmentKind
+      channel: frame.channel,
+      kind: frame.kind
     }
   }
 
@@ -209,8 +209,8 @@ export class FrameMapper {
       generationId: frame.generationId,
       segmentId: frame.segmentId,
       segmentIndex: meta.segmentIndex,
-      channel: meta.channel as SegmentChannel,
-      kind: meta.kind as SegmentKind,
+      channel: meta.channel,
+      kind: meta.kind,
       deltaSequence: frame.deltaSequence,
       text: frame.delta
     }
@@ -230,8 +230,8 @@ export class FrameMapper {
       generationId: frame.generationId,
       segmentId: frame.segmentId,
       segmentIndex,
-      channel: channel as SegmentChannel,
-      kind: kind as SegmentKind,
+      channel: channel,
+      kind: kind,
       ...(frame.content !== undefined ? { content: frame.content } : {})
     }
     this.segmentMeta.delete(frame.segmentId) // 普通段映射结束后清理(docs/18 §8.4)

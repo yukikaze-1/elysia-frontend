@@ -973,7 +973,7 @@ export const useMessageStore = defineStore('message', () => {
     // 向前找最近的一条**有正文的**用户消息（同会话）
     let prompt: Message | undefined
     for (let i = idx - 1; i >= 0; i -= 1) {
-      const candidate = byId.value[order.value[i]!]
+      const candidate = byId.value[order.value[i]]
       if (candidate?.role === 'user' && candidate.conversationId === target.conversationId && (candidate.content ?? '')) {
         prompt = candidate
         break

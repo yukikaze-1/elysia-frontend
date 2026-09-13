@@ -30,7 +30,9 @@ function parseBuildSha(serverVersion: unknown): string | undefined {
 
 async function readBackendMetadata(page: Page): Promise<StageHEvidenceInput['backend']> {
   try {
-    const connection = await page.evaluate(async () => window.desktopApi.getConnectionState()) as Record<string, unknown>
+    // `getConnectionState()` 的渲染侧返回类型是 ConnectionState，而这个 harness 只按字段名做
+    // 结构读取（并逐字段做 typeof 收窄）——故先经 unknown 再当记录用，而不是直接断言。
+    const connection = await page.evaluate(async () => window.desktopApi.getConnectionState()) as unknown as Record<string, unknown>
     return {
       url: typeof connection.serverUrl === 'string' ? connection.serverUrl : undefined,
       protocolVersion: typeof connection.protocolVersion === 'string' ? connection.protocolVersion : undefined,
@@ -70,7 +72,6 @@ export async function runStageH(argv: readonly string[] = process.argv.slice(2))
   const config = parsed.config
   const startedAt = new Date().toISOString()
   const cleanup = new CleanupStack()
-  let session
   let result
   let executionError: unknown
   let cleanupErrors: unknown[] = []
@@ -79,7 +80,10 @@ export async function runStageH(argv: readonly string[] = process.argv.slice(2))
     : { expectedBuildSha: config.expectedBackendCommit }
 
   try {
-    session = await launchStageHElectron(config)
+    // 2026-09-13（type-aware lint 全集批次）：原为 `let session`（无注解）——本文件此前不在任何
+    // tsconfig 的 include 里，故 `TS7034 隐式 any` 一直没被报出来。改为 try 内 const 后，
+    // 清理闭包捕获的是已赋值的确定类型，且作用域与真实生命周期一致（session 只在 try 内使用）。
+    const session = await launchStageHElectron(config)
     cleanup.add('Electron application', () => closeStageHElectron(session))
     backend = mergeBackendMetadata(backend, await readBackendMetadata(session.page))
     const scenario = scenarioRunners[config.scenario]

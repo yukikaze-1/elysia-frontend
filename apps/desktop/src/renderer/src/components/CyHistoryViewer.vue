@@ -148,7 +148,7 @@ function onRowResized(key: string, entry: ResizeObserverEntry): void {
 const rowEls = new Map<string, HTMLElement>()
 const resizeObs = ref<ResizeObserver>()
 function setRowEl(key: string, el: Element | null): void {
-  if (el) { rowEls.set(key, el as HTMLElement); resizeObs.value?.observe(el as HTMLElement) }
+  if (el) { rowEls.set(key, el as HTMLElement); resizeObs.value?.observe(el) }
   else { const prev = rowEls.get(key); if (prev) { resizeObs.value?.unobserve(prev); rowEls.delete(key) } }
 }
 

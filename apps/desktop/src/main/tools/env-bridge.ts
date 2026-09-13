@@ -13,7 +13,7 @@ export function parseMockToolAllowRootEnv(value: string | undefined): string[] |
   try {
     const v: unknown = JSON.parse(value)
     if (!Array.isArray(v) || !v.every((x) => typeof x === 'string')) return undefined
-    return v as string[]
+    return v
   } catch { return undefined }
 }
 
@@ -41,5 +41,7 @@ export function parseMockCaptureSourcesEnv(value: string | undefined): Array<{ s
  *  仅 mock 模式集成测试使用（装配侧 useMock 门控 M-2——真实模式误设不注入）。 */
 export function parseMockGrantDirectoryEnv(value: string | undefined): string | undefined {
   if (!value) return undefined
-  try { const p = JSON.parse(value); return typeof p === 'string' && p.length > 0 ? p : undefined } catch { return undefined }
+  // `JSON.parse` 返回 any：先落成 unknown 再判型，避免 `p.length` 这类访问落在 any 上
+  //（2026-09-13 type-aware 全集：本仓已被同类隐式 any 咬过一次，见 tsconfig.node.json 的 noImplicitAny 注记）。
+  try { const p: unknown = JSON.parse(value); return typeof p === 'string' && p.length > 0 ? p : undefined } catch { return undefined }
 }

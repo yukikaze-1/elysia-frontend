@@ -40,12 +40,24 @@ export interface ProcessErrorDeps {
   onFatal?(message: string): void
 }
 
-/** 把任意抛出值转成可安全写入日志/审计的单行文本（不取 stack——stack 含绝对路径且噪音大） */
+/** 把任意抛出值转成可安全写入日志/审计的单行文本（不取 stack——stack 含绝对路径且噪音大）
+ *
+ *  2026-09-13（type-aware 全集，`no-base-to-string`）：原写法末尾是 `JSON.stringify(value) ?? String(value)`，
+ *  而 `String(任意对象)` 会得到 '[object Object]'——虽然对象在正常路径上已被序列化，兜底分支仍可能吐出这句
+ *  没有信息量的假文案。现按类型逐支处理：对象只走序列化（失败即明确标注），函数给固定标记
+ *  （`String(fn)` 是整段源码，不该进单行日志），剩下的原始值 `String()` 才是准确的。 */
 export function describeThrown(value: unknown): string {
   if (value instanceof Error) return value.message || value.name
   if (typeof value === 'string') return value
   if (value === null || value === undefined) return String(value)
-  try { return JSON.stringify(value) ?? String(value) } catch { return '[不可序列化的抛出值]' }
+  if (typeof value === 'function') return '[函数]'
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value) ?? '[不可序列化的抛出值]' } catch { return '[不可序列化的抛出值]' }
+  }
+  // 剩余原始值逐支显式处理（`String(value)` 在"可能含对象"的类型上会被判为可能产出 '[object Object]'，
+  // 见 `no-base-to-string`；显式分支让这件事不可能发生）
+  if (typeof value === 'bigint' || typeof value === 'symbol') return value.toString()
+  return '[不可序列化的抛出值]'
 }
 
 const MAX_SUMMARY_CHARS = 300

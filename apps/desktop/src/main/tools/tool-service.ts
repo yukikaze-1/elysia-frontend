@@ -389,12 +389,21 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     return rec.realPath
   }
   function codeOf(e: unknown): string {
-    if (e && typeof e === 'object' && 'code' in e && typeof (e as { code: unknown }).code === 'string') return (e as { code: string }).code
+    if (e && typeof e === 'object' && 'code' in e && typeof (e).code === 'string') return (e as { code: string }).code
     return 'EXECUTION_FAILED'
   }
   function messageOf(e: unknown): string {
     if (e instanceof Error) return e.message
-    return String(e ?? '')
+    // `String(未知值)` 对对象会得到 '[object Object]'（no-base-to-string，2026-09-13 type-aware 全集）：
+    // 逐支显式处理，对象一律序列化，其余原始值才走 String —— 不制造假文案。
+    if (typeof e === 'string') return e
+    if (e === undefined || e === null) return ''
+    if (typeof e === 'object') {
+      try { return JSON.stringify(e) ?? '[不可序列化的抛出值]' } catch { return '[不可序列化的抛出值]' }
+    }
+    if (typeof e === 'bigint' || typeof e === 'symbol') return e.toString()
+    if (typeof e === 'number' || typeof e === 'boolean') return String(e)
+    return '[不可序列化的抛出值]'
   }
   async function run(rec: ToolRecord, tool: RegisteredTool): Promise<void> {
     if (rec.status !== 'requested' && rec.status !== 'awaiting_permission') return   // N-1/L-3：已终态记录整体拒绝（防定时器过期后复活）

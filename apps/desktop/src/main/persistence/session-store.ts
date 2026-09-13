@@ -45,7 +45,7 @@ export interface SessionStoreDeps {
   appCache: string
   safeRoot: string
   logger: Logger
-  countDiagnostic(code: string): void
+  countDiagnostic: (code: string) => void
   getActiveConversationId(): string | undefined
 }
 

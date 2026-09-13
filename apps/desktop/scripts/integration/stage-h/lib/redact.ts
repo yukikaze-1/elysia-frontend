@@ -69,7 +69,12 @@ export function redactForEvidence(value: unknown, options: EvidenceRedactOptions
     }
     return output
   }
-  return String(value)
+  // 走到这里只剩 function／symbol／bigint（对象已在上面被递归处理）：
+  // 逐支显式处理而不是 `String(value)`——后者在"可能含对象"的类型上会被 `no-base-to-string` 判为
+  // 可能产出 '[object Object]'，而显式分支把这件事变成不可能（2026-09-13 type-aware 全集）。
+  if (typeof value === 'function') return '[函数]'
+  if (typeof value === 'bigint' || typeof value === 'symbol') return value.toString()
+  return '[不可序列化的值]'
 }
 
 export interface SafeError {

@@ -116,19 +116,25 @@ export async function waitConnected(page: Page, timeoutMs: number): Promise<Reco
     last = await page.evaluate(async () => {
       const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
       return api.getConnectionState()
-    }) as Record<string, unknown>
+    })
     if (last.status === 'connected') return last
-    if (last.status === 'error') throw new Error(`后端连接失败：${String(last.lastError ?? 'unknown')}`)
+    // `last` 是按字段名使用的记录：字段判型后再进文案（`String(对象)` 会得到 '[object Object]'，
+    // `no-base-to-string`，2026-09-13 type-aware 全集）。取不到就保留 'unknown' 这一既有口径。
+    if (last.status === 'error') {
+      const detail = last.lastError
+      throw new Error(`后端连接失败：${typeof detail === 'string' && detail ? detail : 'unknown'}`)
+    }
     await page.waitForTimeout(100)
   }
-  throw new Error(`后端连接超时：${String(last?.status ?? 'unknown')}`)
+  const lastStatus = last?.status
+  throw new Error(`后端连接超时：${typeof lastStatus === 'string' && lastStatus ? lastStatus : 'unknown'}`)
 }
 
 async function ensureEndpointAndConnection(page: Page, config: StageHConfig): Promise<Record<string, unknown>> {
   const endpoint = await page.evaluate(async () => {
     const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
     return api.getEndpoint()
-  }) as { endpoint?: string }
+  })
   const expected = normalizeEndpointForComparison(config.backendUrl)
   if (!endpoint.endpoint) {
     // Setting an endpoint without a token is harmless; connect still obtains
@@ -144,7 +150,7 @@ async function ensureEndpointAndConnection(page: Page, config: StageHConfig): Pr
   const current = await page.evaluate(async () => {
     const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
     return api.getConnectionState()
-  }) as Record<string, unknown>
+  })
   if (current.status !== 'connected') await page.evaluate(async () => {
     const api = (window as unknown as { desktopApi: StageHDesktopApi }).desktopApi
     return api.connect()
@@ -217,5 +223,5 @@ export async function readCommonSnapshot(page: Page): Promise<Record<string, unk
       api.listConversations({ limit: 100 })
     ])
     return { runtime, connection, me, characters, conversations }
-  }) as Promise<Record<string, unknown>>
+  })
 }

@@ -2,6 +2,16 @@ import tseslint from 'typescript-eslint'
 import pluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 
+// type-aware（需要类型信息的）规则必须知道每个文件属于哪个 tsconfig。
+// `projectService` 走 TS 的 project service 自动匹配；`.vue` 是非标准扩展名，还要 `extraFileExtensions`。
+// ⚠️ 这两个键与 `parser` **必须写在同一个块里**：再开一个块设 `languageOptions.parserOptions` 会**整体
+// 覆盖**掉本块的 parserOptions（flat config 对 parserOptions 是替换而非深合并），`.vue` 会退回按 JS 解析
+// 并报 `'>' expected` —— 2026-09-13 实测踩到过（59 个 .vue 全部解析失败）。
+const TS_PROJECT = {
+  projectService: true,
+  tsconfigRootDir: import.meta.dirname
+}
+
 export default tseslint.config(
   {
     // 阶段 5 批次 A（Task 1）：vendored Live2D（Framework 源码 59 ts + public Core min.js/13 shaders）三方产物不参与 lint
@@ -12,6 +22,9 @@ export default tseslint.config(
       'node_modules/**',
       '*.d.ts',
       '**/*.d.ts',
+      // 2026-09-13：脚本的手写声明文件与 .d.ts 同类（`scripts/*.d.mts`）——它们没有值级代码，
+      // 放进来只会得到 "was not found by the project service" 的解析失败（4 处）。
+      '**/*.d.mts',
       'src/renderer/src/live2d/framework/**',
       'src/renderer/public/live2d/**'
     ]
@@ -19,31 +32,6 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   // 用 essential 而非 recommended:只保留正确性规则,不做格式化噪音(格式化交给后续引入的 Prettier)
   pluginVue.configs['flat/essential'],
-  {
-    files: ['**/*.vue'],
-    languageOptions: {
-      parser: vueParser,
-      parserOptions: {
-        parser: tseslint.parser,
-        ecmaVersion: 'latest',
-        sourceType: 'module',
-        // P1-11：type-aware 规则需要 projectService；`.vue` 是非标准扩展名，必须显式登记，
-        // 否则每个 .vue 都报 "was not found by the project service"。
-        // 这两项与 parser 必须写在**同一个** parserOptions 里：再开一个 .vue 块设置它们会覆盖本块。
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-        extraFileExtensions: ['.vue']
-      }
-    },
-    rules: {
-      // 图标 SVG path 是组件内静态常量(非用户输入),v-html 无 XSS 面
-      'vue/no-v-html': 'off',
-      // P1-11：三条高信号 type-aware 规则同样覆盖 .vue（reason 见下方 ts 块注释）
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/no-misused-promises': 'error'
-    }
-  },
   {
     rules: {
       // Mock 实现里 `_` 前缀参数表示"本实现不使用但接口要求"
@@ -57,25 +45,56 @@ export default tseslint.config(
     // fire-and-forget 的调用抛错无人接、`shell.openExternal` 漏 `.catch`（同文件另一分支却有）、
     // `await` 一个同步函数造成"存在持久化屏障"的错觉。这三条正是抓它们的。
     //
-    // 为什么**不**开 `recommendedTypeChecked` 全集：实测 **1171** 条，绝大多数是风格类
-    // （`require-await` 约 250、`no-unnecessary-type-assertion` 约 185），会淹没真正的语义问题；
-    // 与门禁加固混在一个提交里做，只能靠批量 disable 收场——那等于用"关规则"冒充"加门禁"。
-    // 全集接入属独立一轮。
+    // P1-11 续（2026-09-13）：**全集接入**。全量 `recommendedTypeChecked` 实测 1238 条命中，
+    // 其中生产代码（src/**）约 150 条、其余在测试代码；本轮把生产代码清零并启用全集，
+    // 测试代码分区的口径见下方 tests 块。
     //
-    // 范围为什么只限 `src/**`：这三条在测试代码里另有 85 条命中，而测试里「发起 promise 不等待」
-    // 常是有意为之（故意不 await 的清理等），需逐个判断语义，同属那一独立轮。
-    // 生产代码实测仅 **4** 条，已全部当场修完（见本提交）。
-    //
-    // 注意 `.vue` 的同类规则在上方 .vue 块里（那边必须与 parser/extraFileExtensions 写在一起）。
+    // 注意 `.vue` 的同类规则在下方 `<template>` 前那个 .vue 块里（那边必须与 parser/extraFileExtensions 写在一起）。
     files: ['src/**/*.ts', 'src/**/*.mts'],
+    extends: [tseslint.configs.recommendedTypeChecked],
+    languageOptions: { parserOptions: { ...TS_PROJECT } }
+  },
+  {
+    files: ['**/*.vue'],
+    extends: [tseslint.configs.recommendedTypeChecked],
     languageOptions: {
-      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname }
+      parser: vueParser,
+      parserOptions: {
+        parser: tseslint.parser,
+        ecmaVersion: 'latest',
+        sourceType: 'module',
+        ...TS_PROJECT,
+        extraFileExtensions: ['.vue']
+      }
     },
     rules: {
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/no-misused-promises': 'error'
+      // 图标 SVG path 是组件内静态常量(非用户输入),v-html 无 XSS 面
+      'vue/no-v-html': 'off'
     }
+  },
+  {
+    // Stage H 集成 runner（scripts/integration/**）：与生产代码同口径（全集）。
+    files: ['scripts/**/*.ts', 'scripts/**/*.mts'],
+    extends: [tseslint.configs.recommendedTypeChecked],
+    languageOptions: { parserOptions: { ...TS_PROJECT } }
+  },
+  {
+    // `require-await`：**用实测把这条规则否掉**（2026-09-13，与之前"单测不得 import electron"那次同款做法：
+    // 先量，再决定改代码还是改配置）。
+    //
+    // 实测 64 处命中，**没有一处**是它要抓的缺陷形态（"写了 async 却忘了 await"）：
+    //   · 52 处在两个适配器**实现**里（`mock-backend.ts` 38／`real-backend.ts` 14），逐个核对签名——
+    //     它们实现 `BackendAdapter` 接口，契约要求返回 `Promise<T>`，而 mock 与部分真实桩本就没有可 await 的
+    //     异步步骤，`async` 是满足该契约的惯用写法；
+    //   · 其余 12 处（`main/index.ts` mock 采集桩、`ipc/tool-handlers.ts`、`attachments/media-service.ts`、
+    //     `tools/tool-service.ts`、`CyCharacterPane.vue`、`conversation.store.ts`）逐处看过，结论相同：
+    //     都是"实现 Promise 返回的接口/API"，函数体内没有异步步骤。
+    // 而"忘了 await"这个缺陷类**不由它兜**——函数里只要别处有 await，本条就不触发；真正把关的是已开启的
+    // `no-floating-promises` / `no-misused-promises` / `await-thenable`。
+    // 要"修"这 64 处只能逐个改写成 `f() { return Promise.resolve(x) }`：纯形式改写、零行为收益、
+    // 且 52 处落在适配器主路径上。故**关掉并写明理由**，而不是逐处 disable 或批量 disable 别处。
+    files: ['src/**/*.ts', 'src/**/*.mts', 'src/**/*.vue', 'scripts/**/*.ts', 'scripts/**/*.mts'],
+    rules: { '@typescript-eslint/require-await': 'off' }
   },
   {
     // .cjs 脚本(scripts/verify-artifact.cjs)以 CommonJS 运行,require 是合法机制,

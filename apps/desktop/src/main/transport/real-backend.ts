@@ -904,7 +904,16 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       // 判据用 ws 库第二参（isBinary 布尔）而非 Buffer.isBuffer——真实 ws 在 Node 22 下文本帧也以 Buffer 投递
       //（typeof=object），第二参才是二进制/文本的权威判别；文本帧(无论 string/Buffer)仍走 handleFrame。
       if (arg2 === true) { this.warn('UNEXPECTED_BINARY', '收到意外二进制帧,已忽略'); return }
-      this.handleFrame(typeof arg === 'string' ? arg : String(arg), connectAttempt)
+      // 文本帧在 Node 22 下可能是 string 也可能是 Buffer（见上条注释）：三种形态显式区分，
+      // 不再 `String(arg)`——那对任意对象都会得到 '[object Object]'（no-base-to-string，2026-09-13）。
+      const text = typeof arg === 'string'
+        ? arg
+        : Buffer.isBuffer(arg)
+          ? arg.toString('utf8')
+          : ArrayBuffer.isView(arg)
+            ? Buffer.from(arg.buffer, arg.byteOffset, arg.byteLength).toString('utf8')
+            : '[非文本帧]'
+      this.handleFrame(text, connectAttempt)
     })
     ws.on('close', () => { this.onSocketClosed(ws, incarnation, connectAttempt) })
     ws.on('error', () => { this.onSocketClosed(ws, incarnation, connectAttempt) })
@@ -1140,7 +1149,8 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       // （disconnected 仍为 false），故重连不再走到这里——这正是本次修复的差别。
       if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，请求已取消')
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
+        // `res.json()` 是 any：落成 unknown 再按字段读（2026-09-13 type-aware 全集）
+        const body: unknown = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
         throw new CyreneError(mapHttpError(res.status, code), (body as { message?: string }).message ?? `HTTP ${res.status}`, body)
       }
@@ -1386,7 +1396,8 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       })
       if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
+        // `res.json()` 是 any：落成 unknown 再按字段读（2026-09-13 type-aware 全集）
+        const body: unknown = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
         throw new CyreneError(mapHttpError(res.status, code), (body as { message?: string }).message ?? `HTTP ${res.status}`, body)
       }

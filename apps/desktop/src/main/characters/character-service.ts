@@ -98,6 +98,15 @@ function staleConnectionError(): CyreneError {
  * 写入互斥和连接世代保护都在此收敛。它不认识 URL、raw DTO 或 Electron，
  * 也不提供离线队列或乐观 revision。
  */
+/**
+ * 同步抛出的值归一成 Error 再作为拒绝原因（`prefer-promise-reject-errors`，2026-09-13 type-aware 全集）。
+ * `requireProfiles()` 抛的是 `CyreneError`（Error 子类），故本条对既有路径**零行为变化**；
+ * 非 Error 的抛出值也不丢——挂在 `cause` 上。
+ */
+function asRejection(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error('角色服务前置校验同步抛出', { cause: reason })
+}
+
 export class CharacterService {
   private readonly backend: CharacterServiceBackendPort
   private readonly isConnected?: () => boolean
@@ -172,7 +181,7 @@ export class CharacterService {
     try {
       this.requireProfiles()
     } catch (error) {
-      return Promise.reject(error)
+      return Promise.reject(asRejection(error))
     }
     const epoch = this.readEpoch()
     this.syncEpoch(epoch)
@@ -246,7 +255,7 @@ export class CharacterService {
     try {
       this.requireProfiles()
     } catch (error) {
-      return Promise.reject(error)
+      return Promise.reject(asRejection(error))
     }
     const epoch = this.readEpoch()
     this.syncEpoch(epoch)
@@ -281,7 +290,7 @@ export class CharacterService {
   }
 
   private epochOperation<T>(operation: () => Promise<T>): Promise<T> {
-    try { this.requireProfiles() } catch (error) { return Promise.reject(error) }
+    try { this.requireProfiles() } catch (error) { return Promise.reject(asRejection(error)) }
     const epoch = this.readEpoch()
     this.syncEpoch(epoch)
     return Promise.resolve().then(operation).then((value) => {

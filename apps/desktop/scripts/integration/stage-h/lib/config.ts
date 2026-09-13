@@ -184,7 +184,7 @@ export function listScenarios(): string {
 
 export function parseStageHArgs(
   argv: readonly string[],
-  env: Record<string, string | undefined> = process.env as Record<string, string | undefined>
+  env: Record<string, string | undefined> = process.env
 ): StageHParseResult {
   let scenarioRaw: string | undefined
   let backendUrlRaw: string | undefined

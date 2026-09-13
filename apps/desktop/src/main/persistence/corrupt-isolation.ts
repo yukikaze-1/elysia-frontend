@@ -9,7 +9,9 @@ import type { Logger } from '../diagnostics/logger'
 
 export interface CorruptIsolationOpts {
   logger: Logger
-  countDiagnostic(code: string): void
+  /** 回调值（不是对象方法）⇒ 按属性声明：调用方摘取该字段传给别的服务时才不会丢 `this`
+   *  （`unbound-method`，2026-09-13 type-aware 全集；本仓 3 个 store 都做这种转交）。 */
+  countDiagnostic: (code: string) => void
 }
 export interface CorruptIsolation {
   isolate(file: string, tag: string, safeRoot?: string): Promise<string>

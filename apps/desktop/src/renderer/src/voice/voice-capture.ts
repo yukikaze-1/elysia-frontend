@@ -114,15 +114,19 @@ export class PcmChunkAggregator {
 }
 
 export interface PcmCaptureOptions {
-  /** 每个 640B（20ms）PCM16 chunk 回调；bytes 为独立 Uint8Array 拷贝 */
-  onChunk(bytes: Uint8Array): void
+  /** 每个 640B（20ms）PCM16 chunk 回调；bytes 为独立 Uint8Array 拷贝。
+   *  2026-09-13（type-aware 全集）：三个回调原按「方法」声明（`onChunk(bytes): void`），
+   *  于是 `this.onChunk = options.onChunk` 这种摘取会被 `unbound-method` 判为"this 失去保证"。
+   *  它们本来就是**回调值**而不是对象方法 ⇒ 改按属性声明（`onChunk: (bytes) => void`）。
+   *  纯类型面改动，运行期语义不变；反过来若调用方传的是 `obj.method`，现在会在调用点被如实报出来。 */
+  onChunk: (bytes: Uint8Array) => void
   /** stop() 时回调累积音频（AudioBuffer 1 声道 16k）；无捕获样本时不回调 */
-  onStop?(audioBuffer: AudioBuffer): void
+  onStop?: (audioBuffer: AudioBuffer) => void
   /** 指定麦克风 deviceId（MediaTrackConstraints.deviceId；缺省用系统默认） */
   deviceId?: string
   /** 语音活动检测（doc 11 §3.3）：连续静音达到 durationMs 后回调一次（自动结束录音）。
    *  缺省 undefined ⇒ 关闭，行为与开启该设置前完全一致。 */
-  silence?: { durationMs: number; onSilence(): void }
+  silence?: { durationMs: number; onSilence: () => void }
 }
 
 /** Task 12 可注入 fake 的形状（voiceStore 单测用） */
@@ -286,7 +290,14 @@ export class PcmCapture implements PcmCaptureLike {
     })
 
     node.port.onmessage = (event: MessageEvent): void => {
-      this.consumeChunk(new Uint8Array(event.data))
+      // `MessageEvent.data` 是 any：AudioWorklet 侧 postMessage 的负载是 **Uint8Array**
+      //（见文件头注释「port.postMessage(Uint8Array 640B)」），浏览器也可能给 ArrayBuffer。
+      // 两种形态都**构造成新视图**——`PcmCaptureOptions.onChunk` 的契约是"bytes 为独立拷贝"，
+      // 不能把收到的数组原样转出去。其余形态丢弃：不猜、也不让 any 顺着类型面扩散。
+      // （2026-09-13 type-aware 全集；本条第一版只认 ArrayBuffer，被既有 `voice-capture.spec.ts` 当场抓红。）
+      const data: unknown = event.data
+      if (data instanceof Uint8Array) { this.consumeChunk(new Uint8Array(data)); return }
+      if (data instanceof ArrayBuffer) { this.consumeChunk(new Uint8Array(data)); return }
     }
 
     source.connect(node)

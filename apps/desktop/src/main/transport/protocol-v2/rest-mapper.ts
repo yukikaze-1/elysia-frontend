@@ -205,7 +205,7 @@ function extractText(content: unknown, parts?: unknown[]): string | undefined {
   if (typeof content === 'string' && content.length > 0) return content
   const fromEntries = mapContentToEntries(content)
     .filter((e) => e.type === 'text')
-    .map((e) => (e as { type: 'text'; text: string }).text)
+    .map((e) => (e).text)
     .join('')
   if (fromEntries.length > 0) return fromEntries
   const joined = (parts ?? []).reduce<string>((acc, p) => {

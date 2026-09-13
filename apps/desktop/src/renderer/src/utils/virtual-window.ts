@@ -114,7 +114,7 @@ export function buildPrefix(items: Message[], heights: Record<string, number>): 
 export function buildPrefix<T>(items: T[], heights: Record<string, number>, opts: PrefixOpts<T>): number[]
 export function buildPrefix(items: unknown[], heights: Record<string, number>, opts?: PrefixOpts<unknown>): number[] {
   const o = opts ?? (MESSAGE_PREFIX_OPTS as PrefixOpts<unknown>)
-  const prefix: number[] = new Array(items.length + 1)
+  const prefix: number[] = new Array<number>(items.length + 1)
   prefix[0] = 0
   for (let i = 0; i < items.length; i++) {
     const key = o.keyFor(items[i])

@@ -50,7 +50,7 @@ let singleton: DocumentVisibilitySource | undefined
  */
 export function documentVisible(): Ref<boolean> {
   if (!singleton && typeof document !== 'undefined') {
-    singleton = createDocumentVisibilitySource(document as unknown as VisibilityDocument)
+    singleton = createDocumentVisibilitySource(document)
   }
   return singleton ? singleton.visible : ALWAYS_VISIBLE
 }

@@ -17,7 +17,7 @@ export interface SettingsServiceDeps {
   dir: string
   safeRoot: string
   logger: Logger
-  countDiagnostic(code: string): void
+  countDiagnostic: (code: string) => void
 }
 
 export const SETTINGS_FILE_NAME = 'settings.json'

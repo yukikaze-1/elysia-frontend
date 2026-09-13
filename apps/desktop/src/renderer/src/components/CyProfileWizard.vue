@@ -103,7 +103,7 @@ function validate(): boolean {
 /** 测试并保存：先 connectivity 测试（带局部 apiKey + draft.baseUrl），通过后 saveProfile；失败保留表单（error 已展示）。 */
 async function onTestAndSave(): Promise<void> {
   if (!validate()) { apiKeyRef.value = ''; return }
-  const d = draft.value!
+  const d = draft.value
   const name = d.name.trim()
   const keyInput = apiKeyRef.value
   const baseUrlInput = d.baseUrl?.trim() || undefined   // P4-A final review：新 custom 未持久化 YAML，test 需透传 baseUrl 才能构造请求
@@ -120,7 +120,7 @@ async function onTestAndSave(): Promise<void> {
 /** 保存并设为当前：saveProfile 成功后 activate（store 无 makeActive 透传，经两次动作完成）。 */
 async function onSaveAndActivate(): Promise<void> {
   if (!validate()) { apiKeyRef.value = ''; return }
-  const d = draft.value!
+  const d = draft.value
   const name = d.name.trim()
   const keyInput = apiKeyRef.value
   await modelStore.saveProfile({ ...d, name }, keyInput || undefined)

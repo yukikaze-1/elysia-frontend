@@ -6,7 +6,7 @@ export function canonicalJsonStringify(value: unknown): string {
     if (Array.isArray(v)) return v.map(canon)
     if (v !== null && typeof v === 'object') {
       const out: Record<string, unknown> = {}
-      for (const k of Object.keys(v as Record<string, unknown>).sort()) out[k] = canon((v as Record<string, unknown>)[k])
+      for (const k of Object.keys(v).sort()) out[k] = canon((v as Record<string, unknown>)[k])
       return out
     }
     return v

@@ -15,7 +15,10 @@ export async function hashFile(abs: string): Promise<{ size: number; sha256: str
   const st = await lstat(abs)
   if (!st.isFile()) throw new Error(`hashFile: 非普通文件 ${abs}`)
   const hash = createHash('sha256')
-  for await (const chunk of createReadStream(abs)) {
+  // Node 的 `Readable` 把 `[Symbol.asyncIterator]` 声明成 `AsyncIterableIterator<any>`（自带的 any 口子），
+  // 于是 `chunk` 是 any、`hash.update(chunk)` 落在 any 上（2026-09-13 type-aware 全集）。
+  // 显式收成 `AsyncIterable<Buffer>`——这正是 `fs.createReadStream` 的实际产物。
+  for await (const chunk of createReadStream(abs) as AsyncIterable<Buffer>) {
     hash.update(chunk)
   }
   return { size: st.size, sha256: hash.digest('hex') }

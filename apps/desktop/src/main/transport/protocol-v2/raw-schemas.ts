@@ -675,11 +675,24 @@ export const RAW_FRAME_TYPES: readonly string[] = [...new Set(
   objectOptions(RawFrameSchema).map((o) => String((o.shape.type as { value: unknown }).value))
 )]
 
+/** zod 字面量的取值 → 指纹文本。标量沿用 `String()` 的口径（指纹锚点不可变），对象显式序列化；
+ *  逐支显式处理是 `no-base-to-string` 的要求：`String(可能含对象的值)` 会产出 '[object Object]'。 */
+function literalText(value: unknown): string {
+  if (value === undefined) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value)
+  if (typeof value === 'object') return JSON.stringify(value) ?? ''
+  return ''
+}
+
 /** 单字段签名: `k:_def.type:枚举成员(entries 排序):字面量值(_def.values/value)`;zod v4 判别 API(_def.type 小写、_def.entries、_def.values) */
 const fieldSig = ([k, s]: [string, unknown]): string => {
   const d = s as { _def?: { type?: string; entries?: Record<string, unknown>; values?: unknown[]; value?: unknown } }
   const vals = d._def?.entries ? Object.keys(d._def.entries).sort().join(',') : (d._def?.values ?? []).join(',')
-  const lit = d._def?.value !== undefined ? String(d._def.value) : ''
+  // 指纹的**取值口径保持不变**（这是被 `check:contract` 比对的锚点）：标量仍按 `String()` 的口径渲染；
+  // 只有对象字面量从 '[object Object]' 改为显式序列化（`no-base-to-string`，2026-09-13 type-aware 全集）。
+  const rawValue = d._def?.value
+  const lit = literalText(rawValue)
   return `${k}:${d._def?.type}:${vals}:${lit}`
 }
 

@@ -66,8 +66,11 @@ export function createIpcHandler<TReq, TRes>(
             const issue = item as Record<string, unknown>
             if ((issue.severity !== 'error' && issue.severity !== 'warning') || typeof issue.code !== 'string' || typeof issue.path !== 'string' || typeof issue.message !== 'string') return []
             if (!issue.path.startsWith('/') || issue.path.includes('\\') || issue.path.includes('://') || /^\/[a-zA-Z]:/.test(issue.path)) return []
+            // 同 public-error.ts：收窄结果要用显式标注的中间量承接，不能靠 `as`（该断言会被
+            // `no-unnecessary-type-assertion` 自动删掉，删掉后对象字面量把 severity 拓宽成 string ⇒ typecheck 红）
+            const severity: 'error' | 'warning' = issue.severity
             return [{
-              severity: issue.severity as 'error' | 'warning',
+              severity,
               code: truncateCodepoints(options.sanitize(issue.code), 80),
               path: truncateCodepoints(options.sanitize(issue.path), 300),
               message: truncateCodepoints(options.sanitize(issue.message), 500)

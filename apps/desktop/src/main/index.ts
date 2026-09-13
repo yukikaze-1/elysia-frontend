@@ -307,8 +307,10 @@ async function main(): Promise<void> {
           return new RealBackend({
             onConnectionStateChange: onState,
             onSessionReplay: onReplay,
-            onProtocolWarning: errorHandlers.onProtocolWarning,
-            onError: errorHandlers.onError,
+            // `.bind(errorHandlers)`：这两个是 errorHandlers 上的方法，摘下来传进 RealBackend 后
+            // `this` 不再有保证（`unbound-method`，2026-09-13 type-aware 全集）；绑定后与原先的调用形态一致。
+            onProtocolWarning: errorHandlers.onProtocolWarning.bind(errorHandlers),
+            onError: errorHandlers.onError.bind(errorHandlers),
             // P4-B：TTS 音频 sink（Task 5/6）。mediaBridge.media 未装配前返回 undefined → real-backend 告警丢弃（TTS_MEDIA_SINK_MISSING）
             getTtsMedia: () => mediaBridge.media
               ? { putTtsAudio: (id, bytes, mime) => mediaBridge.media!.putTtsAudio(id, bytes, mime) }

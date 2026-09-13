@@ -31,7 +31,11 @@ export const CONSOLE_LEVEL_ERROR = 3
  */
 export type ConsoleLevel = 'info' | 'warning' | 'error' | 'debug'
 
-export function normalizeConsoleLevel(level: ConsoleLevel | number | string): ConsoleLevel | undefined {
+/** 接受**字符串**（现代形态，合法取值即 `ConsoleLevel`）或**数字**（废弃位置参数）。
+ *  形参原写作 `ConsoleLevel | number | string`——字面量联合被 `string` 吞掉，是冗余类型成分
+ *  （`no-redundant-type-constituents`，2026-09-13 type-aware 全集），故收敛为 `string | number`；
+ *  合法取值仍由下方逐值比较把关，并写明在上面的注释里。 */
+export function normalizeConsoleLevel(level: string | number): ConsoleLevel | undefined {
   if (typeof level === 'number') {
     return level >= CONSOLE_LEVEL_ERROR ? 'error' : level === 2 ? 'warning' : level === 1 ? 'info' : 'debug'
   }
@@ -39,8 +43,8 @@ export function normalizeConsoleLevel(level: ConsoleLevel | number | string): Co
 }
 
 export interface RendererConsoleDetails {
-  /** 字符串（现代形态）或数字（废弃位置参数）皆可——见 normalizeConsoleLevel */
-  level: ConsoleLevel | number | string
+  /** 字符串（现代形态，合法取值即 ConsoleLevel）或数字（废弃位置参数）皆可——见 normalizeConsoleLevel */
+  level: string | number
   message: string
   /** 来源标识（现代形态的 sourceId，通常是脚本 URL） */
   sourceId?: string

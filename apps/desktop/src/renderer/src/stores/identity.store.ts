@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { UpdateUserIdentityCommand, UserIdentityProfile } from '@shared/contracts'
 import { api } from './desktop-api'
 import { parsePublicError, type PublicError } from '../utils/public-error'
+import { toRejection } from '../utils/rejection'
 
 export type IdentityLoadState = 'idle' | 'loading' | 'ready' | 'error'
 export type IdentitySaveState = 'idle' | 'saving' | 'success' | 'error' | 'conflict'
@@ -76,14 +77,15 @@ export const useIdentityStore = defineStore('character-identity', () => {
     const request = ++requestSequence.value
     status.value = 'loading'
     error.value = undefined
-    const getter = api && api.getMe
+    // `.bind(api)`：显式摘取方法（`unbound-method`，2026-09-13 type-aware 全集）
+    const getter = api ? api.getMe?.bind(api) : undefined
     // 保持调用在本 tick 发起（调用方可能马上推进 epoch/释放 deferred），
     // 同时把同步抛错转成 rejected Promise，统一由下面的 catch 收口。
     let operation: Promise<UserIdentityProfile>
     try {
       operation = getter ? Promise.resolve(getter()) : Promise.reject(missingApiError())
     } catch (cause) {
-      operation = Promise.reject(cause)
+      operation = Promise.reject(toRejection(cause))
     }
     const task = operation
       .then((nextProfile) => {
@@ -159,7 +161,7 @@ export const useIdentityStore = defineStore('character-identity', () => {
     options: { syncDraft: boolean; selectedDefaultCharacterId?: string }
   ): Promise<boolean> {
     if (pendingSave) return pendingSave
-    const updater = api && api.updateMe
+    const updater = api ? api.updateMe?.bind(api) : undefined
     if (!updater) {
       saveError.value = parsePublicError(missingApiError().message)
       saveStatus.value = 'error'
@@ -179,7 +181,7 @@ export const useIdentityStore = defineStore('character-identity', () => {
     try {
       operation = Promise.resolve(updater(command))
     } catch (cause) {
-      operation = Promise.reject(cause)
+      operation = Promise.reject(toRejection(cause))
     }
     const task = operation
       .then((nextProfile) => {
