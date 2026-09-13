@@ -891,7 +891,7 @@ describe('live2dStore 批次 C（C2）：GPU 重建一次（D5C-04，reset(当�
 
 /** 带白名单的 fake handle（真实 controller 自动映射可命中不同表达式） */
 function installWhitelistedHandle(adapter: { createModel: ReturnType<typeof vi.fn>; handles: Array<{ startExpression: ReturnType<typeof vi.fn> }> }): { handle: { startExpression: ReturnType<typeof vi.fn> } } {
-  adapter.createModel.mockImplementation(async () => {
+  adapter.createModel.mockImplementation(() => {
     const h = {
       update: vi.fn(), draw: vi.fn(), destroy: vi.fn(),
       getParameterIdList: vi.fn(() => []),

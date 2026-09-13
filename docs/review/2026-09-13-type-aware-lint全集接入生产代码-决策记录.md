@@ -102,9 +102,16 @@
 | A. 全集（含两条豁免） | **约 460 处** / 122 个测试文件 | 豁免 `require-await`（474，同 §3 的理由：`async` 测试替身）与 `unbound-method`（73，vitest 惯例）。其余为 `no-unnecessary-type-assertion` 208（可自动修）、`no-unsafe-*` 223、`no-base-to-string` 18、`no-floating-promises` 5、`await-thenable` 2、`no-misused-promises` 2、`only-throw-error` 1 |
 | B. 只接三条高信号规则 | **9 处** | 即前一轮记的"测试目录接入"的实质内容（当时记的 85 是另一套口径下的数）。改动小、风险低 |
 
-本轮**没有替用户选**：A 的价值是把 `no-unsafe-*` 这类"夹具里 any 到处漏"的真实口子也覆盖掉，
-代价是一次横跨 122 个文件、以补类型为主的大改（可复核性差）；B 的成本几乎为零但覆盖面窄。
-建议：**先做 B 把测试目录纳入类型感知**，A 视是否真的发生过"测试代码里的 any 掩盖了缺陷"再决定。
+**同批已落 B**（用户选定本项时口径为"全集 + 测试目录接入"，故不属于"推迟"）：测试目录已接入
+`no-floating-promises` / `await-thenable` / `no-misused-promises`，9 处逐处判语义后修完——
+悬空的 `connect` 补 `await`；**有意交错**的 `saveAsNew()` 与只读同步断言面的 `handleUncaughtException()`
+用 `void` 显式声明忽略（而不是让它悬空）；`await` 一个同步函数、`mockImplementation(async …)` 落在
+void 位置这两类直接去掉多余修饰。配置注释里写明了"为什么是这三条"：**测试自己吞掉 rejection，
+会把'实现坏了'伪装成'测试通过'**。
+
+A 仍**未做且不替用户选**：它的价值是把 `no-unsafe-*` 这类"夹具里 any 到处漏"的口子也覆盖掉，
+代价是一次横跨 122 个文件、以补类型为主的大改（可复核性差）。建议：A 视是否真的发生过
+"测试代码里的 any 掩盖了缺陷"再决定。
 
 ---
 

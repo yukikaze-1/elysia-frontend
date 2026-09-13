@@ -111,7 +111,7 @@ function writtenIds(h: FakeHandle): string[] {
 
 /** 公共：把 createModel 装配为返回带指定规格的 handle */
 function stubHandle(adapter: { createModel: MockFn; handles: FakeHandle[] }, spec: { params?: string[]; motions?: string[]; expressions?: string[] }): void {
-  adapter.createModel.mockImplementation(async () => {
+  adapter.createModel.mockImplementation(() => {
     const h = makeHandle(spec)
     adapter.handles.push(h)
     return h

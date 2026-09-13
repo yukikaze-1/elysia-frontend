@@ -505,7 +505,9 @@ describe('characterEditorStore FE-D2', () => {
     const newPersist = deferred<void>()
     api.saveCharacterDraft.mockReturnValueOnce(newPersist.promise)
     const newFlush = store.flushDraft()
-    store.saveAsNew()
+    // 刻意不 await：本用例要的就是"saveAsNew 的持久化还没落地时又开新草稿"这段交错（`newFlush` 才是被等待的那个）。
+    // 测试目录接入 type-aware（2026-09-13）后用 `void` 显式声明"这个 promise 是有意忽略的"，而不是让它悬空。
+    void store.saveAsNew()
     store.beginCreate(draft('另一个 key'))
     newPersist.resolve()
     await newFlush

@@ -97,6 +97,27 @@ export default tseslint.config(
     rules: { '@typescript-eslint/require-await': 'off' }
   },
   {
+    // 测试目录接入 type-aware（2026-09-13）：**先接三条高信号规则**（口径 B）。
+    //
+    // 为什么是这三条：它们正是本仓真实缺陷所属的类别（异步语义用错 / promise 没人管），
+    // 而且在测试里同样致命——**测试自己吞掉 rejection，会把"实现坏了"伪装成"测试通过"**。
+    // 实测命中仅 9 处（`no-floating-promises` 5／`await-thenable` 2／`no-misused-promises` 2），
+    // 已逐处判断语义后修完（悬空的 `connect` 补 await；有意交错的用 `void` 显式声明；
+    // `await` 一个同步函数、`mockImplementation(async …)` 用在 void 位置两类直接去掉多余修饰）。
+    //
+    // 为什么不顺手接全集（口径 A）：实测 **1012 条 / 122 个测试文件**，其中 547 条来自两条
+    // "在测试替身上前提不成立"的规则（`require-await` 474＝async 测试替身、`unbound-method` 73＝
+    // vitest 的 `expect(obj.method)` 惯例）。剩下的仍以"给夹具补类型"为主，属独立一轮；
+    // 两个口径的实测比较与建议见 docs/review/2026-09-13-type-aware-lint全集接入生产代码-决策记录.md §6。
+    files: ['tests/**/*.ts', 'tests/**/*.mts'],
+    languageOptions: { parserOptions: { ...TS_PROJECT } },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/await-thenable': 'error',
+      '@typescript-eslint/no-misused-promises': 'error'
+    }
+  },
+  {
     // .cjs 脚本(scripts/verify-artifact.cjs)以 CommonJS 运行,require 是合法机制,
     // 不在 recommended 的 no-require-imports 规则范围内
     files: ['**/*.cjs'],

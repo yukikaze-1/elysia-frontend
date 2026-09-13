@@ -71,7 +71,9 @@ describe('CYRENE_MOCK_MULTI_SEGMENT seed 生成（Task 4）', () => {
     const events: string[] = []
     const mock = new MockBackend({ multiSegmentCount: 3, emitDelayMs: 0 })
     mock.subscribe((e) => events.push(e.event))
-    mock.connect({ serverUrl: 'mock://local', token: 't' })
+    // 测试目录接入 type-aware（2026-09-13）：connect 是 `Promise` 返回的 API，原来悬空未等待。
+    // 这里语义上就是"先连上再用"，await 是正确写法（MockBackend.connect 内部同步，行为不变）。
+    await mock.connect({ serverUrl: 'mock://local', token: 't' })
     await mock.sendMessage({ conversationId: 'conv-1001', clientRequestId: 'cr-1', text: '测试多分段' })
     // 等待重放完成（emitDelayMs=0，逐条 setTimeout(0)——flush 微任务）
     await new Promise((r) => setTimeout(r, 20))

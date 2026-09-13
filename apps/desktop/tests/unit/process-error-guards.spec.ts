@@ -96,7 +96,9 @@ describe('handleUnhandledRejection / handleUncaughtException（H-12）', () => {
 
   it('异常文本经脱敏后落盘（不泄漏绝对路径）', () => {
     const deps = makeDeps()
-    handleUncaughtException(new Error('failed at /home/u/secret/file'), deps)
+    // `void`：断言读的是**同步**发生的 logger/audit 调用，这个 promise 不是本用例的观测面
+    // （测试目录接入 type-aware 后要求显式声明，2026-09-13）。
+    void handleUncaughtException(new Error('failed at /home/u/secret/file'), deps)
     const logged = deps.logger.error.mock.calls[0][1] as { message: string }
     expect(logged.message).toContain('<home>')
     expect(logged.message).not.toContain('/home/u')
@@ -104,7 +106,7 @@ describe('handleUnhandledRejection / handleUncaughtException（H-12）', () => {
 
   it('超长文本被截断（审计摘要不无限膨胀）', () => {
     const deps = makeDeps()
-    handleUncaughtException(new Error('x'.repeat(5000)), deps)
+    void handleUncaughtException(new Error('x'.repeat(5000)), deps)
     const audited = deps.audit.mock.calls[0][0] as { summary: string }
     expect(audited.summary.length).toBeLessThan(400)
     expect(audited.summary).toContain('…')

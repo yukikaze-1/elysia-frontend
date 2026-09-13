@@ -119,13 +119,13 @@ describe('chat-service', () => {
   it('getRuntimeInfo 依 requireToken 返回 mode', async () => {
     const { deps } = makeDeps({ requireToken: true })
     const svc = createChatService(deps)
-    expect(await svc.getRuntimeInfo()).toEqual({ mode: 'real', packaged: false })
+    expect(svc.getRuntimeInfo()).toEqual({ mode: 'real', packaged: false })
   })
 
   it('getRuntimeInfo Mock 模式 → mode mock', async () => {
     const { deps } = makeDeps()   // requireToken: false
     const svc = createChatService(deps)
-    expect(await svc.getRuntimeInfo()).toEqual({ mode: 'mock', packaged: false })
+    expect(svc.getRuntimeInfo()).toEqual({ mode: 'mock', packaged: false })
   })
 
   it('pushReplay 转发 chat:replay(会话回放生产侧桥)', () => {

@@ -93,7 +93,7 @@ describe('批次 B 改接（toolRequestSink）', () => {
   it('backend kind 发射不变（L3：补最小断言——started/completed 仍经订阅面且 sourceCallId 固定）', async () => {
     const mb = new MockBackend({ toolFlow: { kind: 'backend', started: { toolName: 'search_web', inputSummary: 'q=<str:2>' }, completed: { success: true, outputSummary: 'ok' } }, emitDelayMs: 0 })   // emitDelayMs:0——scheduleReplay 缺省 30ms×11 帧尾事件（对齐既有 sink 用例）
     const events: Array<{ event?: string }> = []; mb.subscribe((e) => events.push(e))
-    mb.connect({ serverUrl: 'mock://server' }); await mb.activateConversation('conv-1001'); await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'r1' })
+    await mb.connect({ serverUrl: 'mock://server' }); await mb.activateConversation('conv-1001'); await mb.sendMessage({ conversationId: 'conv-1001', text: 'hi', clientRequestId: 'r1' })
     await new Promise(r => setTimeout(r, 50))
     const started = events.find(e => e.event === 'tool.started')
     const completed = events.find(e => e.event === 'tool.completed')
