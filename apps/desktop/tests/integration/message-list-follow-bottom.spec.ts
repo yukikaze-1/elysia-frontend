@@ -187,10 +187,17 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       console.log(`[follow-bottom ④] top=${tops.join(',')}`)
       console.log(`[follow-bottom ④] height=${heights.join(',')}`)
       console.log(`[follow-bottom ④] intent=${intents.join('')} atb=${atbs.join('')}`)
-      const frozenAt = tops.findIndex((v, i) => i > 0 && v === tops[i - 1] && heights[i] > heights[i - 1])
+      // 冻结判定（**纯诊断**）：末尾**连续 ≥3 个采样** top 不变而 height 仍在增长。
+      // 第一版写成"任意相邻两点 top 相同且 height 增长"——实测**假阳性**（X99 run2：`top=…,6701,6701,…`
+      // 只是跟随恰好落回同一个取整值，`intent` 全程为 1、`settledGap=0`、用例本身通过）。
+      // 真冻结是**持续**的：流式结束时 top 再不变化（本机复现那一轮是连续 7 个采样）。
+      let lastChange = 0
+      for (let i = 1; i < tops.length; i++) if (tops[i] !== tops[i - 1]) lastChange = i
+      const frozenRun = tops.length - 1 - lastChange
+      const frozenAt = frozenRun >= 3 && heights[heights.length - 1] > heights[lastChange] ? lastChange + 1 : -1
       if (frozenAt > 0) {
         console.log(
-          `[follow-bottom ④] frozenAt=#${frozenAt} top=${tops[frozenAt]} height=${heights[frozenAt]}→${heights[heights.length - 1]}（top 不再变化而内容继续增长）`
+          `[follow-bottom ④] frozenAt=#${frozenAt} 连续${frozenRun}个采样 top=${tops[frozenAt]} 不变，而 height=${heights[frozenAt]}→${heights[heights.length - 1]}`
         )
         // 冻结那一刻的两个内部布尔量：`intent=0` ⇒ 跟随意图被清（谁清的见 onScroll 的 scrollTop<prevTop 分支）；
         // `intent=1` 却不动 ⇒ 意图还在、是"没人推动滚动"，那是另一条分支。这一行就是为了把两者分开。
