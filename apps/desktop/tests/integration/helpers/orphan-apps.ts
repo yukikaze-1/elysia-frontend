@@ -89,6 +89,22 @@ export function processAlive(pid: number): boolean {
 }
 
 /**
+ * 是否 Electron 可执行文件（Windows `electron.exe` / Linux `electron`），排除同名的 node 脚本。
+ *
+ * 2026-09-13：把原先内联在 `carriesTestAppSignature` 里的这条判据提取为具名谓词——因为
+ * `ScanResult.electronCount` 的注释写的是「进程表里所有 **electron** 进程数量」，实现却是
+ * `table.entries.length`（**全部**进程）。Windows 侧无感（CIM 查询已按 `Name='electron.exe'` 过滤），
+ * 但 Linux 侧走 `/proc` 全表，于是每轮 CI 都打印
+ * 「检测到 43 个非本套件的 Electron 进程，未做处理」——**误报**（那 43 个是机器上的任何进程）。
+ * 危害不是行为（该字段只用在这条 warn 与该 warn 的判据上），而是**稀释真实孤儿场景的可信度**：
+ * 真出现孤儿时，运维看到的是同一句已经被训练成忽略的告警。
+ */
+export function isElectronProcess(entry: ProcessEntry): boolean {
+  const executable = entry.executable.replace(/\\/g, '/').toLowerCase()
+  return /(^|\/)electron(\.exe)?$/.test(executable)
+}
+
+/**
  * 判定一条进程记录是否携带「本套件测试应用」的签名。
  *
  * 关键实测事实（2026-09-10 真机采样，两条命令行的差异决定本函数的形状）：
@@ -102,9 +118,8 @@ export function processAlive(pid: number): boolean {
  * 实例级聚合见 scanOrphanTestApps（沿 ppid 回到 main，整体回收）。
  */
 export function carriesTestAppSignature(entry: ProcessEntry, root: string): boolean {
-  const executable = entry.executable.replace(/\\/g, '/').toLowerCase()
   // 必须是 Electron 二进制（Windows electron.exe / Linux electron），排除同名 node 脚本
-  if (!/(^|\/)electron(\.exe)?$/.test(executable)) return false
+  if (!isElectronProcess(entry)) return false
   // 信号二：launchApp 的 mkdtemp 临时 userData（路径分隔符统一后按目录段前缀匹配）
   const dataDir = userDataDirOf(entry.commandLine)
   if (dataDir && dataDir.replace(/\\/g, '/').toLowerCase().split('/').some((segment) => segment.startsWith(ORPHAN_USER_DATA_PREFIX.toLowerCase()))) {
@@ -253,7 +268,8 @@ export interface OrphanScan {
   canReclaim: boolean
   reason?: string
   orphans: OrphanApp[]
-  /** 进程表里所有 electron 进程数量（诊断用：区分「没有孤儿」与「根本读不到」） */
+  /** 进程表里所有 electron 进程数量（诊断用：区分「没有孤儿」与「根本读不到」）。
+   *  2026-09-13 前实测为 `table.entries.length`（Linux 上=机器上全部进程数），见 isElectronProcess 注释。 */
   electronCount: number
   /** 因「所有者进程仍存活」而**主动跳过**的应用数（并发运行的另一个集成 job 正在用它，2026-09-12） */
   liveOwned: number
@@ -309,7 +325,7 @@ export function scanOrphanTestApps(
   return {
     canReclaim: true,
     orphans: [...byMainPid.values()].sort((left, right) => left.pid - right.pid),
-    electronCount: table.entries.length,
+    electronCount: table.entries.filter(isElectronProcess).length,
     liveOwned
   }
 }

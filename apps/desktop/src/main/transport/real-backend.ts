@@ -607,7 +607,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   private handleServerInfo(frame: RawServerInfo, connectAttempt?: PendingConnect): void {
     this.clearHandshakeTimer() // server_info 到达即握手完成,成功与版本不符两条路径都清(后者走 fail-closed)
     if (frame.protocol_version !== PROTOCOL_VERSION_WIRE) {
-      const err = new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `后端协议版本 ${frame.protocol_version} 不兼容,要求 ${PROTOCOL_VERSION_WIRE}`)
+      const err = new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `后端协议版本 ${frame.protocol_version} 不兼容，要求 ${PROTOCOL_VERSION_WIRE}`)
       // Retire before close because ws implementations/mocks may deliver the
       // close callback synchronously.  That callback must not schedule a
       // reconnect before the protocol-mismatch error state is installed.
@@ -969,7 +969,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     if (this.reconnectTimer) return // close+error 双触发只排一次
     this.reconnectAttempts += 1
     if (this.reconnectAttempts > RECONNECT_MAX_ATTEMPTS) {
-      const err = new CyreneError(CyreneErrorCode.NOT_CONNECTED, `重连失败超过 ${RECONNECT_MAX_ATTEMPTS} 次,连接终止`)
+      const err = new CyreneError(CyreneErrorCode.NOT_CONNECTED, `重连失败超过 ${RECONNECT_MAX_ATTEMPTS} 次，连接终止`)
       this.setState({ status: 'error', lastError: err.message, serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
       this.settleConnectAttempt(this.pendingConnect, { error: err })
       this.options.onError?.(err)
@@ -1007,7 +1007,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
     for (const [, pending] of this.pendingAcks) {
       clearTimeout(pending.timer)
-      pending.reject(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,ack 未完成'))
+      pending.reject(new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，ack 未完成'))
     }
     this.pendingAcks.clear()
     for (const pending of this.pendingSwitch.values()) {
@@ -1050,7 +1050,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   // —— WS 发送 ——
   async sendMessage(input: SendMessageInput): Promise<ClientRequestRef> {
     if (this.state.status !== 'connected' || !this.ws) {
-      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接,无法发送消息')
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法发送消息')
     }
     const ackTimeoutMs = this.options.ackTimeoutMs ?? ACK_TIMEOUT_DEFAULT_MS
     // F7:同 clientRequestId 重复 → 先 reject 旧 pending(GENERATION_CONFLICT)再覆盖,防首个 promise 永不 settle
@@ -1085,7 +1085,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
 
   async cancelGeneration(_input: CancelGenerationInput): Promise<void> {
     if (this.state.status !== 'connected' || !this.ws) {
-      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接,无法取消生成')
+      throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法取消生成')
     }
     // interrupt 非定向(后端 InterruptMessage 仅 {type:"interrupt"});generationId 仅日志关联
     this.ws.send(JSON.stringify({ type: 'interrupt' }))
@@ -1138,7 +1138,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()
       // 连接已断 → 结果不应再被应用（保守语义保持不变）。注意：**重连不算断开**
       // （disconnected 仍为 false），故重连不再走到这里——这正是本次修复的差别。
-      if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
+      if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，请求已取消')
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         const code = (body as { code?: string }).code ?? 'HTTP_ERROR'
@@ -1150,7 +1150,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       if (requestTransportIncarnation !== this.transportIncarnation && !this.disconnected) throw this.sourceBoundaryError()
       if (controller.signal.aborted) {
         // I3/D17:disconnect 主动 abort 时 disconnected 已置 true → NOT_CONNECTED;否则是超时 timer abort → TIMEOUT
-        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开,请求已取消')
+        if (this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '连接已断开，请求已取消')
         throw new CyreneError(CyreneErrorCode.TIMEOUT, `REST 请求超时(${this.restTimeoutMs}ms): ${path}`)
       }
       throw this.restFailure(e)

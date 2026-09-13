@@ -155,6 +155,22 @@ describe('进程树回溯与聚合', () => {
     const scan = scanOrphanTestApps(ROOT, table([...INSTANCE, ...second]))
     expect(scan.orphans.map((orphan) => orphan.pid)).toEqual([83404, 86696])
   })
+
+  // 2026-09-13：`electronCount` 的注释写「进程表里所有 electron 进程数量」，实现却是
+  // `table.entries.length`。Windows 侧无感（CIM 已按 Name='electron.exe' 过滤），Linux 侧走 /proc
+  // 全表 ⇒ 每轮 CI 打印「检测到 43 个非本套件的 Electron 进程」的**误报**（那 43 个是机器上任何进程）。
+  // 本用例用混合进程表把「只数 electron」钉住：修复前该断言得 4（全部条目），修复后得 2。
+  it('electronCount 只数 Electron 进程，不把机器上的无关进程算进来', () => {
+    const mixed = [
+      ...INSTANCE.slice(0, 2),   // 2 个 electron 进程
+      entry({ pid: 4001, executable: '/usr/bin/node', commandLine: 'node /repo/apps/desktop/scripts/build.cjs' }),
+      entry({ pid: 4002, executable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', commandLine: 'powershell -NoProfile -Command Get-CimInstance' }),
+      entry({ pid: 4003, executable: '/opt/google/chrome/chrome', commandLine: '/opt/google/chrome/chrome --type=renderer' })
+    ]
+    const scan = scanOrphanTestApps(ROOT, table(mixed))
+    expect(scan.electronCount).toBe(2)
+    expect(scan.orphans, '无关进程既不计入 electronCount，也不得成为回收对象').toHaveLength(1)
+  })
 })
 
 describe('遗留测试应用回收', () => {

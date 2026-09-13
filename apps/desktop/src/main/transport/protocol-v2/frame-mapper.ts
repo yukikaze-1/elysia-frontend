@@ -200,7 +200,7 @@ export class FrameMapper {
     if (meta.segmentIndex !== frame.segmentIndex) {
       this.onProtocolWarning({
         code: ProtocolWarningCode.MAPPER_SEGMENT_INDEX_MISMATCH,
-        message: `segment ${frame.segmentId} delta 的 segmentIndex ${frame.segmentIndex} 与 started 元数据 ${meta.segmentIndex} 不一致,以 started 为准`
+        message: `segment ${frame.segmentId} delta 的 segmentIndex ${frame.segmentIndex} 与 started 元数据 ${meta.segmentIndex} 不一致，以 started 为准`
       })
     }
     return {

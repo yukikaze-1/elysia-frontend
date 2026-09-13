@@ -222,7 +222,7 @@ const showBanner = computed(() => {
 })
 const bannerText = computed(() => {
   const s = connectionStore.state.status
-  if (s === 'reconnecting') return '连接已断开,正在重连…'
+  if (s === 'reconnecting') return '连接已断开，正在重连…'
   if (s === 'error') return `连接出错${connectionStore.error?.message ? `: ${connectionStore.error.message}` : ''}`
   return ''
 })
