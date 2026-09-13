@@ -233,7 +233,9 @@
   `finally` 里的取值改成**多次重采样**（如结束后每 5s 取一次、共 60s），这属下一轮的自诊断改造内容。
   **至此的汇总（6 次）**：出现过的三组签名——`78/3856/19-of-25`、`449`、`124/3759/15-of-25/settledGap=4274`，
   以及复现两次的饱和组 `2506/5011/2-of-25/5526`。**不同签名 ⇒ 触发点不同；但"最终不收敛"这一点在多次里成立**。
-  `6171cd1` 的处置：`gh run rerun --failed` 重跑该分片（见下方本批 CI 行）。
+  `6171cd1` 的处置（**含一次流程事实，如实记**）：`gh run rerun --failed` 重跑了该分片，但**该重跑在 20 秒后被紧随其后的下一次 push（`bdef229`）顶掉**——`ci.yml` 的 `cancel-in-progress: true` 会取消同 ref 上仍在跑/排队的 run——最终以 **cancelled** 结束。
+  因此这一次**没有取得"重跑后是否转绿"的数据**（对比 `26c7d12` 那轮拿到了）。真正的结清发生在下一个提交：`bdef229`（纯文档）/ [run 34753892800](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34753892800) **8/8 全绿、首跑即绿**。
+  **教训（值得写进纪律）**：`gh run rerun --failed` 之后不要立刻再 push 同一分支——否则重跑会被顶掉，"重跑是否转绿"这条证据直接丢失。要么等重跑出结果，要么接受这次不结清。
 
 
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
@@ -284,7 +286,13 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 构建 | `pnpm build` | PASS |
 | 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动） |
 | 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | `26c7d12` / [run 34752619683](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34752619683) **8/8 全绿（重跑后）**；`6171cd1`（纯文档）/ [run 34753436139](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34753436139) 首跑红在 `integration (shard 2/3)` 的**既有 ④**（见上文第 6 次），**其余 7 个 job 全绿**，`gh run rerun --failed` 后重跑结清。两次的红都与本批改动无关（同一组数值在 2026-09-12 的 `34692644842`、本批之前的纯 workflow 提交上都出现过）；**判据未改、结论按上文记录**，不以重跑掩盖 |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS**（`26c7d12` 与 `bdef229` 各 8/8 全绿；`6171cd1` 首跑红于既有 ④、重跑被顶掉）——三次 run 的逐条事实见本表下方 |
+
+**本批 CI 行的逐条事实**（行宽到上限，故移出表外）：
+- `26c7d12` / [run 34752619683](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34752619683)：**8/8 全绿**（同一 commit 三次 attempt：红 → 红（数值逐像素相同）→ 绿，见上文第 5 次再现）；
+- `6171cd1`（纯文档）/ [run 34753436139](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34753436139)：首跑红在 `integration (shard 2/3)` 的**既有 ④**（第 6 次），其余 7 个 job 全绿；**其重跑被下一次 push 顶掉（cancelled）**；
+- `bdef229`（纯文档）/ [run 34753892800](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34753892800)：**8/8 全绿、首跑即绿**。
+三次的红都与本批改动无关（同一组数值在 2026-09-12 的 `34692644842`、以及本批之前的纯 workflow 提交上都出现过）；**判据未改、结论按上文记录**，不以重跑掩盖。
 
 **本批变异验证 3 次**：M1 失败后不再放回 patch → 单测 **红 4 条**；M2 摘掉设置页状态条 → 组件 **红 5/6** + 集成红于 `expected +0 to be 1`；M3 `SettingsService.load()` 恢复"隔离失败上抛" → 单测红于 promise rejected、**集成红于 `firstWindow: Target page, context or browser has been closed`（应用根本起不来）**——即修前的真实行为。
 
