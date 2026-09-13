@@ -46,14 +46,17 @@ const bottomGap = (page: Page): Promise<number> =>
  *   **height 持续增长而 top 冻结不动** ⇒ 就是那条分支。
  * 只在失败时多花时间：收敛值 > 40 时再补三次 5s 重采样，用来区分「慢到超出 15s 观测窗」与「永不收敛」。
  */
-const geometry = (page: Page): Promise<{ gap: number; top: number; height: number } | null> =>
+const geometry = (page: Page): Promise<{ gap: number; top: number; height: number; intent: string; atb: string } | null> =>
   page.evaluate(() => {
     const el = document.querySelector<HTMLElement>('.cy-messages')
     if (!el) return null
     return {
       gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
       top: Math.round(el.scrollTop),
-      height: Math.round(el.scrollHeight)
+      height: Math.round(el.scrollHeight),
+      // 只读探针（组件把两个内部布尔量反射到 data-* 上）：判定"是谁把跟随意图清了"必须看得见它们
+      intent: el.dataset.followIntent ?? '?',
+      atb: el.dataset.atBottom ?? '?'
     }
   })
 
@@ -162,11 +165,15 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       const samples: number[] = []
       const tops: number[] = []
       const heights: number[] = []
+      const intents: string[] = []
+      const atbs: string[] = []
       for (let i = 0; i < 25; i++) {
         const g = await geometry(page)
         samples.push(g?.gap ?? Number.NaN)
         tops.push(g?.top ?? Number.NaN)
         heights.push(g?.height ?? Number.NaN)
+        intents.push(g?.intent ?? '?')
+        atbs.push(g?.atb ?? '?')
         await page.waitForTimeout(200)
       }
       const sorted = [...samples].sort((a, b) => a - b)
@@ -179,10 +186,16 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       // 冻结曲线（纯诊断）：height 涨而 top 不动 ⇒ 命中代码里记过的"再无恢复路径"分支
       console.log(`[follow-bottom ④] top=${tops.join(',')}`)
       console.log(`[follow-bottom ④] height=${heights.join(',')}`)
+      console.log(`[follow-bottom ④] intent=${intents.join('')} atb=${atbs.join('')}`)
       const frozenAt = tops.findIndex((v, i) => i > 0 && v === tops[i - 1] && heights[i] > heights[i - 1])
       if (frozenAt > 0) {
         console.log(
           `[follow-bottom ④] frozenAt=#${frozenAt} top=${tops[frozenAt]} height=${heights[frozenAt]}→${heights[heights.length - 1]}（top 不再变化而内容继续增长）`
+        )
+        // 冻结那一刻的两个内部布尔量：`intent=0` ⇒ 跟随意图被清（谁清的见 onScroll 的 scrollTop<prevTop 分支）；
+        // `intent=1` 却不动 ⇒ 意图还在、是"没人推动滚动"，那是另一条分支。这一行就是为了把两者分开。
+        console.log(
+          `[follow-bottom ④] 冻结时 intent=${intents[frozenAt]} atb=${atbs[frozenAt]}（前一点 intent=${intents[frozenAt - 1]} atb=${atbs[frozenAt - 1]}）`
         )
       }
       expect.soft(
@@ -212,7 +225,7 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
             for (const wait of [5000, 5000, 5000]) {
               await page.waitForTimeout(wait)
               const g = await geometry(page)
-              console.log(`[follow-bottom ④] resample(+${wait}ms)=${g?.gap}px top=${g?.top} height=${g?.height}`)
+              console.log(`[follow-bottom ④] resample(+${wait}ms)=${g?.gap}px top=${g?.top} height=${g?.height} intent=${g?.intent} atb=${g?.atb}`)
             }
           }
         } catch { /* 页面已关闭：无诊断值可打，不影响断言结论 */ }

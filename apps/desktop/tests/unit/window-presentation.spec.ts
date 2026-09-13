@@ -235,9 +235,15 @@ describe('出帧保活（隐藏窗口的 rAF 不被压到 1 帧/秒）', () => {
     const f = fakeWindow({ loading: false })
     const mode = startSilentFrameKeepAlive(f.win, SILENT, { attempts: 2, frameTimeoutMs: 10, retryDelayMs: 5 })
     expect(mode).toBe('pending')
-    await new Promise((r) => setTimeout(r, 80))
-    expect(f.calls.filter((c) => c === 'beginFrameSubscription')).toHaveLength(2) // 首次 + 1 次重试
-    expect(f.calls).toContain('showInactive')
+    // 2026-09-13（flake 处置，**断言未放宽**）：原先这里是固定 `setTimeout(r, 80)` 之后直接断言
+    // 「已回退」。重试链本身只要约 25ms（10+5+10），但全套 252 个 spec 并行跑时事件循环被挤，
+    // 定时器可被推迟到 80ms 之后 ⇒ 断言先于终态执行 ⇒ 偶发红（本机全量跑实测红过一次、
+    // 单跑 20/20 绿）。改为等待**同一个终态条件**成立，只是把"等多久"从猜的 80ms 换成上限 2s：
+    // 两个断言（恰好 2 次订阅 + 已回退）都留在轮询内 ⇒ 真出现第 3 次重试或永不回退仍会红。
+    await vi.waitFor(() => {
+      expect(f.calls.filter((c) => c === 'beginFrameSubscription')).toHaveLength(2) // 首次 + 1 次重试
+      expect(f.calls).toContain('showInactive')
+    }, { timeout: 2000, interval: 10 })
     expect(f.visible).toBe(true)
   })
 

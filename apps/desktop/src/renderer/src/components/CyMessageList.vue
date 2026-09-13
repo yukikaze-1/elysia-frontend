@@ -481,7 +481,19 @@ onMounted(() => {
 </script>
 
 <template>
-  <div ref="container" class="cy-messages" aria-live="polite" @scroll.passive="onScroll">
+  <!-- 只读探针（2026-09-13，④ 收口用）：把「跟随意图」与「瞬时贴底」两个内部布尔量反射到 DOM 上。
+       存在的理由：④ 在 CI 上偶发冻结（`top` 冻住而 `height` 继续增长、且不恢复），而要判定"是谁把意图清了"
+       必须看得见这两个量——此前它们只活在组件作用域里，测试只能看到几何量，判不出分支。
+       两条不变量：**只读**（不改任何行为、不参与渲染决策）、**零渲染成本**（两个字符串属性）。
+       既有 DOM 契约门禁（perf-gate 断言的 `.cy-vlist-row`/`data-message-id`）不受影响。 -->
+  <div
+    ref="container"
+    class="cy-messages"
+    aria-live="polite"
+    :data-follow-intent="stickToBottom ? '1' : '0'"
+    :data-at-bottom="atBottom ? '1' : '0'"
+    @scroll.passive="onScroll"
+  >
     <div v-if="isEmpty" class="cy-empty" role="status">
       <strong>{{ conversationStore.offlineView ? '这个会话暂时无法读取' : '想聊点什么？' }}</strong>
       <span>{{ conversationStore.offlineView ? '连接恢复后可以重新读取会话内容。' : '从一句话开始，角色会在这里听你说。' }}</span>

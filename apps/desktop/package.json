@@ -19,7 +19,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "lint": "eslint . --max-warnings=0",
     "pretest": "node scripts/check-node-version.mjs",
-    "test": "vitest run --config vitest.config.mts",
+    "test": "pnpm ensure:electron && vitest run --config vitest.config.mts",
     "test:integration": "pnpm ensure:electron && electron-vite build --mode test && vitest run --config vitest.integration.config.mts",
     "test:integration:visible": "pnpm ensure:electron && electron-vite build --mode test && vitest run --config vitest.integration.config.visible.mts",
     "test:integration:live2d": "pnpm ensure:electron && electron-vite build --mode test && vitest run --config vitest.integration.config.mts electron-live2d",

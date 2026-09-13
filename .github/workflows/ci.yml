@@ -316,7 +316,16 @@ jobs:
       - name: Artifact smoke (xvfb)
         run: xvfb-run -a pnpm --filter @cyrene/desktop verify:artifact -- --smoke
 
-  # Windows 构建级门禁（C3：不启动 Electron）——unit 是 node 环境 + build 是打包器，均不需 electron 二进制
+  # Windows 构建级门禁（C3：不启动 Electron）——**注意：unit 套件确实需要 electron 二进制**
+  #
+  # 2026-09-13 实测更正：本行原先写的是「unit 是 node 环境 + build 是打包器，均**不需** electron 二进制」。
+  # 那是**假设而非事实**。用「unit spec 的相对 import 闭包」扫描实测：**252 个 unit spec 里有 50 个会到达
+  # `from 'electron'`**（经 `native-ui/dialog-service.ts` 32、`ipc/registry.ts` 8、`credentials/safe-storage.ts` 2、
+  # 以及 `persistence-handlers.ts`/`protocol/*`/`windows/main-window.ts` 等），而 `electron@43` 无 postinstall
+  # ⇒ 二进制靠 `require('electron')` 懒下载。干净工作区里多个 vitest worker **同时**首次 require ⇒ 并发解包
+  # ⇒ `os error 183`（`dist\resources` 已存在）⇒ **某个 spec 文件加载失败（0 test）**的偶发红
+  # （run `34757913922` 的 windows job：`settings-service.spec.ts (0 test)`）。故 `pnpm test` 已改为先
+  # `ensure:electron` 再跑 vitest（与 integration 脚本同款），把解包串行化到 vitest 启动之前。
   #
   # 2026-09-12：从 GitHub 托管 `windows-latest` 改钉到本仓 self-hosted runner（`yomu-win11`，标签 `fe-win`）。
   # 依据（本机实测，非推断）：
