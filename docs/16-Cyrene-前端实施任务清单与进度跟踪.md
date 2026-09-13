@@ -194,6 +194,18 @@
   **第 3 轮（`34741071616`，同一批代码、仅多一次文档提交）8/8 全绿，④ 转绿**——三轮内 2 红 1 绿、
   同一份跟随逻辑未变，故**当前定性：CI 环境相关的间歇失败**；但前两轮的"缺陷量级 + 与历史值逐像素相同"
   仍未被解释，**不得据此关闭该用例的疑虑**。下轮若再现，按上文 recipe（先连上再改尺寸）复现后再定判据。
+  **第 4 次再现（2026-09-13，`258d564` / [run 34743845854](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34743845854)）**：
+  红在 `integration (shard 2/3)` 的 ④，`median=449px`（判据 ≤200）、`within < 15/25`——仍落在该用例
+  自己写下的"缺陷量级"一侧。**这一轮的证据价值高于前三次**：`258d564` **只改了 `windows-runtime.yml`
+  一个文件**（ci.yml 根本不读它），而它的**前一个提交 `378f055`（应用代码完全相同）在同一分片上是绿的**
+  ——「同一份代码、相邻两次运行、一绿一红」是环境相关的**最直接**证据链（此前只能靠"本地绿/CI 红"）。
+  故定性不变（CI 环境相关间歇），但**前三次的缺陷量级数值仍未被解释**：本轮没有新数据能支持"已收敛"，
+  **既不放宽判据，也不关闭疑虑**。下一个可执行的判别动作仍是复现（按上文 recipe 修正版：**先连上并激活、
+  再调窗口尺寸**），本轮未做。
+  **该 run 的处置（沿用本仓既有先例）**：`gh run rerun 34743845854 --failed` 只重跑失败分片 →
+  **attempt 2 通过（2m43s）**，故 `258d564` 的 CI 记录为「首跑红于既有 ④ 偶发 → 重跑失败分片后全绿」。
+  失败 attempt 的关键事实已在重跑前取回（GitHub 会覆盖 attempt 日志，见本文件既有注记）：
+  `median=449px`（≤200）、`within < 15/25`。**"重跑即绿"本身不构成收敛证据**，只是把该 run 结清。
 
 
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
@@ -211,11 +223,11 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | Lint | `pnpm lint` | PASS（exit 0） |
 | 文档结构 | `pnpm docs:check` | PASS（20 core / **81** review / 40 superpowers / 42 archived；本批新增 1 份决策记录，`docs:index` 已重生成） |
 | 单元测试 | `pnpm test` | PASS（**251 文件 / 3075 通过** + 6 expected-fail + 22 skipped；本批净增 16 条 = `session-store` +5、`draft.store` +5、`cy-persistence-banner` 5、`orphan-apps` +1——与上一批记录的 3059 逐条对得上，见上一批单元行的校正） |
-| 集成测试（新增 1 个 spec） | `pnpm test:integration` | PASS（`persistence-degraded` 2/2：本机以 **Windows 目录 junction** 形态跑通降级全链路；Linux 侧走**文件 symlink** 形态，断言更强——外部目标文件逐字节未变） |
+| 集成测试（新增 1 个 spec） | `pnpm test:integration` | PASS（`persistence-degraded` 2/2；**两种链接形态都有真证据**：本机 Windows 走 **目录 junction** 2/2，CI Linux 走**文件 symlink**（断言更强：外部目标文件逐字节未变）——run `34743246107` 的 `shard 3/3` 日志 `✓ tests/integration/persistence-degraded.spec.ts (2 tests) 6124ms`） |
 | 构建 | `pnpm build` | PASS |
 | 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动） |
 | 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | 见下方本批 CI 行 |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS**：`378f055`（含本批 `b351da6`／`ce09277`／`378f055` 三提交）/ [run 34743246107](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34743246107) **8/8 job 全绿、首跑即绿**（6m20s）。**另有两条非 ci.yml 的运行证据**：`linux-runtime` 首次完整绿（见 §5 第 12 条①）、`windows-runtime` 首次完整运行红且日志未留下（同处，已修 workflow 证据捕获 `258d564`）。**`258d564`（只改 `windows-runtime.yml`）**：首跑红于**既有 ④ 偶发**（`integration (shard 2/3)`，见上文第 4 次再现），`gh run rerun --failed` 后 **attempt 2 全绿** |
 
 **本批变异验证 4 次**（每次确认变异真的改了代码路径）：M1 摘掉 `App.vue` 的横幅 → 集成 ① 红（阳性对照仍绿）；M2 `assertWritable` 的码改回 `UNKNOWN` → 集成 ③′ 红，且打出修复前原样报文 `[UNKNOWN] 持久化已降级（…）`；M3 `persistNow` 的 catch 不再置位 → 单测/组件 **4 条红**；M4 `hydrate` 忽略 `persistenceDegraded` → 集成 ① 红（`expected +0 to be 1`），**证明"随水合告知"这条路径必要**。
 
@@ -527,8 +539,16 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 11. **本轮的文档同步（2026-09-12）**：行为变更已同步到各自维护文档而非只写本文件——doc 03（§3.1 断点范围修正 + §14 补两条新交互口径）、doc 05（窗口可见性门 + 纹理显式释放）、doc 06（`BREAKPOINTS` 删除后的更正）、doc 07（§6.3 IPC 大小上限的落实状态与运行时撤回理由）、doc 08（新增/变更门禁矩阵 12 行）、doc 09（打包命令变更、生产依赖归类与 16.26 MB 实测）。
 12. **CI 平台归属的后续动作（2026-09-12 起，按序）**：
     - ① 取得 `windows-runtime` 与 `linux-runtime` 的**首次完整**结果：两者均为 `workflow_dispatch` + **每周定时**（周日 20:00／21:00 UTC），不手动也会自动跑。现状：`linux-runtime` 已 dispatch 过一次（`34685789785`，红于当时尚未定位的 `/proc/<pid>/exe` OOM 缺陷，该缺陷已由 `5261a82` 修复）；`windows-runtime` 修好 invalid workflow 与无代理两处后**尚未取得过完整结果**。**在此之前「Windows 能跑全量集成」只是本机 Session 1 的证据、「自建 Linux 更快」只是推算，均不得当作 CI 事实**。
-    - ② 记录 self-hosted `windows` job 的首次冷启动耗时（服务账号 profile 为空）与转暖后的稳定值。
-    - ③ 若 `windows-runtime` 在观察窗口内持续绿，再决定是否提升为必过门禁；提升前必须先处置 `protocol-handler` 两条 symlink 用例的跳过缺口，否则「少测两条安全边界」会被绿光掩盖。
+      **2026-09-13 更新（两条都已取到结果）**：
+      - **`linux-runtime` 首次完整结果 = 绿**：[run 34742118058](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34742118058)（`db8cc56`，9m24s）**35 files / 169 passed + 1 skipped，套件耗时 510.96s**，`[window-mode] silent` 生效。该 run 顺带打出了 `[orphan-apps] 检测到 **241** 个非本套件的 Electron 进程`——本批 ②-1 修复前的**最完整误报样本**（判据写成 `table.entries.length`，Linux 上等于机器全部进程数）。
+      - **`windows-runtime` 首次完整结果 = 红，但根因是执行环境、不是被测代码**：第一条 run（`34742115780`）红且**日志未留下**（artifact 仅 219 字节，`Tee-Object` 在 PS 5.1 长命令上不建文件），已由 `258d564` 修（cmd 自行重定向 + `if-no-files-found: error`）。
+        第二条 run（[34743861720](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34743861720)，`258d564`，29m16s）日志留下来了：**16 files / 43 tests 红（124 passed）；`element is not visible` 378 次、30s 动作超时 84 次**。
+        形态是决定性的——**需要 DOM 交互的文件全红**（`electron-tools` 13/13、`message-list-follow-bottom` 4/4、`persist-flush` 2/2…），**只走主进程/IPC/`page.evaluate` 的文件全绿**（`ipc-security` 18/18、`protocol-handler` 9、`persistence-lifecycle` 4/4…），即"DOM 存在、几何为零"。
+      - **根因与对照**：该 runner 是**服务形态**（`NT AUTHORITY\NETWORK SERVICE`，Session 0、**无交互桌面**），窗口拿不到合成器帧 ⇒ 布局为零 ⇒ Playwright 判定所有元素不可见。对照三组数据：**同一台机器同一份代码**，本机交互式会话（同样静默窗口）**167/172 通过**、Linux+xvfb **169/172 通过** ⇒ 变量是"有没有可合成的显示会话"，**不是静默窗口模式、也不是被测代码**。
+      - **第 12 条③的答案**：**不得把 `windows-runtime` 提升为必过门禁**——它不是"还没稳定"，而是当前配置下**结构性地跑不出运行时信号**。三种处置（A 把 runner 改成交互式会话运行／B 去掉每周定时、只留人工 dispatch／C 维持每周一条红 run）**均未选**，属对这台机器运维形态的决定，须由用户拍板；完整证据见 [Windows 运行时在服务形态 runner 上不可用](review/2026-09-13-Windows运行时在服务形态runner上不可用-决策记录.md)。
+      - **Windows 运行时证据目前只能人工在本机会话取得**，本轮已取到一条（**167/172**，两次红是机器争用超时、单跑 30/30 绿）——这是本仓**第一次**有 Windows 全量集成套件的完整数字（此前只有"Windows 联调仍阻塞"的记法）。
+    - ② 记录 self-hosted `windows` job 的首次冷启动耗时（服务账号 profile 为空）与转暖后的稳定值。**2026-09-13 部分取到**：`windows-runtime` 第一次整 job **27m36s**（含冷启动的 Electron／chromium 下载）、第二次（profile 已暖）**29m16s**，其中**集成步骤本身 1534.41s**。**未拆开记录**证明步骤（下载）与套件各自的耗时——第二次运行 29m16s > 第一次，说明"转暖后更快"在本机并不成立（更可能是环境差异而非缓存），**故本条的"稳定值"仍未取得**。
+    - ③ 若 `windows-runtime` 在观察窗口内持续绿，再决定是否提升为必过门禁；提升前必须先处置 `protocol-handler` 两条 symlink 用例的跳过缺口，否则「少测两条安全边界」会被绿光掩盖。**2026-09-13 已给出答案：不得提升**——该 job 在服务形态 runner 上**结构性地跑不出运行时信号**（见本条①的 Windows 段与决策记录），"观察窗口"这个前提不成立；symlink 缺口的处置因此不再是当前阻塞点（`protocol-handler` 在该环境下实际跑了 9 条 + 2 skipped，与 Linux 一致）。
     - ④ 与平台无关的 CI 时长优化见[决策记录 §6](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md)。**2026-09-13 逐条复核**：
       - integration 分片**已实施**（同决策记录 §9.3，`ci.yml` 现为三分片 + live2d 独占）。
       - `unit`/`windows` 两 job 的 Electron 二进制重复下载：两 job 现均跑在**自建 runner**上，`~/.cache/electron` 跨 run 持久（`ci.yml` 头部明确不加 `actions/cache`：走缓存服务反而每 run 多传约 120MB），故**代价只在首次冷启动**。
