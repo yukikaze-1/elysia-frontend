@@ -238,6 +238,8 @@
   **教训（值得写进纪律）**：`gh run rerun --failed` 之后不要立刻再 push 同一分支——否则重跑会被顶掉，"重跑是否转绿"这条证据直接丢失。要么等重跑出结果，要么接受这次不结清。
 
 
+  **④ 已在 CI 机器上复现（2026-09-13，同日最后一轮）——复现配方与冻结曲线见下方本批记录。** 冻结曲线第一次真的用上，结论是**它不是"慢"，而是"停住且不恢复"**：`top` 冻在 8139 而 `height` 从 8882 涨到 12568，流式结束后三次 5s 重采样**全是 3856px**（明确不收敛），且与 CI `34740144774` 的数值逐像素相同。
+
 **上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
 `unit tests` 1m16s、`integration (shard 1/3)` 3m16s、`(2/3)` 2m09s、`(3/3)` 1m09s、`integration (live2d)` 3m38s、
 `packaged artifact smoke` 47s（含真实启动冒烟）、`windows build-level` 3m44s。
@@ -300,8 +302,27 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 
 **本批观察到一次单元测试 flake（如实记录，未改任何断言）**：全量 `pnpm test` 第一遍红在 `real-backend-search.spec.ts`「单流（all）首屏按 sortKey 升序」，栈落在 `RealBackend.restFailure`，同轮 stderr 出现 happy-dom 的 `AsyncTaskManager has been destroyed` / `DOMException [NetworkError] … http://localhost:3000/x`（该 spec 注入 fetch 替身）。**单独重跑该文件 10/10 绿、随后全量重跑 252 文件全绿**，故定性为 happy-dom 拆装竞态类偶发；**未放宽任何断言**。本批改动面（设置域）与该 spec（历史查询 REST）无交集。
 
-CI 历史（本表 CI 行只记当前批次，历史见下）：
-- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
+**2026-09-13 持久化失败可见性收口 + ④ 复现批次（`081d3fe`／`2f3f0b9`／`a1b2c3d`）门禁记录**——用户在同日「还剩什么」清单里选定四项（① `CharacterDraftStore` 同族、⑤ 两处残余可见性、② ④ 深挖、A1-B 去定时）。完整决策、取舍、夹具自纠与残余见[决策记录](review/2026-09-13-持久化失败可见性收口与follow-bottom复现-决策记录.md)。
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（exit 0） |
+| Lint | `pnpm lint` | PASS（exit 0） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / **84** review / 40 superpowers / 42 archived） |
+| 单元测试 | `pnpm test` | PASS（**252 文件 / 3098 通过** + 6 expected-fail + 22 skipped；本批净增 9 条：character-draft-store +2、cy-character-catalog +1、cache.store +3、settings.store +1、settings-service +1、persistence-banner +1） |
+| 集成测试 | `pnpm test:integration` | PASS（本机 `message-list-follow-bottom` 4/4，并首次打印冻结曲线；新增诊断不改判据） |
+| 构建 | `pnpm build` | PASS |
+| 敏感扫描 | `verify:sensitive` | PASS |
+| 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议 |
+| 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
+| GitHub CI | `.github/workflows/ci.yml` | 见下方本批 CI 行 |
+
+**本批变异验证 4 次**：① 摘掉写守卫 → 降级用例红且 `save()` 由 reject 变 **resolve**（"覆写"真的发生）；② 隔离失败改回吞掉 → 降级用例红；③ `cache.store` 的 catch 改回静默 → 3 条红；④ `settings:load` 改回返回默认值 → 拒绝读取用例红。
+**两处被既有门禁/用例抓到的真问题**：① `voice-handlers.spec` 的 settings 替身缺 `getLastError()`（handler 依赖面变了）当场变红，已按其真实契约补齐；② **我第一版"判别用例"是假判别**——用 safeRoot 不匹配造降级时 `assertStorageRoot` 本来就会拦住写，"覆写"发生不了，红的只是错误码不同；已改为"正确 safeRoot + 注入 isolate 失败"的真实形态。
+
+**④ 复现（本批最大产出）**：在 CI 机器 `yomu-X99`（本机可免密 `ssh 192.168.1.18`）上建临时工作树、按分片 CPU 亲和（`taskset -c 14-23`）跑同一条用例 **8 轮，1 轮冻结**（`median=78px settledGap=3856px`），拿到冻结曲线：`top` 冻在 8139 而 `height` 8882→12568，**流式结束后三次 5s 重采样全为 3856px（明确不收敛，不是"慢"）**，并与 CI `34740144774` 数值逐像素相同。配方、探针方案与残余见决策记录 §4。**判据未改**。
+
+CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
 - `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。
 - `98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：多套 UI 基础批次，5 个 job 全绿（typecheck + lint、unit tests、integration tests、windows build-level、packaged artifact smoke）。
@@ -605,6 +626,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
       - **Windows 运行时证据目前只能人工在本机会话取得**，本轮已取到一条（**167/172**，两次红是机器争用超时、单跑 30/30 绿）——这是本仓**第一次**有 Windows 全量集成套件的完整数字（此前只有"Windows 联调仍阻塞"的记法）。
     - ② 记录 self-hosted `windows` job 的首次冷启动耗时（服务账号 profile 为空）与转暖后的稳定值。**2026-09-13 部分取到**：`windows-runtime` 第一次整 job **27m36s**（含冷启动的 Electron／chromium 下载）、第二次（profile 已暖）**29m16s**，其中**集成步骤本身 1534.41s**。**未拆开记录**证明步骤（下载）与套件各自的耗时——第二次运行 29m16s > 第一次，说明"转暖后更快"在本机并不成立（更可能是环境差异而非缓存），**故本条的"稳定值"仍未取得**。
     - ③ 若 `windows-runtime` 在观察窗口内持续绿，再决定是否提升为必过门禁；提升前必须先处置 `protocol-handler` 两条 symlink 用例的跳过缺口，否则「少测两条安全边界」会被绿光掩盖。**2026-09-13 已给出答案：不得提升**——该 job 在服务形态 runner 上**结构性地跑不出运行时信号**（见本条①的 Windows 段与决策记录），"观察窗口"这个前提不成立；symlink 缺口的处置因此不再是当前阻塞点（`protocol-handler` 在该环境下实际跑了 9 条 + 2 skipped，与 Linux 一致）。
+      **2026-09-13 追加（用户拍板：采用选项 B）**：`windows-runtime.yml` **移除每周定时触发**，只保留 `workflow_dispatch`（workflow 本身保留，供人工取证与将来换 runner 形态后复验）；**若将来改成交互式会话运行（选项 A），应把定时一并恢复**——这条写进了 workflow 的 `on:` 块注释。理由与验证边界（只做了 YAML 解析校验、**无 actionlint 语义校验**）见[决策记录 §5](review/2026-09-13-Windows运行时在服务形态runner上不可用-决策记录.md)。`linux-runtime` 的每周定时**保留**（它已取到绿色基线，定时用于防平台漂移）。
     - ④ 与平台无关的 CI 时长优化见[决策记录 §6](review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md)。**2026-09-13 逐条复核**：
       - integration 分片**已实施**（同决策记录 §9.3，`ci.yml` 现为三分片 + live2d 独占）。
       - `unit`/`windows` 两 job 的 Electron 二进制重复下载：两 job 现均跑在**自建 runner**上，`~/.cache/electron` 跨 run 持久（`ci.yml` 头部明确不加 `actions/cache`：走缓存服务反而每 run 多传约 120MB），故**代价只在首次冷启动**。

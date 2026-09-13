@@ -20,7 +20,10 @@ name: Windows runtime (observation)
 #      明令禁止的「把未核对伪装成通过」（同 ci.yml 中 check:contract 退出码分档的既有理由）。这里让它
 #      **该红就红**，只是暂不挂到 main 的必过检查上；证据稳定转绿后再把 job 提升进 ci.yml 成为必过门禁。
 #
-# 触发：手动 dispatch（验证改动/回归）+ 每周定时（防平台漂移）。
+# 触发：**仅手动 dispatch**（2026-09-13 起，见下方 on 块的说明；原先还有每周定时，因该形态下跑不出信号而移除）。
+#
+# 2026-09-13 实测结论（本 workflow 首次真正跑起来的两次）：**服务形态 runner 上结构性不可用**——
+# 详见 on 块注释与 docs/review/2026-09-13-Windows运行时在服务形态runner上不可用-决策记录.md。
 #
 # 已知平台差异（**如实记录，不得当作通过**）：
 #   - `tests/integration/protocol-handler.spec.ts` 的两条「symlink 逃逸 → 403」由 `canCreateSymlink()`
@@ -42,10 +45,18 @@ name: Windows runtime (observation)
 
 on:
   workflow_dispatch:
-  schedule:
-    # 每周日 20:00 UTC（北京时间周一 04:00）——机器空闲时段，避免与人工 push 的 CI 抢同一台 runner
-    - cron: '0 20 * * 0'
-
+  # 2026-09-13（用户拍板，选项 B）：**移除每周定时触发**，只保留人工 dispatch。
+  #
+  # 为什么移除（取证结论，见 docs/review/2026-09-13-Windows运行时在服务形态runner上不可用-决策记录.md）：
+  # 该 job 在服务形态 runner（Session 0、无交互桌面）上**结构性地跑不出运行时信号**——窗口拿不到合成器帧
+  # ⇒ 布局为零 ⇒ Playwright 判定所有 DOM 元素 "element is not visible"（实测 16 files / 43 tests 红，
+  # 378 次 not-visible；而只走主进程/IPC/evaluate 的文件全绿）。同一台机器同一份代码，交互式会话下
+  # 167/172 通过、Linux+xvfb 169/172 通过 ⇒ 变量是"有没有可合成的显示会话"。
+  # 因此保留每周定时只会**每周稳定产出一条无法转绿的红 run**——长期红会稀释告警可信度
+  # （与本轮修掉 `orphan-apps` electronCount 误报是同一条理由）。
+  # 保留 workflow 本身（人工 dispatch 仍可用于：换 runner 形态后的复验、取证、以及"红在哪一条"的现场）。
+  # 若将来把该 runner 改成交互式会话运行（决策记录选项 A），应把定时触发一并恢复。
+  # 下方 concurrency 仍保留：手动连续 dispatch 时新的顶掉排队中的旧的。
 # 定时与手动触发可能叠加：同一时刻只保留一次，新的顶掉排队中的旧的（不打断正在跑的）
 concurrency:
   group: windows-runtime
