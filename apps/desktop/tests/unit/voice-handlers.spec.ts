@@ -66,12 +66,12 @@ function makeVoiceAdapter() {
 interface SettingsLike { load: () => Promise<unknown>; save: (patch: unknown) => Promise<unknown> }
 
 /**
- * 2026-09-13（M-19 残余）：handler 侧的依赖面多了一个 `getLastError()`——`settings:load` 现在在
- * **降级态拒绝读取**（返回默认值等于谎报：磁盘上那份设置其实读不出来）。该用例的替身是手搓的
- * `{ load, save }`，缺这个方法会让 `settings:load` 变成 `UNKNOWN/内部错误`（本批全量单测实际抓到过）。
- * 这里统一补上「未降级」，需要测降级的用例可自行覆盖 `getLastError`（展开顺序保证后者生效）。
+ * 2026-09-13（M-19 残余）：handler 侧改为调 `settings.loadForRenderer()`——降级态拒绝读取
+ * （返回默认值等于谎报：磁盘上那份设置其实读不出来）。该用例的替身是手搓的 `{ load, save }`，
+ * 缺这个方法会让 `settings:load` 变成 `UNKNOWN/内部错误`（全量单测实际抓到过）。
+ * 这里统一补上「未降级 = 直接委托 load」，需要测降级的用例可自行覆盖 `loadForRenderer`（展开顺序保证后者生效）。
  */
-type SettingsStub = SettingsLike & { getLastError?: () => string | undefined }
+type SettingsStub = SettingsLike & { loadForRenderer?: () => Promise<unknown> }
 
 /** 每次 resetModules + 动态 import 拿全新 registry/voice-handlers/settings-handlers（registry 的 registered Set 模块级，避免重复注册抛错） */
 async function registerOnce(adapter: unknown, settings: SettingsStub): Promise<{ invoke: (channel: string, ...args: unknown[]) => Promise<IpcResult<unknown>>; emitOneWay: (channel: string, event: unknown, payload: unknown) => void; logger: Logger }> {
@@ -82,7 +82,7 @@ async function registerOnce(adapter: unknown, settings: SettingsStub): Promise<{
   const { registerSettingsHandlers } = await import('../../src/main/settings/settings-handlers')
   setMainWindow(fakeWindow as never)
   registerVoiceHandlers({ adapter: adapter as BackendAdapter, media: {} as never, sanitize, logger })
-  registerSettingsHandlers({ settings: { getLastError: () => undefined, ...settings } as never, sanitize, logger })
+  registerSettingsHandlers({ settings: { loadForRenderer: settings.load, ...settings } as never, sanitize, logger })
   return {
     invoke: (channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> => {
       const listener = getListeners().get(channel)

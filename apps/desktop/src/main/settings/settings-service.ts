@@ -84,6 +84,29 @@ export class SettingsService {
   /** 降级原因（设置域）；undefined 表示正常。供诊断与测试读取。**含 fs 原文，不得跨 IPC**。 */
   getLastError(): string | undefined { return this.degraded }
 
+  /**
+   * Renderer 侧的读入口（2026-09-13，M-19 残余）：**降级态下读也拒绝**。
+   *
+   * 降级（损坏文件隔离失败）意味着磁盘上那份设置**读不出来**，而内存里只有默认值。此时把默认值当
+   * "当前设置"返回给 UI 是**谎报**——用户会以为设置被重置了，接着改一改、写一写，把未能隔离的原文件
+   * 覆掉。故这条读路径直接抛 `PERSISTENCE_DEGRADED`：Renderer 的 `settings.hydrate` 早已 fail-open
+   * （保留默认值、不阻塞启动），现在多了一步"把失败记下来并在设置页显示"。
+   *
+   * **启动期不受影响**：`main/index.ts` 走的是 `load()` 本身（不经本方法），仍不抛。
+   * 放在服务上而不是 handler 里，有一个具体理由：handler 模块经 `ipc/registry` 间接 import `electron`，
+   * 而 **单元测试 import 它会触发 Electron 二进制的懒下载**（本仓 M-40 记过这个坑）——本方法让
+   * "降级拒绝读"这条规则可以在纯 node 单测里直击（Windows CI 实际抓到过 `os error 183`）。
+   */
+  async loadForRenderer(): Promise<SettingsState> {
+    if (this.degraded !== undefined) {
+      throw new CyreneError(
+        CyreneErrorCode.PERSISTENCE_DEGRADED,
+        `持久化已降级（${SETTINGS_FILE_NAME}：${this.degraded}），已拒绝读取以保留现场`
+      )
+    }
+    return this.load()
+  }
+
   /** 写入前守卫：降级态下拒绝一切写入，绝不覆写未能隔离的原文件（与 SessionStore 同纪律） */
   private assertWritable(): void {
     if (this.degraded === undefined) return

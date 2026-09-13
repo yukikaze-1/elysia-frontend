@@ -6,7 +6,6 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, real
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsService, SETTINGS_FILE_NAME } from '../../src/main/settings/settings-service'
-import { loadSettingsForRenderer } from '../../src/main/settings/settings-handlers'
 import { DEFAULT_APPEARANCE, DEFAULT_LIVE2D, DEFAULT_SETTINGS, SettingsStateSchema } from '../../src/shared/schemas'
 import type { SettingsPatch } from '../../src/shared/contracts'
 import { createIpcHandler } from '../../src/main/ipc/executor'
@@ -246,18 +245,21 @@ describe('SettingsService', () => {
   // M-19 残余（2026-09-13）：Renderer 那条读路径在降级时**拒绝**，而不是把默认值当"当前设置"返回
   // （返回默认值是谎报：用户会以为设置被重置，接着改一改就把未能隔离的原文件覆掉）。
   // 启动期不走这里（main/index.ts 直接调 load()），故 boot 的 fail-open 不受影响。
-  it('loadSettingsForRenderer：降级态拒绝读取（PERSISTENCE_DEGRADED），正常态照常返回', async () => {
+  // **方法放在 SettingsService 上而不是 handler 里**，正是为了让本用例留在纯 node 单测里：
+  // handler 模块经 ipc/registry 间接 import electron，单测 import 它会触发 Electron 二进制懒下载
+  // （本仓 M-40 记过；Windows CI 本轮实际抓到 `os error 183` 导致该 spec 加载失败、0 test）。
+  it('loadForRenderer：降级态拒绝读取（PERSISTENCE_DEGRADED），正常态照常返回', async () => {
     const healthy = makeDir()
     const okSvc = new SettingsService({ dir: healthy.dir, safeRoot: healthy.safeRoot, logger, countDiagnostic: vi.fn() })
     await okSvc.load()
-    await expect(loadSettingsForRenderer(okSvc)).resolves.toEqual(DEFAULT_SETTINGS)
+    await expect(okSvc.loadForRenderer()).resolves.toEqual(DEFAULT_SETTINGS)
 
     const dir = mkdtempSync(join(tmpdir(), 'cy-settings-degraded-'))
     const other = mkdtempSync(join(tmpdir(), 'cy-settings-degraded-root-'))
     writeFileSync(settingsPath(dir), JSON.stringify({ version: 2 }), { mode: 0o600 })
     const degraded = new SettingsService({ dir, safeRoot: realpathSync(other), logger, countDiagnostic: vi.fn() })
     await degraded.load()                                   // 隔离失败 → 降级（不抛）
-    await expect(loadSettingsForRenderer(degraded)).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    await expect(degraded.loadForRenderer()).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
     rmSync(dir, { recursive: true, force: true })
     rmSync(other, { recursive: true, force: true })
   })
