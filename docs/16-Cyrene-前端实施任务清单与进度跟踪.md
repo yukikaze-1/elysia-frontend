@@ -315,7 +315,7 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 敏感扫描 | `verify:sensitive` | PASS |
 | 跨仓契约 | `check:contract` | **未重跑**：本批未触碰后端线协议 |
 | 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链 |
-| GitHub CI | `.github/workflows/ci.yml` | 见下方本批 CI 行 |
+| GitHub CI | `.github/workflows/ci.yml` | `081d3fe`（①⑤ 代码）→ `2f3f0b9`／`7a3d34a` 的 run **首跑两处红**：`integration (shard 1/3)` 红在我**新增**的 `settings-save-failure.spec.ts`（`expected 1 to be +0`——⑤b 让降级启动即可见，而该用例仍写着"初始不应有提示"；**行为对、用例旧**），`integration (shard 2/3)` 红在既有 ④；`60ecbca` 修掉前者后 **shard 1/3 转绿**，仅剩 ④，`gh run rerun --failed` 重跑后 **8/8 全绿**。**判据一字未改**；④ 的 CI 日志本轮**自己打出了冻结曲线**（`top` 冻结而 `height` 继续增长） |
 
 **本批变异验证 4 次**：① 摘掉写守卫 → 降级用例红且 `save()` 由 reject 变 **resolve**（"覆写"真的发生）；② 隔离失败改回吞掉 → 降级用例红；③ `cache.store` 的 catch 改回静默 → 3 条红；④ `settings:load` 改回返回默认值 → 拒绝读取用例红。
 **两处被既有门禁/用例抓到的真问题**：① `voice-handlers.spec` 的 settings 替身缺 `getLastError()`（handler 依赖面变了）当场变红，已按其真实契约补齐；② **我第一版"判别用例"是假判别**——用 safeRoot 不匹配造降级时 `assertStorageRoot` 本来就会拦住写，"覆写"发生不了，红的只是错误码不同；已改为"正确 safeRoot + 注入 isolate 失败"的真实形态。
