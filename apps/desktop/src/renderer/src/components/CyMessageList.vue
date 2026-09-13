@@ -12,8 +12,12 @@ import { useIdentityStore } from '../stores/identity.store'
 import { useCharacterCatalogStore } from '../stores/character-catalog.store'
 import type { Message } from '@shared/contracts'
 import CyMessageBubble from './CyMessageBubble.vue'
+import CyContextMenu from './CyContextMenu.vue'
+import type { ContextMenuItem } from '../utils/context-menu'
 import { buildPrefix, captureAnchor, computeWindow, restoreScrollTop, OVERSCAN_PX } from '../utils/virtual-window'
 import { dayFirstDayKeys, daySeparatorLabel, estimateMessageRowHeight } from '../utils/message-time'
+import { messageCopyableText } from '../utils/message-copy'
+import { copyText } from '../utils/clipboard'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
@@ -154,6 +158,39 @@ function onResend(messageId: string): void {
 /** 重新生成：以该回复之前最近的一条用户消息重发一次（新 clientRequestId ⇒ 新一代回复） */
 function onRegenerate(messageId: string): void {
   void messageStore.regenerateFrom(messageId)
+}
+
+// —— doc 03 §5.1 / §7.5（2026-09-13）：消息右键菜单 ——
+// 台账要求"同一 context-menu 机制一次覆盖两处"，故与会话列表共用 CyContextMenu。
+// 菜单项只放**本条消息已具备**的能力：复制（H-02）+ 重发/重新生成（本轮），
+// 且与操作行用同一套可用性判据（busy 时禁用、带附件/贴图不给重发）。
+const messageMenu = ref<{ open: boolean; x: number; y: number; messageId?: string }>({ open: false, x: 0, y: 0 })
+
+function openMessageMenu(payload: { messageId: string; x: number; y: number }): void {
+  messageMenu.value = { open: true, x: payload.x, y: payload.y, messageId: payload.messageId }
+}
+
+const messageMenuItems = computed<ContextMenuItem[]>(() => {
+  const msg = messageMenu.value.messageId ? messageStore.byId[messageMenu.value.messageId] : undefined
+  if (!msg) return []
+  const items: ContextMenuItem[] = [{ id: 'copy', label: msg.role === 'assistant' ? '复制回答' : '复制消息' }]
+  if (msg.role === 'user') {
+    const canResend = (msg.content ?? '').length > 0 && (msg.attachments?.length ?? 0) === 0 && !msg.stickerId
+    if (canResend) items.push({ id: 'resend', label: '重新发送', disabled: actionBusy.value })
+  } else {
+    items.push({ id: 'regenerate', label: '重新生成', disabled: actionBusy.value })
+  }
+  return items
+})
+
+function onMessageMenuSelect(id: string): void {
+  const messageId = messageMenu.value.messageId
+  if (!messageId) return
+  const msg = messageStore.byId[messageId]
+  if (!msg) return
+  if (id === 'copy') void copyText(messageCopyableText(msg))
+  else if (id === 'resend') void messageStore.resendUserMessage(messageId)
+  else if (id === 'regenerate') void messageStore.regenerateFrom(messageId)
 }
 
 /** UII-QQ 轮次分组（纯展示）：与前一条「非 tool」消息角色不同的行为「轮首」。
@@ -472,6 +509,7 @@ onMounted(() => {
           :busy="actionBusy"
           @resend="onResend"
           @regenerate="onRegenerate"
+          @menu="openMessageMenu"
         />
         <span v-if="messageStore.highlightMessageId === id" class="cy-located-chip">已定位</span>
       </div>
@@ -483,6 +521,15 @@ onMounted(() => {
     </template>
 
     <button v-if="!atBottom && !isEmpty" class="cy-back-bottom" title="回到底部" @click="backToBottom">↓ 回到底部</button>
+    <!-- doc 03 §5.1/§7.5：消息右键菜单（实例唯一，teleport 到 body——见 CyContextMenu 头注的虚拟列表理由） -->
+    <CyContextMenu
+      :open="messageMenu.open"
+      :x="messageMenu.x"
+      :y="messageMenu.y"
+      :items="messageMenuItems"
+      @select="onMessageMenuSelect"
+      @close="messageMenu.open = false"
+    />
     <!-- P2-4：aria-live 区常驻（v-if 条件挂载部分读屏器不播报）——role=status 占位容器恒在，文本随高亮更新；
          清除策略：6s 定时（spec「滚动或 6s」取定时分支；程序性定位滚动与用户滚动难可靠区分，定时满足语义） -->
     <div class="cy-sr-live" role="status" aria-live="polite">{{ hasHighlight ? '已定位到消息' : '' }}</div>

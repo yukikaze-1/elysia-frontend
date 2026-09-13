@@ -1,12 +1,15 @@
 <script setup lang="ts">
 // CyConversationList:conversationStore.items 渲染(当前高亮)+ 新建/重命名/删除。
 // 新建后调 activate(c.id)(F1,Task 4 review——create 不 reset messageStore,须显式 activate 拉起空消息)。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import type { ComponentPublicInstance } from 'vue'
 import type { Conversation } from '@shared/contracts'
 import { useConnectionStore } from '../stores/connection.store'
 import { useConversationStore } from '../stores/conversation.store'
 import { useAppStore } from '../stores/app.store'
 import CyConversationCharacterPicker from './CyConversationCharacterPicker.vue'
+import CyContextMenu from './CyContextMenu.vue'
+import type { ContextMenuItem } from '../utils/context-menu'
 import { errorMessage } from '../utils/error-message'
 
 const conversationStore = useConversationStore()
@@ -34,8 +37,37 @@ const filteredItems = computed(() => {
 
 const renamingId = ref<string>()
 const renameDraft = ref('')
+// 注意：输入框在 `v-for` 内，**模板 ref 在 v-for 里拿到的是数组**（`ref="x"` 会变成 HTMLInputElement[]）。
+// 用函数 ref 明确收单个元素，避免 `renameInput.value.focus is not a function` 这类只在运行时才炸的坑
+// （本轮实测就是这个：渲染层 TypeError 被 vue errorHandler 记录，而界面只是"没聚焦"）。
+let renameInputEl: HTMLInputElement | undefined
+function setRenameInput(el: Element | ComponentPublicInstance | null): void {
+  renameInputEl = el instanceof HTMLInputElement ? el : undefined
+}
 const characterPickerOpen = ref(false)
 const characterPickerBusy = ref(false)
+
+// —— doc 03 §5.1「会话项…右键菜单」（2026-09-13）——
+// 菜单项只暴露**已存在**的能力（PRD §6.3「右键菜单至少支持：重命名；删除」），置顶/归档/分组是 P1
+// 且 `conversation.store` 里 0 实现，故不进菜单（与 §5.2 的 P0 清单一致）。
+// 键盘等价入口仍然存在：行内 hover/focus-within 显形的重命名/删除按钮（Tab 可达），
+// 故右键只是"更快的一条路"，不是唯一路径。
+const menu = ref<{ open: boolean; x: number; y: number; target?: Conversation }>({ open: false, x: 0, y: 0 })
+const menuItems = computed<ContextMenuItem[]>(() => [
+  { id: 'rename', label: '重命名', disabled: !canAct.value },
+  { id: 'delete', label: '删除', danger: true, disabled: !canAct.value }
+])
+
+function openMenu(c: Conversation, e: MouseEvent): void {
+  menu.value = { open: true, x: e.clientX, y: e.clientY, target: c }
+}
+
+function onMenuSelect(id: string): void {
+  const c = menu.value.target
+  if (!c) return
+  if (id === 'rename') startRename(c)
+  else if (id === 'delete') remove(c)
+}
 
 async function createLegacy(): Promise<void> {
   const conversation = await conversationStore.create()
@@ -74,6 +106,18 @@ function startRename(c: Conversation): void {
   renamingId.value = c.id
   renameDraft.value = c.title
 }
+
+/**
+ * 重命名输入框**渲染出来即聚焦并全选**（"点完就能打字"）。
+ *
+ * 为什么用 `flush: 'post'` 的 watch 而不是函数 ref：函数 ref 的回调时机取决于 Vue 在 mountElement
+ * 里"先插入 DOM 还是先 setRef"的次序（实测同一份代码两次运行一个成一个不成，第一次 focus() 时元素
+ * 尚未连接 ⇒ activeElement 变 BODY）。post-flush 回调必然在 DOM 更新之后，没有时序猜测。
+ */
+watch(renamingId, () => {
+  renameInputEl?.focus()
+  renameInputEl?.select()
+}, { flush: 'post' })
 
 async function commitRename(): Promise<void> {
   const id = renamingId.value
@@ -158,6 +202,7 @@ function activateConv(id: string): void {
         :key="c.id"
         class="cy-conversation"
         :class="{ 'is-active': currentId === c.id }"
+        @contextmenu.prevent="openMenu(c, $event)"
       >
         <!-- 常规态:整行可点激活;重命名态:标题换输入框(按钮内不放 input) -->
         <button v-if="renamingId !== c.id" class="cy-conversation-main" :aria-pressed="currentId === c.id" :disabled="!canOpen" @click="activateConv(c.id)">
@@ -174,6 +219,7 @@ function activateConv(id: string): void {
         <div v-else class="cy-conversation-main cy-conversation-renaming">
           <span class="cy-conversation-avatar" :style="avatarStyle(c)">{{ avatarLabel(c) }}</span>
           <input
+            :ref="setRenameInput"
             v-model="renameDraft"
             class="cy-rename-input"
             aria-label="会话名称"
@@ -206,6 +252,14 @@ function activateConv(id: string): void {
     @close="characterPickerOpen = false"
     @confirm="confirmCharacter"
     @open-settings="openSettings"
+  />
+  <CyContextMenu
+    :open="menu.open"
+    :x="menu.x"
+    :y="menu.y"
+    :items="menuItems"
+    @select="onMenuSelect"
+    @close="menu.open = false"
   />
 </template>
 

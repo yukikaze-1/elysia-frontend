@@ -372,3 +372,62 @@ describe('CyConversationList FE-E1 新建会话与会话角色快照', () => {
     wrapper.unmount()
   })
 })
+
+// —— doc 03 §5.1（2026-09-13）：会话项右键菜单 ——
+// 菜单项只暴露已存在的能力（PRD §6.3：重命名/删除），且沿用行内按钮的同一门控（canAct）。
+// 集成层另有真实右键用例（context-menu.spec.ts 断言坐标定位与菜单→动作闭环），此处补**确定性**的
+// 门控与派发路径——集成用例跑在已连接态，覆盖不到"未连接时禁用"。
+describe('CyConversationList 右键菜单（doc 03 §5.1）', () => {
+  /** 挂载 + 播一条会话 + 在首行触发右键（菜单项渲染在 teleport 到 body 的容器里，故查询用 document） */
+  async function openMenuOnFirstRow(options: Parameters<typeof prepare>[0] = {}, attach = false): Promise<ReturnType<typeof mountList>> {
+    prepare(options)
+    // 带角色绑定快照：profiles 模式下 store 会拒收"缺绑定"的会话响应（首版就栽在这，
+    // 列表渲染成空态 → 找不到 .cy-conversation）
+    mockApi.listConversations.mockResolvedValue({
+      items: [{
+        id: 'c-1', title: '会话一', updatedAt: '2026-09-13T00:00:00.000Z', preview: '你好',
+        character: { characterId: elysia.characterId, characterInstanceId: 'instance-elysia', characterRevision: 1, displayName: 'Elysia', presentation: elysia.presentation }
+      }],
+      hasMore: false
+    })
+    // 焦点相关断言必须 attachTo（脱离文档时 happy-dom 不把 focus 反映到 document.activeElement）
+    const wrapper = attach
+      ? mount(CyConversationList, { global: { plugins: [pinia] }, attachTo: document.body })
+      : mountList()
+    await useConversationStore().list()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.cy-conversation').trigger('contextmenu', { clientX: 120, clientY: 80 })
+    await wrapper.vm.$nextTick()
+    return wrapper
+  }
+
+  it('右键会话行 → 菜单打开并渲染「重命名/删除」两项', async () => {
+    const wrapper = await openMenuOnFirstRow()
+    const menu = document.querySelector('[data-testid="context-menu"]')
+    expect(menu).not.toBeNull()
+    expect(menu!.querySelectorAll('[role="menuitem"]')).toHaveLength(2)
+    expect(document.querySelector('[data-testid="context-menu-rename"]')?.textContent).toBe('重命名')
+    expect(document.querySelector('[data-testid="context-menu-delete"]')?.textContent).toBe('删除')
+    wrapper.unmount()
+  })
+
+  it('未连接（canAct=false）→ 两项都禁用（不提供点不动的假入口）', async () => {
+    const wrapper = await openMenuOnFirstRow()
+    useConnectionStore().setState({ status: 'disconnected' })
+    await wrapper.vm.$nextTick()
+    expect((document.querySelector('[data-testid="context-menu-rename"]') as HTMLButtonElement).disabled).toBe(true)
+    expect((document.querySelector('[data-testid="context-menu-delete"]') as HTMLButtonElement).disabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('选「重命名」→ 进入重命名态并聚焦输入框（点完就能打字）', async () => {
+    const wrapper = await openMenuOnFirstRow({}, true)
+    ;(document.querySelector('[data-testid="context-menu-rename"]') as HTMLButtonElement).click()
+    await wrapper.vm.$nextTick()
+    await wrapper.vm.$nextTick()
+    const input = wrapper.find('.cy-rename-input')
+    expect(input.exists()).toBe(true)
+    expect(document.activeElement, '输入框渲染后必须拿到焦点').toBe(input.element)
+    wrapper.unmount()
+  })
+})

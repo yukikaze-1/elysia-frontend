@@ -8,6 +8,7 @@ import type { AssistantSegment, CharacterBindingSnapshot, CharacterGenerationRef
 import { stickerRenderUrl } from '@shared/domain'
 import { formatFullTime, formatMessageTime } from '../utils/message-time'
 import { copyText } from '../utils/clipboard'
+import { messageCopyableText } from '../utils/message-copy'
 import CyMarkdown from './CyMarkdown.vue'
 import CyAttachmentMedia from './CyAttachmentMedia.vue'
 import CyToolCard from './CyToolCard.vue'   // 阶段 6 批次 B（Task 7）：归档工具卡片（只读）
@@ -35,7 +36,12 @@ const props = defineProps<{
    *  动作本身由父层（CyMessageList）执行——本组件不 import store，保持"展示 + 交互"职责。 */
   busy?: boolean
 }>()   // UI 问题 1 修复：不再按 visible 延迟渲染——虚拟窗口/overscan 内全量渲染真实内容，消除「完整↔骨架」几何切跳
-const emit = defineEmits<{ resend: [messageId: string]; regenerate: [messageId: string] }>()
+const emit = defineEmits<{
+  resend: [messageId: string]
+  regenerate: [messageId: string]
+  /** 右键：把坐标交给父层（菜单实例由 CyMessageList 持有——每个气泡各带一个菜单会随虚拟列表放大开销） */
+  menu: [payload: { messageId: string; x: number; y: number }]
+}>()
 
 // —— UII-QQ 时间戳批次：每条 Message 只显示一次时间（inner_voice/public_reply/工具卡/emotion 共用）——
 // 默认可见内容仅本地 HH:mm（h23）；<time datetime> 保留原始 createdAt，title/aria-label 为完整本地时间；
@@ -133,12 +139,8 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 // —— H-02（2026-09-11）：消息级复制 ——
 // 报告实测：`body { user-select: none }` + 无操作行 + 无右键菜单，使「复制回答」三条路全断。
 // 本组件补操作行（选择能力由 CyMessageList 对消息行恢复 user-select 承担）。
-// 复制内容 = 用户可读正文：user 取 content；assistant 取 public_reply 分段拼接（内心独白与
-// 技术元数据不外带——它们不是「回答」本身）。
-const copyableText = computed(() => {
-  if (isUser.value) return props.message.content ?? ''
-  return publicSegments.value.filter(isTextSegment).map(segmentText).join('\n\n').trim()
-})
+// 「复制什么」的判据自 2026-09-13 起收敛到 utils/message-copy（右键菜单的复制项用同一份，防两份副本漂移）。
+const copyableText = computed(() => messageCopyableText(props.message))
 const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 async function onCopy(): Promise<void> {
@@ -164,7 +166,7 @@ const busy = computed(() => props.busy === true)
 
 <template>
   <!-- user 消息:右对齐 + 「我」头像;content 纯文本 mustache 转义(不解析 HTML,勿用 v-html);failed 加错误角标(P2-4) -->
-  <div v-if="isUser" class="cy-message-row cy-user-row">
+  <div v-if="isUser" class="cy-message-row cy-user-row" @contextmenu.prevent="emit('menu', { messageId: message.messageId, x: $event.clientX, y: $event.clientY })">
     <div class="cy-msg-col cy-user-col">
       <!-- UII-QQ 收尾：时间头部行（右对齐）位于内容上方——与 Assistant「头像+名称时间头部+内容」镜像；
            头像已表达用户身份，头部不重复「我」；时间仍在气泡外、不入蓝色气泡 -->
@@ -201,7 +203,7 @@ const busy = computed(() => props.busy === true)
   <div v-else-if="message.role === 'tool'" class="cy-tool-role-placeholder" />
 
   <!-- assistant 消息:左对齐,动态角色头像 + 扁平列(名称一次/内心独白折叠/工具卡/白色气泡/低权重元数据) -->
-  <div v-else class="cy-message-row cy-assistant-row" :class="{ 'is-streaming': message.status === 'streaming' }">
+  <div v-else class="cy-message-row cy-assistant-row" :class="{ 'is-streaming': message.status === 'streaming' }" @contextmenu.prevent="emit('menu', { messageId: message.messageId, x: $event.clientX, y: $event.clientY })">
     <span class="cy-avatar cy-avatar-assistant" role="img" :title="assistantName" :aria-label="assistantName">{{ assistantAvatar }}</span>
     <div class="cy-msg-col">
       <!-- UII-QQ 时间戳批次：名称行升为轻头部「角色 · HH:mm」——时间弱于名称；inner_voice/工具卡/正文/心情共用 -->
