@@ -181,6 +181,29 @@ describe('阶段 5 批次 A live2d 设置 schema（D5A-10，A6）', () => {
     if (r.success) expect(r.data.live2d).toEqual(DEFAULT_LIVE2D)
   })
 
+  // 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）：字段级 .default ⇒ 旧 settings.json（无这两项）
+  // 照旧可装载，不 corrupt、不 bump version；越界/非整数被拒。
+  it('SettingsStateSchema：voice 缺 silenceAutoStop/silenceStopMs → 补默认（false / 2000ms）', () => {
+    const oldVoice = { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false }
+    const r = SettingsStateSchema.safeParse({ version: 1, voice: oldVoice, dictation: { insertMode: 'append' } })
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.data.voice.silenceAutoStop).toBe(false)   // 默认关闭：不替用户改变"何时停止录音"
+      expect(r.data.voice.silenceStopMs).toBe(2000)
+    }
+  })
+
+  it('SettingsStateSchema：voice.silenceStopMs 越界/非整数被拒（1000–5000 整数）', () => {
+    const voice = { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false, silenceAutoStop: true }
+    const ok = (ms: unknown): boolean => SettingsStateSchema.safeParse({ version: 1, voice: { ...voice, silenceStopMs: ms }, dictation: { insertMode: 'append' } }).success
+    expect(ok(1000)).toBe(true)
+    expect(ok(5000)).toBe(true)
+    expect(ok(999)).toBe(false)
+    expect(ok(5001)).toBe(false)
+    expect(ok(2000.5)).toBe(false)
+    expect(ok('2000')).toBe(false)
+  })
+
   it('SettingsStateSchema：live2d 合法值通过 / 非法（modelId 非 string|null）拒绝', () => {
     const base = {
       version: 1,

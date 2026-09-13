@@ -19,8 +19,64 @@ export const PCM_SAMPLE_RATE = 16000
 export const PCM_CHUNK_SAMPLES = 320
 /** 单 chunk 字节数：320 样本 × 2B = 640B（PCM s16le 小端） */
 export const PCM_CHUNK_BYTES = PCM_CHUNK_SAMPLES * 2
+/** 单 chunk 时长（ms）——静音累计以它为单位（20ms 帧，与后端 VAD 帧对齐） */
+export const PCM_CHUNK_MS = 20
 /** AudioWorklet 处理器注册名（pcm-worklet.js 内 registerProcessor 同名） */
 export const PCM_PROCESSOR_NAME = 'pcm-processor'
+
+/**
+ * 语音活动检测的判定阈值（RMS，0–1）：低于它即视为"这一帧没有语音"。
+ *
+ * 取 0.01 ≈ −40 dBFS：EC/NS/AGC 开启后的安静房间底噪通常远低于此，而正常说话远高于此。
+ * **刻意不做成设置项**：把裸 RMS 阈值暴露给用户没有可解释的语义（"0.01" 对用户无意义），
+ * 设置里只给 doc 11 §3.3 要求的「语音活动检测开关 + 静音结束时长」两项。
+ */
+export const SILENCE_RMS_THRESHOLD = 0.01
+
+/** 一帧 PCM 的 RMS（0–1）。纯函数，便于单测（静音判定是"何时自动结束录音"的唯一依据）。 */
+export function computeRms(samples: Float32Array): number {
+  if (samples.length === 0) return 0
+  let sum = 0
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i]
+  return Math.sqrt(sum / samples.length)
+}
+
+/**
+ * 静音累计器（doc 11 §3.3「语音活动检测／静音结束时长」，2026-09-13）。
+ *
+ * 语义：逐帧喂 RMS；连续静音累计到 `durationMs` 时**返回一次 true**（调用方据此自动结束录音），
+ * 之后不再重复触发；期间只要有一帧达到阈值就清零重新计时。
+ *
+ * 为什么是纯类而不是塞进 PcmCapture：判据（"多久算说完"）必须能被确定性单测覆盖——
+ * 真实麦克风在 CI 上不可控，把它做成 DOM/音频依赖的逻辑就只能靠人耳验证。
+ */
+export class SilenceTracker {
+  private silentMs = 0
+  private fired = false
+
+  constructor(
+    private readonly durationMs: number,
+    private readonly chunkMs: number = PCM_CHUNK_MS,
+    private readonly thresholdRms: number = SILENCE_RMS_THRESHOLD
+  ) {}
+
+  /** 喂一帧 RMS；返回本次是否**首次**达到静音时长 */
+  push(rms: number): boolean {
+    if (rms >= this.thresholdRms) {
+      this.silentMs = 0
+      return false
+    }
+    this.silentMs += this.chunkMs
+    if (this.fired || this.silentMs < this.durationMs) return false
+    this.fired = true
+    return true
+  }
+
+  /** 已累计的连续静音时长（诊断/断言用） */
+  get silentDurationMs(): number {
+    return this.silentMs
+  }
+}
 
 /**
  * Float32 → PCM16 s16le（每样本截断到 [-1,1] 后 round(v*32767)，Int16 LE）。
@@ -64,6 +120,9 @@ export interface PcmCaptureOptions {
   onStop?(audioBuffer: AudioBuffer): void
   /** 指定麦克风 deviceId（MediaTrackConstraints.deviceId；缺省用系统默认） */
   deviceId?: string
+  /** 语音活动检测（doc 11 §3.3）：连续静音达到 durationMs 后回调一次（自动结束录音）。
+   *  缺省 undefined ⇒ 关闭，行为与开启该设置前完全一致。 */
+  silence?: { durationMs: number; onSilence(): void }
 }
 
 /** Task 12 可注入 fake 的形状（voiceStore 单测用） */
@@ -93,6 +152,8 @@ export class PcmCapture implements PcmCaptureLike {
   private silentGain: GainNode | null = null
   private onChunk: ((bytes: Uint8Array) => void) | null = null
   private onStop: ((audioBuffer: AudioBuffer) => void) | null = null
+  private silenceTracker: SilenceTracker | null = null
+  private onSilence: (() => void) | null = null
   private readonly floatChunks: Float32Array[] = []
   private totalSamples = 0
 
@@ -137,6 +198,8 @@ export class PcmCapture implements PcmCaptureLike {
       this.audioContext = audioContext
       this.onChunk = options.onChunk
       this.onStop = options.onStop ?? null
+      this.silenceTracker = options.silence ? new SilenceTracker(options.silence.durationMs) : null
+      this.onSilence = options.silence?.onSilence ?? null
       this.floatChunks.length = 0
       this.totalSamples = 0
 
@@ -264,13 +327,19 @@ export class PcmCapture implements PcmCaptureLike {
     this.silentGain = silent
   }
 
-  /** 统一 chunk 消费：Int16→Float32 累积（供 onStop AudioBuffer）+ 转发 onChunk */
+  /** 统一 chunk 消费：Int16→Float32 累积（供 onStop AudioBuffer）+ 转发 onChunk + 静音判定 */
   private consumeChunk(bytes: Uint8Array): void {
     const sampleCount = bytes.byteLength / 2
     const f32 = new Float32Array(sampleCount)
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     for (let i = 0; i < sampleCount; i++) {
       f32[i] = view.getInt16(i * 2, true) / 32767
+    }
+    // 语音活动检测（doc 11 §3.3）：用**已有**的 PCM 帧算 RMS，不额外挂 AnalyserNode、不动 worklet 热路径
+    if (this.silenceTracker?.push(computeRms(f32))) {
+      const notify = this.onSilence
+      this.onSilence = null   // 只报一次（stop 之后即便还有在途 chunk 也不再触发）
+      notify?.()
     }
     this.floatChunks.push(f32)
     this.totalSamples += sampleCount
@@ -303,6 +372,8 @@ export class PcmCapture implements PcmCaptureLike {
     this.audioContext = null
     this.onChunk = null
     this.onStop = null
+    this.silenceTracker = null
+    this.onSilence = null
     this.floatChunks.length = 0
     this.totalSamples = 0
   }

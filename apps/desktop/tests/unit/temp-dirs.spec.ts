@@ -178,6 +178,9 @@ describe('防漂移：允许表必须覆盖测试源码里出现的所有 mkdtem
     return out
   }
 
+  // 显式超时（2026-09-13）：本用例要遍历整个 tests/ 树读每个文件，是纯 I/O 扫描；
+  // 全套并行跑（250+ 文件同时抢磁盘）时实测 6.6s > 默认 5000ms 而**超时失败**（单跑仅 88ms）。
+  // 断言一字未改，只给这个扫描用例留出预算——超时不是判别力，是环境噪声。
   it('每个 mkdtemp 前缀都在 TEST_TEMP_PREFIXES 里登记（新前缀必须来登记，否则本用例变红）', () => {
     const files = collectSourceFiles(TESTS_ROOT).filter((f) => !f.endsWith('temp-dirs.ts'))
     const discovered = new Map<string, string>()   // prefix → 首个出处
@@ -196,7 +199,7 @@ describe('防漂移：允许表必须覆盖测试源码里出现的所有 mkdtem
       .filter(([prefix]) => !TEST_TEMP_PREFIXES.includes(prefix))
       .map(([prefix, where]) => `${prefix}（${where}）`)
     expect(unregistered, `以下 mkdtemp 前缀未登记到 TEST_TEMP_PREFIXES，会被永久泄漏在 $TEMP：\n${unregistered.join('\n')}`).toEqual([])
-  })
+  }, 30_000)
 
   it('允许表里没有已无人使用的前缀（防反向漂移：删了 spec 却留着条目）', () => {
     const files = collectSourceFiles(TESTS_ROOT).filter((f) => !f.endsWith('temp-dirs.ts'))

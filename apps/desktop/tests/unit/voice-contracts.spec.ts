@@ -9,7 +9,8 @@ describe('语音/设置领域契约 schema（阶段4批次B）', () => {
       version: 1,
       voice: {
         enabled: true, realtimeEnabled: false, autoReadReply: true,
-        showCaptions: true, consentBackendStt: false
+        showCaptions: true, consentBackendStt: false,
+        silenceAutoStop: false, silenceStopMs: 2000 // 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）
       },
       dictation: { insertMode: 'append' },
       live2d: {

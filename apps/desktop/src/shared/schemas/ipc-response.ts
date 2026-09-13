@@ -275,7 +275,25 @@ export const ActiveModelSelectionSchema: z.ZodType<ActiveModelSelection> = z.obj
 // 顶层 SettingsStateSchema/SettingsPatchSchema 注 z.ZodType 强制镜像契约形状。
 export const VoiceSettingsSchema = z.object({
   enabled: z.boolean(), realtimeEnabled: z.boolean(), autoReadReply: z.boolean(),
-  showCaptions: z.boolean(), consentBackendStt: z.boolean(), micDeviceId: z.string().optional()
+  showCaptions: z.boolean(), consentBackendStt: z.boolean(), micDeviceId: z.string().optional(),
+  // 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）：**带 default** ⇒ 旧 settings.json 无这两项时不 corrupt、不 bump version
+  silenceAutoStop: z.boolean().default(false),
+  silenceStopMs: z.number().int().min(1000).max(5000).default(2000)
+})
+/**
+ * IP-1（2026-09-13 补）：voice 的 patch 子 schema **无 default**。
+ *
+ * 背景：上面的字段级 `.default()` 是给**整份 state** 用的（旧文件兼容）。但 `SettingsPatchSchema` 原先写的是
+ * `VoiceSettingsSchema.partial()`——zod 的 `.partial()` 只把字段变可选，**不会剥掉 `.default()`**，
+ * 于是 `{voice:{enabled:false}}` 这种单字段 patch 会被补上 `silenceAutoStop:false, silenceStopMs:2000`：
+ * 用户把静音时长调到 4s 之后、只要再拨一下语音总开关，4s 就被静默改回 2s。
+ * 这正是 live2d（`Live2DSettingsPatchSchema`）与 tools（`ToolsSettingsPatchSchema`）早就踩过并已规避的同一类缺陷，
+ * 由 settings-tools.spec（IP-1 用例）与 voice-handlers.spec（patch 原样入参）当场抓住。
+ */
+export const VoiceSettingsPatchSchema = z.object({
+  enabled: z.boolean().optional(), realtimeEnabled: z.boolean().optional(), autoReadReply: z.boolean().optional(),
+  showCaptions: z.boolean().optional(), consentBackendStt: z.boolean().optional(), micDeviceId: z.string().optional(),
+  silenceAutoStop: z.boolean().optional(), silenceStopMs: z.number().int().min(1000).max(5000).optional()
 })
 export const DictationSettingsSchema = z.object({
   sttProfileId: z.string().optional(), insertMode: z.enum(['append', 'replace_selection'])
@@ -396,7 +414,7 @@ export const SettingsStateSchema: z.ZodType<SettingsState> = z.object({
 })
 /** 局部更新（settings:save 入参；patch 后 merge 才落盘，未提交字段保持现值） */
 export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
-  voice: VoiceSettingsSchema.partial().optional(),
+  voice: VoiceSettingsPatchSchema.optional(),   // IP-1：无默认子 schema（否则单字段 patch 会把静音时长等非默认值改回默认）
   dictation: DictationSettingsSchema.partial().optional(),
   live2d: Live2DSettingsPatchSchema.optional(), // IP-1：patch 路径用无默认子 schema，防单字段 patch clobber 已持久化非默认字段
   tools: ToolsSettingsPatchSchema.optional(), // IP-1：patch 子 schema 无 default，防单字段 patch 注入默认 grants
@@ -408,7 +426,7 @@ export const SettingsPatchSchema: z.ZodType<SettingsPatch> = z.object({
  *  2026-09-13：appearance 引用 DEFAULT_APPEARANCE（fontScale 100） */
 export const DEFAULT_SETTINGS: SettingsState = {
   version: 1,
-  voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
+  voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false, silenceAutoStop: false, silenceStopMs: 2000 },
   dictation: { insertMode: 'append' },
   live2d: DEFAULT_LIVE2D,
   tools: DEFAULT_TOOLS,

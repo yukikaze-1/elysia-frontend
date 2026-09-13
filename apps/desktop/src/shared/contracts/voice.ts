@@ -45,6 +45,11 @@ export interface VoiceSettings {
   showCaptions: boolean      // 显示直接语音字幕
   consentBackendStt: boolean // 后端 STT 首次操作一次性同意已接受（D-P16；默认 false → 首个 backend-STT 操作前弹确认）
   micDeviceId?: string       // 麦克风设备（缺省默认设备）
+  /** 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）：连续静音达 silenceStopMs 自动结束录音。
+   *  默认**关闭**（opt-in）——它会改变"什么时候停止录音"这一既有行为，不应当默认替用户决定。 */
+  silenceAutoStop: boolean
+  /** 静音结束时长（ms，1000–5000，默认 2000；仅 silenceAutoStop 为真时生效） */
+  silenceStopMs: number
 }
 export interface DictationSettings {
   sttProfileId?: string      // 独立 STT Profile（<provider>/<model>；缺省 → dictation.start 不带 → 全局活动 STT，D-P14）

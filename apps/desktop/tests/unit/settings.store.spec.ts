@@ -18,7 +18,7 @@ const mockApi = createDesktopApiMock()
 function state(over: Partial<SettingsState> = {}): SettingsState {
   return {
     version: 1,
-    voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false },
+    voice: { enabled: true, realtimeEnabled: false, autoReadReply: true, showCaptions: true, consentBackendStt: false, silenceAutoStop: false, silenceStopMs: 2000 },
     dictation: { insertMode: 'append' },
     live2d: { ...DEFAULT_LIVE2D },
     tools: { grants: [] }, // 阶段 6 批次 C（D6C-02）：tools 空子树
@@ -47,7 +47,7 @@ describe('settingsStore', () => {
 
   it('hydrate 成功覆盖 state + loaded=true', async () => {
     mockApi.settingsLoad.mockResolvedValue(state({
-      voice: { enabled: false, realtimeEnabled: true, autoReadReply: false, showCaptions: false, consentBackendStt: true, micDeviceId: 'dev-1' },
+      voice: { enabled: false, realtimeEnabled: true, autoReadReply: false, showCaptions: false, consentBackendStt: true, micDeviceId: 'dev-1', silenceAutoStop: true, silenceStopMs: 3500 },
       dictation: { sttProfileId: 'p/m', insertMode: 'replace_selection' }
     }))
     const s = useSettingsStore()

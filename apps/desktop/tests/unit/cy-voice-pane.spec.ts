@@ -306,6 +306,42 @@ describe('CyVoicePending 待发送语音条——错误展示（final-review Imp
   })
 })
 
+describe('CyVoicePane 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）', () => {
+  it('默认关闭：开关为关、时长滑杆禁用（不让用户调一个不起作用的参数）', async () => {
+    const wrapper = mount(CyVoicePane)
+    await wrapper.vm.$nextTick()
+    const settings = useSettingsStore()
+    expect(settings.voice.silenceAutoStop).toBe(false)
+    const range = wrapper.get('[data-testid="silence-stop-range"]')
+    expect((range.element as HTMLInputElement).disabled).toBe(true)
+    expect(wrapper.get('[data-testid="silence-stop-value"]').text()).toBe('2.0s')
+    wrapper.unmount()
+  })
+
+  it('开关打开 → 写设置并解禁滑杆；滑杆 → setVoice(silenceStopMs) 且范围/步进即安全钳制', async () => {
+    const wrapper = mount(CyVoicePane)
+    await wrapper.vm.$nextTick()
+    const settings = useSettingsStore()
+    const toggle = wrapper.findAll('input[type="checkbox"]').find((el) => el.attributes('aria-label') === '静音自动结束录音')
+    expect(toggle, '开关必须带可读 aria-label').toBeTruthy()
+    // CySwitch 是原生 checkbox + role=switch，且监听的是 change（不是 click）——用 setValue 驱动
+    await toggle!.setValue(true)
+    await wrapper.vm.$nextTick()
+    expect(settings.voice.silenceAutoStop).toBe(true)
+
+    const range = wrapper.get('[data-testid="silence-stop-range"]')
+    const el = range.element as HTMLInputElement
+    expect(el.disabled).toBe(false)
+    expect(el.min).toBe('1000')
+    expect(el.max).toBe('5000')
+    expect(el.step).toBe('500')
+    await range.setValue('4000')
+    expect(settings.voice.silenceStopMs).toBe(4000)
+    expect(wrapper.get('[data-testid="silence-stop-value"]').text()).toBe('4.0s')
+    wrapper.unmount()
+  })
+})
+
 describe('CyRealtimeBar 实时条——错误展示 + 字幕门控（final-review Important-1a / Minor-2）', () => {
   it('realtime + voiceStore.error → 条内展示 error.message，不再显示「聆听中」误导态', () => {
     const voice = useVoiceStore()

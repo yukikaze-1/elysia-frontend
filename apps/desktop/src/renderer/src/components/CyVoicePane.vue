@@ -41,9 +41,14 @@ function onMicDeviceChange(e: Event): void {
 }
 
 // —— 开关（UII-QQ 设置页批次：CySwitch 统一布尔开关，handler 收布尔） ——
-type VoiceToggleKey = 'enabled' | 'realtimeEnabled' | 'autoReadReply' | 'showCaptions'
+type VoiceToggleKey = 'enabled' | 'realtimeEnabled' | 'autoReadReply' | 'showCaptions' | 'silenceAutoStop'
 function onToggle(key: VoiceToggleKey, checked: boolean): void {
   settings.setVoice({ [key]: checked })
+}
+
+/** 静音结束时长（ms）：滑杆拖动即改 ⇒ setVoice 的 500ms 防抖持久化，与其它设置同一路径 */
+function onSilenceStopChange(e: Event): void {
+  settings.setVoice({ silenceStopMs: Number((e.target as HTMLInputElement).value) })
 }
 
 // —— 转写 STT Profile 下拉（D-P20：desktop/local_worker 会 STT_PROFILE_NOT_FOUND，不列） ——
@@ -199,6 +204,35 @@ onBeforeUnmount(() => {
         <span v-if="micTestDuration !== undefined" class="cy-vp-mictest-result">录音 {{ micTestDuration }}s，已试听</span>
         <span v-if="micTestError" class="cy-vp-error" role="alert">{{ micTestError }}</span>
       </div>
+    </div>
+
+    <!-- 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）：默认关闭——它会改变"什么时候停止录音"，
+         不应当默认替用户决定；开启后连续静音达设定时长即自动结束并给出可见提示。 -->
+    <div class="cy-vp-group">
+      <h4 class="cy-vp-sub">语音活动检测</h4>
+      <label class="cy-vp-row">
+        <CySwitch
+          :model-value="settings.voice.silenceAutoStop"
+          aria-label="静音自动结束录音"
+          @change="(v) => onToggle('silenceAutoStop', v)"
+        />
+        <span class="cy-vp-label"><span class="cy-vp-label-main">静音时自动结束录音 <span class="cy-toggle-state" :class="{ on: settings.voice.silenceAutoStop }">{{ settings.voice.silenceAutoStop ? '已开启' : '已关闭' }}</span></span><small>连续静音达到下方时长后自动停止（与手动停止同一条路径）</small></span>
+      </label>
+      <label class="cy-vp-field">
+        <span class="cy-vp-field-label">静音结束时长</span>
+        <span class="cy-vp-field-control">
+          <input
+            type="range"
+            data-testid="silence-stop-range"
+            min="1000" max="5000" step="500"
+            :value="settings.voice.silenceStopMs"
+            :disabled="!settings.voice.silenceAutoStop"
+            aria-label="静音结束时长"
+            @input="onSilenceStopChange"
+          />
+          <span class="cy-vp-field-value" data-testid="silence-stop-value">{{ (settings.voice.silenceStopMs / 1000).toFixed(1) }}s</span>
+        </span>
+      </label>
     </div>
 
     <div class="cy-vp-group">

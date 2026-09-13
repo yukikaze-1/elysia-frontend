@@ -4,14 +4,60 @@
 // node 环境无 navigator.mediaDevices/AudioContext/AudioWorkletNode——vi.stubGlobal 注入 fake。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  computeRms,
   floatToPcm16,
   PcmCapture,
   PcmChunkAggregator,
   PCM_CHUNK_BYTES,
+  PCM_CHUNK_MS,
   PCM_CHUNK_SAMPLES,
   PCM_PROCESSOR_NAME,
-  PCM_SAMPLE_RATE
+  PCM_SAMPLE_RATE,
+  SilenceTracker,
+  SILENCE_RMS_THRESHOLD
 } from '../../src/renderer/src/voice/voice-capture'
+
+// —— doc 11 §3.3「语音活动检测／静音结束时长」（2026-09-13）：判据是纯逻辑，先钉死它 ——
+// 真实麦克风在 CI 上不可控（听不到声音、也造不出确定的静音），所以"多久算说完"这条判据
+// 必须是可确定性单测的纯函数/纯类；PcmCapture 只负责把每一帧的 RMS 喂进来。
+describe('静音判定（doc 11 §3.3）', () => {
+  it('computeRms：全零 0、满幅 1、正负相消（直流为零但交流有能量）', () => {
+    expect(computeRms(new Float32Array(0))).toBe(0)
+    expect(computeRms(new Float32Array([0, 0, 0, 0]))).toBe(0)
+    expect(computeRms(new Float32Array([1, -1, 1, -1]))).toBeCloseTo(1, 5)
+    // ±交替的信号 RMS=幅值（均值恒 0，若实现错误地取平均会得 0）
+    expect(computeRms(new Float32Array([0.5, -0.5]))).toBeCloseTo(0.5, 5)
+  })
+
+  it('SilenceTracker：连续静音累计到时长才触发一次；中途有声音则重新计时', () => {
+    const tracker = new SilenceTracker(100) // 100ms = 5 帧
+    expect(tracker.push(0)).toBe(false)   // 20ms
+    expect(tracker.push(0)).toBe(false)   // 40
+    expect(tracker.push(0.5)).toBe(false) // 说话 → 清零
+    expect(tracker.silentDurationMs).toBe(0)
+    for (let i = 0; i < 4; i++) expect(tracker.push(0)).toBe(false)
+    expect(tracker.push(0), '第 5 帧静音累计满 100ms').toBe(true)
+    expect(tracker.push(0), '只报一次（防自动结束被重复触发）').toBe(false)
+  })
+
+  it('SilenceTracker：阈值边界——恰好等于阈值算"有声音"，低于才算静音', () => {
+    const tracker = new SilenceTracker(20, PCM_CHUNK_MS)
+    expect(tracker.push(SILENCE_RMS_THRESHOLD)).toBe(false)          // 等于阈值 → 视为有声
+    expect(tracker.silentDurationMs).toBe(0)
+    expect(tracker.push(SILENCE_RMS_THRESHOLD - 1e-9)).toBe(true)    // 低于阈值 → 一帧即满 20ms
+  })
+
+  it('SilenceTracker：durationMs 越大触发得越晚（设置项真的生效）', () => {
+    const frames = (durationMs: number): number => {
+      const t = new SilenceTracker(durationMs)
+      let n = 0
+      while (!t.push(0)) n += 1
+      return n + 1
+    }
+    expect(frames(1000)).toBe(50)   // 1000ms / 20ms
+    expect(frames(5000)).toBe(250)
+  })
+})
 
 // —— fakes（结构镜像 voice-capture 消费的 Web Audio API 面）——
 

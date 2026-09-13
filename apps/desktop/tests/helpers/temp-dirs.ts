@@ -75,6 +75,7 @@ export const TEST_TEMP_PREFIXES: readonly string[] = [
   'cy-tail-',
   'cy-tmpdirs-sandbox-',
   'cy-tools-',
+  'cy-vad-',
   'cy-xss-',
   'cyrene-character-drafts-',
   'cyrene-character-outside-',

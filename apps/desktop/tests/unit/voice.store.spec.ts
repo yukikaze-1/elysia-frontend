@@ -215,6 +215,30 @@ describe('voiceStore', () => {
     expect(store.record.elapsedMs).toBe(0)
   })
 
+  // —— doc 11 §3.3「语音活动检测／静音结束」（2026-09-13）：默认关闭；开启后把配置交给采集层 ——
+  it('record：silenceAutoStop 默认关闭 → 不给采集层传 silence（行为与开启该设置前一致）', async () => {
+    const store = useVoiceStore()
+    await store.startRecord()
+    const opts = fake.start.mock.calls[0][0] as PcmCaptureOptions
+    expect(opts.silence).toBeUndefined()
+    expect(useSettingsStore().voice.silenceAutoStop).toBe(false)
+  })
+
+  it('record：开启后按设置传 durationMs，onSilence 触发即停止录音 + 给出可见提示', async () => {
+    const settings = useSettingsStore()
+    settings.setVoice({ silenceAutoStop: true, silenceStopMs: 1500 })
+    const store = useVoiceStore()
+    await store.startRecord()
+    const opts = fake.start.mock.calls[0][0] as PcmCaptureOptions
+    expect(opts.silence?.durationMs).toBe(1500)
+
+    // 采集层判定静音到点 → 走的是与手动停止完全相同的路径（voiceStopRecord + record_pending）
+    opts.silence!.onSilence()
+    await vi.waitFor(() => { expect(mockApi.voiceStopRecord).toHaveBeenCalledTimes(1) })
+    expect(store.mode).toBe('record_pending')
+    expect(store.notice, '自动结束要有可见提示，不做静默行为变更').toContain('静音')
+  })
+
   it('record：start→stop→transcript→commit → sendVoiceCommit(recordingId, transcript) + 清态', async () => {
     vi.useFakeTimers()
     const store = useVoiceStore()

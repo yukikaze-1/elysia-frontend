@@ -322,11 +322,25 @@ export const useVoiceStore = defineStore('voice', () => {
     }
     activeRecordingId = recordingId // 控制帧成功后才记入（失败不残留可被 stop/discard 误引用的 id）
     capture = captureFactory()
+    const voiceSettings = useSettingsStore().voice
     try {
       await capture.start({
         onChunk: (b) => api.voiceSendAudio(b),
         onStop: (ab) => { record.value.audioBuffer = ab },
-        deviceId: useSettingsStore().voice.micDeviceId
+        deviceId: voiceSettings.micDeviceId,
+        // 语音活动检测 / 静音结束（doc 11 §3.3，2026-09-13）：默认关闭；开启后连续静音达设定时长即自动结束，
+        // 走的是与手动停止完全相同的路径（同一个 stopRecord），并给用户一条可见提示（不做静默行为变更）。
+        ...(voiceSettings.silenceAutoStop
+          ? {
+              silence: {
+                durationMs: voiceSettings.silenceStopMs,
+                onSilence: () => {
+                  setNotice('检测到持续静音，已自动结束录音')
+                  void stopRecord()
+                }
+              }
+            }
+          : {})
       })
     } catch (e) {
       // Important-3 / P0-01：getUserMedia/AudioContext 拒绝 → micError + 停采集 + await discardRecord()

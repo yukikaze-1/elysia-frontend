@@ -137,7 +137,7 @@ const settingsState = {
   version: 1,
   voice: {
     enabled: false, realtimeEnabled: false, autoReadReply: false, showCaptions: false,
-    consentBackendStt: false
+    consentBackendStt: false, silenceAutoStop: false, silenceStopMs: 2000
   },
   dictation: { insertMode: 'append' },
   live2d: {
