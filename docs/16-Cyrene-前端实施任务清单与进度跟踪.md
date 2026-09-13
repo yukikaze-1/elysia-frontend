@@ -365,7 +365,9 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 单元测试 | `pnpm test` | PASS（**253 文件 / 3103 通过** + 6 expected-fail + 22 skipped） |
 | 集成测试（定向） | `message-list-follow-bottom`＋`perf-gate` | PASS（9/9；②b 是"上翻后必须停止跟随"的对照，未放宽） |
 | 集成测试（全量，本机） | `pnpm test:integration` | **1 红 / 37 文件**（169 passed + 3 skipped）——红的就是上表那条既有 `context-menu` ④b（本机 Windows 稳定、CI 绿，已单独取证） |
-| 文档结构 | `pnpm docs:check` | PASS |
+| 测试目录 type-aware（口径 B） | `pnpm lint`／`pnpm test` | PASS（接入三条高信号规则，实测 9 处全部修完；lint 0、单测 253 文件 3103 通过） |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS 两次**：`727f7e3` [run 34765704473](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34765704473) 与 `5d575a3` [run 34766233715](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34766233715) 均 **8/8 首跑即绿**（含此前反复红的 `integration (shard 2/3)`——④ 修复在 CI 上同样成立） |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / **85** review / 40 superpowers / 42 archived） |
 
 **本批"先量后改"救回来的判断 3 次**：① ④ 的门限由实测的 31px 定，而不是按上一轮反推的"40–50px"（那个反推只有上界）；② `require-await` 被实测否掉（64 处全是接口实现的惯用写法）；③ **我自己写错的一处被既有用例当场抓住**——`voice-capture` 的 `port.onmessage` 第一版只认 `ArrayBuffer`，而 AudioWorklet 实际 postMessage 的是 **Uint8Array**（等于掐断音频链路），`voice-capture.spec.ts` 立刻红。另记一条同族教训：`eslint --fix` 删掉的 2 处类型断言**删错了**（对象字面量会把字面量联合拓宽回 `string`），typecheck 立刻红——**自动修复必须复核**。
 
