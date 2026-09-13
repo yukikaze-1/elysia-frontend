@@ -120,7 +120,7 @@
 | 产物校验 | `pnpm verify:artifact` | 静态部分 PASS；fuse 读回与启动冒烟因无 `dist/` 未执行 | **未执行**：本轮未触碰打包链 | **未执行**：同上 | **未执行**：同上 | **未执行**：本轮未触碰打包链 |
 | GitHub CI | `.github/workflows/ci.yml` | 见正文 | 见正文 | 见正文 | **PASS**（`98efd5d` / [run 34508128478](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508128478)：5 个 job 全绿；`becedc9` / [run 34508996184](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34508996184)：首跑集成偶发、重跑全绿，见下） | **PASS**（`da64667` / [run 34562266876](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34562266876)：5 个 job 全绿，首跑即绿） |
 
-**2026-09-12 测试静默窗口模式批次（本地，未推送）门禁记录**——主表里"单元测试/集成测试"两行的行宽已到
+**2026-09-12 测试静默窗口模式批次（`e21f98c`／`3b60bc0`，已推送）门禁记录**——主表里"单元测试/集成测试"两行的行宽已到
 `docs:check` 的 500 字符上限（该检查逐行生效），故本批**不追加列**，单列于此：
 
 | 门禁 | 命令 | 结果 |
@@ -135,8 +135,15 @@
 | 一键链路 | `pnpm verify`（本批新增） | PASS（typecheck → lint → test → test:integration → build） |
 | 构建 | `pnpm build` | PASS（三端 built，exit 0） |
 | 跨仓契约 | `pnpm -F @cyrene/desktop check:contract` | **未重跑**：本批未触碰后端线协议（wire 零改动），不得读作通过 |
-| 产物校验 | `pnpm verify:artifact` | **未执行**：本批未触碰打包链；`--smoke` 已显式改为静默启动（`CYRENE_WINDOW_MODE=silent`） |
-| GitHub CI | `.github/workflows/ci.yml` | **未推送**：本批仅本机取证；CI 无需改动（集成 job 直接继承静默默认），待下一轮 push 复核 |
+| 产物校验 | `pnpm verify:artifact` | **本机未执行**：本轮未触碰打包链；`--smoke` 已显式改为静默启动（`CYRENE_WINDOW_MODE=silent`）。**CI 侧已跑并绿**：`packaged artifact smoke` job（含真实启动冒烟）通过，见本表下方 CI 行 |
+| GitHub CI | `.github/workflows/ci.yml` | **PASS（已推送并复核）**：`3b60bc0`（同一次 push 含 `e21f98c` 的全部代码改动）/ [run 34716921956](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34716921956) **8/8 job 全绿**；逐 job 耗时与"静默默认无需改 CI"的结论见本表下方 |
+
+**上表 CI 行的细节（2026-09-13 推送后取回）**：逐 job 耗时——`typecheck + lint` 2m20s（含 `docs:check` 与敏感扫描）、
+`unit tests` 1m16s、`integration (shard 1/3)` 3m16s、`(2/3)` 2m09s、`(3/3)` 1m09s、`integration (live2d)` 3m38s、
+`packaged artifact smoke` 47s（含真实启动冒烟）、`windows build-level` 3m44s。
+**GitHub 把该 run 记为 7h1m4s，那是排队而非执行**：7 个 Linux job 自 20:22Z 起全部 queued，直到 03:18Z 才在 3 秒内同时起跑
+（X99 当时不在线，见 §5.12 的运维耦合），Windows job 则立即执行。**"静默窗口模式无需改 CI"由此条实证**——
+Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的静默模式。
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：
 
@@ -423,7 +430,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：
 7. ② H-08 第三半「消息数组封顶」—— 实测后判定**无需做**：`heights` 切会话即清空且只为已加载消息建条目，`markdownCache`/估算器缓存已限幅，Main 侧快照本就封顶；原始担忧的每一处都已受界，对 `order`/`byId` 封顶只会改变用户可见语义。
 8. ③ P1-1 运行时收口 —— **实现后撤回**，四条实测依据见 §3.1（遮蔽诊断、二进制不可度量、方向不匹配、边际价值有限）；保留声明表的 `measure` 字段与该实测的持久落点。
 9. 另：type-aware lint 的全集规则（实测 1171 条，多为风格类）与测试目录接入（85 条）同属独立一轮；当前已接的三条高信号规则只覆盖 `src/**`。
-10. **P2 批次（第 5 轮）的未做项，逐条在此列明，不藏在提交信息里**：① ~~**P2-7 / M-24**——`prefers-reduced-motion` 与自有"减少动态"开关对 CSS 动画的门控**未做**~~ **已完成（2026-09-12）**：形态定为「根类名（OS 偏好 ∨ 自有开关折算）+ 单一覆盖文件 `reduced-motion.css`」，6 处持续动画全部纳入并有覆盖完整性门禁；doc 03 §14 对应条款已满足，另见 §3.1 的 M-24 条目；② **P2-9 / M-26**——录音 PCM 缓冲（约 38 MB + 数万个小对象）**未做**，评审自标其风险为"触及音频热路径与 `onStop(AudioBuffer)` 契约"；③ **P2-10 / I-06**——`createDesktopApiMock` 共享 helper（约 40 个文件的迁移）**未做**，纯重构、无行为收益。
+10. **P2 批次（第 5 轮）的未做项，逐条在此列明，不藏在提交信息里**：① ~~**P2-7 / M-24**——`prefers-reduced-motion` 与自有"减少动态"开关对 CSS 动画的门控**未做**~~ **已完成（2026-09-12）**：形态定为「根类名（OS 偏好 ∨ 自有开关折算）+ 单一覆盖文件 `reduced-motion.css`」，6 处持续动画全部纳入并有覆盖完整性门禁；doc 03 §14 对应条款已满足，另见 §3.1 的 M-24 条目；② **P2-9 / M-26**——录音 PCM 缓冲（约 38 MB + 数万个小对象）**未做**，评审自标其风险为"触及音频热路径与 `onStop(AudioBuffer)` 契约"；③ ~~**P2-10 / I-06**——`createDesktopApiMock` 共享 helper（约 40 个文件的迁移）**未做**，纯重构、无行为收益~~
+   **已完成（2026-09-12，本会话）**：**43/43 全量迁移、`PENDING` 清零**，门禁角色由「欠账台账」变为**防回退闸门**（新 spec 再手搓裸 mock 即红）；过程中修掉「工厂返回类型丢失 mock 方法」这一真 bug，并更正了上一轮两条被实测推翻的诊断，见 §3.1 的 I-06 收口条目。**该项已不再是欠账。**
 11. **本轮的文档同步（2026-09-12）**：行为变更已同步到各自维护文档而非只写本文件——doc 03（§3.1 断点范围修正 + §14 补两条新交互口径）、doc 05（窗口可见性门 + 纹理显式释放）、doc 06（`BREAKPOINTS` 删除后的更正）、doc 07（§6.3 IPC 大小上限的落实状态与运行时撤回理由）、doc 08（新增/变更门禁矩阵 12 行）、doc 09（打包命令变更、生产依赖归类与 16.26 MB 实测）。
 12. **CI 平台归属的后续动作（2026-09-12 起，按序）**：
     - ① 取得 `windows-runtime` 与 `linux-runtime` 的**首次完整**结果：两者均为 `workflow_dispatch` + **每周定时**（周日 20:00／21:00 UTC），不手动也会自动跑。现状：`linux-runtime` 已 dispatch 过一次（`34685789785`，红于当时尚未定位的 `/proc/<pid>/exe` OOM 缺陷，该缺陷已由 `5261a82` 修复）；`windows-runtime` 修好 invalid workflow 与无代理两处后**尚未取得过完整结果**。**在此之前「Windows 能跑全量集成」只是本机 Session 1 的证据、「自建 Linux 更快」只是推算，均不得当作 CI 事实**。
