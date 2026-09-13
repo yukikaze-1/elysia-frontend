@@ -126,17 +126,44 @@ const stickToBottom = ref(true)
 const BOTTOM_EPS = 40
 
 /**
- * 只读探针（2026-09-13，④ 收口第二轮）：记录**清掉跟随意图的那一次 scroll 事件**的完整上下文。
+ * 用户上翻的**判别门限**（④ 收口第三轮，2026-09-13；数值来自 X99 配方实测，不是估的）。
  *
- * 为什么还要一层：上一轮已证明"意图是被 `onScroll` 的 `scrollTop < prevTop` 分支清的"，但只拿到了
- * 一个**上界**——反推用的是"清掉之后 gap 刚越过 BOTTOM_EPS"，那只说明**下移后**距底 40 多像素，
- * 下移量本身可以是 3px 也可以是 43px。没有这个数就定不出任何阈值，也判不出是不是我们自己写的
- * （`restoreScrollTop` 写的是**估算**位置，不是实测位置）。
+ * 定据：第 7 轮拿到的首次清意图读数 `d=31 acc=31 t=8139 max=8185 h=8758 c=573 w=own/+32ms`——
+ * 下移 **31px**、下移**前**的位置正是我们 **32ms 前自己**写入的那个值、下移后距底 **46px**（只比
+ * `BOTTOM_EPS=40` 多 6px）。即：**浏览器在一次我们自己贴底写入之后把位置回退了 31px**，而这个 scroll
+ * 事件被读成"用户上翻"——意图就此永久丢失（此后不再贴底 ⇒ 缺口单调增到数千像素，实测 3856/5526px）。
+ *
+ * 判据因此从"任何下移"改为"**累计下移 ≥ 64px**"：
+ *   · 实测误清只有 31px ⇒ 被挡住；且**累计量在每次贴底时清零**（内容一增长就会重新贴底），
+ *     连两次误清也不会凑够；
+ *   · 触控板的小步上滑靠**累计**越过门限，不需要单次大幅——这是"按幅度判别"必须配累计的原因，
+ *     否则小步上滑永远清不掉意图，每次内容增长都会把正在阅读的用户拽回底部；
+ *   · 既有 `perf-gate` ②b 的刺激性写入是 `clientHeight - top + 120`（实测 ≥120px，该用例要求
+ *     "上翻后必须停止跟随"），仍稳稳越过 64px。
+ *
+ * 与那条**试过并被否掉**的加固的区别：那条用的是几何条件（"最大可滚动量未增长才算用户上翻"），
+ * 而流式期间 maxScroll 一直在增长 ⇒ 它恒不生效、却会忽略真正的用户上翻（②b 红于 245 < 534）。
+ * 本条只看**位移本身**，不依赖任何"内容是否在增长"的假设。
+ */
+const USER_SCROLL_MIN_PX = 64
+/** 自上次"确认贴底"以来累计的上移量（触控板小步上滑靠它越过门限；贴底/回滚都会清零） */
+let upwardAccum = 0
+
+/**
+ * 只读探针（2026-09-13，④ 收口第二／三轮）：记录**位置下移**与**真正清掉意图**的完整上下文。
+ *
+ * 为什么需要：上一轮只证明了"意图是被 `onScroll` 的 `scrollTop < prevTop` 分支清的"，但拿到的下移量
+ * 只有**上界**（反推用的是"清掉之后 gap 刚越过 BOTTOM_EPS"，那只说明下移后距底 40 多像素，下移量
+ * 本身可以是 3px 也可以是 43px）。第二轮补上读数后才发现是 31px，且**紧跟在我们自己的写入之后**——
+ * `USER_SCROLL_MIN_PX` 这个数就是从这条记录来的。
  *
  * 同 `data-follow-intent` 的纪律：**只读**——`noteWrite` 只在程序性写之后记一笔，不改任何判定；
- * `clearLog` 只在既有的清意图分支里追加，不参与渲染决策。两个字符串属性，零渲染成本。
+ * 两个日志只在既有分支里追加，不参与渲染决策。字符串属性，零渲染成本。
  */
 let lastWrite: { top: number; max: number; at: number } | undefined
+/** 最近 3 次"位置下移"事件（不论是否清掉意图），带累计量 `acc=` */
+const upLog = ref<string[]>([])
+/** 最近 3 次**真正**把意图清掉（1→0）的记录 */
 const clearLog = ref<string[]>([])
 /** 第一次真正把意图从 true 清成 false 的那次读数——决定性的一条，只记一次，不被后续记录挤掉 */
 const firstFlip = ref('')
@@ -256,19 +283,30 @@ function onScroll(): void {
   scrollTop.value = el.scrollTop
   const atBottomNow = computeAtBottom(el)
   atBottom.value = atBottomNow
-  // H-02（意图/位置分离）：滚到（近）底部 → 恢复跟随意图；scrollTop 变小（用户上翻，含拖滚动条）→ 放弃跟随。
+  // H-02（意图/位置分离）：滚到（近）底部 → 恢复跟随意图；**确认**用户上翻（见 USER_SCROLL_MIN_PX）→ 放弃跟随。
   // 内容增长只改 scrollHeight、不改 scrollTop，故不会误清意图——这正是"瞬时位置吞掉意图"的根因。
-  if (atBottomNow) stickToBottom.value = true
-  else if (el.scrollTop < prevTop) {
-    // 只读探针（④ 第二轮）：把这次下移的完整上下文记下来。判"是不是我们自己写的"用 prevTop 与
+  if (atBottomNow) {
+    stickToBottom.value = true
+    // 回到（近）底部＝重新确认跟随：累计量随之清零，下一次误清要从头攒起
+    upwardAccum = 0
+  } else if (el.scrollTop < prevTop) {
+    const delta = prevTop - el.scrollTop
+    upwardAccum += delta
+    // 只读探针（④ 第二／三轮）：把这次下移的完整上下文记下来。判"是不是我们自己写的"用 prevTop 与
     // 最近一次程序性写入值的比对——`restoreScrollTop` 写的是估算位置，与实测位置不等即非本次写入。
     const record =
-      `d=${Math.round(prevTop - el.scrollTop)} t=${Math.round(el.scrollTop)} max=${Math.round(el.scrollHeight - el.clientHeight)}` +
-      ` h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}` +
+      `d=${Math.round(delta)} acc=${Math.round(upwardAccum)} t=${Math.round(el.scrollTop)}` +
+      ` max=${Math.round(el.scrollHeight - el.clientHeight)} h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}` +
       ` w=${lastWrite && Math.abs(lastWrite.top - prevTop) <= 1 ? 'own' : 'ext'}/+${lastWrite ? Math.round(probeNow() - lastWrite.at) : -1}ms`
-    if (stickToBottom.value && !firstFlip.value) firstFlip.value = record
-    clearLog.value = [...clearLog.value, record].slice(-5)
-    stickToBottom.value = false
+    upLog.value = [...upLog.value, record].slice(-3)
+    if (upwardAccum >= USER_SCROLL_MIN_PX) {
+      if (stickToBottom.value && !firstFlip.value) firstFlip.value = record
+      if (stickToBottom.value) clearLog.value = [...clearLog.value, record].slice(-3)
+      stickToBottom.value = false
+    }
+  } else if (el.scrollTop > prevTop) {
+    // 往底部方向移动：累计量清零（用户回滚了一部分，之前的累计不再代表"离开意图"）
+    upwardAccum = 0
   }
   // UI 问题 1：滚动期间进入「滚动中」态，实测高写 pendingHeights（不立即合并）
   // → 滚动中 padding/scrollHeight 稳定，thumb 不跳；滚动停 150ms 后合并一次修正。
@@ -340,6 +378,7 @@ function restoreLoadAnchor(): void {
       atBottom.value = computeAtBottom(container.value)
       // loadOlder 锚点恢复同样是**有意的**非贴底定位（用户正在向上翻），放弃跟随
       stickToBottom.value = false
+      upwardAccum = 0
     }
   })
 }
@@ -388,6 +427,7 @@ watch(() => conversationStore.currentId, (id, oldId) => {
   atBottom.value = true
   // 新会话默认「跟随底部」；若随后 restoreScrollFor 恢复到锚点位置，那里会按实际位置显式改写意图
   stickToBottom.value = true
+  upwardAccum = 0
   pendingRestoreId = id ?? undefined
 })
 
@@ -419,6 +459,7 @@ function restoreScrollFor(id: string): void {
   atBottom.value = computeAtBottom(el)
   // 恢复锚点是**有意的**非贴底定位：显式放弃跟随意图（否则随后一次内容增长会把用户拽回底部）
   stickToBottom.value = atBottom.value
+  upwardAccum = 0
 }
 
 function backToBottom(): void {
@@ -428,6 +469,7 @@ function backToBottom(): void {
   noteWrite(el)
   atBottom.value = true
   stickToBottom.value = true   // 用户主动回到底部＝重新表达跟随意图
+  upwardAccum = 0
 }
 
 /** G4 D6：来源跳转高亮——滚动居中 + 6s 清除 + aria-live 播报（非纯颜色，配「已定位」chip）。
@@ -453,6 +495,7 @@ function scrollToHighlight(id: string): boolean {
   atBottom.value = computeAtBottom(el)
   // 来源跳转是**有意的**非贴底定位：放弃跟随，避免随后增长把用户从定位处拽走
   stickToBottom.value = false
+  upwardAccum = 0
   return true
 }
 
@@ -526,10 +569,11 @@ onMounted(() => {
   <!-- 只读探针（2026-09-13，④ 收口用）：把「跟随意图」与「瞬时贴底」两个内部布尔量反射到 DOM 上。
        存在的理由：④ 在 CI 上偶发冻结（`top` 冻住而 `height` 继续增长、且不恢复），而要判定"是谁把意图清了"
        必须看得见这两个量——此前它们只活在组件作用域里，测试只能看到几何量，判不出分支。
-       第二轮追加 `data-follow-clears` / `data-follow-clear-last`：把**清意图那一次**的下移量、
-       当前 max/clientHeight、以及"这次下移是不是紧跟在我们自己程序性写入之后"一并带出来——
-       只有下移量的上界是定不出阈值的（见 script 里 clearLog 的注释）。
-       不变量：**只读**（不改任何行为、不参与渲染决策）、**零渲染成本**（四个字符串属性）。
+       第二轮追加 `data-follow-up-*` / `data-follow-clears` / `data-follow-clear-last` / `data-follow-clear-flip`：
+       把**位置下移那一次**的下移量与累计量、当前 max/clientHeight、以及"这次下移是不是紧跟在我们自己
+       程序性写入之后"一并带出来——只有下移量的上界是定不出阈值的（见 script 里 upLog 的注释），
+       而 `USER_SCROLL_MIN_PX=64` 正是从这条读数定的。
+       不变量：**只读**（不改任何行为、不参与渲染决策）、**零渲染成本**（七个字符串属性）。
        既有 DOM 契约门禁（perf-gate 断言的 `.cy-vlist-row`/`data-message-id`）不受影响。 -->
   <div
     ref="container"
@@ -537,6 +581,8 @@ onMounted(() => {
     aria-live="polite"
     :data-follow-intent="stickToBottom ? '1' : '0'"
     :data-at-bottom="atBottom ? '1' : '0'"
+    :data-follow-up-count="String(upLog.length)"
+    :data-follow-up-last="upLog[upLog.length - 1] ?? ''"
     :data-follow-clears="String(clearLog.length)"
     :data-follow-clear-last="clearLog[clearLog.length - 1] ?? ''"
     :data-follow-clear-flip="firstFlip"
