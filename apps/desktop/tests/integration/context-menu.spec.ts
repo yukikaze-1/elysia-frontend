@@ -112,6 +112,36 @@ describe('右键菜单（doc 03 §5.1 / §7.5）', () => {
       expect(await page.locator('[data-testid="context-menu-copy"]').textContent()).toBe('复制消息')
       expect(await page.locator('[data-testid="context-menu-resend"]').count()).toBe(1)
       expect(await page.locator('[data-testid="context-menu-regenerate"]').count()).toBe(0)
+
+      // —— ④c 列表滚动（应用自身或程序的滚动）**不得**关掉菜单，且菜单要跟随该行 ——
+      //
+      // 修的是实测缺陷：原判据"任何滚动即关闭"分不清"用户滚的"与"应用自己滚的"，而消息列表在流式
+      // 回复期间会自行跟随底部/重锚 —— 于是右键菜单刚打开就被列表自己的滚动关掉（探针读数：
+      // 菜单确实开了、400ms 内被恰好一次 scroll 事件关掉）。现由 `anchor`（触发行）决定"跟随而不是关闭"。
+      // 断言方式对"列表随后又被跟随逻辑拉回底部"也成立：那一瞬行与菜单会**同幅**移动。
+      const before = await page.evaluate(() => {
+        const list = document.querySelector<HTMLElement>('.cy-messages')
+        const row = document.querySelector<HTMLElement>('.cy-user-row')
+        const menu = document.querySelector<HTMLElement>('[data-testid="context-menu"]')
+        if (!list || !row || !menu) return null
+        const r = { rowTop: row.getBoundingClientRect().top, menuTop: menu.getBoundingClientRect().top }
+        list.scrollTop += 60
+        return r
+      })
+      expect(before, '④c 前置：列表/行/菜单都应存在').not.toBeNull()
+      await page.waitForTimeout(150)
+      const after = await page.evaluate(() => {
+        const row = document.querySelector<HTMLElement>('.cy-user-row')
+        const menu = document.querySelector<HTMLElement>('[data-testid="context-menu"]')
+        return menu && row
+          ? { open: true, rowTop: row.getBoundingClientRect().top, menuTop: menu.getBoundingClientRect().top }
+          : { open: false, rowTop: 0, menuTop: 0 }
+      })
+      expect(after.open, '滚动不得关掉菜单（只有目标消失/出视口才关）').toBe(true)
+      expect(
+        Math.round(after.menuTop - before!.menuTop),
+        `菜单必须与目标同幅移动（行 ${Math.round(before!.rowTop)}→${Math.round(after.rowTop)}）`
+      ).toBe(Math.round(after.rowTop - before!.rowTop))
       await page.keyboard.press('Escape')
     } finally {
       try { await closeApp({ app, page, userData }) } catch { /* 尽力 */ }

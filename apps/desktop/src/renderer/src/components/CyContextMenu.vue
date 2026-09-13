@@ -17,21 +17,43 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { ContextMenuItem } from '../utils/context-menu'
 
-const props = defineProps<{ open: boolean; x: number; y: number; items: ContextMenuItem[] }>()
+const props = defineProps<{
+  open: boolean
+  x: number
+  y: number
+  items: ContextMenuItem[]
+  /**
+   * 可选：**锚定元素**（触发菜单的那一行/那一条）。
+   *
+   * 为什么需要它（2026-09-13 实测）：原先"任何滚动即关闭"的判据分不清"用户滚的"与"应用自己滚的"——
+   * 消息列表在流式回复期间会自行跟随底部/重锚，于是**右键菜单刚打开就被列表自己的滚动关掉**
+   * （探针读数：菜单确实开了，400ms 内被恰好一次 scroll 事件关掉，而那不是用户操作）。
+   * 给了锚点后语义变成"**跟随**目标"：滚动/缩放时把菜单重新贴回目标（保持打开时的相对偏移），
+   * 只有当目标从 DOM 消失或整体移出视口时才关闭——那才是"菜单会指向错误对象"的真条件。
+   * 不给锚点（例如会话列表）则保持既有语义：任何滚动即关闭。
+   */
+  anchor?: () => HTMLElement | null
+}>()
 const emit = defineEmits<{ select: [id: string]; close: [] }>()
 
 const root = ref<HTMLElement>()
 /** 位置在落 DOM 前按视口夹取（菜单尺寸要等渲染后才知道，故用两段式：先粗放，nextTick 后精确修正） */
 const pos = ref({ x: props.x, y: props.y })
+/** 打开瞬间"指针相对锚点"的偏移：跟随滚动时保持它，菜单不会跳到目标角上 */
+let anchorOffset: { dx: number; dy: number } | undefined
 const EDGE = 8
 
-function clampToViewport(): void {
+function clampPoint(x: number, y: number): { x: number; y: number } {
   const el = root.value
-  if (!el) return
+  if (!el) return { x, y }
   const r = el.getBoundingClientRect()
   const maxX = Math.max(EDGE, window.innerWidth - r.width - EDGE)
   const maxY = Math.max(EDGE, window.innerHeight - r.height - EDGE)
-  pos.value = { x: Math.min(Math.max(EDGE, props.x), maxX), y: Math.min(Math.max(EDGE, props.y), maxY) }
+  return { x: Math.min(Math.max(EDGE, x), maxX), y: Math.min(Math.max(EDGE, y), maxY) }
+}
+
+function clampToViewport(): void {
+  pos.value = clampPoint(props.x, props.y)
 }
 
 let restoreTarget: HTMLElement | null = null
@@ -77,26 +99,38 @@ function onSelect(item: ContextMenuItem): void {
   close()
 }
 
+/** 点菜单外即关（capture：菜单是 teleport 出去的浮层，不能靠冒泡判定） */
 function onPointerDownOutside(e: PointerEvent): void {
   if (!root.value) return
   if (e.target instanceof Node && root.value.contains(e.target)) return
   close()
 }
 
-// 滚动/缩放时关闭：fixed 定位的菜单不会跟随内容滚动，留在原地会指向错误的对象
-function onViewportChange(): void { close() }
+// 滚动/缩放时的处置：**有锚点就跟**（目标还在 ⇒ 贴回去；目标没了/出视口 ⇒ 关），
+// 没有锚点则保持原语义（fixed 菜单留在原地会指向错对象 ⇒ 关）。
+function onViewportChange(): void {
+  const anchorEl = props.anchor?.()
+  if (!props.anchor) { close(); return }
+  if (!anchorEl || !anchorEl.isConnected) { close(); return }
+  const r = anchorEl.getBoundingClientRect()
+  const inViewport = r.bottom > 0 && r.top < window.innerHeight && r.right > 0 && r.left < window.innerWidth
+  if (!inViewport) { close(); return }
+  const off = anchorOffset ?? { dx: 0, dy: 0 }
+  pos.value = clampPoint(r.left + off.dx, r.top + off.dy)
+}
+function onWindowBlur(): void { close() }
 
 function bind(): void {
   document.addEventListener('pointerdown', onPointerDownOutside, true)
   window.addEventListener('resize', onViewportChange)
   window.addEventListener('scroll', onViewportChange, true)
-  window.addEventListener('blur', onViewportChange)
+  window.addEventListener('blur', onWindowBlur)
 }
 function unbind(): void {
   document.removeEventListener('pointerdown', onPointerDownOutside, true)
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener('scroll', onViewportChange, true)
-  window.removeEventListener('blur', onViewportChange)
+  window.removeEventListener('blur', onWindowBlur)
 }
 
 // immediate：菜单可能在挂载时就已 open（父层先设坐标再渲染），此时 watch 不触发会漏掉
@@ -104,6 +138,11 @@ function unbind(): void {
 watch(() => props.open, async (open) => {
   if (open) {
     pos.value = { x: props.x, y: props.y }
+    // 记录"指针相对锚点"的偏移：滚动跟随时保持它，菜单不会突然跳到目标角上
+    const anchorEl = props.anchor?.()
+    anchorOffset = anchorEl
+      ? (() => { const r = anchorEl.getBoundingClientRect(); return { dx: props.x - r.left, dy: props.y - r.top } })()
+      : undefined
     restoreTarget = document.activeElement instanceof HTMLElement ? document.activeElement : null
     bind()
     await nextTick()
@@ -118,6 +157,7 @@ watch(() => props.open, async (open) => {
     const canRestore = restoreTarget && restoreTarget !== document.body && restoreTarget !== document.documentElement
     if (canRestore && restoreTarget!.isConnected) restoreTarget!.focus()
     restoreTarget = null
+    anchorOffset = undefined
   }
 }, { immediate: true })
 

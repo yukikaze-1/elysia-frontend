@@ -58,7 +58,13 @@ const menuItems = computed<ContextMenuItem[]>(() => [
   { id: 'delete', label: '删除', danger: true, disabled: !canAct.value }
 ])
 
+/** 菜单锚点（2026-09-13）：与消息列表同一机制——菜单跟随触发行，而不是"任何滚动就关"。
+ *  行不在 DOM 里（列表虚拟化/被删）时返回 null ⇒ 菜单关闭。 */
+let menuAnchorEl: HTMLElement | null = null
+function menuAnchor(): HTMLElement | null { return menuAnchorEl }
+
 function openMenu(c: Conversation, e: MouseEvent): void {
+  menuAnchorEl = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
   menu.value = { open: true, x: e.clientX, y: e.clientY, target: c }
 }
 
@@ -258,6 +264,7 @@ function activateConv(id: string): void {
     :x="menu.x"
     :y="menu.y"
     :items="menuItems"
+    :anchor="menuAnchor"
     @select="onMenuSelect"
     @close="menu.open = false"
   />

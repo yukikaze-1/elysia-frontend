@@ -24,7 +24,7 @@ const ITEMS: ContextMenuItem[] = [
 
 /** 挂到专用宿主 div（其父为 body）：teleport 的目标是 **body**，故宿主内必须没有菜单——
  *  这才是"菜单不在挂载点的 DOM 子树里"的可断言形态（`wrapper.element` 对 Teleport 根组件会解析成 body） */
-function mountMenu(props: Partial<{ open: boolean; x: number; y: number; items: readonly ContextMenuItem[] }> = {}) {
+function mountMenu(props: Partial<{ open: boolean; x: number; y: number; items: readonly ContextMenuItem[]; anchor: () => HTMLElement | null }> = {}) {
   const host = document.createElement('div')
   document.body.appendChild(host)
   const w = mount(CyContextMenu, {
@@ -197,5 +197,76 @@ describe('CyContextMenu：键盘与关闭', () => {
     expect(added).toBeGreaterThan(0)
     expect(removed).toBe(added)
     addSpy.mockRestore(); removeSpy.mockRestore()
+  })
+})
+
+/**
+ * 锚点语义（2026-09-13，实测缺陷修复）：
+ *
+ * 原判据是"任何滚动即关闭"，它分不清"用户滚的"与"应用自己滚的"——消息列表在流式回复期间会自行
+ * 跟随底部/重锚，于是**右键菜单刚打开就被列表自己的滚动关掉**（集成层探针读数：菜单确实开了，
+ * 400ms 内被恰好一次 scroll 事件关掉）。给了锚点后的语义是"**跟随**目标"：目标还在就贴回去
+ * （保持打开时的相对偏移），目标从 DOM 消失或整体移出视口才关闭——那才是"菜单会指向错误对象"的真条件。
+ */
+describe('CyContextMenu：锚点（有锚点则跟随，无锚点保持"滚动即关"）', () => {
+  /** 造一个"看起来在某个位置"的元素（happy-dom 不做布局，getBoundingClientRect 恒为 0 ⇒ 必须桩） */
+  function anchorAt(rect: { left: number; top: number; width: number; height: number }): HTMLElement {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    el.getBoundingClientRect = (): DOMRect => ({
+      left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+      right: rect.left + rect.width, bottom: rect.top + rect.height,
+      x: rect.left, y: rect.top, toJSON: () => ({})
+    })
+    return el
+  }
+
+  it('滚动时**跟随锚点**（保持打开时的相对偏移），不关闭', async () => {
+    const anchor = anchorAt({ left: 100, top: 200, width: 300, height: 40 })
+    const { w } = mountMenu({ x: 140, y: 220, anchor: () => anchor })
+    await nextTick()
+    const menu = document.querySelector<HTMLElement>('[data-testid="context-menu"]')!
+    expect(menu).not.toBeNull()
+
+    // 目标整体下移 60px（等价于列表滚动后该行换了位置）
+    anchor.getBoundingClientRect = (): DOMRect => ({
+      left: 100, top: 260, width: 300, height: 40, right: 400, bottom: 300, x: 100, y: 260, toJSON: () => ({})
+    })
+    window.dispatchEvent(new Event('scroll'))
+    await nextTick()
+
+    expect(w.emitted('close'), '目标还在 ⇒ 菜单不得被应用自身的滚动关掉').toBeUndefined()
+    expect(document.querySelector('[data-testid="context-menu"]')).not.toBeNull()
+    // 相对偏移保持：打开时指针相对目标左上角是 (+40, +20)；目标下移 60 ⇒ 菜单 y 也应 +60
+    const style = document.querySelector<HTMLElement>('[data-testid="context-menu"]')!.getAttribute('style') ?? ''
+    expect(style).toContain('top: 280px')
+    w.unmount()
+  })
+
+  it('锚点从 DOM 消失 → 关闭（这时菜单确实无法再指向对象）', async () => {
+    const anchor = anchorAt({ left: 100, top: 200, width: 300, height: 40 })
+    const { w } = mountMenu({ x: 140, y: 220, anchor: () => anchor })
+    await nextTick()
+    anchor.remove()
+    window.dispatchEvent(new Event('scroll'))
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('锚点整体移出视口 → 关闭', async () => {
+    const anchor = anchorAt({ left: 100, top: -400, width: 300, height: 40 })   // 完全在视口上方
+    const { w } = mountMenu({ x: 140, y: 220, anchor: () => anchor })
+    await nextTick()
+    window.dispatchEvent(new Event('scroll'))
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('不给锚点（会话列表）→ 保持既有语义：任何滚动即关闭', async () => {
+    const { w } = mountMenu()
+    await nextTick()
+    window.dispatchEvent(new Event('scroll'))
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
   })
 })
