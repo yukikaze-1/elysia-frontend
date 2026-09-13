@@ -17,39 +17,19 @@
 //     `lstat().isSymbolicLink() === true`、`realpath` 解析到外部）。此时断言改为"外部目录里除哨兵文件外
 //     什么都没多出来"，因为被覆写的对象是链接本身而不是某个文件。
 // 若两者都不可用（既无 symlink 权限又非 Windows）→ 整组跳过，并在测试名里写明，而不是伪装通过。
-import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, statSync, writeFileSync } from 'fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it } from 'vitest'
 import type { Page } from 'playwright'
 import { launchApp, closeApp, type LaunchedApp } from './helpers/app'
+import { detectLinkMode } from './helpers/links'
 
 const POLL = { timeout: 15000, interval: 200 }
 const MARK = 'H11B-降级态下键入的草稿-7c41f0'
 const DRAFTS_REL = 'app-cache/drafts-v1.json'
 
-/**
- * 可用的链接形态（探测方式与 protocol-handler / safe-open / live2d-registry / tool-executors 同款：
- * 建一次真链接，失败即认为该形态不可用，绝不靠平台名猜）。
- */
-type LinkMode = 'file-symlink' | 'dir-junction' | 'none'
-
-function detectLinkMode(): LinkMode {
-  const probe = mkdtempSync(join(tmpdir(), 'cy-persist-degrade-probe-'))
-  const targetDir = join(probe, 'target')
-  const targetFile = join(probe, 'target.txt')
-  try {
-    writeFileSync(targetFile, 'x')
-    try {
-      symlinkSync(targetFile, join(probe, 'flink'))
-      return 'file-symlink'
-    } catch { /* Windows 无开发者模式 → EPERM，退到 junction */ }
-    try {
-      symlinkSync(targetDir, join(probe, 'dlink'), process.platform === 'win32' ? 'junction' : 'dir')
-      return 'dir-junction'
-    } catch { return 'none' }
-  } finally { rmSync(probe, { recursive: true, force: true }) }
-}
+/** 可用的链接形态（探测实现与理由见 helpers/links.ts；两种形态都让 Main 走同一条降级路径） */
 const linkMode = detectLinkMode()
 
 /** 连接 + 激活首个会话（与 persist-flush.spec.ts 同款真实路径；键入草稿需要输入框可用） */

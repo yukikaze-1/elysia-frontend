@@ -258,7 +258,7 @@ const statusText = computed(() => {
 
     <div class="cy-l2d-group cy-l2d-foot">
       <button class="cy-l2d-btn" @click="restoreDefaults">恢复默认设置</button>
-      <span class="cy-l2d-foot-note">修改即时预览，500ms 自动保存</span>
+      <span class="cy-l2d-foot-note">修改即时预览，约 0.5 秒后自动保存（保存结果见页面顶部状态）</span>
     </div>
   </section>
 </template>

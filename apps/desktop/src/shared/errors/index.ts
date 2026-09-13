@@ -35,7 +35,15 @@ export enum CyreneErrorCode {
    * H-11b renderer 半边（2026-09-13）：一次写入失败（磁盘满/权限/只读目录等）。
    * message 只带 errno 码，**不带任何路径**（Main 是路径边界，见 docs/07）。
    */
-  PERSISTENCE_WRITE_FAILED = 'PERSISTENCE_WRITE_FAILED'
+  PERSISTENCE_WRITE_FAILED = 'PERSISTENCE_WRITE_FAILED',
+  /**
+   * M-19（2026-09-13）：**设置**保存失败（settings.json 写不进去）。
+   * 与会话域的 `PERSISTENCE_WRITE_FAILED` 分开，是为了让 UI 能说"设置没保存"而不是
+   * "草稿/缓存没保存"——两类改动在用户眼里是不同的事。同样只带 errno 码、不带路径。
+   * 注：设置域**隔离失败**（降级、不可自愈）复用 `PERSISTENCE_DEGRADED`，不另立码——
+   * 那句话（"本地保存已停用…为避免覆盖现场已停止一切写入"）对两个域同样成立。
+   */
+  SETTINGS_SAVE_FAILED = 'SETTINGS_SAVE_FAILED'
 }
 
 export class CyreneError extends Error {

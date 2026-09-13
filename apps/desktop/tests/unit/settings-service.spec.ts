@@ -2,7 +2,7 @@
 // Task 8:Main SettingsService 持久化——load 缺失→默认 / save patch merge / 损坏隔离备份 / 版本不匹配回默认 /
 // 非法 patch 拒绝 / 原子写产物可读 + handler 接线（env=node，直接调用 createIpcHandler，不经 ipcMain）。
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync } from 'fs'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, readdirSync, realpathSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { SettingsService, SETTINGS_FILE_NAME } from '../../src/main/settings/settings-service'
@@ -64,7 +64,7 @@ describe('SettingsService', () => {
     const corruptFiles = readdirSync(dir).filter((n) => n.startsWith('settings.json.corrupt-settings-'))
     expect(corruptFiles.length).toBe(1)
     expect(readFileSync(join(dir, corruptFiles[0]), 'utf8')).toBe('not-json{{{') // 现场隔离保留
-    expect(logger.warn).toHaveBeenCalledWith('settings:corrupt-isolated', { file: SETTINGS_FILE_NAME })
+    expect(logger.warn).toHaveBeenCalledWith('settings:corrupt-isolated', { file: SETTINGS_FILE_NAME, reason: 'unknown' })
   })
 
   it('版本不匹配（version 非 1）→ 回默认并隔离备份（Minor 19）', async () => {
@@ -192,6 +192,54 @@ describe('SettingsService', () => {
     const saved = await svc.save({ voice: { enabled: false } }) // 未显式 load
     expect(saved.voice.autoReadReply).toBe(false) // 已有落盘值保留
     expect(saved.voice.enabled).toBe(false)
+  })
+
+  // —— M-19 renderer 半边的 Main 侧配套（2026-09-13）——
+  //
+  // 目标只有一条：**设置保存失败必须带着一个可展示的码到达 Renderer**。此前裸 fs 错误经
+  // `createIpcHandler` 兜底成 `UNKNOWN/内部错误`，Renderer 侧再补 UI 也说不出一句有用的话。
+  it('写失败 → SETTINGS_SAVE_FAILED（只带 errno，绝不带路径）', async () => {
+    const { dir, safeRoot } = makeDir()
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
+    await svc.load()
+    // 真实构造：把 config 目录整体删掉 → atomicWriteFile 的父目录 realpath/包含性复核失败
+    rmSync(dir, { recursive: true, force: true })
+    let caught: unknown
+    try { await svc.save({ voice: { enabled: false } }) } catch (e) { caught = e }
+    expect(caught).toMatchObject({ code: 'SETTINGS_SAVE_FAILED' })
+    const message = (caught as Error).message
+    expect(message).not.toContain(dir)
+    expect(message, 'message 里不得出现任何路径分隔符').not.toMatch(/[/\\]/)
+  })
+
+  // 接缝覆盖：走**真实** isolation（不是注入替身）。safeRoot 指向别处 → assertContained 拒绝 → isolate 上抛。
+  // 修前该异常会一路穿过 `main/index.ts` 的 eager `await settingsSvc.load()`，把整条启动装配打断
+  // （注释却写着"不阻塞启动"）；修后转降级态：启动照常 + 拒绝写入 + 保现场。
+  it('隔离失败 → load 不再上抛（启动不被打断）+ 降级态 + 拒绝写入且原始文件逐字节未变', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cy-settings-degraded-'))
+    const other = mkdtempSync(join(tmpdir(), 'cy-settings-degraded-root-'))
+    const raw = JSON.stringify({ version: 2, voice: DEFAULT_SETTINGS.voice })
+    writeFileSync(settingsPath(dir), raw, { mode: 0o600 })
+    const counts: string[] = []
+    const svc = new SettingsService({
+      dir, safeRoot: realpathSync(other), logger, countDiagnostic: (code: string) => { counts.push(code) }
+    })
+    await expect(svc.load(), '隔离失败不得让 load 上抛').resolves.toEqual(DEFAULT_SETTINGS)
+    expect(svc.getLastError(), '必须进入降级态').toBeDefined()
+    expect(counts).toContain('settings:degraded')
+    await expect(svc.save({ voice: { enabled: false } }))
+      .rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    expect(readFileSync(settingsPath(dir), 'utf8'), '保现场：原文件逐字节未变').toBe(raw)
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(other, { recursive: true, force: true })
+  })
+
+  it('未降级时 getLastError 为 undefined 且写入正常（不误报）', async () => {
+    const { dir, safeRoot } = makeDir()
+    const svc = new SettingsService({ dir, safeRoot, logger, countDiagnostic: vi.fn() })
+    await svc.load()
+    expect(svc.getLastError()).toBeUndefined()
+    await expect(svc.save({ voice: { enabled: false } })).resolves.toBeDefined()
   })
 })
 

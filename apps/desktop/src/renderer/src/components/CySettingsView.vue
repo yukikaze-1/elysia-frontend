@@ -16,11 +16,24 @@ import { useVoiceStore } from '../stores/voice.store'
 import { useIdentityStore } from '../stores/identity.store'
 import { useCharacterEditorStore } from '../stores/character-editor.store'
 import { useAppStore } from '../stores/app.store'
+import { useSettingsStore } from '../stores/settings.store'
+import { errorMessage } from '../utils/error-message'
 
 const voiceStore = useVoiceStore()
 const identityStore = useIdentityStore()
 const characterEditorStore = useCharacterEditorStore()
 const appStore = useAppStore()
+const settingsStore = useSettingsStore()
+
+/**
+ * 设置保存状态（M-19，2026-09-13）。
+ *
+ * 修前的事实：`settings.store` 的 `saveError` / `saved` 是**死状态**——全仓没有任何组件渲染它们
+ * （grep 只命中 store 自身），而 Live2D 子页却写着"500ms 自动保存"。于是"拨动开关 → 界面正常 →
+ * 重启后被还原"这条链上用户拿不到任何信号。现挂在设置中心**头部下方**（不随子页切换消失），
+ * 三态：保存失败（alert）> 正在保存 > 已保存；文案经 `errorMessage()` 单一来源。
+ */
+const saveErrorMessage = computed(() => errorMessage(settingsStore.saveError, '设置保存失败：改动没有写入磁盘。'))
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -111,6 +124,22 @@ onBeforeUnmount(() => { triggerElement = null })
         <button ref="closeBtn" class="cy-close-btn" aria-label="关闭设置" @click="close">✕</button>
       </header>
 
+      <!-- M-19（2026-09-13）：设置保存状态。失败必须可见、且说明"改动没丢"——
+           本仓库既有教训是"失败以什么都没有的形式到达用户"，这里刻意把三者放在同一处常驻显示。 -->
+      <div v-if="settingsStore.saveError" class="cy-settings-save-state is-error" role="alert" data-testid="settings-save-error">
+        <span class="cy-save-state-dot" aria-hidden="true" />
+        <span>{{ saveErrorMessage }}</span>
+        <span class="cy-save-state-hint">改动仍保留在待写队列，会自动重试一次；也可再改一次或关闭窗口时重试。</span>
+      </div>
+      <div v-else-if="settingsStore.unsaved" class="cy-settings-save-state" role="status" data-testid="settings-saving">
+        <span class="cy-save-state-dot is-pending" aria-hidden="true" />
+        <span>正在保存设置…</span>
+      </div>
+      <div v-else-if="settingsStore.saved" class="cy-settings-save-state is-ok" role="status" data-testid="settings-saved">
+        <span class="cy-save-state-dot is-ok" aria-hidden="true" />
+        <span>设置已保存</span>
+      </div>
+
       <div class="cy-settings-layout">
         <nav class="cy-settings-nav" aria-label="设置分组">
           <button
@@ -193,6 +222,26 @@ onBeforeUnmount(() => { triggerElement = null })
   background: var(--cy-surface-glass);
 }
 .cy-settings-title { display: flex; align-items: baseline; gap: var(--cy-space-4); }
+
+/* M-19：保存状态条常驻在头部下方（不随子页切换消失），失败时用警示色 + alert 角色 */
+.cy-settings-save-state {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--cy-space-4);
+  padding: var(--cy-space-3) var(--cy-space-8);
+  border-bottom: 1px solid var(--cy-border);
+  background: var(--cy-surface-soft);
+  color: var(--cy-muted);
+  font-size: var(--cy-font-sm);
+}
+.cy-settings-save-state.is-error { color: var(--cy-danger); background: var(--cy-surface); }
+.cy-settings-save-state.is-ok { color: var(--cy-success); }
+.cy-save-state-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: var(--cy-radius-circle); background: var(--cy-muted); }
+.cy-save-state-dot.is-pending { background: var(--cy-warning); }
+.cy-save-state-dot.is-ok { background: var(--cy-success); }
+.cy-settings-save-state.is-error .cy-save-state-dot { background: var(--cy-danger); }
+.cy-save-state-hint { color: var(--cy-muted); }
 .cy-settings-title strong { font-size: calc(20px * var(--cy-user-font-scale)); }
 .cy-close-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-surface); color: var(--cy-muted); font-size: calc(18px * var(--cy-user-font-scale)); }
 .cy-settings-layout { flex: 1 1 0; display: flex; min-height: 0; }

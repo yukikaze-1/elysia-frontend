@@ -4,7 +4,7 @@
 // env=node:store 经 stores/desktop-api 注入 mock api(R2);pinia 用 createPinia + setActivePinia。
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { insertDictationText, SETTINGS_SAVE_DEBOUNCE_MS, useSettingsStore } from '../../src/renderer/src/stores/settings.store'
+import { hasPendingPatch, insertDictationText, mergeSettingsPatch, SETTINGS_SAVE_DEBOUNCE_MS, SETTINGS_SAVE_RETRY_MS, useSettingsStore } from '../../src/renderer/src/stores/settings.store'
 import { useDraftStore } from '../../src/renderer/src/stores/draft.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
@@ -122,15 +122,99 @@ describe('settingsStore', () => {
     expect(s.dictation.sttProfileId).toBe('stt/p1')
   })
 
-  it('setVoice 失败 → saveError 置位 + 本地改保留（fail-open UI 可展示）', async () => {
+  it('setVoice 失败 → saveError 置位（code 形态）+ 本地改保留（fail-open UI 可展示）', async () => {
     vi.useFakeTimers()
     mockApi.settingsSave.mockRejectedValue(new Error('[IPC_ERROR] [UNKNOWN] 写盘失败'))
     const s = useSettingsStore()
     s.setVoice({ showCaptions: false })
     await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
-    expect(s.saveError).toContain('写盘失败')
+    // M-19（2026-09-13）：形态由原始 message 改为 **code**（措辞归 UI 层的 error-message.ts）。
+    // 注意 parsePublicError 取**第一个**方括号段为 code：跨进程原文 '[IPC_ERROR] [UNKNOWN] 写盘失败'
+    // 解析出的是 IPC_ERROR（这是既有语义，不是本批引入的）。
+    expect(s.saveError?.code).toBe('IPC_ERROR')
+    expect(s.saveError?.message).toContain('写盘失败')
     expect(s.saved).toBe(false)
-    expect(s.voice.showCaptions).toBe(false) // 本地改不回滚
+    expect(s.unsaved).toBe(true)                 // 未确认写入：UI 据此说真话
+    expect(s.voice.showCaptions).toBe(false)     // 本地改不回滚
+  })
+
+  // —— M-19（2026-09-13）：设置保存失败必须**可见**且**不丢改动** ——
+  //
+  // 修前的两处事实（都是实测）：① `pending = {}` 在 `await` **之前**执行 ⇒ 保存失败即丢弃该 patch，
+  // 用户看到开关生效、重启后被静默还原；② `saveError` / `saved` 全仓**没有任何组件渲染**
+  // （grep 只命中 store 自身），而 Live2D 子页写着"500ms 自动保存"。故作两组判别用例：
+  // 「失败的那一份必须在后续保存里出现」与「状态必须能被 UI 读到」。
+  describe('保存失败可见且不丢改动（M-19）', () => {
+    it('失败后 patch 不丢：下一次保存把失败的那一份一起写下去【判别用例】', async () => {
+      vi.useFakeTimers()
+      mockApi.settingsSave.mockRejectedValueOnce(new Error('[PERSISTENCE_WRITE_FAILED] 本地保存失败（ENOSPC）'))
+      mockApi.settingsSave.mockImplementation(async (patch: Parameters<typeof applyPatch>[1]) => applyPatch(state(), patch))
+      const s = useSettingsStore()
+      s.setVoice({ showCaptions: false })
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)         // 第一次落盘失败
+      expect(s.saveError?.code).toBe('PERSISTENCE_WRITE_FAILED')
+      expect(s.unsaved).toBe(true)
+      // 在自动重试之前用户又改了一次：两次改动必须合并提交（修复前只提交后一次，前一次永久丢失）
+      s.setVoice({ autoReadReply: false })
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+      expect(mockApi.settingsSave).toHaveBeenLastCalledWith({ voice: { showCaptions: false, autoReadReply: false } })
+      expect(s.saveError, '写回成功后应清掉错误状态').toBeUndefined()
+      expect(s.unsaved).toBe(false)
+    })
+
+    it('失败后自动重试一次并恢复（错误状态清除 + saved 置位）', async () => {
+      vi.useFakeTimers()
+      mockApi.settingsSave.mockRejectedValueOnce(new Error('[SETTINGS_SAVE_FAILED] 本地保存失败（EACCES）'))
+      mockApi.settingsSave.mockImplementation(async (patch: Parameters<typeof applyPatch>[1]) => applyPatch(state(), patch))
+      const s = useSettingsStore()
+      s.setVoice({ enabled: false })
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+      expect(mockApi.settingsSave).toHaveBeenCalledTimes(1)
+      expect(s.saveError?.code).toBe('SETTINGS_SAVE_FAILED')
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_RETRY_MS)             // 自动重试
+      expect(mockApi.settingsSave).toHaveBeenCalledTimes(2)
+      expect(mockApi.settingsSave).toHaveBeenLastCalledWith({ voice: { enabled: false } })
+      expect(s.saveError).toBeUndefined()
+      expect(s.saved).toBe(true)
+      expect(s.unsaved).toBe(false)
+    })
+
+    it('持续失败只自动重试一次（不按防抖节奏热循环打盘），改动留在队列里', async () => {
+      vi.useFakeTimers()
+      mockApi.settingsSave.mockRejectedValue(new Error('[SETTINGS_SAVE_FAILED] 本地保存失败（ENOSPC）'))
+      const s = useSettingsStore()
+      s.setVoice({ enabled: false })
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_DEBOUNCE_MS)
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_RETRY_MS)
+      await vi.advanceTimersByTimeAsync(SETTINGS_SAVE_RETRY_MS * 10)
+      expect(mockApi.settingsSave, '首次 + 恰好一次重试').toHaveBeenCalledTimes(2)
+      expect(s.unsaved, '改动仍在待写队列（由下一次修改 / 退出 flush 再试）').toBe(true)
+      expect(s.saveError?.code).toBe('SETTINGS_SAVE_FAILED')
+    })
+
+    it('退出 flush 会把失败保留的 patch 再试一次（H-04 与 M-19 的交点）', async () => {
+      vi.useFakeTimers()
+      mockApi.settingsSave.mockRejectedValueOnce(new Error('[SETTINGS_SAVE_FAILED] 本地保存失败（ENOSPC）'))
+      mockApi.settingsSave.mockImplementation(async (patch: Parameters<typeof applyPatch>[1]) => applyPatch(state(), patch))
+      const s = useSettingsStore()
+      s.setVoice({ autoReadReply: false })
+      await s.flush()                                   // 第一次失败
+      expect(s.saveError?.code).toBe('SETTINGS_SAVE_FAILED')
+      await s.flush()                                   // 同一次退出流程 / 下一次 flush 重试
+      expect(mockApi.settingsSave).toHaveBeenLastCalledWith({ voice: { autoReadReply: false } })
+      expect(s.saveError).toBeUndefined()
+      expect(s.saved).toBe(true)
+    })
+
+    it('mergeSettingsPatch：等待期间的新改动优先（重试不会把新值覆盖回旧值）', () => {
+      expect(mergeSettingsPatch(
+        { voice: { enabled: false, autoReadReply: true }, live2d: { modelId: 'old' } },
+        { voice: { autoReadReply: false } }
+      )).toEqual({ voice: { enabled: false, autoReadReply: false }, dictation: undefined, live2d: { modelId: 'old' }, tools: undefined, appearance: undefined })
+      expect(hasPendingPatch({})).toBe(false)
+      expect(hasPendingPatch({ appearance: { fontScale: 90 } })).toBe(true)
+      expect(hasPendingPatch({ tools: { grants: [] } })).toBe(true)   // tools 子树也计入（早退判据收口到一处）
+    })
   })
 
   // —— 阶段 5 批次 A（A6，D5A-10）：live2d 子树三处接线 ——

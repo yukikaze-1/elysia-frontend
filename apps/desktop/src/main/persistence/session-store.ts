@@ -6,6 +6,7 @@ import { unlink } from 'fs/promises'
 import { atomicWriteFile } from '../credentials/atomic-write'
 import { openSafeFile } from './safe-open'
 import { createCorruptIsolation, type CorruptIsolation } from './corrupt-isolation'
+import { toWriteFailure } from './write-failure'
 import { MAX_IPC_MESSAGE_BYTES, type Conversation, type ConversationDraft, type Message, type PersistSessionInput, type PersistSessionResult, type ScrollAnchor, type SessionPersistenceState } from '@shared/contracts'
 import { ConversationDraftSchema, ConversationSchema, MessageSchema } from '@shared/schemas'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
@@ -56,27 +57,6 @@ function msgBytes(m: Message): number {
   return n
 }
 function nowIso(): string { return new Date().toISOString() }
-
-/**
- * 写失败结构化（H-11b renderer 半边，2026-09-13）。
- *
- * 此前 `atomicWriteFile` 的原始错误直接上抛，经 `createIpcHandler` 的兜底分支变成
- * `{ code: 'UNKNOWN', message: '内部错误' }` —— Renderer 既分不清「降级拒绝写入」与
- * 「磁盘满/权限不足」，也拿不到任何可展示的原因，于是持久化失败在 UI 上就是"什么都没有"
- * （评审 M-19 同族症状）。
- *
- * 纪律：**只取 errno 码**（`ENOSPC`/`EACCES`/`EROFS`…），绝不把 fs 错误原文或路径带出去
- * ——Main 是路径边界，Renderer 不得收到绝对本地路径。
- */
-export function toWriteFailure(err: unknown): unknown {
-  if (err instanceof CyreneError) return err   // 已有语义码（DRAFT_LIMIT_EXCEEDED / IPC_MESSAGE_TOO_LARGE / PERSISTENCE_DEGRADED）不覆盖
-  const raw = (err as NodeJS.ErrnoException | undefined)?.code
-  const code = typeof raw === 'string' && /^[A-Z0-9_]{1,32}$/.test(raw) ? raw : undefined
-  return new CyreneError(
-    CyreneErrorCode.PERSISTENCE_WRITE_FAILED,
-    code === undefined ? '本地保存失败' : `本地保存失败（${code}）`
-  )
-}
 
 export class SessionStore {
   private readonly draftsFile: string

@@ -7,7 +7,9 @@ import { join } from 'path'
 import { atomicWriteFile } from '../credentials/atomic-write'
 import { openSafeFile } from '../persistence/safe-open'
 import { createCorruptIsolation, type CorruptIsolation } from '../persistence/corrupt-isolation'
+import { toWriteFailure } from '../persistence/write-failure'
 import { DEFAULT_SETTINGS, SettingsStateSchema } from '@shared/schemas'
+import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type { SettingsPatch, SettingsState } from '@shared/contracts'
 import type { Logger } from '../diagnostics/logger'
 
@@ -25,6 +27,15 @@ export class SettingsService {
   private readonly isolation: CorruptIsolation
   private state: SettingsState = DEFAULT_SETTINGS
   private loaded = false
+  /**
+   * 损坏文件**隔离失败**后的降级态（2026-09-13，H-11b 同族发现）。
+   *
+   * 此前 `load()` 的 catch 里直接 `await isolate(...)`：隔离本身失败时异常会继续上抛，而
+   * `main/index.ts:374` 是 **eager `await settingsSvc.load()`**（注释写着"不阻塞启动"）——
+   * 即"配置文件是符号链接 / 被 AV 或备份代理锁住 → 隔离改名失败"这条链会把**整条启动装配**打断。
+   * 现改为进入降级态：保留默认内存态、**拒绝后续写入**（保现场）、留痕并计数，启动照常。
+   */
+  private degraded: string | undefined
 
   constructor(private readonly deps: SettingsServiceDeps) {
     this.file = join(deps.dir, SETTINGS_FILE_NAME)
@@ -34,6 +45,7 @@ export class SettingsService {
   /**
    * 装载：文件缺失 → DEFAULT_SETTINGS；存在 → openSafeFile + JSON parse + SettingsStateSchema.safeParse；
    * 失败（损坏/版本不匹配/非普通文件/权限不符）→ 隔离备份 .corrupt-settings-<ts> + 回默认（fail-open）。
+   * **隔离失败不再上抛**（见 degraded 字段注释）：转降级态后照常以默认值返回。
    */
   async load(): Promise<SettingsState> {
     try {
@@ -51,13 +63,34 @@ export class SettingsService {
         this.loaded = true
         return this.state
       }
-      this.deps.logger.warn('settings:corrupt-isolated', { file: SETTINGS_FILE_NAME })
-      await this.isolation.isolate(this.file, 'settings', this.deps.safeRoot) // 隔离保留现场，不污染后续写入
+      // 只记类别与 errno，不记 fs 原文（可能含绝对路径）——与 write-failure 同一条路径边界纪律
+      const errno = (e as NodeJS.ErrnoException).code
+      this.deps.logger.warn('settings:corrupt-isolated', { file: SETTINGS_FILE_NAME, reason: typeof errno === 'string' ? errno : 'unknown' })
+      try {
+        await this.isolation.isolate(this.file, 'settings', this.deps.safeRoot) // 隔离保留现场，不污染后续写入
+      } catch (isolateErr: unknown) {
+        const detail = isolateErr instanceof Error ? isolateErr.message : String(isolateErr)
+        this.degraded = `isolate-failed:${detail}`
+        this.deps.countDiagnostic('settings:degraded')
+        this.deps.logger.error('settings:degraded', { file: SETTINGS_FILE_NAME, message: detail })
+      }
       this.state = DEFAULT_SETTINGS
     }
     await this.isolation.pruneCorrupt(this.file, 'settings') // HIGH-1 有界保留：只留最新一份 .corrupt-settings-*
     this.loaded = true
     return this.state
+  }
+
+  /** 降级原因（设置域）；undefined 表示正常。供诊断与测试读取。**含 fs 原文，不得跨 IPC**。 */
+  getLastError(): string | undefined { return this.degraded }
+
+  /** 写入前守卫：降级态下拒绝一切写入，绝不覆写未能隔离的原文件（与 SessionStore 同纪律） */
+  private assertWritable(): void {
+    if (this.degraded === undefined) return
+    throw new CyreneError(
+      CyreneErrorCode.PERSISTENCE_DEGRADED,
+      `持久化已降级（${SETTINGS_FILE_NAME}：${this.degraded}），已拒绝写入以保留现场`
+    )
   }
 
   /**
@@ -67,6 +100,7 @@ export class SettingsService {
    */
   async save(patch: SettingsPatch): Promise<SettingsState> {
     if (!this.loaded) await this.load()
+    this.assertWritable()   // 降级态：拒绝写入（load 里已 load 过，守在这里以防 load 期间才降级）
     const next: SettingsState = {
       ...this.state,
       ...patch,
@@ -77,7 +111,10 @@ export class SettingsService {
       appearance: { ...this.state.appearance, ...patch.appearance }   // 外观（2026-09-13）：同款子树 merge（漏了它会把整棵外观子树替换掉）
     }
     const newState = SettingsStateSchema.parse(next)
+    // M-19（2026-09-13）：写失败必须带上可展示的码。此前裸 fs 错误经 executor 兜底成
+    // `UNKNOWN/内部错误`，Renderer 侧再有状态也说不出一句有用的话（设置域用专用码，见 errors/index.ts）。
     await atomicWriteFile(this.file, JSON.stringify(newState), { safeRoot: this.deps.safeRoot })
+      .catch((e: unknown) => { throw toWriteFailure(e, CyreneErrorCode.SETTINGS_SAVE_FAILED) })
     this.state = newState
     return newState
   }
