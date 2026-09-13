@@ -208,25 +208,70 @@ describe('CharacterDraftStore FE-D2', () => {
     expect(fresh.list().map((item) => item.key).sort()).toEqual(['create:independent', 'edit:other'])
   })
 
-  it('appCache 逃逸 safeRoot 时 load fail-open、save fail-closed 且不触碰外部文件/日志正文', async () => {
+  it('appCache 逃逸 safeRoot：load 不抛（boot 不阻塞）+ **降级态**下读写全拒 + 不触碰外部文件/日志正文', async () => {
     const safe = await mkdtemp(join(tmpdir(), 'cyrene-character-safe-'))
     const outside = await mkdtemp(join(tmpdir(), 'cyrene-character-outside-'))
     environments.push(safe, outside)
     const env = await makeStore({ base: outside, safeRoot: await realpath(safe) })
     const secret = 'OUTSIDE_DRAFT_SECRET'
-    expect(env.store.list()).toEqual([])
+    // H-11b 同族（2026-09-13）改判：这条此前期望 `list() === []` + `save()` 抛
+    // CHARACTER_DRAFT_STORAGE_UNAVAILABLE——那是**旧行为**（隔离失败被 `.catch(()=>{})` 吞掉，
+    // 内存换成空仓库、下一次写覆写未能隔离的原文件）。现改为：置降级位 → 读也拒绝（返回空是谎报，
+    // 磁盘上明明有东西）→ 写拒绝（保现场）。load 本身仍不抛，启动不受影响。
     expect(env.store.getLastError()).toEqual({ code: 'CHARACTER_DRAFT_STORAGE_UNAVAILABLE', operation: 'load' })
+    expect(env.store.getDegradedReason(), '隔离失败必须进入降级态，不得被吞').toContain('isolate-failed')
+    expect(env.counts).toContain('character-drafts:degraded')
 
+    expect(() => env.store.list()).toThrowError(/持久化已降级/)
     await expect(env.store.save(entry('create:outside', '2026-08-31T03:00:00.000Z', secret)))
-      .rejects.toMatchObject({ code: 'CHARACTER_DRAFT_STORAGE_UNAVAILABLE' })
-    expect(env.store.list()).toEqual([])
-    expect(env.store.getLastError()).toEqual({ code: 'CHARACTER_DRAFT_STORAGE_UNAVAILABLE', operation: 'save' })
+      .rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    await expect(env.store.delete('create:outside')).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    await expect(env.store.deleteByCharacterId('custom/x')).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    await expect(env.store.retryPendingWrite()).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    await expect(env.store.clear()).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
     expect(await stat(join(outside, CHARACTER_DRAFT_FILE_NAME)).catch(() => undefined)).toBeUndefined()
     const logs = JSON.stringify(env.logger.warn.mock.calls)
     expect(logs).not.toContain(safe)
     expect(logs).not.toContain(outside)
     expect(logs).not.toContain(secret)
     expect(logs).not.toContain('draft-cache-outside-safe-root')
+    // 降级日志同样只含固定 code/文件名（该文件头注明的纪律：不含正文/绝对路径/底层 message）
+    const errorLogs = JSON.stringify(env.logger.error.mock.calls)
+    expect(errorLogs).toContain('character-drafts:degraded')
+    expect(errorLogs).not.toContain(safe)
+    expect(errorLogs).not.toContain(outside)
+  })
+
+  it('未被隔离的原文件在降级态下逐字节保留（判别用例：修复前下一次 save 会覆写它）', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'cyrene-character-drafts-'))
+    environments.push(base)
+    // 这一条刻意**不用** safeRoot 不匹配来造降级：那种夹具下 `assertStorageRoot` 本来就会拦住写，
+    // 于是"覆写"根本发生不了——判别力是假的（本轮 M1 变异时实际发现：它红在错误码不同，而不是红在文件被改）。
+    // 真实形态是「隔离改名失败、但写入路径本身健康」（文件被 AV/备份代理锁住 / 只读目录下 rename 失败）：
+    // 故这里保留正确的 safeRoot，只注入 isolate 失败（与 session-store.spec 同款手法）。
+    const original = 'not-json{{{'
+    await writeRootFile(base, original)
+    const counts: string[] = []
+    const localLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }
+    const store = new CharacterDraftStore({
+      appCache: base, safeRoot: await realpath(base), logger: localLogger as never,
+      countDiagnostic: (code) => counts.push(code)
+    })
+    const isolation = (store as unknown as { isolation: { isolate(): Promise<string> } }).isolation
+    isolation.isolate = async () => { throw new Error('EPERM: rename denied') }
+    await store.load()
+    expect(store.getDegradedReason()).toContain('isolate-failed')
+    expect(counts).toContain('character-drafts:degraded')
+    await expect(store.save(entry('create:new', '2026-08-31T04:00:00.000Z'))).rejects.toMatchObject({ code: 'PERSISTENCE_DEGRADED' })
+    expect(await readFile(join(base, CHARACTER_DRAFT_FILE_NAME), 'utf8'), '保现场：原文件逐字节未变').toBe(original)
+  })
+
+  it('正常路径不误报降级（getDegradedReason 为 undefined，读写照常）', async () => {
+    const env = await makeStore(); environments.push(env.base)
+    expect(env.store.getDegradedReason()).toBeUndefined()
+    await env.store.save(entry('create:ok', '2026-08-31T05:00:00.000Z'))
+    expect(env.store.list()).toHaveLength(1)
+    expect(env.counts).not.toContain('character-drafts:degraded')
   })
 
   it('安全根内目录名含两个点不被 containment 误判', async () => {

@@ -34,6 +34,29 @@ const bottomGap = (page: Page): Promise<number> =>
     return Math.round(el.scrollHeight - el.scrollTop - el.clientHeight)
   })
 
+/**
+ * 冻结曲线采样（2026-09-13，④ 的第 6 次再现之后加的**纯诊断**，不改任何判据）。
+ *
+ * 为什么需要它：④ 的六次 CI 红出现了三组不同签名，其中`2506/5011/2-of-25/5526` 那一组**逐像素重复**
+ * （含同一 commit 的两次 attempt）——说明触发时缺口落在**确定的饱和值**上，而不是"机器慢一点"的连续浮动。
+ * 三个聚合值（median/max/within）判不出这件事发生在哪一步，故补逐采样的几何量：
+ *   `top` 是 `.cy-messages` 的 scrollTop，`height` 是 scrollHeight。
+ *   代码里已记录过一条"**再无恢复路径**"分支（`CyMessageList.vue:112-125`：一旦早退，scrollTop 冻结、
+ *   不再产生 scroll 事件 → 没有 settle → 没有重锚，缺口永久累积），而本曲线正是判定它的直接证据：
+ *   **height 持续增长而 top 冻结不动** ⇒ 就是那条分支。
+ * 只在失败时多花时间：收敛值 > 40 时再补三次 5s 重采样，用来区分「慢到超出 15s 观测窗」与「永不收敛」。
+ */
+const geometry = (page: Page): Promise<{ gap: number; top: number; height: number } | null> =>
+  page.evaluate(() => {
+    const el = document.querySelector<HTMLElement>('.cy-messages')
+    if (!el) return null
+    return {
+      gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+      top: Math.round(el.scrollTop),
+      height: Math.round(el.scrollHeight)
+    }
+  })
+
 describe('消息列表贴底跟随与复制（H-02）', () => {
   it('① 长会话中发送消息后仍贴底（跟随底部，最新内容可见）', async () => {
     // 200 条种子历史 → 远超一屏，复现「按 Enter 看不见自己的消息」的真实前提
@@ -137,8 +160,13 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
        * 而变异实测 2274px、噪声带仅 ~84px），却因该断言从未执行而无法定性。
        */
       const samples: number[] = []
+      const tops: number[] = []
+      const heights: number[] = []
       for (let i = 0; i < 25; i++) {
-        samples.push(await bottomGap(page))
+        const g = await geometry(page)
+        samples.push(g?.gap ?? Number.NaN)
+        tops.push(g?.top ?? Number.NaN)
+        heights.push(g?.height ?? Number.NaN)
         await page.waitForTimeout(200)
       }
       const sorted = [...samples].sort((a, b) => a - b)
@@ -148,6 +176,15 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       console.log(
         `[follow-bottom ④] median=${median}px max=${max}px within=${withinTolerance}/${samples.length}`
       )
+      // 冻结曲线（纯诊断）：height 涨而 top 不动 ⇒ 命中代码里记过的"再无恢复路径"分支
+      console.log(`[follow-bottom ④] top=${tops.join(',')}`)
+      console.log(`[follow-bottom ④] height=${heights.join(',')}`)
+      const frozenAt = tops.findIndex((v, i) => i > 0 && v === tops[i - 1] && heights[i] > heights[i - 1])
+      if (frozenAt > 0) {
+        console.log(
+          `[follow-bottom ④] frozenAt=#${frozenAt} top=${tops[frozenAt]} height=${heights[frozenAt]}→${heights[heights.length - 1]}（top 不再变化而内容继续增长）`
+        )
+      }
       expect.soft(
         median,
         `流式期间距底缺口中位数 ${median}px（max ${max}px）——「持续累积」才是缺陷形态，瞬时抖动不是`
@@ -168,6 +205,16 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
           console.log(
             `[follow-bottom ④] settledGap=${settledGap}px（≤40 ⇒ 窗口内已收敛=只是跟不上；仍大 ⇒ 永不收敛=缺陷）`
           )
+          // 只在"不收敛"时补采样：用来看它是**慢**（后续会降下来）还是**真的永不收敛**
+          // （`POLL` 的 15s 是观测窗口，"永不收敛"实测口径其实就是"15s 内不收敛"——这三次重采样正是为了
+          // 把这两种解释分开；只加时间、不加断言）。
+          if (settledGap > 40) {
+            for (const wait of [5000, 5000, 5000]) {
+              await page.waitForTimeout(wait)
+              const g = await geometry(page)
+              console.log(`[follow-bottom ④] resample(+${wait}ms)=${g?.gap}px top=${g?.top} height=${g?.height}`)
+            }
+          }
         } catch { /* 页面已关闭：无诊断值可打，不影响断言结论 */ }
       }
     } finally { await closeApp(launched) }

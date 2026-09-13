@@ -86,6 +86,17 @@ export class CharacterDraftStore {
   private entries = new Map<string, PersistedCharacterDraft>()
   private writeTail: Promise<void> = Promise.resolve()
   private lastError: CharacterDraftStorageError | undefined
+  /**
+   * 损坏文件**隔离失败**后的降级态（2026-09-13，H-11b 同族第三处）。
+   *
+   * 此前 `load()` 里是 `await this.isolation.isolate(...).catch(() => {})` —— 正是 H-11b 明确否掉的
+   * 「改名失败被吞」形态，且本 store 的写入路径**没有任何守卫**。于是这条静默销毁路径成立：
+   * 隔离失败（文件被 AV/备份代理锁住、只读目录、符号链接越根…）⇒ 原文件仍在磁盘上、内存被换成空仓库
+   * ⇒ **下一次 save/delete/retryPendingWrite 把未能隔离的原文件覆写**，用户自建角色的恢复草稿整份消失。
+   * 现与 `SessionStore`／`SettingsService` 同纪律：**置降级位 → 读写全拒（保现场）→ 留痕计数**。
+   * 值含 fs 原文（可能含绝对路径），只进诊断/测试，**不得跨 IPC**。
+   */
+  private degraded: string | undefined
 
   constructor(private readonly deps: CharacterDraftStoreDeps) {
     this.file = join(deps.appCache, CHARACTER_DRAFT_FILE_NAME)
@@ -166,11 +177,20 @@ export class CharacterDraftStore {
       this.entries = new Map()
       this.lastError = { code: CyreneErrorCode.CHARACTER_DRAFT_STORAGE_UNAVAILABLE, operation: 'load' }
       this.deps.logger.warn('character-drafts:load-failed', { code: 'CHARACTER_DRAFT_STORAGE_UNAVAILABLE' })
-      await this.isolation.isolate(this.file, 'character-drafts', this.deps.safeRoot).catch(() => {})
+      try {
+        await this.isolation.isolate(this.file, 'character-drafts', this.deps.safeRoot)
+      } catch (isolateError: unknown) {
+        // H-11b 同族（2026-09-13）：隔离失败**不能**吞。日志纪律照旧只含固定 code/文件名
+        // （不含正文、绝对路径、底层 message）；完整原文只进本进程的 degraded，供诊断与测试。
+        this.degraded = `isolate-failed:${isolateError instanceof Error ? isolateError.message : String(isolateError)}`
+        this.deps.countDiagnostic('character-drafts:degraded')
+        this.deps.logger.error('character-drafts:degraded', { file: CHARACTER_DRAFT_FILE_NAME })
+      }
     }
   }
 
   list(): CharacterDraftSummary[] {
+    this.assertUsable()
     return [...this.entries.values()]
       .sort(compareEntries)
       .map((entry) => cloneValue(summaryOf(entry)))
@@ -178,11 +198,13 @@ export class CharacterDraftStore {
 
   get(key: string): PersistedCharacterDraft | undefined {
     this.assertKey(key)
+    this.assertUsable()
     const entry = this.entries.get(key)
     return entry ? cloneValue(entry) : undefined
   }
 
   async save(input: PersistedCharacterDraft): Promise<void> {
+    this.assertUsable()
     const parsed = PersistedCharacterDraftSchema.safeParse(input)
     if (!parsed.success) throw new CyreneError(CyreneErrorCode.SCHEMA_VALIDATION_FAILED, '角色草稿格式无效')
     const entry = cloneValue(parsed.data)
@@ -206,6 +228,7 @@ export class CharacterDraftStore {
 
   async delete(key: string): Promise<void> {
     this.assertKey(key)
+    this.assertUsable()
     if (!this.entries.has(key)) return
     await this.assertStorageRoot('delete')
     const next = new Map(this.entries)
@@ -217,6 +240,7 @@ export class CharacterDraftStore {
   /** 角色归档成功后的内部清理；删除同一角色的 edit/clone 草稿，不影响远端归档结果。 */
   async deleteByCharacterId(characterId: string): Promise<void> {
     if (typeof characterId !== 'string' || characterId.trim().length === 0) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '角色标识无效')
+    this.assertUsable()
     const next = new Map([...this.entries].filter(([, entry]) =>
       !((entry.mode === 'edit' || entry.mode === 'clone') && entry.characterId === characterId)
     ))
@@ -228,6 +252,7 @@ export class CharacterDraftStore {
 
   /** 清理失败后的安全重试基础；仍使用当前内存快照，不恢复已删除的正文。 */
   async retryPendingWrite(): Promise<void> {
+    this.assertUsable()
     await this.assertStorageRoot('retry')
     return this.enqueueWrite(this.serialize(this.entries), 'retry')
   }
@@ -236,8 +261,28 @@ export class CharacterDraftStore {
     return this.lastError ? { ...this.lastError } : undefined
   }
 
-  /** 测试/设置清理使用；不暴露为 Renderer IPC。 */
+  /** 降级原因（H-11b 同族，2026-09-13）；undefined 表示正常。**含 fs 原文，不得跨 IPC**。 */
+  getDegradedReason(): string | undefined { return this.degraded }
+
+  /**
+   * 降级守卫（2026-09-13）：降级态下**读写全拒**。
+   *
+   * - 写（save/delete/deleteByCharacterId/retryPendingWrite/clear）：拒绝 ⇒ 绝不覆写未能隔离的原文件；
+   * - 读（list/get）：也拒绝，而不是返回空 —— 空仓库会让 UI 显示「没有草稿」，而事实是**磁盘上有但读不到**，
+   *   那是谎报（用户会以为草稿丢了，或更糟：以为可以继续编辑并保存）。拒绝时 Renderer 收到
+   *   `PERSISTENCE_DEGRADED`，经 `error-message.ts` 显示为「本地保存已停用…」这一句durable的说明。
+   */
+  private assertUsable(): void {
+    if (this.degraded === undefined) return
+    throw new CyreneError(
+      CyreneErrorCode.PERSISTENCE_DEGRADED,
+      `持久化已降级（${CHARACTER_DRAFT_FILE_NAME}：${this.degraded}），已拒绝读写以保留现场`
+    )
+  }
+
+  /** 测试/设置清理使用；不暴露为 Renderer IPC。降级态下同样拒绝（unlink 会毁掉现场）。 */
   async clear(): Promise<void> {
+    this.assertUsable()
     this.entries = new Map()
     await unlink(this.file).catch(() => {})
     this.lastError = undefined

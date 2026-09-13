@@ -101,8 +101,13 @@ export const useSettingsStore = defineStore('settings', () => {
         live2d.value = { ...state.live2d } // ① 接线：读 state.live2d（缺 live2d 段时 SettingsStateSchema.default 已补默认）
         appearance.value = { ...state.appearance } // 外观：同上（缺 appearance 段时 schema.default 补 {fontScale:100}）
       }
-    } catch {
-      // fail-open：装载失败保留默认（C1 同款），不阻塞启动
+      saveError.value = undefined
+    } catch (e) {
+      // fail-open：装载失败保留默认（C1 同款），不阻塞启动。
+      // 2026-09-13（M-19 残余）：**但要记下来并让用户看到**——此前这里是无条件静默。
+      // 降级态（隔离失败）下 Main 的 settings:load 会拒绝，返回默认值当"当前设置"是谎报；
+      // 记进 saveError 后由设置页头部那条三态横幅显示（文案走 error-message 单一来源）。
+      saveError.value = parsePublicError(e instanceof Error ? e.message : String(e))
     }
     loaded.value = true
   }

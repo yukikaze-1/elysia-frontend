@@ -87,6 +87,37 @@ describe('cacheStore（spec §4.5）', () => {
     s.purge('c1')
     expect(s.snapshotMessages('c1')).toBeUndefined()
   })
+
+  // —— H-11b 残余（2026-09-13）：快照推送失败不再无声 ——
+  // 修前是 `catch { /* 缓存缺落由后端调和兜底 */ }`：best-effort 语义没问题，但用户拿不到任何信号，
+  // 与草稿域（H-11b）不对称。现记进本 store 的 persistenceFailure，由全局横幅聚合显示；
+  // **操作级 fail-open 未变**（失败不影响发送/加载，仍由后端调和兜底）。
+  describe('快照推送失败的可见性（H-11b 残余）', () => {
+    it('推送失败 → persistenceFailure 置位（code 形态），且不影响调用方', async () => {
+      mockApi.cacheMessages.mockRejectedValueOnce(new Error('[PERSISTENCE_WRITE_FAILED] 本地保存失败（ENOSPC）'))
+      const s = useCacheStore()
+      await expect(s.pushMessages('c1', [m('m1', 't')], 'now')).resolves.toBeUndefined()
+      expect(s.persistenceFailure).toEqual({ code: 'PERSISTENCE_WRITE_FAILED' })
+    })
+
+    it('后续推送成功 → 清除单次失败（提示不常驻）', async () => {
+      mockApi.cacheMessages.mockRejectedValueOnce(new Error('[PERSISTENCE_WRITE_FAILED] 本地保存失败（ENOSPC）'))
+      const s = useCacheStore()
+      await s.pushMessages('c1', [m('m1', 't')], 'now')
+      expect(s.persistenceFailure).toBeDefined()
+      await s.pushMessages('c1', [m('m2', 't')], 'now2')
+      expect(s.persistenceFailure).toBeUndefined()
+    })
+
+    it('降级态不会被一次"成功"推送清掉（Main 侧持续条件）', async () => {
+      const s = useCacheStore()
+      await s.pushMessages('c1', [m('m1', 't')], 'now')
+      s.persistenceFailure = { code: 'PERSISTENCE_DEGRADED', file: 'message-cache-v1.json', reason: 'read-failed:unknown' }
+      await s.pushMessages('c1', [m('m2', 't')], 'now2')
+      expect(s.persistenceFailure?.code).toBe('PERSISTENCE_DEGRADED')
+      expect(s.persistenceFailure?.file).toBe('message-cache-v1.json')
+    })
+  })
 })
 
 describe('chunkMessages（P1-2 分片：≤200 条/批 + 字节预算；单条超限跳过）', () => {

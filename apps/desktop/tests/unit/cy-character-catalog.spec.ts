@@ -276,7 +276,11 @@ describe('CyCharacterCatalog 角色目录', () => {
 
     const recoveryError = wrapper.get('.cy-recovery-error')
     expect(recoveryError.attributes('role')).toBe('alert')
-    expect(recoveryError.text()).toContain('本地草稿列表暂时不可用')
+    // 2026-09-13：文案改走 errorMessage() 单一来源，故这里断言的是**映射表**里的那句
+    // （`STORAGE_UNAVAILABLE` → 「本地草稿存储暂时不可用；请稍后重试。」），不再是组件里写死的那句；
+    // 「角色目录仍可继续浏览」的安抚语义由横幅内固定的补充行承担（对两类码都成立）。
+    expect(recoveryError.text()).toContain('本地草稿存储暂时不可用')
+    expect(recoveryError.text()).toContain('角色目录仍可继续浏览')
     expect(wrapper.findAll('.cy-character-card')).toHaveLength(1)
 
     const createButton = wrapper.findAll('button').find((button) => button.text() === '新建角色')!
@@ -289,6 +293,26 @@ describe('CyCharacterCatalog 角色目录', () => {
     expect(createButton.attributes('disabled')).toBeDefined()
     await createButton.trigger('click')
     expect(wrapper.emitted('create')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  // —— H-11b 同族第三处（2026-09-13）：降级态（隔离失败）的文案必须**说真话** ——
+  //
+  // 修前这段横幅是**写死**的一句「本地草稿列表暂时不可用。可以继续浏览角色，稍后重试恢复。」，
+  // 而"降级"在本进程内**不会自愈**——按它说的去"稍后重试"只会一次次撞墙。现走 errorMessage()
+  // 单一来源：有码走映射表，无码才回落到原来那句语境兜底（下一条用例就是兜底那一支）。
+  it('草稿存储降级（PERSISTENCE_DEGRADED）→ 提示说「本地保存已停用」而不是「稍后重试恢复」', async () => {
+    listCharacterDrafts.mockRejectedValueOnce(new Error('[PERSISTENCE_DEGRADED] 持久化已降级（character-drafts-v1.json：isolate-failed），已拒绝读写以保留现场'))
+    listCharacters.mockResolvedValueOnce({ items: [summary('builtin/elysia', { displayName: 'Elysia' })], hasMore: false })
+    const wrapper = mountCatalog()
+    await flushPromises()
+
+    const recoveryError = wrapper.get('.cy-recovery-error')
+    expect(recoveryError.attributes('role')).toBe('alert')
+    expect(recoveryError.text()).toContain('本地保存已停用')
+    expect(recoveryError.text(), '降级不可自愈，不得再承诺"稍后重试恢复"').not.toContain('稍后重试恢复')
+    // 仍然只降级提示、不阻塞目录浏览
+    expect(wrapper.findAll('.cy-character-card')).toHaveLength(1)
     wrapper.unmount()
   })
 })

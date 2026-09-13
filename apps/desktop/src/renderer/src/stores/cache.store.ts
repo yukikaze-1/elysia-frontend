@@ -1,10 +1,13 @@
 // 离线缓存内存态（spec §4.1/§4.5 D2）：启动水合离线视图 + 已确认消息快照分片推送。
 // Main 是持久化边界：会话列表缓存由 Main 在 listConversations 服务时派生，消息快照由本 store 推送。
+// 2026-09-13（H-11b 残余）：推送失败**不再无声**——best-effort 语义（失败不影响发送/加载）保持不变，
+// 但失败会记进本 store 的 persistenceFailure，由全局 CyPersistenceBanner 显示（与会话草稿域同一条横幅）。
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { MAX_IPC_MESSAGE_BYTES, type Conversation, type Message, type SessionPersistenceState } from '@shared/contracts'
 import { api } from './desktop-api'
 import { cloneValue } from '@shared/domain'
+import { applyPersistenceFailure, clearPersistenceFailure, type PersistenceFailure } from '../utils/persistence-failure'
 
 export const CACHE_PUSH_CHUNK = 200
 
@@ -39,6 +42,8 @@ export const useCacheStore = defineStore('cache', () => {
   const snapshots = ref<Record<string, Message[]>>({})
   const lastActiveConversationId = ref<string>()
   const hydrated = ref(false)
+  /** 消息快照推送失败（2026-09-13）：与会话草稿域同一条全局横幅显示，见 utils/persistence-failure.ts */
+  const persistenceFailure = ref<PersistenceFailure | undefined>(undefined)
 
   function hydrate(state: SessionPersistenceState): void {
     conversations.value = cloneValue(state.conversations)
@@ -75,7 +80,12 @@ export const useCacheStore = defineStore('cache', () => {
         const byId = new Map(prev.map((m) => [m.messageId, m]))
         for (const m of chunkSnapshot) byId.set(m.messageId, cloneValue(m))
         snapshots.value = { ...snapshots.value, [conversationId]: [...byId.values()] }
-      } catch { /* 缓存缺落由后端调和兜底 */ }
+        persistenceFailure.value = clearPersistenceFailure(persistenceFailure.value)
+      } catch (e) {
+        // 缓存缺落仍由后端调和兜底（best-effort 语义不变），但**不再无声**：
+        // 记进本 store 的故障态，由全局横幅显示（2026-09-13，H-11b 残余）。
+        persistenceFailure.value = applyPersistenceFailure(persistenceFailure.value, e)
+      }
     }
   }
 
@@ -93,5 +103,5 @@ export const useCacheStore = defineStore('cache', () => {
     delete snapshots.value[conversationId]
   }
 
-  return { conversations, snapshots, lastActiveConversationId, hydrated, hydrate, pushMessages, snapshotMessages, syncConversations, purge }
+  return { conversations, snapshots, lastActiveConversationId, hydrated, persistenceFailure, hydrate, pushMessages, snapshotMessages, syncConversations, purge }
 })

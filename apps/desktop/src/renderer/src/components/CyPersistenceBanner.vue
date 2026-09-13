@@ -23,10 +23,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useDraftStore } from '../stores/draft.store'
+import { useCacheStore } from '../stores/cache.store'
 import { errorMessage } from '../utils/error-message'
 
 const draftStore = useDraftStore()
-const failure = computed(() => draftStore.persistenceFailure)
+const cacheStore = useCacheStore()
+/**
+ * 两个来源，一条横幅（2026-09-13，H-11b 残余）：`draft.store` 管 `drafts-v1.json` 的写入，
+ * `cache.store` 管 `message-cache-v1.json` 的快照推送——同一个 `SessionStore` 的两个文件，
+ * 用户眼里是同一件事（"本地没存住"）。各自持有状态、由本组件聚合，store 之间**没有**新增依赖边。
+ * 草稿域优先：它带 file/reason 投影，信息更全。
+ */
+const failure = computed(() => draftStore.persistenceFailure ?? cacheStore.persistenceFailure)
 
 const title = computed(() => errorMessage(
   failure.value ? { code: failure.value.code, message: '' } : undefined,

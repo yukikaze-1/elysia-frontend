@@ -68,6 +68,18 @@ describe('settingsStore', () => {
     expect(s.dictation.insertMode).toBe('append')
   })
 
+  // M-19 残余（2026-09-13）：装载失败此前是**无条件静默**——降级态下 Main 的 settings:load 会拒绝
+  // （见 settings-handlers 的 loadSettingsForRenderer），而把默认值当"当前设置"展示就是谎报。
+  // 现在记进 saveError（同一套三态横幅显示），fail-open 本身不变。
+  it('hydrate 失败 → 记入 saveError（可见），但仍保留默认值、不阻塞启动', async () => {
+    mockApi.settingsLoad.mockRejectedValue(new Error('[PERSISTENCE_DEGRADED] 持久化已降级（settings.json：isolate-failed），已拒绝读取以保留现场'))
+    const s = useSettingsStore()
+    await expect(s.hydrate()).resolves.toBeUndefined()
+    expect(s.loaded).toBe(true)
+    expect(s.saveError?.code).toBe('PERSISTENCE_DEGRADED')
+    expect(s.voice.enabled).toBe(true)
+  })
+
   it('setVoice 本地改 + 500ms 防抖持久化（窗口内不触发）', async () => {
     vi.useFakeTimers()
     mockApi.settingsSave.mockImplementation(async (patch) => applyPatch(state(), patch))

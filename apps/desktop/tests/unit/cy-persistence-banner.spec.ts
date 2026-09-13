@@ -13,6 +13,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
 import CyPersistenceBanner from '../../src/renderer/src/components/CyPersistenceBanner.vue'
 import { useDraftStore } from '../../src/renderer/src/stores/draft.store'
+import { useCacheStore } from '../../src/renderer/src/stores/cache.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { createDesktopApiMock } from './helpers/desktop-api'
 import type { SessionPersistenceState } from '@shared/contracts'
@@ -70,6 +71,21 @@ describe('CyPersistenceBanner（H-11b renderer 半边）', () => {
     await store.flush('c1')
     await w.vm.$nextTick()
     expect(w.find('[data-testid="persistence-banner"]').text()).toContain('本地保存失败：草稿与离线缓存没有被写入磁盘。')
+  })
+
+  it('只由 cache.store 报告的失败也会显示（两个来源聚合，2026-09-13 H-11b 残余）', async () => {
+    const w = mountBanner()
+    const api = createDesktopApiMock()
+    api.cacheMessages.mockRejectedValueOnce(new Error('[PERSISTENCE_WRITE_FAILED] 本地保存失败（ENOSPC）'))
+    setDesktopApi(api)
+    await useCacheStore().pushMessages(
+      'c1',
+      [{ messageId: 'm1', conversationId: 'c1', role: 'user', content: 'x', status: 'completed', createdAt: 't' }],
+      't'
+    )
+    await w.vm.$nextTick()
+    // 消息快照推送失败此前是静默 fire-and-forget；现在与会话草稿域共用同一条横幅
+    expect(w.find('[data-testid="persistence-banner"]').text()).toContain('本地保存失败')
   })
 
   it('绝不显示绝对路径（外部传入的畸形投影也不行）', async () => {

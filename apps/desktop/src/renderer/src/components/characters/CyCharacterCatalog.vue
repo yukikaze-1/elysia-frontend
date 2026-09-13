@@ -5,6 +5,7 @@ import { useCharacterCatalogStore } from '../../stores/character-catalog.store'
 import { useCharacterEditorStore } from '../../stores/character-editor.store'
 import { useIdentityStore } from '../../stores/identity.store'
 import CyCharacterCard from './CyCharacterCard.vue'
+import { errorMessage } from '../../utils/error-message'
 
 const emit = defineEmits<{
   select: [characterId: string]
@@ -30,6 +31,16 @@ watch(() => catalog.lastQuery, (next) => {
 }, { deep: true })
 
 const resultSummary = computed(() => `${catalog.summaries.length} 个角色`)
+
+/**
+ * 草稿恢复失败文案（2026-09-13，H-11b 同族第三处）：此前是**写死**的一句
+ * 「本地草稿列表暂时不可用。可以继续浏览角色，稍后重试恢复。」
+ *
+ * 写死的问题在降级态上暴露出来：那句话承诺「稍后重试恢复」，而**降级（隔离失败）在本进程内不会自愈**，
+ * 用户按它说的去"稍后重试"只会一次次撞墙。现改走 `errorMessage()` 单一来源：有码走映射表
+ * （降级 →「本地保存已停用：损坏的本地文件未能隔离…」），无码才回落到原来那句语境兜底。
+ */
+const recoveryErrorMessage = computed(() => errorMessage(editor.recoveryError, '本地草稿列表暂时不可用。可以继续浏览角色，稍后重试恢复。'))
 
 onMounted(() => {
   if (catalog.status === 'idle') void reload(false)
@@ -100,7 +111,10 @@ async function removeDraft(key: string): Promise<void> {
         </li>
       </ul>
     </section>
-    <div v-else-if="editor.recoveryStatus === 'error'" class="cy-recovery-error" role="alert">本地草稿列表暂时不可用。可以继续浏览角色，稍后重试恢复。</div>
+    <div v-else-if="editor.recoveryStatus === 'error'" class="cy-recovery-error" role="alert">
+      {{ recoveryErrorMessage }}
+      <span class="cy-recovery-hint">角色目录仍可继续浏览。</span>
+    </div>
 
     <form class="cy-catalog-filters" role="search" @submit.prevent="reload()">
       <label class="cy-search-field">
@@ -196,6 +210,7 @@ async function removeDraft(key: string): Promise<void> {
 .cy-recovery li > div:last-child { display: flex; flex: 0 0 auto; gap: var(--cy-space-2-5); }
 .cy-recovery .danger { color: var(--cy-danger); }
 .cy-recovery-error { padding: var(--cy-space-4-5) var(--cy-space-5-5); border: 1px dashed var(--cy-danger); border-radius: var(--cy-radius-4-5); color: var(--cy-danger); font-size: var(--cy-font-sm); }
+.cy-recovery-hint { margin-left: var(--cy-space-3); color: var(--cy-muted); }
 button { padding: var(--cy-space-3) var(--cy-space-5-5); border: 1px solid var(--cy-border); border-radius: var(--cy-radius-4); background: var(--cy-pane); color: var(--cy-text); font-size: var(--cy-font-md); }
 .primary { border-color: var(--cy-accent-strong); color: var(--cy-accent-strong); }
 button:hover:not(:disabled) { background: var(--cy-surface-hover); }

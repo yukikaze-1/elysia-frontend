@@ -4,23 +4,11 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import type { PersistSessionResult, ScrollAnchor, SessionPersistenceState } from '@shared/contracts'
 import { api } from './desktop-api'
-import { parsePublicError } from '../utils/public-error'
+import { applyPersistenceFailure, clearPersistenceFailure, type PersistenceFailure } from '../utils/persistence-failure'
 
 export const DRAFT_MAX_BYTES = 100 * 1024
 export const DRAFT_DEBOUNCE_MS = 800
 export const DRAFT_MAX_ENTRIES = 50
-
-/**
- * 本地持久化故障（H-11b renderer 半边，2026-09-13）。
- *
- * `code` 为 IPC 公开错误码（UI 经 `errorMessage()` 取文案，本 store 不产出用户措辞）；
- * `file`/`reason` 只在降级态有值，来自 Main 的无路径投影（基名 + 封闭标签）。
- */
-export interface PersistenceFailure {
-  code: string
-  file?: string
-  reason?: string
-}
 
 function nowIso(): string { return new Date().toISOString() }
 function byteLength(s: string): number { return new TextEncoder().encode(s).byteLength }
@@ -60,14 +48,13 @@ export const useDraftStore = defineStore('draft', () => {
       if (res?.evictedConversationIds?.length) {
         removeConversations(res.evictedConversationIds) // 评审 P2-4：淘汰项内存清理（草稿/锚点/定时器）+ 一次性通知——否则被 Main 淘汰的草稿留在 Renderer 内存，保存即重新写回、50 会话配额反复震荡
       }
-      // 写回成功即清「单次失败」；降级态是 Main 侧的持续条件（本进程内不可自愈），只能由 hydrate 改变——
-      // 若在这里一并清掉，UI 会在"拒绝写入 → 立刻显示 → 下一次尝试又清掉"之间闪烁。
-      if (persistenceFailure.value?.code !== 'PERSISTENCE_DEGRADED') persistenceFailure.value = undefined
+      // 写回成功即清「单次失败」；降级态是 Main 侧的持续条件（本进程内不可自愈），只能由 hydrate 改变
+      // ——规则收口在 utils/persistence-failure.ts（cache.store 用的是同一份）。
+      persistenceFailure.value = clearPersistenceFailure(persistenceFailure.value)
       return res
     } catch (e) {
       // fail-open（C1 同款）保留：持久化失败保内存态，下次触发重试。**但不再静默**——见 persistenceFailure。
-      const parsed = parsePublicError(e instanceof Error ? e.message : String(e))
-      persistenceFailure.value = { code: parsed.code }
+      persistenceFailure.value = applyPersistenceFailure(persistenceFailure.value, e)
       return undefined
     }
   }
