@@ -167,7 +167,28 @@ const upLog = ref<string[]>([])
 const clearLog = ref<string[]>([])
 /** 第一次真正把意图从 true 清成 false 的那次读数——决定性的一条，只记一次，不被后续记录挤掉 */
 const firstFlip = ref('')
+/**
+ * 第三轮（2026-09-13）：**触发源的时间线**——翻转那一刻把最近 8 个"位置相关事件"冻结下来。
+ *
+ * 为什么还要这一层：前两轮已经知道"是谁清的"（`onScroll` 的下移分支）和"下移了多少"（31px，
+ * 且紧跟在我们自己 32ms 前的写入之后），但**不知道是谁把位置回退的**——候选有三种，读数分不出来：
+ *   ① 我们自己某处程序性写（`W`，带写入值与调用点）；
+ *   ② 浏览器在**容器尺寸变化**（`R`）后自己夹小/调整；
+ *   ③ 别的东西（滚动锚定、focus 引起的 scrollIntoView…）。
+ * 时间线把三者一次分开：每个事件带 `t`（performance.now 相对量）、当时的 `top/h/c`。
+ * 记录只在**翻转那一刻**冻结一次（`data-follow-flip-trace`），平时零渲染成本。
+ */
+const flipTrace = ref('')
+const trace: string[] = []
+const TRACE_MAX = 8
+function pushTrace(entry: string): void {
+  if (trace.length >= TRACE_MAX) trace.shift()
+  trace.push(entry)
+  if (firstFlip.value && !flipTrace.value) flipTrace.value = trace.join(' | ')
+}
 const probeNow = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+let traceT0 = 0
+const tRel = (): number => Math.round(probeNow() - traceT0)
 
 /** 程序性写 `scrollTop` 之后调用（不改变写入本身）：记下"我们刚把位置放到了哪" */
 function noteWrite(el: HTMLElement): void {
@@ -176,7 +197,13 @@ function noteWrite(el: HTMLElement): void {
     max: Math.round(el.scrollHeight - el.clientHeight),
     at: probeNow()
   }
+  pushTrace(`W${nearestWriteSite()} t=${tRel()} top=${lastWrite.top} h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}`)
 }
+
+/** 程序性写入的调用点标记（只读探针用）：写之前由各写入点设置，便于在时间线里区分是哪一处写的 */
+let writeSite = '-'
+function nearestWriteSite(): string { return writeSite }
+function markWriteSite(site: string): void { writeSite = site }
 
 function computeAtBottom(el: HTMLElement): boolean {
   return el.scrollTop + el.clientHeight >= el.scrollHeight - BOTTOM_EPS
@@ -187,6 +214,7 @@ async function followBottomIfSticky(): Promise<void> {
   await nextTick()
   const el = container.value
   if (!el) return
+  markWriteSite('follow')
   el.scrollTop = el.scrollHeight
   noteWrite(el)
   scrollTop.value = el.scrollTop
@@ -281,6 +309,8 @@ function onScroll(): void {
   if (!el) return
   const prevTop = scrollTop.value
   scrollTop.value = el.scrollTop
+  // 第三轮探针：scroll 事件的时序（含下移量与当时几何量），与 W/R 一起构成"谁回退了位置"的时间线
+  pushTrace(`S t=${tRel()} top=${Math.round(el.scrollTop)} d=${Math.round(prevTop - el.scrollTop)} h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}`)
   const atBottomNow = computeAtBottom(el)
   atBottom.value = atBottomNow
   // H-02（意图/位置分离）：滚到（近）底部 → 恢复跟随意图；**确认**用户上翻（见 USER_SCROLL_MIN_PX）→ 放弃跟随。
@@ -352,9 +382,11 @@ function commitScrollHeights(): void {
     if (!container.value) return
     if (wasAtBottom) {
       // 贴底态：高度修正不应把用户从底部推开（上翻态才走锚点恢复）
+      markWriteSite('commitScrollHeights/bottom')
       container.value.scrollTop = container.value.scrollHeight
     } else {
       const target = restoreScrollTop(items.value, prefix.value, anchor)
+      markWriteSite('commitScrollHeights/anchor')
       container.value.scrollTop = target
     }
     noteWrite(container.value)
@@ -372,6 +404,7 @@ function restoreLoadAnchor(): void {
   void nextTick(() => {
     const target = restoreScrollTop(items.value, prefix.value, anchor)
     if (target > 0 && container.value) {
+      markWriteSite('restoreLoadAnchor')
       container.value.scrollTop = target
       noteWrite(container.value)
       scrollTop.value = container.value.scrollTop
@@ -447,6 +480,7 @@ function restoreScrollFor(id: string): void {
   if (!el) return
   const anchor = draftStore.scrollAnchors[id]
   const idx = anchor ? items.value.findIndex((m) => m.messageId === anchor.messageId) : -1
+  markWriteSite('restoreScrollFor')
   if (anchor && idx >= 0) {
     el.scrollTop = restoreScrollTop(items.value, prefix.value, anchor)
   } else if (anchor && messageStore.hasMoreBefore) {
@@ -465,6 +499,7 @@ function restoreScrollFor(id: string): void {
 function backToBottom(): void {
   const el = container.value
   if (!el) return
+  markWriteSite('backToBottom')
   el.scrollTop = el.scrollHeight
   noteWrite(el)
   atBottom.value = true
@@ -489,6 +524,7 @@ function scrollToHighlight(id: string): boolean {
   const idx = items.value.findIndex((m) => m.messageId === id)
   if (idx < 0) return false
   const targetTop = prefix.value[idx] ?? 0
+  markWriteSite('scrollToHighlight')
   el.scrollTop = Math.max(0, targetTop - el.clientHeight / 2) // 估高近似居中（实测高误差由后续 scrollIntoView 精确修正）
   noteWrite(el)
   scrollTop.value = el.scrollTop
@@ -534,6 +570,7 @@ onBeforeUnmount(() => {
 })
 
 onMounted(() => {
+  traceT0 = probeNow()   // 第三轮探针：时间线的零点（只影响诊断字符串里的相对毫秒）
   resizeObs.value = new ResizeObserver((entries) => {
     for (const entry of entries) {
       const id = entry.target.getAttribute('data-message-id')
@@ -551,11 +588,16 @@ onMounted(() => {
     const wasAtBottom = stickToBottom.value   // H-02：窗口变矮的贴底判定同样看**意图**而非瞬时位置
     const prevH = viewportHeight.value
     viewportHeight.value = c.clientHeight
+    // 第三轮探针：容器尺寸变化是"谁把位置回退了"的候选之一（视口变高 ⇒ max 变小 ⇒ 浏览器夹小 scrollTop）。
+    // 只读记录，不改判定。
+    pushTrace(`R t=${tRel()} c=${Math.round(prevH)}→${Math.round(c.clientHeight)} top=${Math.round(c.scrollTop)} h=${Math.round(c.scrollHeight)} intent=${stickToBottom.value ? 1 : 0}`)
     // P1 修复：仅「增高前位于底部」且视口变矮（Composer 增高/窗口变小）时继续贴底——
     // 否则最新消息会被挤出视口；用户已上翻则保持原 scrollTop（锚点不动）。
     // 视口变高（发送清稿 Composer 收缩）时浏览器自动钳制 scrollTop 到新最大值，天然贴底，无需处理。
     if (wasAtBottom && c.clientHeight < prevH) {
+      markWriteSite('viewportRO')
       c.scrollTop = c.scrollHeight
+      noteWrite(c)
       scrollTop.value = c.scrollTop
       atBottom.value = true
     }
@@ -586,6 +628,7 @@ onMounted(() => {
     :data-follow-clears="String(clearLog.length)"
     :data-follow-clear-last="clearLog[clearLog.length - 1] ?? ''"
     :data-follow-clear-flip="firstFlip"
+    :data-follow-flip-trace="flipTrace"
     @scroll.passive="onScroll"
   >
     <div v-if="isEmpty" class="cy-empty" role="status">
