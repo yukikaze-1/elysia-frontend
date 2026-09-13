@@ -46,7 +46,7 @@ const bottomGap = (page: Page): Promise<number> =>
  *   **height 持续增长而 top 冻结不动** ⇒ 就是那条分支。
  * 只在失败时多花时间：收敛值 > 40 时再补三次 5s 重采样，用来区分「慢到超出 15s 观测窗」与「永不收敛」。
  */
-const geometry = (page: Page): Promise<{ gap: number; top: number; height: number; intent: string; atb: string } | null> =>
+const geometry = (page: Page): Promise<{ gap: number; top: number; height: number; intent: string; atb: string; clears: number; clearLast: string; clearFlip: string } | null> =>
   page.evaluate(() => {
     const el = document.querySelector<HTMLElement>('.cy-messages')
     if (!el) return null
@@ -56,7 +56,11 @@ const geometry = (page: Page): Promise<{ gap: number; top: number; height: numbe
       height: Math.round(el.scrollHeight),
       // 只读探针（组件把两个内部布尔量反射到 data-* 上）：判定"是谁把跟随意图清了"必须看得见它们
       intent: el.dataset.followIntent ?? '?',
-      atb: el.dataset.atBottom ?? '?'
+      atb: el.dataset.atBottom ?? '?',
+      // 第二轮探针：清意图事件的上下文（下移量 / 是否紧跟程序性写入 / 当时的 max 与 clientHeight）
+      clears: Number(el.dataset.followClears ?? '0'),
+      clearLast: el.dataset.followClearLast ?? '',
+      clearFlip: el.dataset.followClearFlip ?? ''
     }
   })
 
@@ -167,6 +171,9 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       const heights: number[] = []
       const intents: string[] = []
       const atbs: string[] = []
+      const flips: string[] = []
+      const clearTotals: number[] = []
+      const lasts: string[] = []
       for (let i = 0; i < 25; i++) {
         const g = await geometry(page)
         samples.push(g?.gap ?? Number.NaN)
@@ -174,6 +181,9 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
         heights.push(g?.height ?? Number.NaN)
         intents.push(g?.intent ?? '?')
         atbs.push(g?.atb ?? '?')
+        flips.push(g?.clearFlip ?? '')
+        clearTotals.push(g?.clears ?? 0)
+        lasts.push(g?.clearLast ?? '')
         await page.waitForTimeout(200)
       }
       const sorted = [...samples].sort((a, b) => a - b)
@@ -187,6 +197,12 @@ describe('消息列表贴底跟随与复制（H-02）', () => {
       console.log(`[follow-bottom ④] top=${tops.join(',')}`)
       console.log(`[follow-bottom ④] height=${heights.join(',')}`)
       console.log(`[follow-bottom ④] intent=${intents.join('')} atb=${atbs.join('')}`)
+      // 清意图事件的上下文（④ 第二轮探针）：**这一行是修复的唯一依据**——
+      // `d=` 下移量（决定阈值能否分开"用户上翻"与"布局抖动"）、`w=own/ext` 是不是紧跟我们的程序性写入、
+      // `max`/`c` 用来判"下移后是否恰好落在可滚动上界"（落在上界＝被夹小，不是用户意图）。
+      const flip = flips.find((f) => f.length > 0) ?? ''
+      console.log(`[follow-bottom ④] 清意图事件数=${clearTotals[clearTotals.length - 1] ?? 0} 最近一次=${lasts[lasts.length - 1] || '（无）'}`)
+      console.log(`[follow-bottom ④] 首次清意图（intent 1→0，决定性读数）：${flip || '（本轮未发生）'}`)
       // 冻结判定（**纯诊断**）：末尾**连续 ≥3 个采样** top 不变而 height 仍在增长。
       // 第一版写成"任意相邻两点 top 相同且 height 增长"——实测**假阳性**（X99 run2：`top=…,6701,6701,…`
       // 只是跟随恰好落回同一个取整值，`intent` 全程为 1、`settledGap=0`、用例本身通过）。

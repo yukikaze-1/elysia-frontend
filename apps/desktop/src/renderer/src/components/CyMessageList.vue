@@ -125,6 +125,32 @@ const atBottom = ref(true)
 const stickToBottom = ref(true)
 const BOTTOM_EPS = 40
 
+/**
+ * 只读探针（2026-09-13，④ 收口第二轮）：记录**清掉跟随意图的那一次 scroll 事件**的完整上下文。
+ *
+ * 为什么还要一层：上一轮已证明"意图是被 `onScroll` 的 `scrollTop < prevTop` 分支清的"，但只拿到了
+ * 一个**上界**——反推用的是"清掉之后 gap 刚越过 BOTTOM_EPS"，那只说明**下移后**距底 40 多像素，
+ * 下移量本身可以是 3px 也可以是 43px。没有这个数就定不出任何阈值，也判不出是不是我们自己写的
+ * （`restoreScrollTop` 写的是**估算**位置，不是实测位置）。
+ *
+ * 同 `data-follow-intent` 的纪律：**只读**——`noteWrite` 只在程序性写之后记一笔，不改任何判定；
+ * `clearLog` 只在既有的清意图分支里追加，不参与渲染决策。两个字符串属性，零渲染成本。
+ */
+let lastWrite: { top: number; max: number; at: number } | undefined
+const clearLog = ref<string[]>([])
+/** 第一次真正把意图从 true 清成 false 的那次读数——决定性的一条，只记一次，不被后续记录挤掉 */
+const firstFlip = ref('')
+const probeNow = (): number => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+
+/** 程序性写 `scrollTop` 之后调用（不改变写入本身）：记下"我们刚把位置放到了哪" */
+function noteWrite(el: HTMLElement): void {
+  lastWrite = {
+    top: Math.round(el.scrollTop),
+    max: Math.round(el.scrollHeight - el.clientHeight),
+    at: probeNow()
+  }
+}
+
 function computeAtBottom(el: HTMLElement): boolean {
   return el.scrollTop + el.clientHeight >= el.scrollHeight - BOTTOM_EPS
 }
@@ -135,6 +161,7 @@ async function followBottomIfSticky(): Promise<void> {
   const el = container.value
   if (!el) return
   el.scrollTop = el.scrollHeight
+  noteWrite(el)
   scrollTop.value = el.scrollTop
   atBottom.value = computeAtBottom(el)
 }
@@ -232,7 +259,17 @@ function onScroll(): void {
   // H-02（意图/位置分离）：滚到（近）底部 → 恢复跟随意图；scrollTop 变小（用户上翻，含拖滚动条）→ 放弃跟随。
   // 内容增长只改 scrollHeight、不改 scrollTop，故不会误清意图——这正是"瞬时位置吞掉意图"的根因。
   if (atBottomNow) stickToBottom.value = true
-  else if (el.scrollTop < prevTop) stickToBottom.value = false
+  else if (el.scrollTop < prevTop) {
+    // 只读探针（④ 第二轮）：把这次下移的完整上下文记下来。判"是不是我们自己写的"用 prevTop 与
+    // 最近一次程序性写入值的比对——`restoreScrollTop` 写的是估算位置，与实测位置不等即非本次写入。
+    const record =
+      `d=${Math.round(prevTop - el.scrollTop)} t=${Math.round(el.scrollTop)} max=${Math.round(el.scrollHeight - el.clientHeight)}` +
+      ` h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}` +
+      ` w=${lastWrite && Math.abs(lastWrite.top - prevTop) <= 1 ? 'own' : 'ext'}/+${lastWrite ? Math.round(probeNow() - lastWrite.at) : -1}ms`
+    if (stickToBottom.value && !firstFlip.value) firstFlip.value = record
+    clearLog.value = [...clearLog.value, record].slice(-5)
+    stickToBottom.value = false
+  }
   // UI 问题 1：滚动期间进入「滚动中」态，实测高写 pendingHeights（不立即合并）
   // → 滚动中 padding/scrollHeight 稳定，thumb 不跳；滚动停 150ms 后合并一次修正。
   isScrolling.value = true
@@ -282,6 +319,7 @@ function commitScrollHeights(): void {
       const target = restoreScrollTop(items.value, prefix.value, anchor)
       container.value.scrollTop = target
     }
+    noteWrite(container.value)
     scrollTop.value = container.value.scrollTop
     atBottom.value = container.value.scrollTop + container.value.clientHeight >= container.value.scrollHeight - 40
   })
@@ -297,6 +335,7 @@ function restoreLoadAnchor(): void {
     const target = restoreScrollTop(items.value, prefix.value, anchor)
     if (target > 0 && container.value) {
       container.value.scrollTop = target
+      noteWrite(container.value)
       scrollTop.value = container.value.scrollTop
       atBottom.value = computeAtBottom(container.value)
       // loadOlder 锚点恢复同样是**有意的**非贴底定位（用户正在向上翻），放弃跟随
@@ -375,6 +414,7 @@ function restoreScrollFor(id: string): void {
   } else {
     el.scrollTop = el.scrollHeight
   }
+  noteWrite(el)
   scrollTop.value = el.scrollTop
   atBottom.value = computeAtBottom(el)
   // 恢复锚点是**有意的**非贴底定位：显式放弃跟随意图（否则随后一次内容增长会把用户拽回底部）
@@ -385,6 +425,7 @@ function backToBottom(): void {
   const el = container.value
   if (!el) return
   el.scrollTop = el.scrollHeight
+  noteWrite(el)
   atBottom.value = true
   stickToBottom.value = true   // 用户主动回到底部＝重新表达跟随意图
 }
@@ -407,6 +448,7 @@ function scrollToHighlight(id: string): boolean {
   if (idx < 0) return false
   const targetTop = prefix.value[idx] ?? 0
   el.scrollTop = Math.max(0, targetTop - el.clientHeight / 2) // 估高近似居中（实测高误差由后续 scrollIntoView 精确修正）
+  noteWrite(el)
   scrollTop.value = el.scrollTop
   atBottom.value = computeAtBottom(el)
   // 来源跳转是**有意的**非贴底定位：放弃跟随，避免随后增长把用户从定位处拽走
@@ -484,7 +526,10 @@ onMounted(() => {
   <!-- 只读探针（2026-09-13，④ 收口用）：把「跟随意图」与「瞬时贴底」两个内部布尔量反射到 DOM 上。
        存在的理由：④ 在 CI 上偶发冻结（`top` 冻住而 `height` 继续增长、且不恢复），而要判定"是谁把意图清了"
        必须看得见这两个量——此前它们只活在组件作用域里，测试只能看到几何量，判不出分支。
-       两条不变量：**只读**（不改任何行为、不参与渲染决策）、**零渲染成本**（两个字符串属性）。
+       第二轮追加 `data-follow-clears` / `data-follow-clear-last`：把**清意图那一次**的下移量、
+       当前 max/clientHeight、以及"这次下移是不是紧跟在我们自己程序性写入之后"一并带出来——
+       只有下移量的上界是定不出阈值的（见 script 里 clearLog 的注释）。
+       不变量：**只读**（不改任何行为、不参与渲染决策）、**零渲染成本**（四个字符串属性）。
        既有 DOM 契约门禁（perf-gate 断言的 `.cy-vlist-row`/`data-message-id`）不受影响。 -->
   <div
     ref="container"
@@ -492,6 +537,9 @@ onMounted(() => {
     aria-live="polite"
     :data-follow-intent="stickToBottom ? '1' : '0'"
     :data-at-bottom="atBottom ? '1' : '0'"
+    :data-follow-clears="String(clearLog.length)"
+    :data-follow-clear-last="clearLog[clearLog.length - 1] ?? ''"
+    :data-follow-clear-flip="firstFlip"
     @scroll.passive="onScroll"
   >
     <div v-if="isEmpty" class="cy-empty" role="status">
