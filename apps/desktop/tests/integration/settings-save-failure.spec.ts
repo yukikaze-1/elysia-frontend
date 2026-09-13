@@ -47,13 +47,17 @@ describe.skipIf(linkMode === 'none')(`设置保存失败对用户可见（M-19�
       await page.locator('.cy-settings-nav-item').filter({ hasText: '语音' }).first().click()
       await expect.poll(() => page.locator('.cy-voice-pane').count(), POLL).toBe(1)
 
-      // ② 初始无保存状态（没失败就不该有提示）
-      expect(await page.locator('[data-testid="settings-save-error"]').count()).toBe(0)
+      // ② **降级在启动时就可见**（⑤b，2026-09-13 同日补的那半边）：`settings:load` 在降级态拒绝读取
+      //    → Renderer 的 hydrate 把失败记进 saveError → 设置页横幅在用户**还没改任何设置**时就显示。
+      //    修前的口径是"要等到一次保存被拒才看得见"，本条正是那半边差异的端到端证据。
+      //    （本断言最初写的是 `toBe(0)`，被 CI shard 1/3 当场红在 `expected 1 to be +0`——那是我自己
+      //     在同一个批次里把行为改好了、却没同步这条用例；红是对的，用例已按新口径改写。）
+      const alert = page.locator('[data-testid="settings-save-error"]')
+      await expect.poll(() => alert.count(), POLL).toBe(1)
 
-      // ③ 真实拨动一个开关（TTS 自动朗读）→ 500ms 防抖后写盘必失败 → 状态必须变成可见的错误
+      // ③ 真实拨动一个开关（TTS 自动朗读）→ 500ms 防抖后写盘必失败 → 状态保持可见且文案正确
       await page.getByLabel('TTS 自动朗读 AI 回复').click()
       await expect.poll(() => page.getByLabel('TTS 自动朗读 AI 回复').isChecked(), POLL).toBe(false) // 本地即时生效
-      const alert = page.locator('[data-testid="settings-save-error"]')
       await expect.poll(() => alert.count(), POLL).toBe(1)
       const alertText = (await alert.textContent()) ?? ''
       // 降级态复用 PERSISTENCE_DEGRADED 文案（见 errors/index.ts 的说明）
