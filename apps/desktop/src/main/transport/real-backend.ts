@@ -1373,11 +1373,11 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   }
 
   // —— 阶段 3 G3 附件上传/签发（spec §4.4/§4.5）——
-  private async readUploadBytes(f: UploadContent): Promise<Uint8Array> {
-    if (f.bytes) return f.bytes
-    if (f.path) return new Uint8Array(await (await import('fs/promises')).readFile(f.path))
-    throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '上传内容缺少 bytes/path')
-  }
+  // H-01 结构性收窄（2026-09-14）：此处原有 `readUploadBytes(f)`，带一条 `fs.readFile(f.path)` 回退。
+  // 那是全仓**第二个**「从 descriptor 取路径直接读盘」的解析点，且这一层**没有** realpath、userData
+  // 包含判定与敏感路径黑名单（守卫只在 `UploadService`）。实测该回退**从未执行**（`UploadService` 是
+  // `UploadContent` 唯一构造点，两个分支都填 `bytes`）⇒ 已删除，`UploadContent.bytes` 改为**必填**。
+  // 现在「path → fs」在全仓只剩 `UploadService` 一处，且那一处四道守卫齐全。
 
   async uploadAttachments(files: UploadContent[], opts?: { signal?: AbortSignal }): Promise<AttachmentInfo[]> {
     if (!this.serverUrl) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
@@ -1390,7 +1390,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     this.activeControllers.add(timeoutController)
     const form = new FormData()
     for (const f of files) {
-      const bytes = await this.readUploadBytes(f)
+      const bytes = f.bytes
       // 每文件 kind：重复 kind 字段按文件顺序对应；可省略由后端魔数判定
       if (f.kind) form.append('kind', f.kind)
       // bytes 为 Uint8Array<ArrayBufferLike>（fs/promises readFile 或调用方构造）；BlobPart 需 ArrayBufferView<ArrayBuffer>——

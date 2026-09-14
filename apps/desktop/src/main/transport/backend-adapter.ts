@@ -45,14 +45,21 @@ import type {
   VoiceRecordStopInput
 } from '@shared/contracts'
 
-/** 上传内容（路径型 Main 直读盘 / 粘贴型 bytes；kind 为客户端提示值，可省略由后端魔数判定） */
+/**
+ * 上传内容（**bytes-only**；kind 为客户端提示值，可省略由后端魔数判定）。
+ *
+ * H-01 结构性收窄（2026-09-14）：原为 `path?`/`bytes?` 二选一，其中 `path` 允许"调用方给路径、由传输层
+ * 自己读盘"。那条路是**全仓第二个「从 descriptor 取路径直接读盘」的解析点**，而且那一层**没有** realpath、
+ * userData 包含判定与敏感路径黑名单（守卫只在 `UploadService`）。实测该回退**从未执行**——`UploadService`
+ * 是唯一构造点且两个分支都填 `bytes` ⇒ 删除属"删掉一段假能力"。现 `bytes` **必填**，把"路径不再离开
+ * `UploadService`"从约定升级为**类型级不变量**。
+ */
 export interface UploadContent {
   name: string
   mediaType: string
   size: number
   kind?: AttachmentKind
-  path?: string
-  bytes?: Uint8Array
+  bytes: Uint8Array
 }
 
 /** 后端事件回调(Renderer 只消费领域事件,不接触原始协议) */

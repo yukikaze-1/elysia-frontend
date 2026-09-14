@@ -180,7 +180,10 @@ export class UploadService {
           try { bytesRead = (await hfd.read(head, 0, HEAD_LEN)).bytesRead } finally { await hfd.close() }
           const kind = sniffKind(head.subarray(0, bytesRead))
           if (st.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
-          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind: wireKindHint(kind, d.mediaType), path: d.path, bytes: new Uint8Array(await this.fs.readFile(d.path)) })
+          // H-01 结构性收窄（2026-09-14）：**不再把 path 传给后端层**——这里读成 bytes 后，路径到此为止。
+          // （原先同时传 path，使 real-backend 留了一个无 realpath/无黑名单的 `fs.readFile(path)` 回退；
+          //   实测那条回退从未执行。现 `UploadContent.bytes` 必填 ⇒「path → fs」全仓只剩本文件一处。）
+          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind: wireKindHint(kind, d.mediaType), bytes: new Uint8Array(await this.fs.readFile(d.path)) })
         } else if (d.bytes) {
           // P2-1：bytes 分支也按魔数嗅探 kind 复验大小（此前无大小复验）
           const kind = sniffKind(d.bytes.subarray(0, HEAD_LEN))
