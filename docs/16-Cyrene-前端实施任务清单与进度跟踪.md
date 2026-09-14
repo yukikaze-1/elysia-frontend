@@ -411,6 +411,29 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 文档结构 | `pnpm docs:index`＋`pnpm docs:check` | 见本行下方（本批为纯文档 + 脚本注释，按用户指示**未跑** `typecheck`／`lint`／`test`／`test:integration`） |
 | 产品代码 | — | **零改动**：`typing`／`character.*` 三型的**实现早已存在**，缺的只是文档记录；wire 行为未触碰 |
 
+**2026-09-14 M-26 录音 PCM 缓冲收口批次（`voice-capture.ts` + 其单测）**——评审 M-26（P2-9 子项），此前多轮列为"独立批次、触及音频热路径"未做；用户本轮选「都做」（＝① 取消中间拷贝 ＋ ② 按评审原意改可增长 Int16）。完整实测、纠正评审措辞、刻意没做五件事见[决策记录](review/2026-09-14-M-26录音PCM缓冲-决策记录.md)。
+
+| 项 | 状态 | 证据/说明 |
+|---|---|---|
+| 问题范围（比评审更窄） | **只有 record 一条链路累积** | 逐链路核对 `onStop` 接线：record 有、realtime／dictation 都只传 `onChunk`。且 `audioBuffer` 唯一消费者是 `replayRecord()` ⇒ **只在"有人真按住录数分钟"时咬人**（10–30 秒语音消息原本无感） |
+| ① 取消每帧 float 与中间拷贝 | **已完成** | 关键发现：**RMS 可从 Int16 直接算**且与 `computeRms(floatToPcm16(x)/32767)` 数值等价（`floatToPcm16` 就是 `round(clamp*32767)`）⇒ 每帧那个 `Float32Array` **完全不产生**、`floatChunks` 整个消失；`stop()` 改直接写 `AudioBuffer.getChannelData(0)` |
+| ② 可增长 Int16 累积器 | **已完成（`PcmAccumulator`）** | 1 个可增长 `Int16Array`；初始容量 320KB ⇒ 典型 10–30 秒语音**全程不扩容**；2 倍增长（实测 10 分钟浪费 9%）。**曾考虑 1.3 倍**：只多省 1.1MB 却多约 3 倍拷贝次数，不做 |
+| 实测（10 分钟 = 30000 帧） | **常驻 36.6MB → 约 20MB；`stop` 瞬间同步存活 73.2MB → 约 20MB** | **度量口径**：必须用 `memoryUsage().arrayBuffers`，**不能**用 `heapUsed`（V8 把大 typed array 放堆外；我第一版用 `heapUsed` 读到"0.7MB"，差点据此判"问题不大"） |
+| 纠正评审两处措辞 | **已写入记录** | ① "停止瞬间 ≈115MB"是**总分配量**，实测 JS 侧同步存活为 **73.2MB**（`floatChunks` 要到 `onStop` **之后**的 `clearState()` 才释放），第三份是浏览器侧 AudioBuffer——方向对、数字须用实测；② "30000 个对象头"经 GC observer 实测**停顿 0.0ms**（20ms vs 18ms）⇒ **不是延迟问题，纯粹是内存峰值问题** |
+| 顺带修掉的存量隐患 | **已修** | 原实现缓冲构建在 try/catch 之外：`createBuffer`/`copyToChannel` 一旦抛错则**轨道停止与 context 关闭全被跳过**（麦克风白占、`AudioContext` 泄漏）⇒ 改 `finally` 兜底；`onStop` 仍在 finally 前调用，"无捕获样本不回调"语义未变 |
+| `onStop(AudioBuffer)` 契约 | **未变** | store／组件／IPC **零改动**（刻意取舍：改成回传 Int16 让渲染层解码，收益仅省一份临时数组、成本是整个契约面） |
+
+| 门禁 | 命令 | 结果 |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS（双端 exit 0） |
+| Lint | `pnpm lint` | PASS（exit 0，`--max-warnings=0`） |
+| 单元测试 | `pnpm test` | PASS（**253 文件 / 3110 通过** + 6 expected-fail + 22 skipped；本批新增 3 条，`voice-capture.spec` 13 → 16） |
+| 集成（语音回归） | `electron-voice`＋`voice-silence-autostop` | PASS（**16/16**＋**1/1**）。用例 1「录音闭环」断言"录音后有音频缓冲 ⇒ 试听可用"，**正好覆盖 `copyToChannel` → `getChannelData` 这条改动路径**（真实 AudioWorklet + Chromium fake capture device）；静音自动结束仍成立 ⇒ Int16 版 RMS 与 float 版行为一致 |
+| 变异验证 | 4 次 | A 移除扩容检查 → **只有"扩容路径"那条红**（它是该检查的唯一守护者）；B `extract` 截短一格 → 红 4 条；C 漏写最后一格 → 红在尾部哨兵；D `/32767`→`/32768` → 红在等价性用例 |
+| GitHub CI | `.github/workflows/ci.yml` | 见本表下方（本批代码已推送，CI 结果按用户指示不作为本批前置条件） |
+
+**本批一处我自己造的弱断言被变异抓出（值得单列）**：尾部边界我最初用 `makeChunk(0)` 的值断言 `copied[959]`，而 `0` 正是 `Float32Array` 的初值 ⇒ **"漏写一格"与"写了 0"无法区分，变异 C 会假绿**。改为让末块填**非零哨兵**（8192）后才真正有判别力。同族的等价性用例也刻意**用波形而非 ±1**——那些定点值两条路径都恰好精确，测试会平凡通过、证明不了量化误差。
+
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
 - `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。

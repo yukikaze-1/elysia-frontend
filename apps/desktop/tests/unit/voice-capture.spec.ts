@@ -4,8 +4,10 @@
 // node 环境无 navigator.mediaDevices/AudioContext/AudioWorkletNode——vi.stubGlobal 注入 fake。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  computePcmRms,
   computeRms,
   floatToPcm16,
+  PcmAccumulator,
   PcmCapture,
   PcmChunkAggregator,
   PCM_CHUNK_BYTES,
@@ -27,6 +29,65 @@ describe('静音判定（doc 11 §3.3）', () => {
     expect(computeRms(new Float32Array([1, -1, 1, -1]))).toBeCloseTo(1, 5)
     // ±交替的信号 RMS=幅值（均值恒 0，若实现错误地取平均会得 0）
     expect(computeRms(new Float32Array([0.5, -0.5]))).toBeCloseTo(0.5, 5)
+  })
+
+  // M-26（2026-09-14）：`computePcmRms`（Int16 直读）与 `computeRms(floatToPcm16(x)/32767)`
+  // 的**数值等价**是整个改造的前提——正是因为等价，静音判定才不需要在热路径上把每帧解码成
+  // Float32Array（那一份 float 数组原先是 30000 个对象 / 36.6MB）。这条用例把它钉住：
+  // 若有人日后把任一侧的换算改得不一致（例如改成 `/32768`，或漏掉 clamp），这里立刻变红。
+  it('computePcmRms：与 floatToPcm16→computeRms 等价（M-26 改造前提）', () => {
+    // 用**波形**而非 ±1 这类定点值：那些值两条路径都恰好精确，测试会平凡通过、证明不了量化误差。
+    const N = 1000
+    const wave = new Float32Array(N)
+    for (let i = 0; i < N; i++) wave[i] = 0.3 * Math.sin((2 * Math.PI * 440 * i) / 16000)
+    const pcm = floatToPcm16(wave)
+
+    const floatPath = computeRms(Float32Array.from(pcm, (v) => v / 32767))
+    const pcmPath = computePcmRms(pcm)
+    // 容差取量化步长的一半（1/32767）——足以覆盖 RMS 的舍入误差，又紧到任何换算改动都会红。
+    expect(pcmPath).toBeCloseTo(floatPath, 0)
+    expect(Math.abs(pcmPath - floatPath)).toBeLessThan(0.5 / 32767)
+    // 同时证明它量到的确实是这个幅值（否则两边同为错误值也能"等价"）
+    expect(pcmPath).toBeCloseTo(0.3 / Math.SQRT2, 2)
+
+    expect(computePcmRms(new Int16Array(0))).toBe(0)
+    expect(computePcmRms(new Int16Array([0, 0, 0, 0]))).toBe(0)
+    expect(computePcmRms(new Int16Array([32767, -32767, 32767, -32767]))).toBeCloseTo(1, 5)
+  })
+
+  it('PcmAccumulator：跨扩容按序保留；extract 切出恰好尺寸并在取出后归零', () => {
+    const agg = new PcmAccumulator()
+    expect(agg.sampleCount).toBe(0)
+    expect(agg.extract(), '未累积样本 → null（保持"无捕获样本不回调 onStop"语义）').toBeNull()
+
+    agg.push(new Int16Array([1, 2, 3]))
+    agg.push(new Int16Array([4, 5]))
+    expect(agg.sampleCount).toBe(5)
+
+    const out = agg.extract()
+    expect(out).not.toBeNull()
+    expect(Array.from(out as Int16Array)).toEqual([1, 2, 3, 4, 5])
+    expect(agg.sampleCount).toBe(0)
+    expect(agg.extract(), '取出后再取为 null（reset 语义）').toBeNull()
+  })
+
+  it('PcmAccumulator：超过初始容量后仍按序、不丢不漏（2 倍增长路径）', () => {
+    const agg = new PcmAccumulator()
+    // 初始容量 = PCM_CHUNK_SAMPLES × 1024 = 327,680 样本；推 2000 帧 = 640,000 → 触发一次扩容。
+    const frames = 2000
+    for (let f = 0; f < frames; f++) {
+      const chunk = new Int16Array(PCM_CHUNK_SAMPLES)
+      chunk.fill(f + 1) // 每帧一个可辨认的填充值，便于校验顺序
+      agg.push(chunk)
+    }
+    expect(agg.sampleCount).toBe(frames * PCM_CHUNK_SAMPLES)
+    const out = agg.extract()
+    expect(out?.length).toBe(frames * PCM_CHUNK_SAMPLES)
+    const samples = out as Int16Array
+    expect(samples[0], '第 1 帧').toBe(1)
+    expect(samples[PCM_CHUNK_SAMPLES - 1], '第 1 帧末').toBe(1)
+    expect(samples[PCM_CHUNK_SAMPLES], '第 2 帧首（扩容前后衔接处）').toBe(2)
+    expect(samples[samples.length - 1], '末帧末').toBe(frames)
   })
 
   it('SilenceTracker：连续静音累计到时长才触发一次；中途有声音则重新计时', () => {
@@ -92,6 +153,10 @@ interface FakeBuffer {
   channels: number
   length: number
   sampleRate: number
+  /** M-26 ③：生产实现改为直接解码进 `getChannelData(0)`（不再产生中间扁平数组），故替身
+   *  必须像真 AudioBuffer 一样返回**自身的通道存储**——写进去要能读回来。 */
+  channelData: Float32Array
+  getChannelData: (channelNumber: number) => Float32Array
   copied: Float32Array | null
   copyToChannel: (source: Float32Array, channelNumber: number) => void
 }
@@ -144,9 +209,15 @@ class FakeAudioContext {
       channels,
       length,
       sampleRate,
+      channelData: new Float32Array(length),
+      getChannelData: (channelNumber: number) => {
+        if (channelNumber !== 0) throw new Error(`无此通道：${channelNumber}`)
+        return b.channelData
+      },
       copied: null,
       copyToChannel: vi.fn((source: Float32Array) => {
         b.copied = source
+        b.channelData.set(source)
       })
     }
     this.buffers.push(b)
@@ -276,8 +347,9 @@ describe('PcmCapture', () => {
     expect(worklet.connect).toHaveBeenCalledWith(ctx.gains[0])
     expect(ctx.gains[0].connect).toHaveBeenCalledWith(ctx.destination)
 
-    // 模拟 worklet 发来 3 个 640B chunk（16384 / -16384 / 0）
-    const sent = [makeChunk(16384), makeChunk(-16384), makeChunk(0)]
+    // 模拟 worklet 发来 3 个 640B chunk（16384 / -16384 / 8192）
+    // 末块刻意用**非零哨兵**：若用 0，尾部断言会被"Float32Array 初值本来就是 0"兜住而恒绿。
+    const sent = [makeChunk(16384), makeChunk(-16384), makeChunk(8192)]
     for (const chunk of sent) worklet.port.onmessage!({ data: chunk })
 
     expect(capturedChunks).toHaveLength(3)
@@ -301,11 +373,15 @@ describe('PcmCapture', () => {
     expect(stopBuffer).toBe(ctx.buffers[0])
     expect(ctx.buffers[0].length).toBe(960)
     expect(ctx.buffers[0].sampleRate).toBe(PCM_SAMPLE_RATE)
-    const copied = ctx.buffers[0].copied!
+    expect(ctx.buffers[0].copied).toBeNull() // M-26 ③：不再走 copyToChannel，改为直接写通道存储
+    const copied = ctx.buffers[0].channelData
     expect(copied).toHaveLength(960)
     expect(copied[0]).toBeCloseTo(16384 / 32767, 7)
     expect(copied[320]).toBeCloseTo(-16384 / 32767, 7)
-    expect(copied[640]).toBe(0)
+    expect(copied[640]).toBeCloseTo(8192 / 32767, 7)
+    // 尾部边界：直接写入通道后，「长度对但内容错」（例如漏写最后一帧）必须能被抓到。
+    // 末块填的是 8192，故这一格非零 —— 写得少一格就是 0，立刻红。
+    expect(copied[959]).toBeCloseTo(8192 / 32767, 7)
   })
 
   it('getUserMedia 约束：16k mono + EC/NS/AGC + deviceId 透传', async () => {
@@ -368,7 +444,7 @@ describe('PcmCapture', () => {
 
       await capture.stop()
       expect(ctx.buffers[0].length).toBe(640) // 尾部 2 样本（<20ms）未纳入
-      expect(ctx.buffers[0].copied![0]).toBeCloseTo(0.5, 4)
+      expect(ctx.buffers[0].channelData[0]).toBeCloseTo(0.5, 4)
     } finally {
       warnSpy.mockRestore()
     }

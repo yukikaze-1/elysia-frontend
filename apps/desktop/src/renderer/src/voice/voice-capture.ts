@@ -12,6 +12,17 @@
 //
 // 供 Task 12 voiceStore 消费：start 先 await 成功（控制帧 D-P19 先于采集）、onStop 产本地
 // AudioBuffer（试听/replay）、pause/resume 供 ack 背压。
+//
+// M-26（2026-09-14）：录音段内存曾是「每帧一个 Float32Array（10 分钟 = 30000 个对象）
+// ＋ stop() 先拼一个同尺寸扁平数组再拷进 AudioBuffer」⇒ 常驻约 36.6MB，且停止瞬间
+// flat 与全部碎片**同时存活**（实测 73.2MB，另加浏览器侧那个 AudioBuffer）。现改为：
+// ① 累积**原始 Int16**（1 个可增长数组，10 分钟实测约 20MB，2 倍增长浪费 9%）；
+// ② 静音判定改由 `computePcmRms` **直接读 Int16**，热路径不再分配 float 数组
+// （与 `computeRms(floatToPcm16(x)/32767)` 的等价性有专门用例钉住）；
+// ③ stop() 直接把解码结果写进 `AudioBuffer.getChannelData(0)`，**不再产生中间扁平数组**。
+// 结果：常驻 36.6MB → 约 20MB（−45%），停止瞬间同步存活 73.2MB → 约 20MB。
+// **onStop(AudioBuffer) 契约未变**（store/组件侧零改动）。量化过程见决策记录：
+// docs/review/2026-09-14-M-26录音PCM缓冲-决策记录.md
 
 /** 采集采样率：16kHz 单声道（后端 BINARY PCM 唯一支持格式 pcm_s16le/16000/1） */
 export const PCM_SAMPLE_RATE = 16000
@@ -113,6 +124,77 @@ export class PcmChunkAggregator {
   }
 }
 
+/**
+ * 一帧 **Int16** PCM 的 RMS（0–1）。**与 `computeRms(floatToPcm16(x) / 32767)` 数值等价**
+ * （M-26 改造的可行性前提，由 `tests/unit/voice-capture.spec.ts` 的特征化用例钉住）：
+ * `floatToPcm16` 就是 `round(clamp(v) * 32767)`，故除以 32767 精确还原同一套代数，
+ * 唯一差别是 Int16 的量化误差（约 3.05e-5），相对 `SILENCE_RMS_THRESHOLD = 1e-2` 小三个数量级。
+ *
+ * 存在的理由：它让静音判定**不再需要在热路径上把每帧解码成 Float32Array**——那正是 M-26 里
+ * 30000 个短命对象与 36.6MB 的来源。`computeRms` 保留为 Float32 侧的规范实现（其判据用例未动）。
+ */
+export function computePcmRms(pcm: Int16Array): number {
+  if (pcm.length === 0) return 0
+  let sum = 0
+  for (let i = 0; i < pcm.length; i++) {
+    const v = pcm[i] / 32767
+    sum += v * v
+  }
+  return Math.sqrt(sum / pcm.length)
+}
+
+/**
+ * 录音整段的**原始 Int16** 累积器（M-26）。取代原先"每 20ms 一个 Float32Array 塞进数组"：
+ * 全程只持有**一个**可增长 `Int16Array`，容量按 2 倍增长（实测 10 分钟下浪费 9%），
+ * `extract()` 时切出恰好尺寸的一份并**立即释放**内部大缓冲。
+ *
+ * 单位是**样本**不是字节：16kHz 单声道下 10 分钟 = 9,600,000 样本 ≈ 18.3MB（Int16）。
+ * 首帧预分配 320KB（≈10 秒），故典型 10–30 秒语音消息**全程不扩容**。
+ * （曾考虑 1.3 倍增长以省下那 9%：实测只多省 1.1MB，不值得多 3 倍次数的拷贝。）
+ */
+export class PcmAccumulator {
+  private buf = new Int16Array(PCM_CHUNK_SAMPLES * 1024)
+  private length = 0
+
+  /** 追加一块 Int16 样本；容量不足则扩容后拷贝旧数据 */
+  push(samples: Int16Array): void {
+    const need = this.length + samples.length
+    if (need > this.buf.length) {
+      let cap = this.buf.length
+      while (cap < need) cap *= 2
+      const next = new Int16Array(cap)
+      next.set(this.buf.subarray(0, this.length))
+      this.buf = next
+    }
+    this.buf.set(samples, this.length)
+    this.length = need
+  }
+
+  /** 已累积样本数 */
+  get sampleCount(): number {
+    return this.length
+  }
+
+  /**
+   * 切出恰好尺寸的一份并释放内部缓冲（调用后 `sampleCount === 0`）。
+   * 未累积任何样本时返回 `null`——保持"无捕获样本不回调 onStop"的既有语义。
+   */
+  extract(): Int16Array | null {
+    if (this.length === 0) return null
+    const out = this.buf.slice(0, this.length)
+    this.buf = new Int16Array(0)
+    this.length = 0
+    return out
+  }
+
+  /** 丢弃全部累积（start 复位 / stop 收尾）。**恢复到初始容量**而非清成 0 长：同一实例可能被
+   *  复用（重录 = discard 后再次 start），留一个 0 长缓冲会让下一次录音从零重新扩容。 */
+  reset(): void {
+    this.buf = new Int16Array(PCM_CHUNK_SAMPLES * 1024)
+    this.length = 0
+  }
+}
+
 export interface PcmCaptureOptions {
   /** 每个 640B（20ms）PCM16 chunk 回调；bytes 为独立 Uint8Array 拷贝。
    *  2026-09-13（type-aware 全集）：三个回调原按「方法」声明（`onChunk(bytes): void`），
@@ -158,8 +240,7 @@ export class PcmCapture implements PcmCaptureLike {
   private onStop: ((audioBuffer: AudioBuffer) => void) | null = null
   private silenceTracker: SilenceTracker | null = null
   private onSilence: (() => void) | null = null
-  private readonly floatChunks: Float32Array[] = []
-  private totalSamples = 0
+  private readonly pcm = new PcmAccumulator()
 
   /**
    * 启动采集。AudioWorklet 加载失败自动降级 ScriptProcessorNode（chunk 仍经 onChunk 送达）；
@@ -204,8 +285,7 @@ export class PcmCapture implements PcmCaptureLike {
       this.onStop = options.onStop ?? null
       this.silenceTracker = options.silence ? new SilenceTracker(options.silence.durationMs) : null
       this.onSilence = options.silence?.onSilence ?? null
-      this.floatChunks.length = 0
-      this.totalSamples = 0
+      this.pcm.reset()
 
       try {
         await this.createWorkletGraph(audioContext, stream)
@@ -241,26 +321,33 @@ export class PcmCapture implements PcmCaptureLike {
     const stream = this.mediaStream
     const onStop = this.onStop
 
+    // M-26 ③：**直接**解码进 AudioBuffer 的通道数据，不再先拼一个等长 Float32Array 再
+    // copyToChannel（那一份中间缓冲在 10 分钟录音下是 36.6MB）。`getChannelData` 返回的
+    // 就是 AudioBuffer 自己的存储，写入零额外开销。
+    // 另：原实现的缓冲构建在 try/catch 之外——一旦 createBuffer/copyToChannel 抛错，下面的
+    // 轨道停止与 context 关闭**全被跳过**（麦克风白占、AudioContext 泄漏）。现改为 finally
+    // 兜底：无论缓冲是否建成，资源都释放；且 onStop 仍在 finally 之前调用，故"无缓冲不回调"
+    // 的语义未变。
     let buffer: AudioBuffer | undefined
-    if (audioContext && this.totalSamples > 0) {
-      buffer = audioContext.createBuffer(1, this.totalSamples, PCM_SAMPLE_RATE)
-      const all = new Float32Array(this.totalSamples)
-      let offset = 0
-      for (const part of this.floatChunks) {
-        all.set(part, offset)
-        offset += part.length
+    try {
+      if (audioContext && this.pcm.sampleCount > 0) {
+        const pcm = this.pcm.extract()
+        if (pcm) {
+          buffer = audioContext.createBuffer(1, pcm.length, PCM_SAMPLE_RATE)
+          const channel = buffer.getChannelData(0)
+          for (let i = 0; i < pcm.length; i++) channel[i] = pcm[i] / 32767
+        }
       }
-      buffer.copyToChannel(all, 0)
+      if (onStop && buffer) onStop(buffer)
+    } finally {
+      this.pcm.reset()
+      this.disposeGraph()
+      if (stream) {
+        for (const track of stream.getTracks()) track.stop()
+      }
+      if (audioContext) await audioContext.close().catch(() => undefined)
+      this.clearState()
     }
-
-    this.disposeGraph()
-    if (stream) {
-      for (const track of stream.getTracks()) track.stop()
-    }
-    if (audioContext) await audioContext.close().catch(() => undefined)
-    this.clearState()
-
-    if (onStop && buffer) onStop(buffer)
   }
 
   /** AudioWorklet 主路径：addModule → AudioWorkletNode → 源连接 → port.onmessage → onChunk */
@@ -338,22 +425,19 @@ export class PcmCapture implements PcmCaptureLike {
     this.silentGain = silent
   }
 
-  /** 统一 chunk 消费：Int16→Float32 累积（供 onStop AudioBuffer）+ 转发 onChunk + 静音判定 */
+  /** 统一 chunk 消费：累积原始 Int16（供 onStop AudioBuffer）+ 转发 onChunk + 静音判定 */
   private consumeChunk(bytes: Uint8Array): void {
-    const sampleCount = bytes.byteLength / 2
-    const f32 = new Float32Array(sampleCount)
-    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    for (let i = 0; i < sampleCount; i++) {
-      f32[i] = view.getInt16(i * 2, true) / 32767
-    }
+    // M-26 ②：这里原先每帧分配一个 Float32Array（320 样本）只为算 RMS，并把它**留下**到停止
+    // ——10 分钟就是 30000 个对象、36.6MB。现在只切一个零拷贝视图，RMS 直接读 Int16
+    //（`computePcmRms`，与 float 路径数值等价，见其注释），累积交给 PcmAccumulator 单缓冲。
+    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2)
     // 语音活动检测（doc 11 §3.3）：用**已有**的 PCM 帧算 RMS，不额外挂 AnalyserNode、不动 worklet 热路径
-    if (this.silenceTracker?.push(computeRms(f32))) {
+    if (this.silenceTracker?.push(computePcmRms(pcm))) {
       const notify = this.onSilence
       this.onSilence = null   // 只报一次（stop 之后即便还有在途 chunk 也不再触发）
       notify?.()
     }
-    this.floatChunks.push(f32)
-    this.totalSamples += sampleCount
+    this.pcm.push(pcm)
     this.onChunk?.(bytes)
   }
 
@@ -385,7 +469,6 @@ export class PcmCapture implements PcmCaptureLike {
     this.onStop = null
     this.silenceTracker = null
     this.onSilence = null
-    this.floatChunks.length = 0
-    this.totalSamples = 0
+    this.pcm.reset()
   }
 }
