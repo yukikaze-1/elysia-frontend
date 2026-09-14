@@ -465,6 +465,17 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 
 **本轮排查中一次我自己的误操作（如实记）**：编辑 doc 17 时本想"不做改动"，却误删了 `### 自动化工具不可用` 后的一个空行——已 `git diff --numstat` 复核（11 行新增、**0 删除**）并还原。**教训：编辑工具用于"无操作"时也要复核 diff，不能假定无害。** 详见 [doc 17 §1.1](17-Cyrene-前端开发环境与依赖安装记录.md)。
 
+**2026-09-14 A 组四批次**（用户「A 组全做，B 组先放着」；批 4 由 subagent 并行执行）——A 组＝不需要产品决定的四项；B 组（logger 注入／vendor 契约快照／产品决定）按指示不做。全部完成后另派 subagent 做全面文档 review（排除 `docs/archive` 与已归档历史记录）。
+
+| 批 | 结果 |
+|---|---|
+| ① H-01 结构性收窄（`dc8152e`） | 删 `UploadContent.path` + `real-backend.readUploadBytes` 的 `fs.readFile(path)` 回退，`bytes` 改**必填**。**先复核再改**：评审称"Renderer 提供的字符串→任意文件读取"，实测**不成立**（`toIpcDescriptor` 按字段逐个抄、非 `{...f}`；四组探针伪造 path 全被丢弃、`getPathForFile` 恒赢）。真问题是**第二个无守卫的 path→fs 解析点**（无 realpath／userData 判定／黑名单），且实测**从未执行** ⇒ 删的是"假能力"；typecheck 0 错误反证该字段已死。新增守护 1 类型级 + 3 行为级；**变异**（改 `{...f}`）⇒ 4 条红 |
+| ② doc 02 §19.3 REST 守护（`b2f5edb`） | 上轮只守了 WS（§19.2），REST 半边漏了。新增 §19.3 + 16 模型机器校验锚点，门禁扩 3 条（集合相等双向+顺序／条数／引用 schema 真存在）；并更正 §19.2 一条已过期表述。**变异**（删 `DesktopCallStatus`）⇒ 红并点名。首跑即绿 ⇒ 手抄 16 名逐字准确 |
+| ③ verify-sensitive 4 条宽锚收窄（`1d46932`） | 4 条纯通配锚（欠账）→ 精确字面量。**先量后改**：探针调 `isSecretLikeBase64` 拿到每条**实际放行的那行**，4 条只落在两个字面量（1×1 PNG data URI、base64 夹具）上。顺带更正 reason 里**过期行数**（原 11/22 行，实测各 1 行；过期未被发现是因"行数校验只对 >1 行条目生效"——记为门禁盲区）。门禁改为"集合必须为空"；**变异**（改回通配）⇒ 红并点名。`verify:sensitive` PASS 且放行**仍 63 行** |
+| ④ electron-live2d.spec.ts 拆分 | **subagent 并行执行**（该文件 28 用例／62.9KB，独占一个 CI job ≈182s ＝墙钟地板）；结果见下方追加行 |
+
+**本批一次真实流程事故（如实记）**：批 4 的 subagent 把它的**暂存删除**留在 index，我提交批 2 时被 `git commit` 一并带走 ⇒ `b2f5edb` 删了 `electron-live2d.spec.ts` 却**没带**替换文件，HEAD 短暂**丢失 Live2D 集成覆盖**。已用 `fc607db` 恢复（62900 B 与原文件一致）。**处置**：批 3 起改用 `git commit -F <msg> -- <paths>`（only 模式绕过 index），并把交错告知该 subagent。**教训：并行改同一工作区时，只用 `git add -- <paths>` 不足以保证提交范围——index 里可能已有别人的暂存项。**
+
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。
 - `5e9039a` / [run 34502757096](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34502757096)：契约用例改写批次（含此前 `58008a8`／`91e399f`）。
