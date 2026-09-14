@@ -209,6 +209,15 @@ if (failures.length > 0) {
 console.log(`[check-contract] WS v2 type 覆盖: ${wsV2.length - missing.length}/${wsV2.length} 通过;` +
   `字段级帧 ${checkedFrames} 条完整保留(${traceFrames} 条来自后端契约文件);未纳帧 ${deferred.length} 个有意滞后(warn)`)
 
+// 未纳帧**点名**（2026-09-14）：此前只报数量，于是新出现第 7 型时没有任何提示——`live2d.directive`
+// 就是这样静默进入而未被人注意的（doc 02 §19.1 的注记当时还据此写成"后端未含该帧"）。
+// 只打印类型名：它们来自后端契约、不含用户数据，且这正是"AI 对齐 doc 02 §19.2"所需的输入。
+// ⚠️ 这两个列表（WS_V2_FRAME_TYPES 与 doc 02 §19.2 的机器校验清单）由
+// tests/unit/contract-doc-frame-inventory.spec.ts 做**集合相等**守护，改一处必须改另一处。
+if (deferred.length > 0) {
+  console.log(`[check-contract] 未纳帧点名（前端有意滞后，不报错；新增项请复核 doc 02 §19.2）: ${deferred.join(', ')}`)
+}
+
 // ── REST 段：rest.py 目标模型 ↔ 前端 rest-schemas.ts（阶段3 联调前整改 spec §4.3.1；阶段4 批次A 增 providers/TTS 模型）——
 // 字段名/必填性/role 枚举子集比对；防静默通过（模型数 < 目标数 或任一模型字段数=0 → exit 1）。
 const REST_TARGET_MODELS = {

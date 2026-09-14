@@ -999,9 +999,16 @@ idle → connecting → connected
 
 ### 19.2 帧类型覆盖清单（契约门禁的观测口径）
 
+**权威来源（与本表读数同等重要）：** 后端契约的权威副本**只有两个**——X99（`yomu@192.168.1.18:~/elysia-agent`，经 SSH 取回）与后端交接包。**本机若出现后端克隆，一律不得作为核验来源**：它不会自我声明过期，且可能只是部分副本；用它跑 `check:contract` 会得到**形态正确但来源错误**的读数（实测过一次 `36/36 + 16/16` 的假绿，只有 exit code 与"(0 条来自后端契约文件)"能揭示）。用户于 2026-09-14 已删除本机那份克隆，但**规则保留**——详见 [决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md) §3。
+
 **基线：** 2026-09-14 对权威后端实测（后端 `fc57b16d`，经 X99 取回 `frontend_contract/` + `traces/ws-v2-*.jsonl`），命令与口径见 [决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md)。**建立本表的直接动因**：这三处此前在本文档**一次都没出现**——`typing`、`character.state.changed`、`character.catalog.changed`（全文检索 0 命中），即"代码已认、文档未记"的静默漂移。
 
 后端 `ServerMessage` 判别联合实测 **42 型**。前端口径分三块：
+
+<!-- ▼ FRAME-INVENTORY：机器校验锚点，勿改动本行格式。格式为「`WS_V2_FRAME_TYPES`(N)`: <反引号包裹的类型，逗号分隔>`」；
+     由 tests/unit/contract-doc-frame-inventory.spec.ts 与 scripts/check-backend-contract.mjs 的 WS_V2_FRAME_TYPES 做**集合相等**比对。
+     增删白名单类型时必须同步本行，否则该门禁变红（这正是补上的"文档 ↔ 代码"守护）。 -->
+**白名单清单（机器校验）：** `WS_V2_FRAME_TYPES`(37)：`server_info`、`session`、`expression`、`user_message.ack`、`error`、`generation.started`、`generation.segment.started`、`generation.delta`、`generation.segment.completed`、`generation.completed`、`generation.failed`、`state`、`typing`、`delta`、`message`、`token_usage`、`switch_model_result`、`set_tts_voice_result`、`voice.transcript`、`voice_session.started`、`voice_session.partial`、`voice_session.turn`、`voice_session.ack`、`voice_session.ended`、`dictation.partial`、`dictation.final`、`dictation.cancelled`、`audio_start`、`audio`、`audio_end`、`audio_cancelled`、`tool.request`、`tool.started`、`tool.completed`、`action`、`character.state.changed`、`character.catalog.changed`
 
 | 类别 | 型数 | 说明 |
 |---|---|---|
