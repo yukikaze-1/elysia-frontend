@@ -50,6 +50,7 @@
     - 处置：`check` / `unit` / `artifact` / 三个分片全部改钉 `[self-hosted, Linux, X64]`；X99 上起**三个 runner 实例**（`yomu-X99` / `-2` / `-3`，同一标签 `fe-linux`）——单实例会把 7 个 Linux job 串行成 20 分钟以上。
     - 按 self-hosted 语义去掉三处托管期专用配置：`cache: pnpm`、electron 的 `actions/cache`、`playwright install --with-deps`（各自理由见 ci.yml 文件头）。
     - **风险与待办**：~~三个实例目前都是 `nohup` 起的（**机器重启即失效**），需用户 `sudo ./svc.sh install/start`~~ **已由 `257f66d` 处置**（三实例已是 systemd 服务，见 §12⑤）；3 实例并发争抢 24 线程的影响**已用 CPU 亲和 + 孤儿回收器所有者门收口**（见决策记录 §10.8／§10.11）。**仍然成立的两条运维耦合**：全部 Linux job 依赖 X99 单机在线；self-hosted `windows` job 依赖本机代理常开（否则 `actions/checkout` 连不上 github.com 而卡住，见决策记录 §7.1）。
+      **2026-09-14 追加第三条（形态耦合，非机器差异）**：本机交互式 shell 已升到 **PowerShell 7.6.6**（本会话工具调用即跑在 PS7 上，UTF-8 读写与 `&&` 均可用），但 **CI `windows` job 看到的仍是 Windows PowerShell 5.1**——runner 服务账号 `NT AUTHORITY\NETWORK SERVICE` 看不到 **Store/MSIX** 形态安装的 pwsh（系统级 `C:\Program Files\PowerShell\7\` 不存在、机器级 PATH 只有 `…\WindowsPowerShell\v1.0\`）⇒ **`ci.yml` 的"self-hosted 没装 pwsh 7"注释仍然成立，`&&` 拆四 step 的修复必须保留**。三条耦合共用一个事实：`yomu-win11` runner 就在这台机器上。详见 [doc 17 §1.1](17-Cyrene-前端开发环境与依赖安装记录.md)。
     - 回退：账单恢复后把各 job 的 `runs-on` 改回 `ubuntu-latest` 并恢复上述三处即可。详见决策记录 §10。
   - **Linux 侧 GPU 进程「必然崩溃」已定位并修复（2026-09-12，run `34695059951` 取证）**：该 run 的 `integration (shard 1/3)` 红在 `trust-boundary.spec.ts:33`——**启动后第一次** `page.evaluate` 报 `Target page, context or browser has been closed`，`rerun --failed` 即绿。根因由内核日志坐实：GPU 进程在 Mesa 软件光栅器里**确定性**段错误（当天 2207 条 `segfault … in swrast_dri.so`、同一指令偏移），Chromium 重试耗尽后 `FATAL: GPU process isn't usable. Goodbye.` **主动杀掉整个浏览器进程**。
     - 最小复现（X99，最小 Electron 窗口、`xvfb-run -a`，每档 3 次一致）：**默认参数每次启动必崩 3 次且 WebGL 恒 null**；`--disable-gpu` 与 `--use-angle=swiftshader --enable-unsafe-swiftshader` 均为 **0 次**；`--no-sandbox` / `GALLIUM_DRIVER=llvmpipe|softpipe` / `LIBGL_ALWAYS_SOFTWARE=1` 全部无效，`--in-process-gpu` 更糟（Electron 自身 139 退出）。
@@ -453,6 +454,16 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 | 跨仓契约 | 对权威后端实跑 | PASS（exit 0；`36/36` + `88 条帧` + `REST 16/16`；新增点名行按预期打出 6 型） |
 | 文档结构 | `pnpm docs:index`＋`pnpm docs:check` | 见文件末尾索引（本批新增本批块与 doc 02／08 更新） |
 | 集成测试 | — | **未跑**：本批不触碰运行时行为（新增的是**文档↔代码文本门禁**与脚本输出文案）；M-26 批次的集成回归已单独跑过 |
+
+**2026-09-14 开发环境 shell 升级（PowerShell 5.1 → 7.6.6）记录**——用户在本机安装 PowerShell 7.6.6；**这是环境事实，不是仓库基线**（仓库不 pin PowerShell 版本）。三项已实测：
+
+| 项 | 事实 |
+|---|---|
+| 本机交互式 shell | **7.6.6（Core）**；`$OutputEncoding` 与 `[Console]::OutputEncoding` **均为 utf-8** |
+| 直接收益 | **此前"shell 读取 UTF-8/中文文件按 ANSI 解码而乱码"这一坑消失**（本仓记录过 3 次同类事故）；`&&` 可用。**但"仓库文件不要用 shell 读改写"的纪律不因此放宽**——它是安全边界（避免误损文件），不是编码权宜 |
+| **CI `windows` job 不受影响** | runner 服务账号 `NT AUTHORITY\NETWORK SERVICE` **看不到** Store/MSIX 形态安装的 pwsh：`C:\Program Files\PowerShell\7\pwsh.exe` **不存在**、机器级 PATH 只含 `…\WindowsPowerShell\v1.0\` ⇒ **`ci.yml` 的"self-hosted 没装 pwsh 7"注释仍成立，`&&` 拆四 step 的修复必须保留**。若将来要让 CI 也有 pwsh 7，须装**系统级 MSI**（非 Store）；本轮**刻意不做**（现行写法在 5.1 与 7 下都成立） |
+
+**本轮排查中一次我自己的误操作（如实记）**：编辑 doc 17 时本想"不做改动"，却误删了 `### 自动化工具不可用` 后的一个空行——已 `git diff --numstat` 复核（11 行新增、**0 删除**）并还原。**教训：编辑工具用于"无操作"时也要复核 diff，不能假定无害。** 详见 [doc 17 §1.1](17-Cyrene-前端开发环境与依赖安装记录.md)。
 
 CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [run 34484192232](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34484192232)：自 2026-08-16 以来首次全绿。
 - `79e4ba9` / [run 34494572138](https://github.com/yukikaze-1/elysia-frontend/actions/runs/34494572138)：缺陷修复批次。

@@ -23,6 +23,17 @@
 
 不要把某台机器当前安装的 Node、pnpm、GitHub 凭据或 MCP 连接状态写成项目基线。
 
+### 1.1 PowerShell 形态（2026-09-14 记录；**不是基线项**）
+
+PowerShell 版本**不属于**上表的仓库锁定项——仓库不 pin 它，故此处只记录**环境事实**与其**对门禁的影响**，不构成"要求装哪个版本"。
+
+| 面 | 形态 | 实测 | 后果 |
+|---|---|---|---|
+| 本机交互式（开发/联调/自动化工具） | **PowerShell 7.6.6**（`PSEdition=Core`） | `$PSVersionTable.PSVersion` = 7.6.6；`$OutputEncoding` 与 `[Console]::OutputEncoding` 均为 `utf-8` | 中文/UTF-8 文件可直接读写；`&&` 可用。**此前 PS 5.1 下 shell 读取 UTF-8 文件会按 ANSI 解码而乱码**（本仓记录过 3 次同类事故）——该风险已消失，但**"仓库文件不要用 shell 读改写"的纪律不因此放宽**（见 CLAUDE.md 与决策记录） |
+| CI `windows` job（self-hosted `yomu-win11`） | **Windows PowerShell 5.1**（`pwsh 7` 不可见） | runner 服务账号为 `NT AUTHORITY\NETWORK SERVICE`；本机 pwsh 由 **Store（MSIX）**安装于 `…\WindowsApps\Microsoft.PowerShell_7.6.6.0_x64__…`，且 `C:\Program Files\PowerShell\7\pwsh.exe` **不存在**；机器级 PATH 只含 `…\WindowsPowerShell\v1.0\` | **`ci.yml` 里"self-hosted 机器没有装 pwsh 7"这条注释仍然成立**，故 `&&` 拆成四个独立 step 的修复**必须保留**——MSIX 包按用户注册，**服务账号看不到** |
+
+**一条必须写清的边界**：`yomu-win11` runner **就在这台机器上**（本机 `COMPUTERNAME=YOMU`），但这**不意味着**在交互式会话里装 PS7 会改变 CI 的 shell——两者的差别是**服务账号与安装形态**，不是机器。若将来希望 CI 侧也有 pwsh 7（例如想用回 `&&` 链），办法是装**系统级 MSI** 到 `C:\Program Files\PowerShell\7\`（非 Store/MSIX）；**本轮刻意不做**——现行四 step 写法在 5.1 与 7 下都成立、且失败定位更准，为一个未验证收益去改 CI 环境不值得。
+
 ## 2. Windows 环境搭建
 
 以下命令在 PowerShell 中执行。若机器尚未安装 fnm，先按团队认可的方式安装 fnm，并重新打开终端。
