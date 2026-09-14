@@ -155,7 +155,11 @@ jobs:
   #     2    | 213 / 78s        | 278s       | 4.6 分钟
   #     3    | 158 / 106 / 26s  | 223s       | 4.1 分钟 ← 恰好触到 live2d job 形成的地板
   #     4-5  | ≤181s            | ≤181s      | 4.1 分钟（无收益：被 live2d job 卡住）
-  #   再往下压必须**拆 electron-live2d.spec.ts**（它的 182s 独占一个 job 就是当前地板），属独立批次。
+  #   再往下压必须**拆 electron-live2d.spec.ts**（它的 182s 独占一个 job 就是当前地板）——**2026-09-15 已拆**：
+  #   该文件按**实测逐用例耗时**切成 electron-live2d-{core,motion,settings}.spec.ts 三个文件，在
+  #   integration-live2d job 里**一个文件一个 job**（见该 job 注释）。本分片 job 的 `--exclude` 同步改为
+  #   `**/electron-live2d*.spec.ts`——**只改文件名就会漏**：旧的精确名 `**/electron-live2d.spec.ts` 匹配不到
+  #   拆分后的新文件名，三个新文件会被并进随机分片，既重复跑、又必然把某一片变成新瓶颈。
   integration:
     name: integration (shard ${{ matrix.shard }})
     runs-on: [self-hosted, Linux, X64, fe-linux]
@@ -212,12 +216,12 @@ jobs:
         run: |
           xvfb-run -a pnpm --filter @cyrene/desktop exec vitest run \
             --config vitest.integration.config.mts \
-            --exclude '**/electron-live2d.spec.ts' \
+            --exclude '**/electron-live2d*.spec.ts' \
             --shard=${{ matrix.shard }}
 
-  # 集成测试·分片 2/2：electron-live2d 独占一个 self-hosted Linux job
+  # 集成测试·分片 2/2：electron-live2d 三文件（原单文件，2026-09-15 拆分）独占 self-hosted Linux job（matrix）
   #
-  # 为什么这一个文件值得单独一个 job：它是全套件最重的文件（28 用例 / 实测定标 182.3s），且对机器最敏感
+  # 为什么这一族文件值得单独 job：原单文件是全套件最重的（28 用例 / 实测定标 182.3s），且对机器最敏感
   # （托管 278.8s vs 自建 182.3s）。放在自建 runner 上独享整机 24 线程，是当前性价比最高的一刀。
   #
   # **代价与前置（如实记录，不藏）**：
@@ -225,10 +229,25 @@ jobs:
   #     把 runs-on 改回 ubuntu-latest 即可（墙钟回到 ~5.7 分钟，因为托管上该文件 278.8s）。
   #   · self-hosted 不挂 `cache: pnpm`（服务用户 home 下的 store 跨 run 持久，走 Actions 缓存反而每 run
   #     多传约 63MB），也不挂 electron 缓存（同理，profile 已持久）。
-  #   · 该文件只用 Electron、不使用 Playwright 浏览器二进制（`trust-boundary` 那类才需要），故不跑
-  #     `playwright install`。
+  #   · 这些文件只用 Electron、不使用 Playwright 浏览器二进制（`trust-boundary` 那类才需要），故不跑
+  #     `playwright install`——三个 matrix job 的步骤里也没有这一步。
   integration-live2d:
-    name: integration (live2d, self-hosted)
+    name: integration (live2d ${{ matrix.file }}, self-hosted)
+    # 2026-09-15（A-1 拆分）：原 electron-live2d.spec.ts（28 用例、自建机实测定标 182.3s）**独占一个 job 就是
+    # CI 墙钟地板**。按实测逐用例耗时拆成 3 个文件后，这里改成**一个文件一个 job**——单 job 墙钟从 182.3s
+    # 降到该文件自己的耗时（本机实测 core 35.1s / motion 47.3s / settings 43.7s）。
+    # fail-fast: false：一个文件红不掩盖另两个的结果（与 integration 分片 job 同款口径）。
+    # 代价（如实记录，不藏）：3 个 job 各付一次 install + build 的固定开销，重型侧总工作量因此多出约 2 份
+    # 固定开销；换来的是**关键路径不再被单个 182s 的 job 钉住**。若三文件出现明显长尾，下一刀按实测再平衡。
+    # 判据（不靠想——分片 job 出过「参数没转发、三片各跑全量」的假绿事故）：每个 job 的日志必须是
+    # `Test Files 1 passed (1)`；过滤器没到位时 vitest 以 "No test files found" 非零退出，不会静默变绿。
+    strategy:
+      fail-fast: false
+      matrix:
+        file:
+          - electron-live2d-core.spec.ts
+          - electron-live2d-motion.spec.ts
+          - electron-live2d-settings.spec.ts
     runs-on: [self-hosted, Linux, X64, fe-linux]
     # self-hosted 掉线时 job 会一直排队（托管 runner 不会），必须有硬上限
     timeout-minutes: 45
@@ -259,8 +278,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --store-dir "$HOME/.pnpm-store-${{ runner.name }}"
 
-      - name: Integration tests (live2d, xvfb)
-        run: xvfb-run -a pnpm --filter @cyrene/desktop test:integration:live2d
+      # 原来这两步由 `test:integration:live2d` 脚本内部完成；改成 matrix 后必须显式拆开——
+      # 脚本里的位置参数是写死的 `electron-live2d`（且 `pnpm <script> -- <args>` 不转发参数，见分片 job 的事故记录），
+      # 没法按 matrix 逐文件过滤，故这里直连 vitest 并把 `${{ matrix.file }}` 作为位置过滤器交给它。
+      - name: Ensure Electron binary
+        run: pnpm --filter @cyrene/desktop ensure:electron
+
+      - name: Build test artifacts (--mode test)
+        run: pnpm --filter @cyrene/desktop exec electron-vite build --mode test
+
+      - name: Integration tests (live2d ${{ matrix.file }}, xvfb)
+        run: |
+          xvfb-run -a pnpm --filter @cyrene/desktop exec vitest run \
+            --config vitest.integration.config.mts \
+            ${{ matrix.file }}
 
   # 打包态安全冒烟：clean → package（内含 electron-vite build）→ verify:artifact --smoke（P0-02 验收 A6 持续化）
   artifact:
