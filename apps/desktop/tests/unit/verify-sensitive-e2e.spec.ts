@@ -302,38 +302,26 @@ describe('verify-sensitive allowlist anchor 广度（真实 56 条数据断言�
   // 只钉既有纪律，不发明新策略（阈值一律取「0 违规」或实测精确集合，不写「允许 N 条」那种假门禁）。
   const GENERIC_ANCHORS = ALLOWLIST.filter((e) => !hasLiteralAnchor(e.anchor.source))
 
-  it('纯通配锚条目集合被钉死（新增即红）——注记：现有 4 条是真实欠账，不是合格线', () => {
-    // 实测 4 条（全部 `rules: ['base64-long-string']` 类别级条目，锚 = /[A-Za-z0-9+/]{40,}/）：
-    //   docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md   放行 1 行
-    //   docs/archive/plans/2026-08-09-phase1-trusted-services.md                放行 1 行
-    //   apps/desktop/src/main/tools/env-bridge.ts                              放行 1 行
-    //   apps/desktop/tests/unit/redact.spec.ts                                 放行 1 行
-    // 它们并非无防护：rules 域把豁免限死在 base64-long-string，同文件的 Bearer/JWT 行仍会红（R2-1）。
-    // 但它们的锚不指向任何具体内容——该文件未来新增的**任何像秘密的 40+ 长串**都会被静默放行，无需人工核对。
-    // 按 verify-sensitive.mjs:15 的纪律，这 4 条本身就是待收窄项；本用例只负责让集合**可见**且不得扩大
-    // （P2-10「allowlist 无 anchor 广度防御」要的就是这个）。收窄它们属扫描器变更，不在本任务范围内。
-    expect(GENERIC_ANCHORS.map((e) => e.path).sort()).toEqual([
-      'apps/desktop/src/main/tools/env-bridge.ts',
-      'apps/desktop/tests/unit/redact.spec.ts',
-      'docs/archive/plans/2026-08-09-phase1-trusted-services.md',
-      'docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md'
-    ])
+  it('纯通配锚条目集合为空——4 条宽锚已于 2026-09-14 全部收窄', () => {
+    // 历史：此处曾有 **4 条**纯通配锚（`/[A-Za-z0-9+/]{40,}/`，全部 `rules: ['base64-long-string']`），
+    // 即"该文件未来新增的**任何像秘密的 40+ 长串**都会被静默放行、无需人工核对"。P2-10 把它们钉成
+    // **真实欠账而非合格线**（本用例当时只负责让集合可见且不得扩大）。
+    //
+    // 2026-09-14 收窄：实测每条**只放行 1 行**，且那 1 行落在一个具体字面量上——于是锚改为字面量本身：
+    //   apps/desktop/src/main/tools/env-bridge.ts  → 1×1 PNG data URI（MOCK_THUMBNAIL_DATA_URL）
+    //   apps/desktop/tests/unit/redact.spec.ts     → base64 测试夹具 MDEyMzQ1Njc4…
+    //   docs/archive/plans/2026-08-09-phase1-…      → 同一个测试夹具（该文档内嵌代码样例）
+    //   docs/superpowers/plans/2026-08-20-phase6-…  → 同一个 1×1 PNG data URI（该文档的注意段）
+    // 顺带更正一处**过期的审计记录**：两个文档条目的 reason 原写"命中 11 行／22 行"，那是 2026-09-10
+    // 规则收窄为「像秘密」（`isSecretLikeBase64`）**之前**的读数；实测各 1 行。旧 reason 之所以长期
+    // 未被发现，是因为下面那条"reason 行数须与实测一致"的校验**只对 >1 行的条目生效**。
+    //
+    // 本用例现在守的是**回归**：一旦有人再加通配锚（或把精确锚改回通配），集合立刻非空 ⇒ 红。
+    expect(GENERIC_ANCHORS.map((e) => e.path), '出现新的纯通配锚条目：请按上例收窄到具体字面量，不要放宽').toEqual([])
     for (const e of GENERIC_ANCHORS) {
-      // 通配锚必须至少被 rules 域限死（否则它对**所有**规则批量放行）
+      // 兜底（当前不可达）：万一将来确需通配，必须至少被 rules 域限死 + 写明人工核对依据
       expect(e.rules, `${e.path} 的通配锚必须有 rules 域`).toEqual(['base64-long-string'])
-      // 且理由必须写明是「逐文件人工核对」这一类别级依据（防有人把精确条目偷偷换成通配锚）
       expect(e.reason, `${e.path} 的通配锚理由`).toContain('人工核对')
-    }
-    // 逐条放行广度被钉死（= 实测值）：任何变化都必须重新人工核对
-    expect(GENERIC_ANCHORS.map((e) => `${e.path}:${hitsForEntry(e).length}`).sort()).toEqual([
-      'apps/desktop/src/main/tools/env-bridge.ts:1',
-      'apps/desktop/tests/unit/redact.spec.ts:1',
-      'docs/archive/plans/2026-08-09-phase1-trusted-services.md:1',
-      'docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md:1'
-    ])
-    // reason 里记的行数与实测一致（reason 是人工核对记录，不能与事实脱节）
-    for (const e of GENERIC_ANCHORS.filter((x) => hitsForEntry(x).length > 1)) {
-      expect(e.reason, `${e.path} 的 reason 行数需与实测一致`).toContain(`命中本文件 ${hitsForEntry(e).length} 行`)
     }
   })
 

@@ -235,12 +235,12 @@ const ALLOWLIST = [
   },
   // ── 应用代码与测试夹具 ──
   {
-    path: 'apps/desktop/src/main/tools/env-bridge.ts', anchor: /[A-Za-z0-9+/]{40,}/,
-    reason: 'base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
+    path: 'apps/desktop/src/main/tools/env-bridge.ts', anchor: /iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk/,
+    reason: 'base64-long-string 命中本文件 1 行——已知静态字面量（1×1 PNG data URI 或测试夹具，均非秘密）。2026-09-14 收窄：锚点已指向具体字面量，不再放行"任意 40+ 长串"', rules: ['base64-long-string']
   },
   {
-    path: 'apps/desktop/tests/unit/redact.spec.ts', anchor: /[A-Za-z0-9+/]{40,}/,
-    reason: 'base64-long-string 命中本文件 1 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
+    path: 'apps/desktop/tests/unit/redact.spec.ts', anchor: /MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5/,
+    reason: 'base64-long-string 命中本文件 1 行——已知静态字面量（1×1 PNG data URI 或测试夹具，均非秘密）。2026-09-14 收窄：锚点已指向具体字面量，不再放行"任意 40+ 长串"', rules: ['base64-long-string']
   },
   // ── 文档（设计/决策/历史记录中的散文与内嵌样例） ──
   {
@@ -256,12 +256,12 @@ const ALLOWLIST = [
     reason: '黑名单规则列示行（规则名/赋值形态字面量自引用——「已人工核对无真实秘密」说明性示例，非真实 secrets）（Task 8 门禁收口核对 2026-08-22）', rules: ['bearer-token', 'agent-access-token-assign', 'account-token-assign']
   },
   {
-    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /[A-Za-z0-9+/]{40,}/,
-    reason: 'base64-long-string 命中本文件 11 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
+    path: 'docs/archive/plans/2026-08-09-phase1-trusted-services.md', anchor: /MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5/,
+    reason: 'base64-long-string 实测命中本文件 1 行（原记 11 行，是 2026-09-10 规则收窄为"像秘密"之前的过期读数，2026-09-14 更正）——已知测试夹具字面量（非秘密）。收窄：锚点指向该夹具，不再放行任意 40+ 长串', rules: ['base64-long-string']
   },
   {
-    path: 'docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md', anchor: /[A-Za-z0-9+/]{40,}/,
-    reason: 'base64-long-string 命中本文件 22 行——已人工核对全部为可读词表/路径/标识符长串（英文单词或标识符+斜杠连接的阅读性序列，非高熵秘密）（逐文件核对 2026-08-22）', rules: ['base64-long-string']
+    path: 'docs/superpowers/plans/2026-08-20-phase6-tools-batchb-main-exec-ui.md', anchor: /iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk/,
+    reason: 'base64-long-string 实测命中本文件 1 行（原记 22 行，是规则收窄前的过期读数，2026-09-14 更正）——已知 1×1 PNG data URI 字面量（非秘密）。收窄：锚点指向该 PNG，不再放行任意 40+ 长串', rules: ['base64-long-string']
   },
   // ── 应用代码与测试夹具 ──
   {
