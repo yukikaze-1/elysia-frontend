@@ -108,3 +108,64 @@ describe('doc 02 §19.2 帧类型清单 ↔ 契约门禁白名单（文档↔代
     }
   })
 })
+
+// —— REST 半边（2026-09-14 补）——
+//
+// 与 WS 段同源：`check:contract` 的 REST 段比的是「后端 rest.py ↔ 前端 rest-schemas.ts」，
+// 属"代码 ↔ 后端"；而 doc 02 §19 表里那 16 个目标模型此前**只存在于脚本的常量里**，
+// 文档没有机器可校验的落点 ⇒ 同一条"文档 ↔ 代码"的缝。这里按同一规格补上。
+const REST_INVENTORY_MARKER = '`REST_TARGET_MODELS`('
+
+/** 从脚本源码抽取 REST_TARGET_MODELS 的**键**（后端模型名）；先剥注释 */
+function scriptRestModels(): string[] {
+  const src = readFileSync(SCRIPT, 'utf8').replace(/\/\/[^\n]*/g, '')
+  const m = /REST_TARGET_MODELS\s*=\s*\{([\s\S]*?)\n\}/.exec(src)
+  if (!m) throw new Error('未能在 check-backend-contract.mjs 中定位 REST_TARGET_MODELS 对象（解析器失效）')
+  const names = [...m[1].matchAll(/^\s*(\w+)\s*:/gm)].map((x) => x[1])
+  if (names.length < 8) throw new Error(`只解析出 ${names.length} 个 REST 目标模型，疑似解析器失效`)
+  return [...new Set(names)]
+}
+
+/** 从 doc 02 的 REST 机器校验锚点行抽取清单（排除相邻的 HTML 注释行） */
+function docRestModels(): { declaredCount: number; models: string[] } {
+  const text = readFileSync(doc02Path(), 'utf8')
+  const line = text
+    .split('\n')
+    .find((l) => l.includes(REST_INVENTORY_MARKER) && !l.trimStart().startsWith('<!--'))
+  if (!line) throw new Error(`doc 02 §19.3 缺少机器校验锚点（应含 ${REST_INVENTORY_MARKER} 的非注释行）`)
+  const count = /\((\d+)\)/.exec(line)
+  if (!count) throw new Error('REST 机器校验锚点里没有声明条数 "(N)"')
+  const models = [...line.matchAll(/`([^`]+)`/g)].map((x) => x[1]).filter((x) => x !== 'REST_TARGET_MODELS')
+  return { declaredCount: Number(count[1]), models: [...new Set(models)] }
+}
+
+describe('doc 02 §19.3 REST 目标模型清单 ↔ 脚本 REST_TARGET_MODELS（文档↔代码守护）', () => {
+  it('两侧集合相等（增删目标模型而忘改文档、或文档写了脚本没有的模型，都红）', () => {
+    const script = scriptRestModels()
+    const { models: doc } = docRestModels()
+    const onlyInScript = script.filter((t) => !doc.includes(t))
+    const onlyInDoc = doc.filter((t) => !script.includes(t))
+    expect(onlyInScript, '脚本里有、doc 02 §19.3 没有（请同步 §19.3）').toEqual([])
+    expect(onlyInDoc, 'doc 02 §19.3 里有、脚本没有（请同步 REST_TARGET_MODELS）').toEqual([])
+    expect(doc, '两侧顺序也须一致（便于逐行对拍）').toEqual(script)
+  })
+
+  it('锚点声明的条数与实际条数一致，且与脚本规模一致', () => {
+    const script = scriptRestModels()
+    const { declaredCount, models: doc } = docRestModels()
+    expect(declaredCount, '锚点里的 "(N)" 与实际列出的条数不符').toBe(doc.length)
+    expect(declaredCount).toBe(script.length)
+  })
+
+  it('每个目标模型引用的前端 schema 都真的存在于 rest-schemas.ts（防"文档与脚本一起漂"）', () => {
+    const src = readFileSync(RAW_SCHEMAS.replace(/raw-schemas\.ts$/, 'rest-schemas.ts'), 'utf8')
+    const exported = new Set([...src.matchAll(/^export const (\w+Schema)/gm)].map((m) => m[1]))
+    expect(exported.size, 'rest-schemas.ts 里没解析到导出 schema，疑似解析器失效').toBeGreaterThan(10)
+    const scriptSrc = readFileSync(SCRIPT, 'utf8').replace(/\/\/[^\n]*/g, '')
+    const m = /REST_TARGET_MODELS\s*=\s*\{([\s\S]*?)\n\}/.exec(scriptSrc)
+    const refs = [...(m?.[1] ?? '').matchAll(/'(\w+Schema)'/g)].map((x) => x[1])
+    expect(refs.length).toBeGreaterThan(8)
+    const dangling = [...new Set(refs)].filter((r) => !exported.has(r))
+    expect(dangling, '脚本引用了 rest-schemas.ts 里不存在的 schema（重命名/删除未同步）').toEqual([])
+  })
+})

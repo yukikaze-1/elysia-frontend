@@ -1022,7 +1022,24 @@ idle → connecting → connected
 
 1. **两边都取不到 ≠ 通过。** 门禁是**子集判定**：`36/36` 只证明"前端已认的 36 型在后端仍存在且逐字段未变"，**证明不了**"后端没有新增帧"。新增帧会先落进上表第 3 类的 warn 口径。
 2. **前 6 型的名单本身也会漂移。** 这 6 型是从后端判别联合现算的；`live2d.directive` 就是**新增进来的**——原脚本注释只列了 5 型且漏掉它，本节"数据来源与记录"注记还据此写成"后端未含该帧"（2026-09-14 已更正）。改白名单时须同步本表。
-3. **"文档 ↔ 代码"这一段没有被任何门禁守着。** 现有 `check:contract` 是"代码 ↔ 后端"；本表覆盖的三型漂移正是从这个缺口里长出来的。本文档的帧型口径**由人工与本表对拍**，改动 `raw-schemas.ts` 或白名单时需一并复核。
+3. **"文档 ↔ 代码"这一段现已由门禁守着（2026-09-14 起）。** 本表与 `WS_V2_FRAME_TYPES` 由 `tests/unit/contract-doc-frame-inventory.spec.ts` 做**集合相等**校验（双向 + 顺序 + 声明条数，另查每个类型都真有 `type: z.literal`）。**本节初稿曾写"没有被任何门禁守着"——那句已被取代**：三型漂移正是从那个缺口里长出来的，该缺口现已补上；REST 段的对应守护见 §19.3。
+
+### 19.3 REST 目标模型清单（契约门禁的观测口径）
+
+`check:contract` 的 REST 段**不是**按帧型核对，而是按「后端 `rest.py` 模型 ↔ 前端 `rest-schemas.ts`」逐模型比对字段名/必填性（role 枚举取子集）。本节的清单就是那 16 个模型——**它是"文档 ↔ 代码"的 REST 半边**：WS 段由 §19.2 守，REST 段由本节守，两者的守护者都是 `tests/unit/contract-doc-frame-inventory.spec.ts`。
+
+**建立动因**：与 §19.2 同源——`check:contract` 只比"代码 ↔ 后端"，于是"代码认了、文档没记"的 REST 模型同样会静默漂移。此前这 16 个模型**只存在于脚本的 `REST_TARGET_MODELS` 常量里**，本文档没有任何机器可校验的落点。
+
+<!-- ▼ REST-INVENTORY：机器校验锚点，勿改动本行格式。格式为「`REST_TARGET_MODELS`(N)`: <反引号包裹的后端模型名，逗号分隔>`」；
+     由 tests/unit/contract-doc-frame-inventory.spec.ts 与 scripts/check-backend-contract.mjs 的 REST_TARGET_MODELS 做**集合相等**比对。
+     增删目标模型时必须同步本行，否则该门禁变红。 -->
+**REST 目标模型清单（机器校验）：** `REST_TARGET_MODELS`(16)：`SearchMessageItem`、`SearchMessagesResponse`、`MessageContextResponse`、`AttachmentInfo`、`AttachmentUploadResponse`、`AttachmentSignResponse`、`StickerEntry`、`StickerListResponse`、`ProviderEntry`、`CustomProvider`、`ProvidersResponse`、`ProviderTestResult`、`TtsVoiceEntry`、`TtsVoicesResponse`、`TtsPreviewResult`、`DesktopCallStatus`
+
+口径与 §19.2 同款，须一并读：
+
+1. **子集判定的边界同样适用**：16/16 只证明"这 16 个模型的字段形状在后端仍成立"，**证明不了**"后端没有新增 REST 模型"。
+2. **一个后端模型可对多个前端 schema**：`AttachmentInfo` 与 `AttachmentUploadResponse` 共用 `RestAttachmentUploadResponseSchema`（前者取 `shape.attachments.element`）⇒ 16 个后端模型对 **15 个**前端 schema，**不是一一映射**，比对时不可假设等长。
+3. **本清单的守护键是后端模型名**（`REST_TARGET_MODELS` 的键），不是前端 schema 名——前端 schema 改名不影响本门禁。
 
 完成这张表并通过真实事件联调后，才可以把本文状态从“待与现有后端核对”改为“已对齐 / 可作为工程契约基线”。
 
