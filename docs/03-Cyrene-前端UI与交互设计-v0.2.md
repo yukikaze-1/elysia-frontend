@@ -91,6 +91,8 @@ Cyrene Desktop
 - 用户最后访问页面；
 - 不保存权限对话框和敏感预览状态。
 
+> **就地更正（2026-09-15；doc 06 §8.5 是同一处，两份一起改）——上列 4 项里只有 2 项落地：** 落盘形状 `StoredLayoutV1` 只有 `{version, conversationCollapsed, live2dVisible, live2dWidth}`（`layout/layout-storage.ts:15-20`），**「窗口位置和大小」与「用户最后访问页面」都不存在且刻意不持久化**：全仓 grep `getBounds|setBounds|lastVisited` **0 命中**；窗口位置与大小由 Main 建窗时决定（`main/windows/main-window.ts` 的 `minWidth` = `layout/constants.ts` 的 `MIN_WINDOW_WIDTH`），「当前页面」由 `app.store.ts:12` 的 `currentView` 承载且明写不持久化（`app.store.ts:4`）。已落地的两项（会话栏折叠态、Live2D 显示与栏宽）**保留**。
+
 ## 4. 全局状态展示
 
 > **UII-QQ 设置页批次注记（2026-08-30）：** 连接状态入口已移至**左侧导航栏底部**（全局运行状态，不属于单个会话）——插头图标 + 右下角状态点，点击展开连接浮层（状态摘要 + 展开的连接设置）；聊天头部不再承载连接状态。下表为浮层内的状态表达：
@@ -126,6 +128,8 @@ Cyrene Desktop
 
 状态优先级：错误 > 生成中 > 未读 > 普通。
 
+> **落地更正（2026-09-15，对照代码逐字复核）——上列「生成中、错误或未读状态」未实现，本行「状态优先级」也是设计口径：** `CyConversationList.vue:206-224` 的会话项只渲染头像、标题、更新时间、`c.preview` 与角色标签，**没有生成中/错误/未读任一状态位**；数据侧也没有来源——`stores/conversation.store.ts` 与 `Conversation` 契约（`shared/contracts/conversation.ts:17-24`）都没有 unread/generating/error 字段，全仓 grep `unread` 在 renderer 状态下 **0 命中**。会话项内**已实现**的是：当前会话高亮（`is-active`）、右键菜单（重命名／删除，见 §7.5 注记）、行内重命名/删除按钮、组件本地标题过滤（`CyConversationList.vue:31-36`）。本行按**未实现**读。
+
 ### 5.2 操作
 
 P0：
@@ -139,6 +143,8 @@ P0：
 - 列表获取失败后重试。
 
 P1：置顶、归档、分组。
+
+> **落地说明（2026-09-15 补，仅记差异、不改清单）：** P0 中「搜索会话标题和摘要」当前只搜**标题**——会话栏搜索框是组件本地 `ref` 过滤 `c.title`（`CyConversationList.vue:31-36`），**未匹配 `preview` 摘要**（`Conversation` 契约里有 `preview`，`shared/contracts/conversation.ts:17-24`）。P0 的「加载更多／列表获取失败后重试」与 P1 三项已由 doc 16 台账结清（降级／P1），此处不重复。
 
 ### 5.3 加载表现
 
@@ -174,6 +180,9 @@ P1：置顶、归档、分组。
 - 分段之间的间距小于不同消息之间的间距，连续视觉边界清晰；
 - 句子分段完成时不出现新的头像、未读数或通知；
 - 父级回复完成后统一显示输入、输出、总 Token、实际模型、心情和完成状态；
+
+> **落地更正（2026-09-15，对照代码逐字复核）——上一行只有「总 Token／实际模型／心情」落地：** 助手气泡的低权重元数据行渲染 `message.model`、`message.usage.total`（`CyMessageBubble.vue:248-251`）与 `message.emotion`（`:247`）；**「输入/输出 Token」从未显示**（`usage.input`/`usage.output` 在 renderer 组件里 0 命中），**「会话级 Token」也没有展示面**——后端 `conversationUsage` 只走到 `shared/domain/stream-accumulator.ts:181` 的 accumulator state，renderer 全域 0 命中。该行按**部分实现**读。
+
 - 搜索、复制、重新生成、TTS 和反馈默认作用于整条回复，必要时可定位具体分段。
 
 ### 7.3 Inner Voice 与 Public Reply
@@ -188,6 +197,9 @@ P1：置顶、归档、分组。
 - 默认复制只复制 Public Reply；“复制完整回复”按全局时间线保留 Inner Voice/Public Reply 标签和顺序；
 - TTS 默认只朗读 Public Reply；
 - 不把调试信息或模型隐藏推理当作 Inner Voice 展示。
+
+> **⚠️ 待裁决：本行「不能把所有 Inner Voice 强行移到顶部而破坏顺序」与现行代码相反（2026-09-15 复核；★「文档对、代码错」）。** `CyMessageBubble.vue:99-108` 按 `channel` 分成两个 computed，模板 `:215-223` 把**全部** `inner_voice` 分段（按 `segmentIndex` 排序）放进同一个置顶 `<details>`，`:227-244` 才渲染 `public_reply` ⇒ **交错顺序在实现里已经丢失**（默认折叠还使位置信息更不可见）。现有 fixture 的 inner_voice 恰在 index 0，故目前只是**潜在缺陷**；后端一旦按 doc 02 允许的方式交错即暴露。
+> **本条按"文档对、代码错"处理，不就地改口径**：是改代码（按 `segmentIndex` 在位置处开新块）还是改本行规格，**属产品决定**。在裁决前，本行仍是有效规格；**请勿据代码现状回改文档**。反证与取证见 [维护文档全面 review 报告](review/2026-09-14-维护文档全面review-报告.md) §16.4 的 U-3。
 
 ### 7.4 Markdown 与多媒体
 
@@ -238,6 +250,8 @@ AI 消息：复制 Public Reply、复制完整回复组、折叠 Inner Voice、�
 - 命中 Inner Voice 时先定位回复组，再按用户当前折叠设置决定是否自动展开；
 - 使用不透明游标懒加载，打开查看器不阻塞聊天流；
 - 已撤销、过期或下载失败的资源保留可解释占位；搜索失败或无结果不清空现有聊天内容。
+
+> **落地更正（2026-09-15）——本清单「高亮来源消息或回复组分段」只实现到消息级：** 跳转链路确实完整（`CyHistoryViewer.vue:234` → `conversationStore.jumpToMessage` → `messageStore.loadContextWindow` + `setHighlight(messageId, segmentId)`，见 `stores/conversation.store.ts:547-554`），但**消费端只读消息 ID**：`CyMessageList.vue:674` 的行高亮类与 `:691` 的「已定位」胶片判据都是 `highlightMessageId === id`，组件里**没有任何地方读 `highlightSegmentId`**（`stores/message.store.ts:118,601,1180,1184`）⇒ 「回复组分段级高亮」是可写入、无消费者的**半接线状态**，当前不成立。消息级定位（滚动居中 + 6s 自动清除）**成立**，保留。
 
 > **虚拟化注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 结果列表改为**虚拟列表渲染**——`groupedItems`（按自然日分组）扁平化为虚拟行 `rows`（`DayHeaderRow | ResultRow`，day header 固定高 ~34px / item 单行 snippet ~72px / sticker 缩略图行 +64px），复用泛型化 `virtual-window` 数学内核渲染可视窗口 + overscan（`OVERSCAN_PX`），命中结果**500 项不再全量 DOM**（`.cy-history-item` 节点数有界 ≤60，不随结果数线性）。剩余行为不变：日分组 header 仍正确显示（随虚拟行挂载）、锚点补偿改 data 层（`captureAnchor`/`restoreScrollTop` 前缀和二分，跳过 header 取首个 item 行，恢复偏移 ≤1px）、加载更多后新页行可达（滚动触发虚拟窗口重算）、Tab 焦点陷阱查询 overlay 全量 focusable（最后 focusable 仍为 footer「加载更多」）、跳转 `onJump`→`jumpToMessage` 不变、snippet 保持 **mustache 插值转义**（`{{ hit.snippet }}`，非 v-html / 非 renderMarkdown——虚拟化只改 DOM 节点数，**不改变** snippet 敏感文本转义与「不落日志/导出」语义）。
 
@@ -399,6 +413,8 @@ P0 操作：
 
 服务器地址、认证信息状态、连接测试、协议版本、清除凭据。
 
+> **落地更正（2026-09-15，对照代码逐字复核）——设置页里没有「连接」子页：** 设置中心导航实为 **7 项**（`CySettingsView.vue:51-57`：模型服务／我的档案／角色／语音／外观与 Live2D／安全与权限／开发与诊断），`app.store.ts:9` 的 `SettingsSection` 联合与之一一对应，**无 `connection` 键**。连接设置的承载面是**左侧导航栏底部的连接入口浮层**（`CyConnectionPanel`，见 §4 的 2026-08-30 注记与本文件 §2 信息架构树里"设置→连接"一行的偏差）。本节其余内容（服务器地址／认证状态／连接测试／协议版本／清除凭据）在**该浮层**里都成立，保留。
+
 ### 12.3 聊天与语音
 
 发送快捷键、自动滚动、TTS 自动播放、普通录音输入、实时语音会话、输入法转写专用 STT Profile、麦克风设备和语音活动检测。界面必须说明直接语音字幕不会进入文字草稿，输入法转写才会修改输入框。
@@ -423,10 +439,14 @@ P0 操作：
 > ③ **命令模板空态**（**F-08 关闭**）：「未启用受控命令执行。桌面工具仅包括文件选择/读取/写入与屏幕捕获，不支持任意命令执行。」——无列表无注册入口。
 >
 > **沙盒/黑名单 UI 明确不落地**（D6B-14 常量化注记：仅黑名单零预授权、`PATH_BLACKLIST_DEFAULTS` 为内置常量不进 settings.json、无管理 UI）。
+>
+> **落地对照（2026-09-15 补记，同源发现 doc 04 D4-15）——本节开头 3 条清单里只有授权面落地：** ✅**权限审批历史**（`tool:history` 只读）、✅**已授权目录与撤销**（`tool:grants` + `tool:grant-revoke`）、✅**已授权命令模板**（按 F-08 以**空态**交付，不支持任意命令执行）；❌**沙盒目录**与❌**路径/域名黑名单的管理 UI 不落地**——`src` 全域 grep `sandboxDirectories|domainBlacklist` **0 命中**，路径黑名单是内置常量（`main/tools/tool-policy.ts:11-26`），`isDomainAllowed`（`:113`）只有定义与单测、生产零调用。上句「黑名单优先级高于沙盒和历史授权」在**路径**维度成立（决策链 step 5 黑名单恒先拒），沙盒维度无实现。该节按**部分满足**读。
 
 ### 12.6 开发与诊断
 
 客户端版本、连接状态、协议版本、前端日志目录、打开日志目录和导出脱敏诊断信息。
+
+> **落地更正（2026-09-15）——第一项「客户端版本」不存在：** `src/renderer` 全域 grep `客户端版本|appVersion|clientVersion` **0 命中**；诊断页只显示**协议版本 + 后端版本**（`CyDiagnosticsPane.vue:267`）。其余各项（连接状态、协议版本、日志目录、打开日志目录、脱敏诊断导出）已落地。
 
 开发者模式可增加脱敏协议事件、工具 Schema、Store 摘要、Live2D 性能信息、Renderer DevTools 和详细前端日志。生产构建默认关闭，开启时明确提示安全风险。
 
@@ -519,6 +539,7 @@ P0 操作：
 > - **§5.1 会话右键菜单 + 消息右键菜单：已实现（2026-09-13）**，两者共用同一个 `CyContextMenu`
 >   （role=menu/menuitem、方向键 + Home/End 导航、Esc/点外部/滚动即关、按指针坐标定位并夹取到视口内、
 >   关闭回焦触发元素；teleport 到 body 以免污染 `.cy-vlist-row` 的 perf-gate DOM 契约）。
+>   **已被 `ba265bb`（2026-09-14）取代——上一行原文里的"滚动即关"仅对"未传锚点"的调用方成立**：该提交把关闭判据改为**跟随锚点**（给锚点时滚动/缩放只把菜单贴回锚点，只有锚点从 DOM 消失或整体移出视口才关闭；`CyContextMenu.vue:109-120`），并让**两个调用点都传锚点**（消息列表 `CyMessageList.vue:707`、会话列表 `CyConversationList.vue:267`，锚点源 `:61-69`）⇒ 实际路径下已无"滚动即关"；`props.anchor` 缺省时保留旧语义（`CyContextMenu.vue:113`）。单测两条并置为证：`cy-context-menu.spec.ts:224`（跟随锚点）/`:265`（无锚点→滚动即关）。**上句原文按历史快照保留，不回改。**
 >   会话菜单项 = 重命名 / 删除（PRD §6.3「右键菜单至少支持」的清单；置顶/归档/分组是 P1 且 store 里 0 实现，故不进菜单）。
 >   消息菜单项 = 复制 + 重新发送（用户消息）或 重新生成（助手回复），与会话操作行同一套可用性判据。
 >   **关于原措辞「消息的右键 Edit 菜单」**：本仓库文档对它有两种读法（评审记为"标准 Edit 菜单"／Main 原生
@@ -535,8 +556,14 @@ P0 操作：
 >   `cy-tool-card.spec.ts`（来源名非 sourceId、提醒文案与顺序、缺尺寸不显示 undefined）、
 >   `electron-tools.spec.ts`（真实 capture 流程断言预览显示「屏幕 1」且提醒含"上传/后端/其它窗口"）。
 >   两处变异验证：预览的 sourceName 置空 → 单测红；删掉提醒段落 → 单测与集成用例同时红。
+> - **§10 权限窗的打开机制：2026-09-15 就地更正本文件 2026-08-20 注记里的一处口径错。** 该注记写「`v-if="toolStore.waitingForApproval"` 显示当前等待记录（tool-service `awaiting_permission` 队列 FIFO 串行弹窗，一次一个）」——**`v-if` 自动渲染不成立**：
+>   `CyToolApproval` 的宿主不是"`CyChatView` 尾部"，而是 `CyLiveToolCards`（`CyChatView.vue:15` 引入、位于消息列表与输入区之间；权限窗由该组件的 `ref(false)` + 卡片事件触发：`CyLiveToolCards.vue:10-18,23,27`）；
+>   组件**受 `props.open` 门控**（`:15` `defineProps<{open:boolean}>()`），`v-if` 条件实为 `props.open && 存在 awaiting_permission 记录`（`:16`），且 `waitingForApproval` 归 false 时**兜底关闭**（`:15-18`）⇒ 它是"**点卡片「允许此电脑操作」才出现**"的窗口，不是随队列自动弹出（`CyToolCard.vue:218` 的按钮 → `emit('openApproval')`；同款自述见 `CyToolApproval.vue:4` 头注）。
+>   **「FIFO 串行」本身仍成立**，但成立在 **tool-service 的 awaiting 队列**层面（决定哪条记录成为 current），不在弹窗渲染机制上——本注记原文其余落地要点（四问、对等权重、无倒计时、关闭=拒绝、Diff、截图三步）**保留不改**。
 > - **§8.3「拖入聊天区」：已于 2026-09-13 实现**（落区由 composer 上移到聊天区根 `.cy-chat`，覆盖式投放区随之覆盖整个聊天区域，含消息列与工具实时区）。原实现只有输入条收拖拽，**往消息列表里拖没有任何反馈**。附件状态机未变：松开只创建待发送条目，不自动上传、不自动发送（§15 验收项）。判别用例：`tests/unit/cy-chat-view-drop.spec.ts`（4 条，接线与嵌套 enter/leave 配平）+ `tests/integration/chat-drop-zone.spec.ts`（几何：投放区矩形必须盖住消息列与输入区）。两处变异验证：去掉根上的 `dragenter` 绑定 → 集成用例红；把投放区限高 120px → 红于「没有盖住消息列」。
 > - **§7.4「表格在窄窗口内横向滚动」：已于 2026-09-13 实现**（`CyMarkdown.vue` 的表格改为自身横向滚动容器）。原实现下宽表的表盒直接超出消息列、再被 `.cy-messages` 的 `overflow-x: hidden` 永久裁掉：真机实测 24 列表格的右边缘超出消息列 **278px**、`scrollLeft` 恒 0（即右侧列看不见也够不到）。判别用例为集成层 `tests/integration/markdown-table-scroll.spec.ts`（真实 Chromium 几何，非 CSS 文本断言）。
 > - **§15「窄窗口下 Live2D 和会话栏可折叠」当前不可验收（2026-09-13 已在 §15 清单行内就地改写口径）**：窗口硬最小宽度为 1100，<1100 不可达（§3.1 范围修正在此条上的直接后果）。改写后的口径为「1100 以上**固定布局** + 窄窗保护由 effective-layout 推导；<1100 属已知产品缺口」，并在清单行内显式写明**不得读作"已实现"或"待回归"**。
 >
+> - **§15「沙盒、黑名单、审批历史和已授权范围可查看及撤销」：本阶段不可满足（2026-09-15 补记，与 §12.5 落地注记同一事实）。** 实测：**已授权范围**可查看且可撤销（`CySecurityPane` 直读 `tool:grants` + `tool:grant-revoke`）、**审批历史**已落地（`tool:history` 只读，`HISTORY_MAX=200`）；而**沙盒目录**与**域名黑名单**既无持久化面也无管理 UI——`src` 全域 grep `sandboxDirectories|domainBlacklist|SecurityPolicy` **0 命中**，`isDomainAllowed` 只有定义与单测、生产零调用（`main/tools/tool-policy.ts:113`）；路径黑名单是内置常量 `PATH_BLACKLIST_DEFAULTS`（`:11-26`），按 D6B-14 **不进 settings.json、无管理 UI**。⇒ 该项按**部分满足**读，不得当作"沙盒/黑名单可管理"。
+> - **§12.6「客户端版本」：未落地（2026-09-15 补记）。** `src/renderer` 全域 grep `客户端版本|appVersion|clientVersion` **0 命中**；诊断页当前只显示**协议版本 + 后端版本**（`CyDiagnosticsPane.vue:267`）。
 > 逐条处置建议（做／砍／改写规格）见 doc 16 的规格漂移台账；**在做与砍确定之前，以上条目不得当作已交付能力**。

@@ -147,6 +147,12 @@ Agent 可以选择工具，但不能在调用时自由改变该工具的 Runtime
 
 传输层可以使用后端现有字段；以下是前端标准语义。Wire 示例使用 `snake_case`，进入前端领域层后由 `BackendAdapter` 转为 `camelCase`。
 
+> **⚠️ 与现行 v2 wire 不符（2026-09-14 复核，实施前必读）：** 上句描述的"wire 是 `snake_case`、由 BackendAdapter 转 camelCase"**不成立**——现行 v2 `tool.request`／`tool.started`／`tool.completed` 帧在 wire 层**就是 camelCase**，
+> raw schema 为 `.strict()`（未知键**整帧拒**），并不存在一个把 snake_case 转 camelCase 的适配步骤。
+> 字段对照（代码为准）：`call_id`→`callId`、`conversation_id`→`conversationId`、`parent_message_id`→（无此字段）、`tool`→`toolName`、`tool_version`→`toolVersion`、`approval_authority`→`approvalAuthority`、`duration_ms`→`durationMs`；
+> 示例里缺的**必填** `sourceCallId`（LLM `tool_call_id`，前端统一领域键）与 `paramHash` 同样必填。实测 `risk_level`／`expires_at` 在 `apps/desktop/src` **0 命中**。
+> 权威来源：[doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) §17 与 `apps/desktop/src/main/transport/protocol-v2/raw-schemas.ts`／`raw-types.ts`（`RawToolRequest`）。下文示例原文保留作语义草案。
+
 ```json
 {
   "type": "tool.call",

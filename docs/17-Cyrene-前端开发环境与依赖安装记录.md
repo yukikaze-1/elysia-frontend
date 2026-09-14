@@ -85,7 +85,9 @@ pnpm check:node
 pnpm dev
 ```
 
-Electron 所需系统库因发行版而异，不在仓库文档中复制一份易失效的 `apt` 清单。CI 的 [integration job](../.github/workflows/ci.yml) 使用 Playwright `install --with-deps chromium` 和 `xvfb-run`，是当前 Linux 无头验证参考。
+Electron 所需系统库因发行版而异，不在仓库文档中复制一份易失效的 `apt` 清单。CI 的 [integration job](../.github/workflows/ci.yml) 使用 Playwright `install chromium`（**不带 `--with-deps`**）和 `xvfb-run`，是当前 Linux 无头验证参考。
+
+> **更新（2026-09-12，`124656e`）：** 原文写作"Playwright `install --with-deps chromium`"，该形态已被取代——全部 job 迁到自建 runner 后，CI 改为 `pnpm --filter @cyrene/desktop exec playwright install chromium`，**不带 `--with-deps`**（`.github/workflows/ci.yml` 的 integration 与 artifact smoke 两处；apt 需 root，16 个系统库与 `xvfb-run` 已在 runner 上一次性装好，见该文件头迁移说明）。⇒ **在其他机器上要重建等价环境，系统库必须自己先装**——`--with-deps` 那一步已不再由 CI 代劳。
 
 ## 3.1 Live2D 模型装配（首次启动后必做）
 
@@ -120,6 +122,8 @@ pnpm live2d:install --model-dir <模型目录> --id <slug> --display-name "<显�
 > **路径口径以本表为准**：[doc 05 §4](05-Cyrene-Live2D前端接入设计-v0.2.md) 里写的 `assets/live2d/<model-id>/` 是早期设计的目录示意，**实际运行时读取的是上表的 userData `models/`**，且模型目录必须由本脚本生成（含 `manifest.json` + `integrity.json`），手工摆放的目录会因缺 manifest 或完整性清单不匹配而被注册表跳过或在列表中标记 `available=false`。
 
 授权红线：只装配来源与授权明确的模型。`EXT-01` 未解除前，不得把任何模型纳入仓库或对外分发。
+
+> **已被 2026-09-12 范围解除取代（`EXT-01`，见 [doc 16 §4.1](16-Cyrene-前端实施任务清单与进度跟踪.md) 与[个人使用范围与阻塞解除决策记录](review/2026-09-12-EXT-01-个人使用范围与阻塞解除-决策记录.md)）：** 本项目仅供本人自用、SDK 为个人授权、所谓发布即本人自己安装 ⇒ `EXT-01` 的约束面（对外分发的产物）**没有实例**，阻塞解除，上句的"未解除前"不再作为当前阻塞。**注意这不做"已合规"结论**：doc 16 记录的实测事实（无 EULA 正文、无逐模型承诺、`lil` 来源仍是本地临时目录、vendor 三树无许可门禁）**全部继续成立**；一旦出现对外分发或多人使用，本条连同 6 条解除条件原样恢复。上句原文保留。
 
 ## 4. Real 与 Mock 启动
 

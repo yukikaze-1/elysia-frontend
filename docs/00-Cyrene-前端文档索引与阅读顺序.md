@@ -18,7 +18,7 @@
 | 理解总体架构和安全边界 | [doc 01](01-Cyrene-Electron-前端总体架构设计-v0.2.md)、[doc 07](07-Cyrene-Electron前端安全设计-v0.2.md) |
 | 修改后端协议或领域契约 | [doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) |
 | 理解用户身份、多角色与自定义角色前端设计 | [多角色与自定义角色前端架构](Cyrene-多角色与自定义角色前端架构设计.md) |
-| 理解任务系统和任务中心 | [任务系统总体架构](2026-08-29-task-system-overall-architecture-design.md)、[任务中心前端架构](2026-08-29-task-center-frontend-architecture-design.md) |
+| 理解任务系统和任务中心（**该范围当前暂缓/排除，状态以 doc 16 为准**） | [任务系统总体架构](2026-08-29-task-system-overall-architecture-design.md)、[任务中心前端架构](2026-08-29-task-center-frontend-architecture-design.md) |
 | 判断阶段能否进入或完成 | [doc 12](12-Cyrene-前端开发启动清单与分阶段实施计划-v0.1.md) |
 | 查技术任务定义 | [doc 10](10-Cyrene-前端实施路线与任务拆分-v0.2.md) |
 | 查历史决策或真机证据 | [review 索引](review/README.md) |
@@ -84,10 +84,12 @@
 ### 5.1 专项清单
 
 - [多角色、用户身份与自定义角色前端架构设计](Cyrene-多角色与自定义角色前端架构设计.md)：Main/Preload/Renderer 对后端角色 Prompt 系统的对接边界，覆盖“我的档案”、角色目录与编辑、会话选角、角色公开状态、Live2D/TTS 身份联动、缓存迁移和分批联调；`character-contract-v1` 已与后端 §11～§12 冻结对齐，后端权威设计位于 `elysia-agent/docs/2026-08-30-character-prompt-customization-backend-architecture-design.md`。
-- [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md)：前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化与分批实施；在前后端仓库保持镜像同步。
-- [任务中心前端架构设计](2026-08-29-task-center-frontend-architecture-design.md)：Main/Preload/Renderer 分层、前端契约、Store、页面、重连和 Desktop 权限关联；后端专属设计位于 `elysia-agent/docs/2026-08-29-task-system-backend-architecture-design.md`。
-- [UI 精修整改清单](2026-08-29-UI精修整改清单.md)：阶段 8 前 UI/布局/风格精修批次的规则与限制（布局硬值、虚拟列表红线、滚动条、token、无障碍、验证清单）。
-- [UI 真机走查问题记录](2026-08-29-UI真机走查问题记录.md)：真机走查发现的 5 个问题 + 3 条附注的定位记录（滚动条抖动、窗口边缘空药丸、表情按钮位置、输入区按钮层级、标题栏装饰点），只定位不修复，修复归 UI 精修批次。
+- [任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md)：前后端共同领域模型、Runtime 边界、公共契约、状态机、持久化与分批实施；在前后端仓库保持镜像同步。**（目标设计；当前暂缓/排除——见下方注记）**
+- [任务中心前端架构设计](2026-08-29-task-center-frontend-architecture-design.md)：Main/Preload/Renderer 分层、前端契约、Store、页面、重连和 Desktop 权限关联；后端专属设计位于 `elysia-agent/docs/2026-08-29-task-system-backend-architecture-design.md`。**（目标设计；当前暂缓/排除——见下方注记）**
+- [UI 精修整改清单](2026-08-29-UI精修整改清单.md)：阶段 8 前 UI/布局/风格精修批次的规则与限制（布局硬值、虚拟列表红线、滚动条、token、无障碍、验证清单）。**⚠️ 该批次文档是 2026-08-29 快照：文中的布局硬值、DOM 契约类名与断点部分已被后续批次取代，见该文就地取代注记；引用前先与代码对拍。**
+- [UI 真机走查问题记录](2026-08-29-UI真机走查问题记录.md)：真机走查发现的 12 条问题 + 3 条附注的定位记录（滚动条抖动、窗口边缘空药丸、表情按钮位置、输入区按钮层级、标题栏装饰点、聊天头部信息架构、hover 字形位移、Mock 媒体 500、设置页阶段标签泄漏、导航栏布局、Cy 徽标、任务中心占位），**其中多条已修复并提交**（文末执行状态块）；文中问题 2/5/10 与断点相关处的机制/前提已被后续批次取代，见该文就地注记。**覆盖范围包括 12 条问题（正文含问题 1～7、9～12 共 11 节，第 8 条只在汇总表、正文缺节）与附注 A/B/C。**
+
+> **任务系统两份的暂缓标记（2026-09-14 复核）：** 上面的[任务系统与任务中心总体架构设计](2026-08-29-task-system-overall-architecture-design.md)（`:87`）与[任务中心前端架构设计](2026-08-29-task-center-frontend-architecture-design.md)（`:88`）都是**目标设计稿，当前暂缓/排除**——[doc 16](16-Cyrene-前端实施任务清单与进度跟踪.md) 明确记「任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态」，阶段 8 暂缓决策（`review/2026-08-29-阶段8暂缓决策记录.md`）仍然有效。它们的 TSA-01「保留并完善完整任务中心」是**方向**（即不得按 UI 走查问题 12「删除入口」执行），**不构成"已开工/已实现"**；当前状态一律以 doc 16 为准。
 
 新增、删除或重命名这些目录中的文档后运行：
 

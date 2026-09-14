@@ -280,6 +280,10 @@ interface DesktopApi {
 }
 ```
 
+> **实现口径注记（2026-09-14 复核，F-7）：** 上方 `DesktopApi` 是 v0.2 设计草案，**照它实现会走错**——`selectFiles`/`requestToolExecution`/`respondPermission`/`cancelTool`/`listSecurityPolicy`/`updateSecurityPolicy`/`listPermissionHistory`/`revokePermissionGrant`/`readSettings`/`updateSettings`/`onDesktopEvent` 在 `src` **0 命中**；落地面是 `src/preload/desktop-api.ts:718-831`（`export type DesktopApi = typeof desktopApi` 见 `:833`）。
+
+> 对应关系：`respondPermission`→`toolDecide`（`{callId, decision:'allow_once'|'deny'}`）、`cancelTool`→`toolCancel`、`listPermissionHistory`→`toolListHistory`、`revokePermissionGrant`→`toolRevokeGrant`、`onDesktopEvent`→`onToolEvent`/`onChatEvent`；设置面由上方 `settingsLoad`/`settingsSave` 覆盖（`shared/contracts/ipc.ts:53-54` 只有 `settings:load`/`settings:save`，故 `readSettings`/`updateSettings` 是重复且未落地）；`selectFiles`/`requestToolExecution`/`listSecurityPolicy`/`updateSecurityPolicy` **无对应实现**（Main 的原生选择器只服务执行期工具与目录授权，见 `src/main/tools/tool-executors.ts:25`、`src/main/index.ts:426`）。原文保留以存设计口径。
+
 Renderer 不获得用于绕过工具层的 `readFile(path)` 或 `exec(command)` 接口。
 
 模型服务只定义 LLM、STT、TTS 三类 Profile。Profile 的实际配置来源可以是现有后端、Local Worker 或受控本机模型适配层；前端通过 Adapter 呈现统一的查看、测试和切换体验。输入法转写不创建第四类模型服务，而是在独立设置中选择一个兼容 STT Profile。模型密钥只显示配置状态，不向 Renderer 返回明文。
@@ -401,7 +405,9 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 - 大文件读取、哈希和上传不在 Renderer 主线程执行；
 - 单个工具或 Live2D 异常不得造成整个窗口崩溃。
 
-> **性能收敛注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 补两条性能面落地——① 历史查看器虚拟化：`CyHistoryViewer` 的 `groupedItems` 扁平化为虚拟行 `rows`，复用泛型化 `virtual-window` 数学内核（`buildPrefix<T>`/`captureAnchor<T>`/`restoreScrollTop<T>`，注入 estimate/keyFor/isAnchorable；`estimateHeight` 泛型签名 + `Message` 重载并存，消息列表调用处零改动），可视窗口 + overscan 渲染，500 项历史资源 DOM 节点有界；② 渲染缓存：`renderMarkdown` 模块级 `Map<string,string>`（source→HTML）+ `clearMarkdownCache()` 挂 `resetConversation`，完成态 segment 免重复 `marked.parse`+`DOMPurify.sanitize`。性能测量由集成 suite（`perf-gate.spec.ts`）常驻门禁——历史查看器 DOM 节点有界（硬失败）+ JS 堆上限（告警非硬失败，`app.commandLine.appendSwitch('enable-precise-memory-info')` 精确读取）+ 100 分段全量呈现 + 长会话行有界 + Live2D 折叠 rAF 停复核。**三态=已开发、未联调**（真实 Windows Electron 联调为批次后）。
+> **性能收敛注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 补两条性能面落地——① 历史查看器虚拟化：`CyHistoryViewer` 的 `groupedItems` 扁平化为虚拟行 `rows`，复用泛型化 `virtual-window` 数学内核（`buildPrefix<T>`/`captureAnchor<T>`/`restoreScrollTop<T>`，注入 estimate/keyFor/isAnchorable；`estimateHeight` 泛型签名 + `Message` 重载并存，消息列表调用处零改动），可视窗口 + overscan 渲染，500 项历史资源 DOM 节点有界；② 渲染缓存：`renderMarkdown` 模块级 `Map<string,string>`（source→HTML）+ `clearMarkdownCache()` 挂 `resetConversation`**（该挂接点已被取代，见下方更正注记）**，完成态 segment 免重复 `marked.parse`+`DOMPurify.sanitize`。性能测量由集成 suite（`perf-gate.spec.ts`）常驻门禁——历史查看器 DOM 节点有界（硬失败）+ JS 堆上限（告警非硬失败，`app.commandLine.appendSwitch('enable-precise-memory-info')` 精确读取）+ 100 分段全量呈现 + 长会话行有界 + Live2D 折叠 rAF 停复核。**三态=已开发、未联调**（真实 Windows Electron 联调为批次后）。
+
+> **缓存清空挂接点更正（2026-09-14 复核，F-8）：** 上注「`clearMarkdownCache()` 挂 `resetConversation`」**已被取代**（`98efd5d`，2026-09-11）：现由**渲染层在模块加载时自行订阅会话边界事件**清空——`renderer/src/utils/markdown.ts:148-152`；`renderer/src/stores/message.store.ts:604-608` 明写此前“此处直接调用 `clearMarkdownCache()`”使 store 反向依赖渲染层，该依赖系**有意反转**（功能层不再 import 渲染层）。「会话切换必清空渲染缓存」的安全语义不变。
 
 ## 11. 必须与后端核对的接口点
 

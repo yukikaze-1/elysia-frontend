@@ -71,7 +71,7 @@
 - **F-01~F-05**（工具注册表/Runtime/事件/幂等/P0 清单）——契约已确认；`desktop.command.run` 确认不注册；
 - **G-04**（情绪→状态映射）——`expression`/`mood` 源字段已确认，映射表仍需设计产出。
 
-**仍未提供（维持 `[ ]`，需外部输入）：** B-07（数据保留策略；**B-01 真实测试环境已到位**，2026-08-14 联调通过后关闭）、E-09（Local Worker 接口，P2）、**F-08 已于 2026-08-21 批次 C 关闭**（命令模板空态确认，受控命令不进入 Demo——`desktop.command.run` 全阶段不注册；F-06/F-07/F-09/F-10 已于 2026-08-20 批次 B 预检拍板关闭）、G-01~G-03/G-05/G-06（Live2D SDK 许可与模型资源）、H 组全部（平台/发布/演示等产品决策）。
+**仍未提供（维持 `[ ]`，需外部输入）：** B-07（数据保留策略；**B-01 真实测试环境已到位**，2026-08-14 联调通过后关闭）、E-09（Local Worker 接口，P2）、**F-08 已于 2026-08-21 批次 C 关闭**（命令模板空态确认，受控命令不进入 Demo——`desktop.command.run` 全阶段不注册；F-06/F-07/F-09/F-10 已于 2026-08-20 批次 B 预检拍板关闭）、G-01~G-03/G-05/G-06（Live2D SDK 许可与模型资源）、**`S8-H` 组**（平台/发布/演示等产品决策；**2026-09-14 更正，C3：原文写「H 组全部」，但本表 `S8-H-09` 已于 2026-08-21 确认并标 `[x]`，且引用必须带 `S8-` 前缀**——否则会与同期评审的代码缺陷编号 `H-01`～`H-12` 混淆，见 §4.8 与 doc 16 §4「编号消歧」）。
 
 ### 4.1 工程、仓库与协作方式
 
@@ -153,7 +153,7 @@
 | [x] | F-07 | P1 | 授权级别：仅一次、目录范围、命令模板、有效期及撤销 | **2026-08-20 预检拍板（F-07）**：仅一次/拒绝最小闭环——select=safe/automatic、read=medium 每次确认+selected-set 豁免、write/capture=high 强确认；`PermissionDecision` 只产出 allow_once/deny；allow_scoped + 设置页授权管理/命令模板空态归批次 C | 6 |
 | [x] | F-08 | P1 | 受控命令模板是否进入 Demo；若进入，允许命令与参数范围 | **2026-08-21 批次 C 关闭**：命令模板空态确认——`desktop.command.run` 全阶段不注册，**受控命令不进入 Demo**；设置页命令模板区为空态文案（「未启用受控命令执行。桌面工具仅包括文件选择/读取/写入与屏幕捕获，不支持任意命令执行。」），无列表无注册入口 | 6 |
 | [x] | F-09 | P1 | 文件写入 Diff、覆盖、写前哈希、冲突和回滚要求 | **2026-08-20 预检拍板（F-09）**：引成熟 diff 库（jsdiff `diff@^9.0.0`）行级 `diffLines`（本批不做词级标注）；写前哈希冲突 → `FILE_CONFLICT`；原子替换 + 格式保留（BOM/换行/末尾换行）；批次 B 已落地 | 6 |
-| [ ] | F-10 | P1 | 截图在 Windows、X11、Wayland 的选择与授权要求 | 目标平台各有可执行方案 | 6 |
+| [x] | F-10 | P1 | 截图在 Windows、X11、Wayland 的选择与授权要求 | **2026-08-20 预检拍板（F-10）**：capture 走「选择 → 预览 → 确认上传」+ high 风险强确认；**Wayland 会话在授权前即拒**（`CAPTURE_UNAVAILABLE`——`apps/desktop/src/main/tools/tool-service.ts:532` 决策链 6 号门禁 + `tool-executors.ts:99` 执行器独立复核）；平台范围由注册表声明 `supportedPlatforms: ['windows','linux']`（`tool-registry.ts:56`）；批次 B 已落地 | 6 |
 | [ ] | F-11 | P2 | 审批历史和工具日志的保留时间、容量、清理与导出策略 | 设置页行为和存储上限明确 | 7 |
 
 ### 4.7 Live2D 资源与表现规则
@@ -181,7 +181,7 @@
 | [ ] | S8-H-06 | P1 | 测试账号、测试会话、测试文件和可公开截图数据 | E2E 不依赖个人敏感数据 | 2 |
 | [ ] | S8-H-07 | P1 | Demo 演示脚本、P0/P1 范围和成功标准最终确认 | 产品、开发、测试使用同一清单 | 0 |
 | [ ] | S8-H-08 | P2 | 性能基线机器和允许的 CPU、内存、GPU 范围 | 阶段 7 可以形成可比较结果 | 7 |
-| [x] | S8-H-09 | P2 | 前端日志目录、轮转、脱敏、开发者模式开放规则 | **已确认**：默认关 + 设置页二次确认开关（会话态，重启恢复禁用；远程调试恒关）——2026-08-21 用户拍板，引语归属 doc 16 §2.8（166） | 7 |
+| [x] | S8-H-09 | P2 | 前端日志目录、轮转、脱敏、开发者模式开放规则 | **已确认**：默认关 + 设置页二次确认开关（会话态，重启恢复禁用；远程调试恒关）——2026-08-21 用户拍板，引语归属 `docs/review/2026-08-22-阶段7批次A-决策记录.md` D7A-05（**2026-09-14 更正，C8：原文写「引语归属 doc 16 §2.8（166）」为失效引用——doc 16 只有 §1～§7（§2 = 阶段状态表），无 §2.8，且 `:166` 已因 doc 16 重构指向无关内容**） | 7 |
 
 ## 5. 推荐的资料交付包
 
@@ -345,7 +345,7 @@ cyrene-integration-input/
 
 **进入条件：** 阶段 2 通过；D-01～D-07 可用或已有明确 Mock 与联调日期。
 
-> **阶段 3 状态（2026-08-15）：** 四组（G1 布局响应式 / G2 历史聊天体验 / G3 附件多媒体 / G4 历史查看器+表情+无障碍）全部落地并全量验证（944 单测（83 files）+ 42 集成（11 files）+ typecheck/lint/build + check:contract（WS 13/13 + REST 段 8/8）全绿），**阶段 3 已真实联调通过**（2026-08-15，真实 Windows Electron 历史查看器 50+50 短回归：普通点击加载第二页 100 条顺序/去重/来源跳转正常），四组与 2026-08-15 三批整改（联调前 / 复验 / 第二轮布局）全部由「已开发、未联调」升「已真实联调」；阶段 2 主链保持「已真实联调」（B-01 封口）。任务勾选与验收口径以活清单 doc 16 §6 为准。
+> **阶段 3 状态（2026-08-15）：** 四组（G1 布局响应式 / G2 历史聊天体验 / G3 附件多媒体 / G4 历史查看器+表情+无障碍）全部落地并全量验证（typecheck／lint／build／check:contract 全绿；**测试数字不在本文件复制，见 doc 16 §3**），**阶段 3 已真实联调通过**（2026-08-15，真实 Windows Electron 历史查看器 50+50 短回归：普通点击加载第二页 100 条顺序/去重/来源跳转正常），四组与 2026-08-15 三批整改（联调前 / 复验 / 第二轮布局）全部由「已开发、未联调」升「已真实联调」；阶段 2 主链保持「已真实联调」（B-01 封口）。任务勾选与验收口径以活清单 doc 16 §6 为准。
 
 主要任务：
 
@@ -420,15 +420,17 @@ cyrene-integration-input/
 - [ ] GPU/资源异常后聊天保持可用；
 - [ ] thinking、speaking 等状态与真实业务事件一致。
 
-> **状态注记（2026-08-17，阶段 5 批次 A 已落地，已开发、未联调）：** 批次 A（Live2D 地基）已落地并全量验证（1400 单测（106 files）+ 83 集成（16 files）+ typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿）——SDK vendoring（Cubism Web SDK 5-r.5，CSP 不放宽）+ 模型注册表/完整性 + cyrene:// 供给 + 装配 CLI + Adapter/CubismGL + Controller/store + settings `live2d` 契约 + Panel 最小面 + Electron 集成；「模型可加载/切换（两个已装配模型）」「切换失败保留原模型」「隐藏暂停渲染」「GPU/资源异常聊天可用（静态头像回退）」批次 A 已覆盖，「非白名单动作/资源路径被拒（协议白名单拒绝）」与「状态与真实业务一致」的完整实现归批次 B/C；真实 Windows Electron（REAL）联调归批次 C/D。详见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
+> **状态注记（2026-08-17，阶段 5 批次 A 已落地，已开发、未联调）：** 批次 A（Live2D 地基）已落地并全量验证（typecheck／lint／build／check:contract 全绿；**测试数字不在本文件复制，见 doc 16 §3**）——SDK vendoring（Cubism Web SDK 5-r.5，CSP 不放宽）+ 模型注册表/完整性 + cyrene:// 供给 + 装配 CLI + Adapter/CubismGL + Controller/store + settings `live2d` 契约 + Panel 最小面 + Electron 集成；「模型可加载/切换（两个已装配模型）」「切换失败保留原模型」「隐藏暂停渲染」「GPU/资源异常聊天可用（静态头像回退）」批次 A 已覆盖，「非白名单动作/资源路径被拒（协议白名单拒绝）」与「状态与真实业务一致」的完整实现归批次 B/C；真实 Windows Electron（REAL）联调归批次 C/D。详见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`。
 
 ### 9.7 阶段 6：统一工具、权限与 Desktop P0 能力
 
 **进入条件：** 阶段 1 和阶段 2 通过；F-01～F-10 已确认（**现状：F-06/F-07/F-09/F-10 已于 2026-08-20 批次 B 预检拍板关闭；F-08（受控命令模板）已于 2026-08-21 批次 C 关闭**——命令模板空态确认，受控命令不进入 Demo）。
 
-> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A/B 已落地）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；后端 B-6-01~09 已落地并验证，本地 HEAD `03a6e882`，尚未 push）。实施要求：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**F-6 批次 B（Main 工具注册表/服务/四执行器/状态发送/审计 + Preload IPC 面 + toolStore/卡片/权限窗/聊天接线/Live2D `waiting_permission` + mock 改接 + 集成测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**——F-06/F-07/F-09/F-10 预检拍板落地（§4.6 已勾选，仅 F-08 待批次 C），见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`；**批次 C（真实 Windows Electron 联调 + allow_scoped/授权管理页/命令模板空态 + `GET /api/tools/calls/{callId}` + action 移除评估 + 跨页/跨会话配对复核）为批次 B 后置**，真实联调通过后三态升「已真实联调」。
+> **决策注记（2026-08-19 方案 B 定案；2026-08-20 后端已落地 + 前端批次 A/B 已落地）：** 工具双轨统筹决策见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md`（后端镜像在 elysia-agent；后端 B-6-01~09 已落地并验证）。实施要求：① raw/领域契约四件套（Server→Client `tool.request/tool.started/tool.completed`、Client→Server `tool.status`，`action` 作旧后端过渡兼容帧）；② `sourceCallId`（LLM `tool_call_id`）为统一权威键，`tool.request.callId`（桥 `call_*`）仅执行协议关联；③ 实时 `toolStore` 易失、归档 `assistant.tool_calls + role=tool` 为历史/回放持久权威；④ Backend Runtime 只展示、Desktop 本地状态机裁决终态。**F-6 批次 A（raw/领域四件套 + `ToolCallRecord` + 归档配对 + mock/测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**，见 `docs/review/2026-08-20-阶段6批次A-决策记录.md`；**F-6 批次 B（Main 工具注册表/服务/四执行器/状态发送/审计 + Preload IPC 面 + toolStore/卡片/权限窗/聊天接线/Live2D `waiting_permission` + mock 改接 + 集成测试）已于 2026-08-20 落地并全量验证（三态=已开发、未联调）**——F-06/F-07/F-09/F-10 预检拍板落地（§4.6 已勾选，仅 F-08 待批次 C），见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`；**批次 C（真实 Windows Electron 联调 + allow_scoped/授权管理页/命令模板空态 + `GET /api/tools/calls/{callId}` + action 移除评估 + 跨页/跨会话配对复核）为批次 B 后置**，真实联调通过后三态升「已真实联调」。
 
 > **批次 C 状态注记（2026-08-21）**：**F-6 批次 C（allow_scoped 目录授权 + 设置页「安全与权限」子页（授权管理/审批历史/命令模板空态）+ settings.tools grants 子树 + L-1~L-8 收口 + GET /api/tools/calls/{callId} real/mock）已于 2026-08-21 落地并全量验证（三态=已开发、未联调）**——**F-08 关闭**（命令模板空态确认，受控命令不进入 Demo）；决策与门禁见 `docs/review/2026-08-20-阶段6批次C-决策记录.md`；**真实 Windows Electron 联调由开发者批次后执行**，通过后三态升「已真实联调」。
+
+> **2026-09-14 更正（C10，见 §9.7 决策注记）：** 该注记原文写「后端镜像在 elysia-agent…本地 HEAD `03a6e882`，尚未 push」——**属 2026-08-19 的会话态/机器态**，本仓无法核实，按 CLAUDE.md「不得把会话断言写入仓库文档」删除，**不以新读数替换**。当前后端功能基线见 doc 16 §3。
 
 主要任务：
 
@@ -481,9 +483,9 @@ cyrene-integration-input/
 - [ ] 崩溃或断线不会破坏已确认消息和用户文件；
 - [ ] 日志和诊断导出通过敏感信息扫描。
 
-> **状态注记（2026-08-26，阶段 7 批次 B 稳定性收敛已落地，真实联调通过，已真实联调）：** 批次 B（稳定性收敛）已落地并全量验证——**门禁：159 单测 files / 1995 passed + 7 expected-fail；21 集成 files / 131 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0**。范围 = 7B 四面（A Renderer 崩溃恢复 / B 网络中断回归+断线草稿自动保存 / C 缓存损坏统一层 // 凭据 fail-closed 不拉平 / D GPU 上下文恢复），对应此处任务 5「Renderer 崩溃、网络中断、缓存损坏和 GPU 上下文恢复」与验收「崩溃或断线不会破坏已确认消息和用户文件」；「Blocker/Critical 为 0」「安全发布清单通过」的完整收口归 7D 全流程；「200 条混合消息滚动」「100 个多分段回复」「性能/内存」归 7C。**三态 = 已真实联调**（2026-08-26 真机验收，见 `docs/review/2026-08-26-阶段7批次B-真实联调验收.md`）；决策见 `docs/review/2026-08-25-阶段7批次B-决策记录.md`。
+> **状态注记（2026-08-26，阶段 7 批次 B 稳定性收敛已落地，真实联调通过，已真实联调）：** 批次 B（稳定性收敛）已落地并全量验证——**门禁：typecheck／lint／build／check:contract／verify:sensitive 全绿**（**测试数字不在本文件复制，见 doc 16 §3**）。范围 = 7B 四面（A Renderer 崩溃恢复 / B 网络中断回归+断线草稿自动保存 / C 缓存损坏统一层 // 凭据 fail-closed 不拉平 / D GPU 上下文恢复），对应此处任务 5「Renderer 崩溃、网络中断、缓存损坏和 GPU 上下文恢复」与验收「崩溃或断线不会破坏已确认消息和用户文件」；「Blocker/Critical 为 0」「安全发布清单通过」的完整收口归 7D 全流程；「200 条混合消息滚动」「100 个多分段回复」「性能/内存」归 7C。**三态 = 已真实联调**（2026-08-26 真机验收，见 `docs/review/2026-08-26-阶段7批次B-真实联调验收.md`）；决策见 `docs/review/2026-08-25-阶段7批次B-决策记录.md`。
 
-> **状态注记（2026-08-28，阶段 7 批次 D 收口收敛已落地，真机联调通过，已真实联调）：** 批次 D（收口收敛）已落地并全量验证——**门禁：161 单测 files / 2016 passed + 7 expected-fail；22 集成 files / 138 passed + typecheck/lint/build 全绿 + check:contract（WS 35/35 + REST 16/16 + 5 未纳 warn）+ verify:sensitive exit 0（605/368/1671/8）**。范围 = 五面 A~E：A 临时附件/录音/缓存上限确认（`attachment.store.remove()` 补清引用 + 无落盘/无 Blob URL + 缓存上限已落地确认（草稿 100KB×50 + 离线 20 会话））；B F-11 审批历史口径（读面 7 天 / 存面 30 天，不拉平）；C 观察项重开（视图感知暂停 + Live2D 数值读数接入诊断页——闭合 D7A-06）；D 阶段 7 收口（Blocker/Critical 为 0 + 安全发布清单通过）；E 文档同步。**三态 = 已真实联调**（2026-08-28 真机验收通过，见 `docs/review/2026-08-28-阶段7批次D-真实联调验收.md`；阶段 7 批次 A/B/C 保持「已真实联调」——7A 2026-08-22 / 7B 2026-08-26 / 7C 2026-08-27 真机验收通过）；决策见 `docs/review/2026-08-27-阶段7批次D-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-27-phase7-batchd-convergence-*`。
+> **状态注记（2026-08-28，阶段 7 批次 D 收口收敛已落地，真机联调通过，已真实联调）：** 批次 D（收口收敛）已落地并全量验证——**门禁：typecheck／lint／build／check:contract／verify:sensitive 全绿**（**测试数字不在本文件复制，见 doc 16 §3**）。范围 = 五面 A~E：A 临时附件/录音/缓存上限确认（`attachment.store.remove()` 补清引用 + 无落盘/无 Blob URL + 缓存上限已落地确认（草稿 100KB×50 + 离线 20 会话））；B F-11 审批历史口径（读面 7 天 / 存面 30 天，不拉平）；C 观察项重开（视图感知暂停 + Live2D 数值读数接入诊断页——闭合 D7A-06）；D 阶段 7 收口（Blocker/Critical 为 0 + 安全发布清单通过）；E 文档同步。**三态 = 已真实联调**（2026-08-28 真机验收通过，见 `docs/review/2026-08-28-阶段7批次D-真实联调验收.md`；阶段 7 批次 A/B/C 保持「已真实联调」——7A 2026-08-22 / 7B 2026-08-26 / 7C 2026-08-27 真机验收通过）；决策见 `docs/review/2026-08-27-阶段7批次D-决策记录.md`；spec/plan 见 `docs/superpowers/specs|plans/2026-08-27-phase7-batchd-convergence-*`。
 
 ### 9.9 阶段 8：打包、跨平台与 Demo 验收
 

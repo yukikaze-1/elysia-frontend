@@ -183,12 +183,15 @@ Demo 选择一种主安装格式，并可附加一种便携格式。需要验证
 
 ```text
 config/        非敏感版本化设置
-cache/         可清除会话缓存
+app-cache/     可清除会话缓存
 logs/          轮转脱敏日志
 audit/         脱敏工具记录
 temp/          上传和截图临时文件
 models/        经验证的模型资源（如允许扩展）
+sandbox/       隔离渲染进程（Electron sandbox）用的进程数据目录
 ```
+
+> **更正（2026-09-14 评审报告 §16.2 G-2）：** 上块原先写的 `cache/` 已更正为 **`app-cache/`**（缓存目录的线上名带 `app-` 前缀），并补上原先漏列的 **`sandbox/`**。两处依据 `src/main/persistence/user-data-dirs.ts:20` 的 `LEAF_NAMES` 常量（`config`／`app-cache`／`logs`／`audit`／`temp`／`models`／`sandbox`，共 7 项，与该接口的 7 个字段 `config`／`appCache`／`logs`／`audit`／`temp`／`models`／`sandbox` 一一对应）。
 
 卸载策略必须明确：程序卸载是否保留用户数据；清除凭据应通过应用内明确操作或卸载选项完成。
 

@@ -278,7 +278,9 @@ tool          本地工具调用卡片
 - Public Reply；
 - 自定义组件。
 
-后端将一次 AI 回复按句切分并连续流式发送时，前端必须把这些句子视为同一条逻辑 Assistant 回复，而不是多条独立消息。所有分段共享 `responseId/messageId`、头像、时间、模型、心情、消息操作区和 Token 统计；不同分段只保留自己的顺序、通道、内容类型和流式状态。
+后端将一次 AI 回复按句切分并连续流式发送时，前端必须把这些句子视为同一条逻辑 Assistant 回复，而不是多条独立消息。所有分段共享 `responseId/messageId`、头像、时间、模型、心情、消息操作区和 Token 统计；不同分段只保留自己的顺序、通道、内容类型和流式状态。**⚠️ Wire 更正（2026-09-14 复核）：** 上句的"所有分段共享 `responseId/messageId`"是**产品语义**，不是 wire 事实——**分段事件本身不承载 `responseId`／`messageId`**
+（`generation.segment.started`／`generation.delta`／`generation.segment.completed` 只有 `generationId/segmentId/segmentIndex/channel/kind`，`shared/contracts/events.ts:36-66`）；
+这两个 ID 只在父事件 `generation.started`／`generation.completed` 上。前端靠 `generationId` 将分段归并到父回复，再由父事件提供 `responseId`／`messageId`。
 
 ### 7.2 文本输入
 
@@ -322,7 +324,11 @@ tool          本地工具调用卡片
 - 允许两种内容交错到达，但保持服务端提供的全局分段顺序；
 - UI 以全局分段时间线渲染：只合并相邻的同通道分段，不把后到的 Inner Voice 移到回复顶部；
 - 使用同一 `responseId` 将多个句子分段稳定归并为一条逻辑回复；
-- 分段完成不代表整条回复完成，只有 `response.completed` 才结束该回复；
+- 分段完成不代表整条回复完成，只有 `response.completed` 才结束该回复。
+  **⚠️ 事件名更正（2026-09-14 复核）：v2 wire 里没有 `response.completed`——父回复的唯一终态事件是 `generation.completed`**
+  （`shared/contracts/events.ts:68-79` 的 `GenerationCompletedEvent`，注释明写"唯一结束父回复的事件"；`response.completed` 在 `apps/desktop/src` 0 命中，`generation.completed` 47 处命中）。
+  **另注：分段事件不承载 `responseId`／`messageId`**（`generation.segment.started`／`generation.delta`／`generation.segment.completed` 只有 `generationId/segmentId/segmentIndex/channel/kind`，见同文件 `:36-66`）——
+  `responseId` 只在 `generation.started` 与 `generation.completed` 上；分段归并要按 `generationId` 关联、`responseId` 由父事件提供。
 - 回复完成后显示本条输入、输出和总 Token；生成期间可显示暂定统计。
 
 流式连接异常后：
@@ -662,6 +668,12 @@ Demo 暂不要求：
 - 上传远程服务器前明确提示图片会被发送给 AI。
 
 Linux Wayland 环境应优先使用操作系统提供的屏幕选择和授权流程，不能假设 Windows、X11 和 Wayland 的捕获行为完全一致。
+
+> **⚠️ Wire 口径更正（2026-09-14 复核，实施前必读）：** 本节 §9.3 的两个示例是**产品语义草案（snake_case）**，**不是现行 v2 wire 的真实字段名**。
+> 真实 `tool.request` 帧是 **camelCase** 且字段不同，raw schema 为 `.strict()`（未知键**整帧拒**）⇒ **照抄下面的示例会得到"不存在的字段"，帧会被直接丢弃**。
+> 字段对照（代码为准）：`call_id`→`callId`、`conversation_id`→`conversationId`、`tool`→`toolName`、`tool_version`→`toolVersion`、`risk_level`→`riskLevel`、`approval_authority`→`approvalAuthority`、`expires_at`→`expiresAt`；
+> 另有示例里没有的**必填** `sourceCallId`（LLM `tool_call_id`，前端统一领域键）与 `paramHash`。实测：`risk_level`／`expires_at` 在 `apps/desktop/src` **0 命中**（`call_id` 的命中全是 `tool_call_id` 子串）。
+> 权威来源：[doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) §17 与 `main/transport/protocol-v2/raw-schemas.ts`／`raw-types.ts`（`RawToolRequest`）。以下示例原文保留作语义草案。
 
 ### 9.3 本地工具请求格式
 

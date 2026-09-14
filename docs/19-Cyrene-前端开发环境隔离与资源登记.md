@@ -150,7 +150,7 @@ DevTools:               F12 / 诊断设置页 devMode 开关（进程内，不�
 | config | `<userData>\config\`（`settings.json`、`credentials.json`） | `<userData>\config\` | `user-data-dirs.ts` |
 | 会话/草稿缓存 | `<userData>\app-cache\` | 同左 | `session-store.ts` / `character-draft-store.ts` |
 | models（Live2D） | `<userData>\models\<id>\` | 同左 | `model-registry.ts` |
-| logs | `<userData>\logs\`（JSONL，保留 30 天） | 同左 | `diagnostics/logger.ts` |
+| logs | `<userData>\logs\`（JSONL，轮转 5MiB×3 份，**无按天保留期**） | 同左 | `diagnostics/logger.ts` |
 | audit | `<userData>\audit\`（JSONL，按天） | 同左 | `diagnostics/audit.ts` |
 | temp | `<userData>\temp\`（诊断导出等临时文件） | 同左 | `user-data-dirs.ts` |
 | sandbox | `<userData>\sandbox\` | 同左 | `user-data-dirs.ts` |

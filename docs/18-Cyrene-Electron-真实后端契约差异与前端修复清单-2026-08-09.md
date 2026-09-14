@@ -25,6 +25,8 @@
 
 以下内容按原审计结构保留，用于解释当时的差异和设计动机。
 
+> **2026-09-14 更正（路径已迁移，低价值项一并记）：** 正文 3 处引用的 `apps/desktop/src/main/fixtures/streaming-reply.jsonl`（§4.2、§9、§16）**已迁移**为 `apps/desktop/src/main/fixtures/domain/streaming-reply.jsonl`；raw wire fixture 侧在 `apps/desktop/src/main/fixtures/wire-v2/`（14 个 `.jsonl`）。原文保留不改，仅此一处集中标注。
+
 > 审计日期：2026-08-09
 >
 > 原始文档用途：交给 Claude Code 直接据此修改 Electron 前端；该用途现已终止，正文只作历史参考。
@@ -54,6 +56,10 @@
 - 文本聊天接入有会导致“回复为空”的 P0 问题；
 - 语音阶段有会导致 STT 静默失败的 P0 格式问题；
 - 历史分页、会话绑定、Token、Desktop 工具还存在 P1 契约缺口。
+
+> **2026-09-14 标注（C-18-2，§1 总述）：** 上面这份「当前状态」是 **2026-08-09 审计基线快照**，已**逐条被现实现取代**——真实 REST/WS Adapter 已存在：`apps/desktop/src/main/transport/real-backend.ts:280` `export class RealBackend implements BackendAdapter, CharacterServiceBackendPort`（+ `src/main/transport/protocol-v2/*`）。
+>
+> §1 总述此前**没有状态注记**：本文原有 3 条状态注记（2026-08-10、2026-08-11×2）只覆盖 §3/§4/§5/§7/§8/§9/§10/§16，§0 终态结论表覆盖 §§3～10、§11、§§12～13、§§14～15、§16。原文按归档纪律保留不改，仅在此加标注。
 
 本文把事项分为三类：
 
@@ -602,7 +608,7 @@ GET /api/sessions/{conversationId}/messages?after=<messageId>&limit=50
   "type": "tool.status",
   "callId": "call_...",
   "status": "result",
-  "toolName": "desktop.screenshot.capture",
+  "toolName": "desktop.screen.capture",
   "toolVersion": "1.0.0",
   "runtime": "desktop",
   "paramHash": "...",
@@ -615,6 +621,8 @@ GET /api/sessions/{conversationId}/messages?after=<messageId>&limit=50
 ```
 
 当前前端 `ToolResult` 只有 `callId/status/summary`，无法满足后端校验，也不能传截图/文件结果。
+
+> **2026-09-14 更正（C-18-3，事实错就地改对）：** 上面示例的 `toolName` 原文写 `desktop.screenshot.capture`，**该工具名不存在**——真实注册名是 `desktop.screen.capture`（`apps/desktop/src/main/tools/tool-registry.ts:21` 的 `TOOL_NAMES`，四工具为 select/read/write/screen.capture）；doc 14 §6 写的名字是对的。
 
 必须修改：
 
@@ -710,7 +718,7 @@ interface StartDictationInput {
 {"type":"dictation.start","clientRequestId":"..."}
 ```
 
-后端没有 `conversationId`、`sessionId` 或 `sttProfileId`，使用当前活动 STT。当前兼容流程只能是：
+后端没有 `conversationId`、`sessionId` 或 `sttProfileId`，使用当前活动 STT。当前兼容流程只能是：**（2026-09-14 更正，C-18-1：本句描述的缺口已被关闭——后端 `556117a` 已为 `dictation.start` 增加可选独立 `sttProfileId`，见下方 §15.2 标注与 doc 02 §19 D-8「已关闭」。原文按归档纪律保留不改。）**
 
 1. 必要时 `switch_model{service:"stt", model: ...}`；
 2. 等待成功结果；
@@ -720,7 +728,7 @@ interface StartDictationInput {
 
 这个流程会改变聊天/实时语音使用的全局 STT，也可能与其他客户端竞争。前端应明确展示或限制，不得假装 dictation 拥有隔离 profile。
 
-后端后续建议给 `dictation.start` 增加可选 `sttProfileId`，在 dictation session 内快照解析，不改变全局活动 STT。
+后端后续建议给 `dictation.start` 增加可选 `sttProfileId`，在 dictation session 内快照解析，不改变全局活动 STT。**（2026-09-14 标注，C-18-1：该建议已由后端 `556117a` 落地并关闭——不得再作为待办提给后端；契约见 doc 02 §19 D-8「已关闭」，前端已端到端透传。原文保留不改。）**
 
 证据：
 
@@ -764,7 +772,7 @@ Main Adapter 必须处理以下差异：
 - `SessionMessage` 增加 `conversationId`；
 - 历史响应增加显式 opaque `nextCursor`，或让 `before` 同时兼容 `_id/messageId`；
 - voice start 增加可验证的音频 descriptor 或在协议中固定并声明格式；
-- dictation start 增加独立 STT profile；
+- dictation start 增加独立 STT profile；**（2026-09-14 标注，C-18-1：✅ 已关闭，勿重复提出——后端 `556117a` 已加可选 `sttProfileId`（`<provider>/<model>`，缺省用全局活动 STT、会话内快照不改全局），前端已端到端透传：`apps/desktop/src/main/transport/protocol-v2/raw-schemas.ts:632`、`apps/desktop/src/shared/contracts/voice.ts:31,55`、`apps/desktop/src/main/transport/real-backend.ts:1725-1726`、`apps/desktop/src/renderer/src/stores/voice.store.ts:509-512`、`apps/desktop/src/renderer/src/components/CyVoicePane.vue:245`；维护文档 doc 02 §19 D-8 已记「关闭」。）**
 - 所有 Client -> Server WS frame 统一经 Pydantic 判别联合校验；当前不少入口仍手工 `data.get()`；
 - 协议版本不兼容时显式拒绝，而不是把未知版本静默降级为 v1；
 - 发布 Electron 可消费的版本化 schema/生成包，并给 schema 加版本或 hash；

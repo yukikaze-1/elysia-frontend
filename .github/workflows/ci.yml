@@ -137,7 +137,7 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
-  # 集成测试·分片 A：其余 36 个文件在自建 runner 上 3 分片（不含 electron-live2d*，2026-09-14 拆分后为三文件）
+  # 集成测试·分片 A：其余 36 个文件在自建 runner 上 3 分片（不含 electron-live2d*，2026-09-15 拆分后为三文件）
   #
   # 2026-09-12 分片批次（原为单 job 跑全套件：10.4 分钟 = 整个 CI 的墙钟）。分片依据是**实测逐文件计时**
   # （三处对照，见 docs/review/2026-09-12-Windows运行时取证与CI平台归属-决策记录.md §8.5）：

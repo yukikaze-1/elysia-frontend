@@ -38,6 +38,8 @@
 > **实施注记（2026-08-14，阶段 3）：** 新增 `layoutStore`（G1 布局响应式，见 §3.13）、`draftStore`（G2 每会话草稿）、`cacheStore`（G2 离线缓存）、`attachmentStore`（G3 附件待发送队列/上传）、`historyViewerStore`（G4 历史查看器查询/分页/跳转）；CyMessageList 虚拟列表与滚动锚点由 messageStore 消费；草稿/滚动锚点经 Main 持久化（`persistSession`/`hydratePersistence`/`cacheMessages` IPC + `session-store.ts`），附件上传/媒体代理经 attachment 通道与 `main/attachments/`（`media-service.ts`/`upload-service.ts`）。
 >
 > **实施注记（2026-08-16，阶段 4 批次 B）：** 新增 `voiceStore`（三模式语音编排 + TTS 播放状态 + 麦克风错误，见 §3.9 落地形状）与 `settingsStore`（voice/dictation 本地设置，见 §3.7 落地形状；启动 `hydrate()` 装载 + 500ms 防抖 `settingsSave` 持久化，fail-open 回默认）。语音设置存 Main `dirs.config/settings.json`（受管目录，`main/settings/settings-service.ts` 原子写 + zod + 版本化 + 损坏隔离），非后端契约。`messageStore` 扩展：`applyEvent` 增 `voice_session.turn` 分支（后端预分配 messageId 装配 user 消息）+ `sendVoiceCommit(recordingId, text)`（乐观消息 + `api.voiceCommit` + migrate，复用 send 路径）。`connectionStore` 对 `VOICE_ERROR_CODES`（`shared/contracts/voice.ts`）不展示全局连接错误横幅（语音族错误经 `voice.error` 在语音 UI 展示，D-P15）。
+>
+> **指向（2026-09-15）：** 多角色／身份面另有 **4 个 store 未在本节逐条列出**（`character-catalog`／`character-editor`／`character-runtime`／`character-identity`，见 `renderer/src/stores/character-*.store.ts` 与 `identity.store.ts:22`）——它们的状态所有权、持久化与离线语义按 [多角色与自定义角色前端架构设计](Cyrene-多角色与自定义角色前端架构设计.md) §9 执行，**不在本文件重复**。
 
 ### 3.1 `appStore`
 
@@ -66,6 +68,8 @@
 - 列表查询状态；
 - 每个会话的草稿引用。
 - 会话搜索查询、结果游标和累计 Token 摘要。
+
+> **落地更正（2026-09-15，对照代码逐字复核；指上方末行「会话搜索查询、结果游标和累计 Token 摘要」）：** 该项**未按本节形状落地**——① 没有 `searchStore`（全仓 grep `useSearchStore|searchStore` **0 命中**），历史查看器的查询/分页/范围态落在 `stores/historyViewer.store.ts`；会话列表内的搜索只是组件本地 `ref` 过滤**标题**（`components/CyConversationList.vue:31-36`，未含摘要，与 doc 03 §5.2「搜索会话标题和摘要」也不一致）。② **累计 Token 摘要没有消费方**：后端 `conversationUsage` 最远只到 `shared/domain/stream-accumulator.ts:181` 的 `state`，renderer 全仓 grep `conversationUsage` **0 命中**；文档设想的「后端缺失时按唯一 `generationId` 本机累计并标 `client_sum`」（§5 处理规则）**未实现**。本行按**设计期口径**读。
 
 ### 3.4 `messageStore`
 
@@ -107,7 +111,9 @@
 - 更新通过 Desktop API 交给 Main；
 - Main 是持久化事实来源。
 
-**落地形状（阶段 4 批次 B）：** `settingsStore` 持有 `SettingsState{version:1, voice, dictation}`（`shared/contracts/voice.ts`）——`voice{enabled, realtimeEnabled, autoReadReply, showCaptions, consentBackendStt, micDeviceId?}` + `dictation{sttProfileId?, insertMode: 'append'|'replace_selection'}`；`hydrate()` 启动装载（失败 fail-open 用默认）、`setVoice`/`setDictation` 本地改 + **500ms 防抖** `api.settingsSave` 持久化（`saveError`/`saved` 供 UI）；`applyDictationInsert(text)` 按 `insertMode` 追加草稿末尾或替换当前选区（D-P4）。持久化落 Main `dirs.config/settings.json`（§8.1），**不是后端契约**（backend 无对应端点）。
+**落地形状（阶段 4 批次 B；子树清单已过期，2026-09-15 就地补）：** `settingsStore` 持有 `SettingsState{version:1, voice, dictation}`（`shared/contracts/voice.ts`）——`voice{enabled, realtimeEnabled, autoReadReply, showCaptions, consentBackendStt, micDeviceId?}` + `dictation{sttProfileId?, insertMode}`；`hydrate()` 启动装载（失败 fail-open 用默认）、`setVoice`/`setDictation` 本地改 + **500ms 防抖** `api.settingsSave` 持久化；`applyDictationInsert(text)` 按 `insertMode` 追加草稿末尾或替换选区（D-P4）。持久化落 Main `dirs.config/settings.json`（§8.1），**不是后端契约**。
+
+> **补记（2026-09-15）：** 上句 `SettingsState{version, voice, dictation}` **已不是当前形状**——现为 `{version, voice, dictation, live2d, tools, appearance}`（`shared/contracts/voice.ts:58-65`）。本 store 实际持有**四棵子树** `voice`/`dictation`/`live2d`/`appearance`（`stores/settings.store.ts:99-102` 装载、`:168-186` 四个 setter）；`tools` **不归它**（Main 专属，见下文批次 C 注记）。
 
 > **阶段 6 批次 C 注记（2026-08-21）**：`SettingsState` 增 **`tools: { grants: PermissionGrant[] }`** 子树（契约见 `shared/contracts/tool.ts`；`ToolsSettingsSchema.default({ grants: [] })`，**version 保持 1**——新增可选字段带 default，旧文件无 `tools` → 空 grants，向后兼容不触发损坏重建；`ToolsSettingsPatchSchema` 无默认子 schema（IP-1 先例，防单字段 patch clobber）；`SettingsService.save` 子树 merge 不 clobber voice/live2d）。**GrantStore 边界**：grants 属 **Main 专属**（`main/tools/grant-store.ts`：list/add/revoke/prune/matches + 装载期逐条校验 + 审计 `grant:*` 事件 + save 失败 fail-open（内存生效 + 审计 + 日志））；**settingsStore 不消费 tools 子树**——授权管理 UI 以 `tool:grants`（Main 直读）为权威刷新源（`settings:load` 为 invoke 非推送，grant 变更后设置页组件本地刷新，F-12），与渲染面现状一致。
 
@@ -151,6 +157,12 @@
 - 最近使用排序、缩略图状态和发送前选择状态；
 - 已发送表情只引用消息中的 `sticker` 分段，不复制消息事实；
 - 不持久化来源文件绝对路径或未验证的远程脚本资源。
+
+> **未落地标注（2026-09-15，对照代码逐字复核）——§3.10／§3.11／§3.12 三个 store 在实现中不存在，也无同名取代物：** 全仓 grep `useSearchStore|useResourceStore|useStickerStore` **0 命中**（`apps/desktop` 全域）。实际落点见下三条：
+> ① **历史查看器的查询/范围/分页/命中态**在 `stores/historyViewer.store.ts`（跳转锚点 `:125-127`，经 `CyHistoryViewer.vue:234` → `conversationStore.jumpToMessage`）；
+> ② **会话媒体/表情/文件的分类索引**是后端搜索结果的资源臂——组件 `CyHistoryResultItem.vue:11-16` 按 `hit.resource.kind` 渲染，**renderer 侧没有资源索引 store**；
+> ③ **表情面板**清单与选择态是组件本地 `ref`（`components/CyStickerPanel.vue:14-37`，经 `api.listStickers()` 拉 `stickerId` 清单；待发送队列 `CyChatInput.vue:180` 的 `pendingStickers`）。
+> ⇒ 三节按**设计期口径**读，不得当作已落地 store。
 
 ### 3.13 `layoutStore`
 
@@ -293,6 +305,11 @@ interface PendingAttachmentState {
 
 保存到应用数据目录的版本化配置文件：
 
+> **落地校正（2026-09-15，对照代码逐字复核）——本代码块是设计期形状，**从未落地**，字段名几乎全部对不上：** 全仓 grep `PersistedSettingsV2` **只在 docs 命中**（`src` 0 命中）；其 `schemaVersion`/`connection`/`chat`/`modelSelection` 四段在代码里**没有任何对应物**（`enterToSend`/`autoScroll`/`autoPlayTts`/`llmProfileId` 均 0 命中）。
+> **真实落盘形状是 `SettingsState`**（`shared/contracts/voice.ts:58-65`；schema `shared/schemas/ipc-response.ts:409-414`；默认值 `:427-434`）：`{ version: 1, voice, dictation, live2d, tools, appearance }`。
+> 其中 `voice` = `enabled/realtimeEnabled/autoReadReply/showCaptions/consentBackendStt/micDeviceId?/silenceAutoStop/silenceStopMs`，`dictation` = `sttProfileId?/insertMode`，`appearance` 当前**只有** `fontScale`（`shared/contracts/appearance.ts:9-12`）。
+> 下方原代码块按「历史设计形状」保留不改写；请与 §3.7 落地形状、§8.1 两条迁移注记一起读。
+
 ```typescript
 interface PersistedSettingsV2 {
   schemaVersion: 2;
@@ -361,7 +378,7 @@ interface CredentialStatus {
 
 自定义模型 Profile 按所有权分层保存：后端 Profile 由后端保存，Desktop Profile 的非敏感配置由 Main 保存、密钥进入系统安全存储，Local Worker Profile 由 Main 保存公开引用并由 Worker 管理其秘密。Renderer 只缓存公开字段、凭据状态和编辑中的一次性密钥输入；提交结束立即清除。
 
-> **阶段 7 批次 B（2026-08-25，缓存损坏统一层——凭据 fail-closed 不拉平，Mock 驱动，标「已开发、未联调」）：** 本批落地**缓存损坏统一层** `createCorruptIsolation(deps)`（`main/persistence/corrupt-isolation.ts`，注入 logger/audit/countDiagnostic/safeRoot/realpath 可单测），返回 `{ isolate(file, tag, safeRoot?) → 把损坏文件 rename 为 `.corrupt-<tag>-<ts>` 隔离副本；dropInvalid(code) → 计数；pruneCorrupt(file, tag) → 下次成功 load 时清同 tag 旧副本只留最新一份（有界保留）}`。**语义按 store 各自声明**——统一骨架 + 语义可配，绝不拉平。采用者：**settings / session-store**（`settings-service.ts` 备份名由 `.corrupt` 迁移为 `.corrupt-<tag>-<ts>`、补 `countDiagnostic` 注入；`session-store.ts` 用 isolate+dropInvalid、**移除既有 countDiagnostic 防双计数**）。**credentials（安全凭据）不纳入统一层**（主会话裁决）——理由：① 凭据形态是 fail-closed（损坏/形状失败 → 拒绝使用该凭据，绝不「重建空凭据」），与统一层的「隔离 + 重建默认 + fail-open」冲突；② 不为密文增 `.corrupt-*` 磁盘备份副本（即使密文也扩大攻击面）；③ 5 参构造注入为 settings/session-store 的损坏处理定制、纳入凭据不划算；④ 既有 CredentialStore 自身已 fail-closed（阶段 0/1 整改 FE-S1-P1-03 的 `EMPTY_FILE` 工厂化）。`.corrupt-*` 隔离副本（尤其 message-cache-v1.json）留存聊天正文，经 `pruneCorrupt` 有界保留、**不纳入日志/审计/诊断导出**（doc 01/07 注明）。
+> **阶段 7 批次 B（2026-08-25，缓存损坏统一层——凭据 fail-closed 不拉平，Mock 驱动，标「已开发、未联调」）：** 本批落地**缓存损坏统一层** `createCorruptIsolation(deps)`（`main/persistence/corrupt-isolation.ts`，注入 logger/audit/countDiagnostic/safeRoot/realpath 可单测），返回 `{ isolate(file, tag, safeRoot?) → 把损坏文件 rename 为 `.corrupt-<tag>-<ts>` 隔离副本；dropInvalid(code) → 计数；pruneCorrupt(file, tag) → 下次成功 load 时清同 tag 旧副本只留最新一份（有界保留）}`。**语义按 store 各自声明**——统一骨架 + 语义可配，绝不拉平。采用者：**settings / session-store / character-draft-store**（`settings-service.ts` 备份名由 `.corrupt` 迁移为 `.corrupt-<tag>-<ts>`、补 `countDiagnostic` 注入；`session-store.ts` 用 isolate+dropInvalid、**移除既有 countDiagnostic 防双计数**；**第三处 `character-draft-store` 为本注记原缺项**——`main/persistence/character-draft-store.ts:103` 构造 `createCorruptIsolation`，`:181` `isolate` / `:168` `pruneCorrupt(file,'character-drafts')` / `:133,:139,:151,:159` `dropInvalid`，同文 `:90-99` 记其与 SessionStore／SettingsService 同纪律的降级位）。**credentials（安全凭据）不纳入统一层**（主会话裁决）——理由：① 凭据形态是 fail-closed（损坏/形状失败 → 拒绝使用该凭据，绝不「重建空凭据」），与统一层的「隔离 + 重建默认 + fail-open」冲突；② 不为密文增 `.corrupt-*` 磁盘备份副本（即使密文也扩大攻击面）；③ 5 参构造注入为 settings/session-store 的损坏处理定制、纳入凭据不划算；④ 既有 CredentialStore 自身已 fail-closed（阶段 0/1 整改 FE-S1-P1-03 的 `EMPTY_FILE` 工厂化）。`.corrupt-*` 隔离副本（尤其 message-cache-v1.json）留存聊天正文，经 `pruneCorrupt` 有界保留、**不纳入日志/审计/诊断导出**（doc 01/07 注明）。
 
 ### 8.3 会话缓存
 
@@ -375,6 +392,8 @@ interface CredentialStatus {
 - 可由用户清除；
 - 设置容量和过期时间。
 
+> **就地更正（2026-09-15，对照代码逐字复核）：** 上列第三条中只有**滚动锚点**落在实现里（`ScrollAnchor` 随草稿存 `drafts-v1.json`：`main/persistence/session-store.ts:41`、`:330`），**「会话级 Token 摘要」与「资源索引摘要」在本机缓存里没有对应字段**——会话快照的落盘形状是 `CacheFile { schemaVersion, conversations, snapshots{ messages, updatedAt, lastSyncAt } }`（`:42`、`:40`），全仓 grep `resourceIndex|tokenSummary` **0 命中**；且后端 `conversationUsage` 到前端只走到 `StreamAccumulator`（`shared/domain/stream-accumulator.ts:181`），无消费者（见本文件 §3.3 注记）。⇒ 本行按**设计期口径**读，不得当作已交付能力。
+
 Inner Voice 与 Public Reply 可以作为后端历史的一部分在当前会话内显示，但本地缓存将它们视为敏感聊天内容：不得进入日志或诊断包；清除会话缓存时一并删除；若产品启用“仅缓存 Public Reply”，Adapter 必须保留后端重新拉取 Inner Voice 的能力并在离线状态明确说明。
 
 ### 8.4 工具审计
@@ -383,10 +402,13 @@ Inner Voice 与 Public Reply 可以作为后端历史的一部分在当前会话
 
 ### 8.5 UI 状态·选择性持久化（布局记忆）
 
-布局相关 UI 状态（窗口位置/大小、会话栏折叠、Live2D 栏可见/折叠/宽度）属**非敏感展示偏好**，走 Renderer localStorage（键 `cyrene.layout.v1`），**不进入 Main 配置**（2026-08-14 阶段 3 G1 定案；`PersistedSettingsV2.layout` 字段已移除，旧配置忽略，见 §8.1 迁移注记）：
+布局相关 UI 状态（窗口位置/大小、会话栏折叠、Live2D 栏可见/折叠/宽度）属**非敏感展示偏好**，走 Renderer localStorage（键 `cyrene.layout.v1`），**不进入 Main 配置**：
+
+> **就地更正（2026-09-15，对照代码逐字复核；doc 03 §3.2 为同一处，一起改）——上句的「窗口位置/大小」在实现中不存在、也刻意不持久化：** `StoredLayoutV1` 只有 `{version, conversationCollapsed, live2dVisible, live2dWidth}`（`layout/layout-storage.ts:15-20`）；全仓 grep `getBounds|setBounds|lastVisited` **0 命中**，窗口位置与大小由 Main 创建窗口时决定（`main/windows/main-window.ts` 的 `minWidth` = `layout/constants.ts` 的 `MIN_WINDOW_WIDTH`），Renderer 不读也不写。上句其余部分（会话栏折叠、Live2D 栏可见/折叠/宽度）与 `LayoutPrefs` 三字段一致（`effective-layout.ts:7-11`），**保留**。
 
 - 由 `layoutStore` 读写（`layout/layout-storage.ts`），组件只消费 store，不直接触碰 localStorage；
 - 数据形状含窗口尺寸、当前宽度下的有效布局（`effective-layout.ts`）、会话栏折叠态、Live2D 栏可见/折叠/宽度；
+  > **就地更正（2026-09-15，对照代码逐字复核）：** 上句的「窗口尺寸」**不是持久化字段**——落盘形状 `StoredLayoutV1` 只有 `{version, conversationCollapsed, live2dVisible, live2dWidth}` 四项（`layout/layout-storage.ts:15-20`、写入见 `:74-79`、读入经 `:41-45`）；`viewportWidth` 是**运行时值**，首帧由 `window.innerWidth` 播种（`stores/layout.store.ts:18`）、由 resize 更新（`:82-91`），既不读自也不写入 localStorage。有效布局是纯函数计算结果（`effective-layout.ts:35-45`），同样不落盘。本句其余部分（会话栏折叠态、Live2D 栏可见/折叠/宽度）与 §3.13 一致，保留。
 - 首帧用 `window.innerWidth` 播种；窗口 resize 后重算有效布局；toggle 按目标态设置并置 override；
 - 不做跨会话同步；清除 localStorage 即恢复默认布局；
 - 权限对话框、敏感预览等状态一律不持久化。

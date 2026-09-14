@@ -333,6 +333,8 @@ P0：
 | low_power | 30 FPS 或更低 | 降低物理更新和画布分辨率 |
 | auto | 动态 | 根据窗口可见性和帧耗时选择 |
 
+> **落地口径（2026-09-14 评审报告 §16.2 L-3）：** 本表是**设计目标**；批次 C 实际落地的只有**帧间隔降帧**一项——`live2d/perf.ts` 的 `FrameBudget` 四值只决定 `shouldDraw` 的帧间隔（quality 恒满帧／low_power 33.33ms 封顶／balanced 按 EMA 帧耗时 60↔30／auto 迟滞升降档），**不改物理更新频率、也不改画布分辨率**（`grep` renderer 无 `devicePixelRatio`，canvas 尺寸只随 CSS 盒变化）。故 `low_power` 行的「降低物理更新和画布分辨率」与 `auto` 行的「根据窗口可见性…选择」两项**当前未落地**。
+
 ### 12.2 自动降级
 
 - 窗口隐藏：暂停渲染循环；
@@ -341,6 +343,8 @@ P0：
 - GPU 上下文丢失：尝试重建一次；
 - 重建失败：静态头像；
 - 系统低电量模式：切换低功耗配置。
+
+> **落地口径（2026-09-14 评审报告 §16.2 L-3）：** 上一条「系统低电量模式」**当前未落地**——代码侧不读系统电量（`grep` 无 `battery`／`getBattery`），没有任何按电量自动切 `low_power` 的路径；只能由用户在设置页手动选。其余五条（隐藏/折叠暂停、帧耗时降帧、GPU 丢失重建一次、重建失败静态头像）均已落地。
 
 Live2D 资源释放后不得残留计时器、音频分析器或事件监听器。
 
@@ -360,6 +364,8 @@ Live2D 资源释放后不得残留计时器、音频分析器或事件监听器�
 - 设置值限制在安全范围，防止模型完全移出画布；
 - DPI 和系统缩放变化时重新计算分辨率；
 - 不把模型区域覆盖到权限确认窗口。
+
+> **落地口径（2026-09-14 评审报告 §16.2 L-4）：** 上一条「DPI 和系统缩放变化时重新计算分辨率」**当前未落地**——`CyLive2DPanel.vue` 的 `resizeCanvas()` 只把 `canvas.width/height` 设为 CSS 盒的 `clientWidth/clientHeight`（**未乘 `devicePixelRatio`**），且 renderer 全树 `devicePixelRatio` 零命中；系统缩放变化时仅靠 CSS 盒变化被动跟随，不做按 DPR 的重算。其余各条均已落地（缩放/偏移带安全范围钳制、面板不覆盖权限窗）。
 
 ## 14. 设置和持久化
 
@@ -398,11 +404,13 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 |---|---|---|---|
 | Cubism Web SDK（Framework 源码 + Core + 13 shaders） | `third_party/CubismSdkForWeb-5-r.5/`（commit `22993e5`），vendored 进 `renderer/src/live2d/` + `public/live2d/`（Core 为 **asm.js** 构建，CSP 无需放宽，D5A-03） | Core：Live2D Proprietary；Framework：Open Software License；SDK 官方许可链接见 `renderer/src/live2d/THIRD_PARTY_NOTICES.md` | 已入库、已验证 |
 | 官方示例模型 8 个 | SDK `Samples/Resources/`（Haru 等） | Free Material License（官方示例资源） | 已入库；Haru 已装配（CI 可装配） |
-| 用户模型 3 个（含修女莉尔免费版） | `tmp/live2d/`（**不入 git**），免费版「个人开发验证」用途 | 免费版个人开发验证；装配工具注入 `LICENSE.txt`（免费版+来源+个人开发验证注记），manifest `licenseRef` 指向之 | 已装配到 `userData/models/`（haru/lil/wanko），未入 git |
+| 用户模型 3 个（含修女莉尔免费版） | `tmp/修女莉尔免费版/修女莉尔免费版/`（**不入 git**，路径更正依据见评审报告 §16.2；用户模型为双层同名目录，内层含 `*.model3.json`），免费版「个人开发验证」用途 | 免费版个人开发验证；装配工具注入 `LICENSE.txt`（免费版+来源+个人开发验证注记），manifest `licenseRef` 指向之 | 已装配到 `userData/models/`（haru/lil/wanko），未入 git |
 
 发布前（批次 C 之后进入发布流程时）必须：① 按 Live2D 官方 **AI/Chatbot / Expandable Applications** 分类复核适用许可并确认出版许可；② 复核 8 个官方示例模型的 Free Material License 使用边界；③ 用户模型分发权与作者授权分别核对留档；④ 无法确认时不发布含该 SDK/模型的产物。开发验证（当前批次）可先行。
 
 > **批次 C 台账注记（2026-08-18）：** 发布前许可复核**仍 defer**（本批只做代码批次与文档，不进入发布流程），上表资源清单与分类判断不变；批次 C 联调清单已把许可复核登记为「遗留说明节」项，进入发布流程前按上述 ①②③④ 执行。
+
+> **路径漂移的连带影响（2026-09-14 评审报告 §16.2 L-6，代码侧待修）：** 集成夹具 `tests/integration/helpers/live2d-fixture.ts:34` 仍按旧路径 `tmp/live2d/修女莉尔免费版/修女莉尔免费版` 拼 `LIL_SRC`，因该路径不存在而 `existsSync` 恒 false ⇒ lil 分支用例在 CI 上**静默跳过**（无失败、无警告）。本文只更正文档侧路径；**夹具属代码侧，另批处置**（见评审报告 §16.3 代码侧疑点 1）。
 
 ## 16. 测试场景
 
@@ -441,7 +449,9 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 
 ## 18. 实现状态（阶段 5 批次 A/B/C 落地，2026-08-18）
 
-**三态：** 已真实联调（2026-08-19，真实 Windows Electron + Ubuntu 后端验收通过；验收记录见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`）。门禁：**1609 单测（120 files）+ 98 集成（16 files）** + typecheck/lint/build + check:contract（WS 28/28 + REST 15/15）全绿。详细决策见 `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）、批次 B 决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`；联调清单见 `docs/review/2026-08-18-阶段5批次C-联调清单.md`。
+**三态：** 已真实联调（2026-08-19，真实 Windows Electron + Ubuntu 后端验收通过；验收记录见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`）。当时门禁为 typecheck/lint/build + 单测 + 集成 + `check:contract` 全绿；**测试数字（单测/集成文件数与用例数）只在 [doc 16](16-Cyrene-前端实施任务清单与进度跟踪.md) 维护，此处不复制**（本行原写的 1609 单测/120 files、98 集成/16 files 是 2026-08-19 读数，现已过期；同期的 doc 10 §6 记的是 1599/119，两份文档两套数字）。详细决策见 `docs/review/2026-08-18-阶段5批次C-决策记录.md`（主会话落文）、批次 B 决策见 `docs/review/2026-08-18-阶段5批次B-决策记录.md`、批次 A 决策与 Rulings 见 `docs/review/2026-08-17-阶段5批次A-决策记录.md`；联调清单见 `docs/review/2026-08-18-阶段5批次C-联调清单.md`。
+
+> **check:contract 论证已作废（2026-09-14，doc 02 §19.2 自我更正）：** 本行原以「check:contract（WS 28/28 + REST 15/15）全绿」作门禁论证，该论证已被 [doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) §19.2 自己否掉——WS 28/28 是批次 7（2026-08 上旬）时点的过期读数，且**口径本身是错的**：该门禁只核对「前端已认的帧型」，**结构上不可能发现「后端新增、前端未认」的帧**，故「通过」不能用来论证后端未含某帧（详见 doc 02 §19.2 末的批次 C 更正注记）。
 
 **批次 A 已落地（本文档对应子项）：**
 
@@ -460,7 +470,7 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | 本文档子项 | 状态 | 落点 |
 |---|---|---|
 | §3 核心接口 | 已实现（真实化） | `switchModel` 返回生效 id（D5B-10）；`setState/setAutoMotions/setLipSync/setMouthLevel/setViewTransform/setLookTarget/playMotion/playTapMotion/setExpression/on` 落地；接口注见 §3 |
-| §6 状态来源与优先级 / §7 状态映射 | 已实现 | `live2dStateSource` 薄编排层（D5B-04）：connection 断→offline、error 优先(3)、生成∧无正文→thinking、正文/TTS→speaking、最后完成消息 emotion 经 `normalizeEmotionCode` 本地归一（中/英文别名→happy/sad/surprised，未命中忽略）、否则 idle；`listening/working/waiting_permission` 槽位定义完备但驱动源 null（归阶段 6）。**F-1（联调前整改）：** 后端 `mood` 为 LLM 自由文本，归一别名表 = `happy`←`happy/开心/高兴/愉快/喜悦/兴奋`、`sad`←`sad/难过/悲伤/伤心/沮丧/低落`、`surprised`←`surprised/惊讶/惊喜/吃惊/诧异`（ASCII 大小写不敏感，中文按字面精确匹配） |
+| §6 状态来源与优先级 / §7 状态映射 | 已实现 | `live2dStateSource` 薄编排层（D5B-04）：connection 断→offline、error 优先(3)、生成∧无正文→thinking、正文/TTS→speaking、最后完成消息 emotion 经 `normalizeEmotionCode` 本地归一（中/英文别名→happy/sad/surprised，未命中忽略）、否则 idle；`listening/working/waiting_permission` 槽位定义完备但驱动源 null（归阶段 6）【**已于 2026-08-20 被阶段 6 批次 B Task 7（`d7346eb`）取代**：`waiting_permission` 已接线（`live2d.store.ts:170` `toolWaiting: () => useToolStore().waitingForApproval`，`state-source.ts:110` 仲裁为 3 级覆盖 thinking/speaking、审批终态后按事件驱动回退）；`listening/working` 仍为定义完备、驱动源 null 的槽位。以上为批次 B（2026-08-18）时点记录，保留原文】。**F-1（联调前整改）：** 后端 `mood` 为 LLM 自由文本，归一别名表 = `happy`←`happy/开心/高兴/愉快/喜悦/兴奋`、`sad`←`sad/难过/悲伤/伤心/沮丧/低落`、`surprised`←`surprised/惊讶/惊喜/吃惊/诧异`（ASCII 大小写不敏感，中文按字面精确匹配） |
 | §9 动作调度 / §3.3 表情 | 已实现 | B3 白名单调度（低优先不打断 3 级态、同动作去抖、长动作上限、切换清队列、点击不打断 speaking/thinking）；情绪态→表情本地映射（happy/f01、sad/f02、surprised/f06，不命中落 B4）；无动作模型 B4 参数级回退（thinking 摆头/speaking 口型+轻头/happy 笑眼/surprised 瞪眼/error 歪头，存在性判定） |
 | §11 鼠标和点击互动 | 已实现 | Panel mouseleave→`setLookTarget(null)` 平滑回正；点击画布→playTapMotion(priority=1)（reduceMotion 禁用）；点击不打断 speaking/thinking/error/waiting_permission |
 | §12 性能策略 / §12.1 性能模式 | 已实现（四值统一） | `performanceMode` 四值 `auto/quality/balanced/low_power`（旧三值 `high/low` 读回归一，schema 归一）；实际降帧消费归批 C |
@@ -469,6 +479,8 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | §5.1 切换 / T6 竞态 | 已实现 | 快速连续切换 → store 仅持久化 `switchModel` 返回的**生效 id**（守卫丢弃时持久化旧 id），渲染模型与持久化 id 一致 |
 
 **集成新增（批次 B，Electron `tests/integration/electron-live2d.spec.ts` 增 7 用例）：** 状态驱动徽标「思考中→说话中→空闲」、动作播放（Haru B3 画布非空 / lil B4 优雅降级）、情绪态→表情（mock emotion=happy → 徽标「开心」+ 画布非空）、设置子页（scale/performanceMode 即时生效 + 重启持久化恢复）、性能模式（四值存在 + 旧值 high/low 读回归一 + 不 corrupt）、布局（无 Layout 模型画幅正常）、切换竞态（生效 id 与渲染/持久化三方一致）。
+
+> **取代注记（2026-09-15，`72b9117`）：** 上句的 `tests/integration/electron-live2d.spec.ts` **已不存在**——该文件按实测逐用例耗时拆为 `electron-live2d-core.spec.ts`／`-motion.spec.ts`／`-settings.spec.ts`（共享夹具抽到 `tests/integration/helpers/live2d-fixture.ts`），CI 侧 `integration-live2d` 同步改为一文件一 matrix job。用例内容未变，只换了落点文件。
 
 **批次 C（收口）已落地（2026-08-18，本文档对应子项）：**
 
@@ -481,7 +493,7 @@ Cyrene 属于 AI/聊天角色应用，且支持切换模型、后端驱动表现
 | 防御加固（M1-M4/F2/F3 等） | 已实现 | resolveModelFile `%` 同口径（`canonicalizeRelPathSegment` 含合法 `%XX` 才解码一次，`%25` 放行 / `%2F`/`%252F`/非法序列拒）/ registry 强制 `manifest.id===dirname` / integrity 空数组视为不完整（列表/请求/verify 三方一致）/ `reason` 闭合枚举 `missing_file|size_mismatch|hash_mismatch` / F2 blink 速率调制（thinking/speaking rate=2）/ F3 expressions 空 → B4 参数级近似 / Task5 M2 restore 分叉（`restoreDefaults()`：面板存活 switchModel 首个可用、已 dispose 显式持久化）/ 批次 A F2/F3/F4 关单（无实害）、N1/N3 批次 B 已完成不重复收口 |
 | §15 资源与许可 | 已记录 | 见 §15.1；**发布前复核仍 defer**（发布流程事项，本批仅台账记录） |
 
-**批次 C 集成新增（Electron `tests/integration/electron-live2d.spec.ts` 增 7 用例；既有第 6 号「设备丢失」由「静态头像回退」改写为「一次重建」，非新增，计数不含）：** C1 口型链路（`CYRENE_MOCK_MOUTH_LEVEL=step` 全链路 + 停止归 0，真实 RMS 归联调肉眼）、C2.1 性能模式四值切换（low_power 降帧后渲染不崩 + 持久化）、C2.2 GPU 丢失重建一次（`webglcontextlost` → 重建回到就绪+渲染恢复或回退不崩 + 聊天可用）、C3.1 指令消费（happy+F01 → 徽标「开心」+ 画布非空 + 无 console error）、C3.2 指令非白名单 expression（不崩 + 脱敏 warn `directive_miss` 不记 payload 原文）、C3.3 指令 `state:working` 越界（env 解析缺省不发射、不崩、聊天可用）、收口回归（恢复默认设置 → 切回首个可用，画布/select/持久化三方一致）。
+**批次 C 集成新增（原标题的 `electron-live2d.spec.ts` 已被 `72b9117`／2026-09-15 取代，见上条注记；原叙述：增 7 用例，既有第 6 号「设备丢失」改写为「一次重建」不计入）：** C1 口型链路（`CYRENE_MOCK_MOUTH_LEVEL=step` 全链路 + 停止归 0，真实 RMS 归联调肉眼）、C2.1 性能模式四值切换（low_power 降帧后渲染不崩 + 持久化）、C2.2 GPU 丢失重建一次（`webglcontextlost` → 重建回到就绪+渲染恢复或回退不崩 + 聊天可用）、C3.1 指令消费（happy+F01 → 徽标「开心」+ 画布非空 + 无 console error）、C3.2 指令非白名单 expression（不崩 + 脱敏 warn `directive_miss` 不记 payload 原文）、C3.3 指令 `state:working` 越界（env 解析缺省不发射、不崩、聊天可用）、收口回归（恢复默认设置 → 切回首个可用，画布/select/持久化三方一致）。
 **批次 C 真实 Windows Electron（REAL）联调：已通过（2026-08-19）。** 按 `docs/review/2026-08-18-阶段5批次C-联调清单.md` 完成冻结基线 + C1/C2/C3 定向复验 + 自动化门禁复跑 + 真机 deferred 结论 + 遗留说明，三态已升「已真实联调」；详见 `docs/review/2026-08-19-阶段5-Live2D真实联调验收.md`。
 
 > **阶段 7 批次 D 注记（2026-08-28，Live2D 数值读数接入诊断页，闭合 D7A-06，已真实联调）：** 诊断页「Live2D 性能」占位（`:240-241`，原为「不可用——帧耗时统计未导出」）已替换为**数值读数**——`FrameBudget.getStats()` → `Live2DController.getStats()` 透传 → `live2dStore.getStats()`（`status !== 'ready' || !controller` → null）→ `CyDiagnosticsPane` `live2dStats` computed 读取时取值 → v-if 显示读数 / v-else 显示「未启动（无读数）」。`Live2dFrameStats` 契约新增（`shared/contracts/live2d.ts`，帧耗时/帧率/降帧计数元数据，无正文/参数敏感面）。**读取时取值**（非持续记录）；`status !== 'ready'` → null → 「未启动（无读数）」。**真机前置修复（2026-08-28）**：CyLive2DPanel 常驻挂载（settings 打开保留 ready，`currentView` gate 停 rAF）——真机诊断页显示真实帧耗时/帧率，禁用→未启动、启用→ready；集成正 path + 禁用/启用生命周期回归（`de4fcf8`/`fc38e7f`）。三态=已真实联调；决策见 `docs/review/2026-08-27-阶段7批次D-决策记录.md`，真机验收见 `docs/review/2026-08-28-阶段7批次D-真实联调验收.md`。

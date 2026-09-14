@@ -51,7 +51,7 @@ Cyrene Desktop 是 Electron + Vue 3 + TypeScript 的个人 AI 桌面客户端。
 
 后端是远程 Python 服务。Electron Main 负责网络、凭据和本地能力；Renderer 不直接持有后端 Token、模型密钥、本地绝对路径或通用系统 API。
 
-## 二、当前后端事实基线
+## 二、当前后端事实基线（2026-08-09 基线快照）
 
 在修改前必须重新核对以下交接结论；它们来自基线 Commit 的静态扫描，不得替代真实代码：
 
@@ -73,6 +73,8 @@ Cyrene Desktop 是 Electron + Vue 3 + TypeScript 的个人 AI 桌面客户端。
 - 存在 `frontend_contract/` 和 `contract.generated.ts` 生成流程。
 
 如果代码与以上描述不同，以当前代码为准，并先更新事实报告再实施。
+
+> **2026-09-14 标注（C-15-1，同 doc 14 §5 一类）：** 上列是 **2026-08-09 交接基线快照**，其中「不存在 Desktop Runtime 和 Local Worker Runtime」「当前 STT 是 PCM + VAD 后自动提交，无按住说话草稿模式和实时字幕协议」「当前用户消息无 ACK，流式回复无父消息 ID/response ID/generation ID」「只有单活动会话」等多条**已被后续后端改造与前端阶段 2/4/6 取代**（含输入法转写独立 `sttProfileId`：后端 `556117a`，见 doc 02 §19 D-8 与 doc 18 §15.2 标注）。原文按归档纪律保留不改；当前后端契约与状态**不以本文为准**（doc 16 §3、doc 02 §19）。**注意：并非每条都已闭环**——doc 14 §5 `BE-032`（会话资源索引）仍为未闭环缺口。
 
 ## 三、必须纠正的错误口径
 

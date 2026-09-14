@@ -77,6 +77,10 @@ type FrontendBackendEvent =
   | BackendErrorEvent;
 ```
 
+> **实现口径注记（2026-09-14 复核，F-6）：** 上列 `FrontendBackendEvent` 是 **v0.2 设计命名，不是现行实现**——落地判别联合是 `BackendEvent`（`shared/contracts/events.ts:259-289`，**28 型**）。15 名中只有 `GenerationStartedEvent`/`GenerationDeltaEvent`/`GenerationCompletedEvent`/`GenerationFailedEvent`/`Live2DDirectiveEvent` 5 名与实现同名；其余 10 名（`ConnectionStateEvent`/`ConversationChangedEvent`/`ResourceChangedEvent`/`ModelProfileChangedEvent`/`VoiceInputEvent`/`DictationEvent`/`TtsPlaybackEvent`/`BackendErrorEvent`/`ToolCallEvent`/`ToolStatusEvent`）在 `src` **0 命中**。
+
+> 实现 28 型的 `event` 名：`generation.started`/`segment.started`/`delta`/`segment.completed`/`completed`/`failed`、`switch_model.result`、`set_tts_voice.result`、`voice.transcript`、`voice_session.started|partial|turn|ack|ended`、`dictation.partial|final|cancelled`、`audio.session.started|ready|cancelled`、`voice.error`、`expression`、`live2d.directive`、`tool.request|started|completed`、`character.state.changed`、`character.catalog.changed`。连接状态不经 `BackendEvent`（走 `chat:state` 推送的 `ConnectionState`），会话与资源面走 REST 命令。原文保留以存设计口径。
+
 ## 4. 统一事件外壳
 
 推荐前端标准事件结构：
@@ -136,7 +140,7 @@ Main → Renderer 可以把多个已校验事件装入短时间片批次以减�
 
 1. Electron Main 连 `/ws` 携带：`Authorization: Bearer <access_token>`（远程，本地空 token 为 fail-open）、`X-Protocol-Version: 2`、`X-Client-Platform: electron`（Desktop 工具桥定向投递标识）；
 2. 建连后服务端依次下发：`session`（历史回放，含 `messages[]` + `token_stats?`）→ `server_info{protocol_version, server_version, features, services, connectionId?, build_sha?}` → `expression{expression, intensity?}`；
-3. `server_info.features` 如实声明能力（`structured_generation`/`multi_conversation`/`desktop_runtime`/`dictation`/`voice_recording`/`voice_realtime`/`media_upload`，均为 bool），前端据此门控 UI，不超前实现；`connectionId` 仅 v2 + electron 下发（`conn_` 前缀），作为附件上传 `X-Client-Connection` 持有者校验头来源；`services.{llm,stt,tts}` 复用 per-service 形状（available/enabled/model/default）；
+3. `server_info.features` 如实声明能力（`structured_generation`/`multi_conversation`/`desktop_runtime`/`dictation`/`voice_recording`/`voice_realtime`/`media_upload`，均为 bool），前端据此门控 UI，不超前实现；`connectionId` 仅 v2 + electron 下发（`conn_` 前缀），作为附件上传 `X-Client-Connection` 持有者校验头来源；`services.{llm,stt,tts}` 复用 per-service 形状（available/enabled/model/default）（**2026-09-14 复核，F-5**：前端当前只把 `character_profiles`/`character_state_stream` 归一为类型化开关，见 `src/main/transport/protocol-v2/character-rest-mapper.ts:65-69`；本行其余 feature 名未在 `src` 逐个门控，落地面见 §5.2 末注记）；
 4. 多会话激活走 WS `activate_session{conversationId}` 或 REST `POST /api/sessions/{id}/activate`，服务端切 active 并重发该会话回放；未知会话 → `error{code: SESSION_NOT_FOUND}`。
 
 `BackendAdapter.connect` 把上述握手归一为前端连接状态域（下方 5.2），不得把 `server_info`/`session`/`expression` 原始字段泄漏到 Vue 组件。
@@ -145,17 +149,19 @@ Main → Renderer 可以把多个已校验事件装入短时间片批次以减�
 
 ```typescript
 interface ConnectionState {
-  state: "idle" | "connecting" | "connected" | "reconnecting" | "offline" | "failed";
+  status: "disconnected" | "connecting" | "connected" | "reconnecting" | "error";   // 2026-09-14 更正：原写 state: "idle"|…|"offline"|"failed"（实现字段名为 status，见本节末实现口径注记）
   protocolVersion?: string;   // server_info.protocol_version
   serverVersion?: string;     // server_info.server_version
-  features?: string[];        // 由 server_info.features 展开（布尔 → 名称列表）
+  features?: BackendFeatureFlags;   // 2026-09-14 更正：实现是类型化对象 {characterProfiles, characterStateStream}，不是 string[]（wire character_* === true 才 true）
   connectionId?: string;      // server_info.connectionId（v2+electron）
   sessionId?: string;         // session 回放归属的活动会话
-  resumeAccepted: false;      // 后端 v2 无断点续传（§16）
+  resumeAccepted: false;      // **未落地**（2026-09-14 复核：src 0 命中）；“后端 v2 无断点续传（§16）”语义仍成立，但实现无此字段
 }
 ```
 
 协商失败时停止工具调用，但可以根据后端能力决定是否允许只读聊天降级。
+
+> **实现口径注记（2026-09-14 复核，F-5）：** 落地形状见 `shared/contracts/backend.ts:14-32`——字段名 `status`（非 `state`）、类型化 `features?: BackendFeatureFlags`（`shared/contracts/character.ts:32-35`，仅 `character_profiles`/`character_state_stream` 两位，wire === true 才 true），另有 `serverUrl`/`connectionScopeId`/`activeConversationId`/`lastError`；本域经 `chat:state` 推送交付（preload `onChatState`）。`resumeAccepted` 未落地（`src` 0 命中），但“后端 v2 无断点续传”语义仍成立（§16.2）。
 
 ## 6. 会话数据结构
 
@@ -183,8 +189,8 @@ interface ConversationPage {
 
 **已确认映射（2026-08-08，rest.py `SessionSummary`）：** 后端会话 wire 为 `SessionSummary{conversationId, title?, messageCount, updatedAt, active}`：
 
-- `conversationId` ↔ 前端 `id`（默认 `"default"`，新建 `conv_<uuid4 hex[:12]>`）；`title` 可空（首条用户消息自动取前 20 字）；`messageCount` ↔ 前端会话的消息数（前端 `Conversation` 目前无此字段，可在 Adapter 补充）；`updatedAt` ↔ 前端 `updatedAt`；
-- 后端**额外提供 `active`**（是否当前活动会话）——前端 `Conversation` 需增补该字段，多会话高亮依赖它；
+- `conversationId` ↔ 前端 `id`（默认 `"default"`，新建 `conv_<uuid4 hex[:12]>`）；`title` 可空（首条用户消息自动取前 20 字）；`messageCount` ↔ 前端会话的消息数（前端 `Conversation` 目前无此字段，可在 Adapter 补充；**2026-09-14 复核：至今未补充**，`Conversation` 实形见 `shared/contracts/conversation.ts:17-24`）；`updatedAt` ↔ 前端 `updatedAt`；
+- 后端**额外提供 `active`**（是否当前活动会话）——前端 `Conversation` 需增补该字段，多会话高亮依赖它（**已被取代，2026-08-11 `e8bb3ee`**：该字段**未**加进 `Conversation`，活动会话改由连接态承载 `ConnectionState.activeConversationId`，见 `shared/contracts/backend.ts:27`；消费处 `renderer/src/stores/conversation.store.ts:443,454`）；
 - 后端会话列表无 `lastMessagePreview`/`tokenUsage`/`lastModel`/`lastEmotion`；会话级 Token 累计经 `generation.completed.conversationUsage` 或 `session` 回放的 `token_stats` 获取，非列表接口直接给出。
 
 前端需要的逻辑操作：
@@ -206,7 +212,7 @@ interface ConversationPage {
 
 ```typescript
 type MessageRole = "user" | "assistant" | "system" | "tool";
-type MessageStatus = "pending" | "streaming" | "completed" | "failed" | "cancelled";
+type MessageStatus = "pending" | "acknowledged" | "streaming" | "completing" | "completed" | "interrupted" | "failed";   // 2026-09-14 更正：原列 5 值（pending/streaming/completed/failed/cancelled）；实现 7 值见 shared/contracts/message.ts:63-70
 
 interface Message {
   id: string;
@@ -452,7 +458,7 @@ interface GenerationFailedPayload {
 
 - 事件类型 `generation.started` / `generation.segment.started` / `generation.delta` / `generation.segment.completed` / `generation.completed` / `generation.failed` 与上文一一对应；
 - **`responseId` 弃用，wire 一律用 `generationId`**（§19 D-1）；`segmentIndex` 全局单调（跨 inner_voice/public_reply 递增）；`delta` 携带段内增量（`deltaSequence` 段内 0 起）；
-- `generation.segment.completed` **必发**（非可选）且携带 `content`（完整段/整句文本，public_reply 与 inner_voice 段都带）——前端无需拼 delta 即可渲染整句；Adapter 应透传该 `content`（前端 `SegmentCompletedEvent` 当前未建模此字段，见 §19 D-6）；
+- `generation.segment.completed` **必发**（非可选）且携带 `content`（完整段/整句文本，public_reply 与 inner_voice 段都带）——前端无需拼 delta 即可渲染整句；Adapter 应透传该 `content`（前端 `SegmentCompletedEvent` **已建模** `content?: string`——`shared/contracts/events.ts:65`，阶段 2 块 A `8d880ac`（2026-08-10）起；2026-09-14 更正，见 §19 D-6）；
 - `generation.completed` 是唯一终态：`finishReason` 仅 `stop`/`tool_calls`，取消/错误统一走 `generation.failed`（`GENERATION_CANCELLED`/`GENERATION_PROVIDER_UNAVAILABLE`/`GENERATION_TIMEOUT`/`INTERNAL`）；前端**不得**从 `state idle` 推断回复结束（§19 D-9）；
 - 通道枚举含 `status`（预留）；`MessageChannel = inner_voice | public_reply | status`，前端 `SegmentChannel` 不含 status，Adapter 需映射/过滤（§19 D-7）；
 - 完成事件载荷：`usage{turn_total, rounds[]}` + `conversationUsage?{total, byModel}` + `model`（实际模型快照）+ `mood`（心情）+ `completeness`（P0 恒 `complete`），见 §19 D-3~D-5。
@@ -685,6 +691,10 @@ interface ModelProfile {
   executionLocation: ModelExecutionLocation;
   endpointLabel?: string;
   credentialOwner: "backend" | "desktop_main" | "local_worker" | "none";
+  // ⚠️ 2026-09-14 更正（与 doc 11 §2.1 同源，由 review 发现）：本块以下字段名在代码中**不存在**——
+  // `credentialOwner` / `openai_compatible` / `custom_rest` / `bundled_local` 于 apps/desktop/src 全量 grep **0 命中**。
+  // 真实落地类型是 `ModelProfile`（apps/desktop/src/shared/contracts/model.ts:9-23）：`source: built_in|custom`、
+  // `models: string[]`、`endpointLabel?`、`baseUrl?`、`builtIn`。**阅读本块时以代码为准**；逐字段对照见 doc 11 §2.1 的更正说明。
   credentialStatus: "missing" | "configured" | "expired";
   enabled: boolean;
   capabilities?: string[];
@@ -729,7 +739,7 @@ interface DictationSettings {
   enabled: boolean;
   sttProfileId: string;
   language?: string;
-  insertMode: "cursor" | "append";
+  insertMode: "append" | "replace_selection";   // 2026-09-14 更正：原写 "cursor" | "append"（与 §13.3 及实现不符；shared/contracts/voice.ts:56）
   discardAudioAfterFinal: true;
 }
 ```
@@ -760,7 +770,7 @@ interface AudioInputDescriptor {
 }
 ```
 
-前端采集即默认格式，各 `start` 控制帧不带 `audio` 字段（契约上可带，缺省按默认）。其后 PCM 原始字节以 WS **BINARY 帧**上行（`send(Uint8Array)`，无描述符/块元数据 JSON 帧）；单帧上限 `MAX_CHUNK_BYTES` = 1 MiB（Main 单向通道 `voice:audio-chunk` 运行时校验，超限丢弃 + warn）；**网络 chunk 无需 640B 对齐**（后端跨 chunk 重组 640B/20ms VAD 帧）。实时链路背压经 `voice_session.ack{seq}`（seq = 服务端已收 BINARY 帧序数）：前端最大未确认 200 帧（≈4s @ 50帧/s，含 1s ack 周期余量）超窗本地暂停采集不丢帧、ack 恢复，无 ack 5s 兜底恢复。
+前端采集即默认格式，各 `start` 控制帧不带 `audio` 字段（契约上可带，缺省按默认）。其后 PCM 原始字节以 WS **BINARY 帧**上行（`send(Uint8Array)`，无描述符/块元数据 JSON 帧）；单帧上限 `MAX_AUDIO_CHUNK_BYTES` = 1 MiB（2026-09-14 更正：原写 `MAX_CHUNK_BYTES`；实见 `src/main/voice/voice-handlers.ts:22`）（Main 单向通道 `voice:audio-chunk` 运行时校验，超限丢弃 + warn）；**网络 chunk 无需 640B 对齐**（后端跨 chunk 重组 640B/20ms VAD 帧）。实时链路背压经 `voice_session.ack{seq}`（seq = 服务端已收 BINARY 帧序数）：前端最大未确认 200 帧（≈4s @ 50帧/s，含 1s ack 周期余量）超窗本地暂停采集不丢帧、ack 恢复，无 ack 5s 兜底恢复。
 
 **TTS 播放（base64 JSON 帧）：** TTS 不下发二进制，`data` 以 base64 内嵌普通事件 JSON——`audio_start{stream_id, format(wav|mp3), sampleRate?, durationMs?}` → `audio{stream_id, seq, data(base64), is_final}` ×N → `audio_end{stream_id, format?}` / `audio_cancelled{stream_id}`；**`is_final` 恒 false，终止由 `audio_end` 判定，不得依赖**。完成语义与取消规则见 §13.4。
 
@@ -926,6 +936,10 @@ idle → connecting → connected
 | tts.playback.changed | Voice/Live2D Store | 更新缓冲、播放、停止和口型联动状态 |
 | error | 对应请求 Store | 转换为可展示错误 |
 
+> **事件名实现口径（2026-09-14 复核，F-6）：** 本表是**设计映射**；实际到达 Renderer 的领域事件名以 `BackendEvent` 为准（见 §3.2 注记）。上表 `connection.changed`/`conversation.changed`/`resource.changed`/`tool.call`/`model.profile.changed`/`voice.caption`/`voice.input.ready`/`tts.playback.changed` 8 名在 `src` **0 命中**。
+
+> 现行对应：连接态 → `chat:state` 推送（`ConnectionState`）；会话/资源 → REST 命令（`listConversations`/`getMessages`/`queryChatHistory`；资源只作为 `ChatHistoryItem.resource` 出现，无独立领域事件）；模型 Profile → `switch_model.result`/`set_tts_voice.result`；工具 → `tool.request`/`tool.started`/`tool.completed`；语音字幕与待发送录音 → `voice_session.partial`/`voice.transcript`；TTS 播放 → `audio.session.started`/`ready`/`cancelled`。表中 `tool.status` 一行是 Client→Server **wire 命令**（`src/main/transport/protocol-v2/raw-types.ts:394`），不是领域事件。
+
 ## 18. 安全规则
 
 - 只连接配置的 HTTPS/WSS 服务；
@@ -989,7 +1003,7 @@ idle → connecting → connected
 | D-3 | `generation.completed.mood` | `emotion`（EmotionState） | 心情字段改名；**F-1（联调前整改）：** mood 为 LLM 自由文本（真实值如「开心」「平静」），前端经 `normalizeEmotionCode`（`renderer/live2d/state-source.ts`）本地归一为 `MoodEmotion`（`happy/sad/surprised`，中英文别名表见 doc 05 §7/§18；未命中保持 `undefined`→`idle`） |
 | D-4 | `generation.completed.usage{turn_total, rounds[]}` | `TokenUsage`（source=`provider_reported`） | 按 generation 去重由 `generationId` 保证；rounds 为 provider 逐轮明细 |
 | D-5 | `generation.completed.conversationUsage{total, byModel}` | `conversationUsage`（source=`server_aggregate`） | 会话级累计来自服务端，非前端累加 |
-| D-6 | `generation.segment.completed.content` | `AssistantSegment.text` | 后端整段文本为权威，无需拼 delta；前端 `SegmentCompletedEvent` 当前未含 content，Adapter 需透传或用其覆盖累积 |
+| D-6 | `generation.segment.completed.content` | `AssistantSegment.text` | 后端整段文本为权威，无需拼 delta；前端 `SegmentCompletedEvent` **已含** `content?: string`（`shared/contracts/events.ts:65`；`frame-mapper.ts:235` 条件透传；2026-09-14 更正，原文为“当前未含 content”），Adapter 透传或用其覆盖累积 |
 | D-7 | `MessageChannel` 含 `status` 通道 | `SegmentChannel` 仅 inner_voice/public_reply | 后端预留 `status` 通道；Adapter 需映射或过滤，不得丢字段 |
 | D-8 | `dictation.start.sttProfileId`（`<provider>/<model>`，可选） | `dictationSttProfileId` | 后端已加独立字段（`556117a`），契约已确认；缺省用全局活动 STT，会话内快照不改全局活动 STT；前端直接透传即可，无需 start 前切换 |
 | D-9 | `generation.completed.finishReason` 限 stop/tool_calls | 前端消息状态 completed | 取消/错误统一走 `generation.failed`，前端不得从 `state idle` 推断完成 |

@@ -43,6 +43,8 @@
 
 设置项按“用户日常使用”和“安全/开发管理”分组，不把所有开关平铺在一个长页面。
 
+> **2026-09-14 更正（C11，对齐实现）：** 上树为**设计分组**，与已实现导航不完全一致——`apps/desktop/src/renderer/src/components/CySettingsView.vue:50-58` 的 `NAV_ITEMS` 实为 **7 项**：模型服务 / **我的档案** / **角色** / 语音 / **外观与 Live2D** / 安全与权限 / 开发与诊断。原树**缺「我的档案」「角色」两页**；原树「角色与外观」在实现中名为「外观与 Live2D」（Live2D 与字体/强调色同页）。
+
 > **阶段 6 批次 C 落地（2026-08-21）**：「安全与权限」子树改写为**授权管理（grants）/ 审批历史 / 命令模板空态**（`CySecurityPane`，NAV security 真页）——**沙盒/黑名单 UI 明确不落地**（D6B-14 常量化注记：仅黑名单零预授权，`PATH_BLACKLIST_DEFAULTS` 为内置常量不进 settings.json、无管理 UI；`sandboxDirectories` 恒空；域名黑名单 = 仅已连接后端端点）。
 
 ## 2. 模型服务
@@ -50,23 +52,30 @@
 ### 2.1 Profile
 
 ```typescript
-interface ModelServiceProfile {
+interface ModelProfile {                    // 2026-09-14 更正：原文名 ModelServiceProfile 在代码中不存在
   id: string;
   type: "llm" | "stt" | "tts";
   displayName: string;
   source: "built_in" | "custom";
   provider: string;
   model: string;
-  protocol: "openai_compatible" | "custom_rest" | "local_worker" | "bundled_local";
+  models: string[];                                // 该 provider 全量模型列表（custom 展示用）
   executionLocation: "backend" | "desktop" | "local_worker";
-  endpoint?: string;
-  credentialOwner: "backend" | "desktop_main" | "local_worker" | "none";
+  endpointLabel?: string;                          // custom base_url host 部分（脱敏展示）
+  baseUrl?: string;                                // custom base_url 全量（非密钥，编辑向导回填用）
   credentialStatus: "missing" | "configured" | "expired";
   enabled: boolean;
   capabilities: string[];
-  updatedAt: string;
+  builtIn: boolean;                                // source 快捷派生（兼容既有消费方）
 }
 ```
+
+> **2026-09-14 更正（对齐代码，C1）：** 本块原写 `interface ModelServiceProfile`，含 `protocol`（`openai_compatible|custom_rest|local_worker|bundled_local`）、`endpoint?`、`credentialOwner`、`updatedAt`。
+>
+> - **该类型名与这四个字段在 `apps/desktop/src` 中 0 命中**（grep `ModelServiceProfile`／`credentialOwner`／`custom_rest`／`openai_compatible`／`bundled_local` 均无命中）；真实类型为 `ModelProfile`：`apps/desktop/src/shared/contracts/model.ts:9-23`。
+> - 差异是**双向**的——代码另有 `models: string[]`、`endpointLabel?`、`baseUrl?`、`builtIn`，原文未写。
+> - `protocol`／`credentialOwner` 属**设计期口径**，前端无实现（模型 Endpoint 与出站网络面归后端，见 §2.5 注记；凭据所有权实际口径见 doc 02 §13 与 §19 E-03）。
+> - doc 02 §13 的 `ModelProfile` 块仍含同样的设计期字段（`protocol`／`credentialOwner`），**待 doc 02 维护者同步**。
 
 前端只读取凭据状态。新建或更新密钥时使用一次性提交接口，保存成功后立即从表单状态清除明文。
 
@@ -101,7 +110,7 @@ interface ModelServiceProfile {
 - Provider、模型、声音和执行位置；
 - 语言、采样率和流式能力摘要；
 - 试听；
-- 音量与语速；
+- ~~音量与语速；~~（**2026-09-14 更正，C11：本项在实现中不存在**——`apps/desktop/src` 内 `音量|语速|volume|playbackRate` 仅 1 处命中，且是 Live2D 口型分析源 `renderer/src/live2d/tts-mouth-source.ts:2`，不是设置项；TTS 无音量/语速用户设置，亦无对应 settings 字段）；
 - 设为当前 TTS；
 - Live2D 口型兼容状态。
 
@@ -118,7 +127,13 @@ interface ModelServiceProfile {
 
 可选项：Provider 名称、API 版本、组织/项目头、上下文长度、语言、实时转写、声音、采样率、流式能力和请求超时。自定义 Header 只能使用允许名单，禁止保存 Cookie、Host、代理认证等危险字段。
 
-Endpoint 安全规则：远程 Provider 默认只允许 HTTPS；需要连接 `localhost/127.0.0.1/[::1]` 的本地模型时必须选择“本机 Provider”模式，并明确显示实际目标和 HTTP 风险。Main 需要校验 DNS、实际连接地址、重定向和域名黑名单，默认拒绝云元数据、链路本地、未授权私网及跨域携带密钥。测试按钮只发送固定最小样例，不使用真实聊天、文件或录音。
+Endpoint 安全规则：远程 Provider 默认只允许 HTTPS；需要连接 `localhost/127.0.0.1/[::1]` 的本地模型时必须选择“本机 Provider”模式，并明确显示实际目标和 HTTP 风险。~~Main 需要校验 DNS、实际连接地址、重定向和域名黑名单，默认拒绝云元数据、链路本地、未授权私网及跨域携带密钥。~~（**2026-09-14 更正，C5：该句为设计期口径，与 7D 收口结论相反，前端从未实现，不得据此认为已有防护**——真实口径见下注记。）测试按钮只发送固定最小样例，不使用真实聊天、文件或录音。
+
+> **2026-09-14 更正（C5，安全相邻的错口径）：** 真实口径是**出站网络面归后端**——九通道 `models:*`／`tts:*` 全为 **thin proxy**（`apps/desktop/src/main/models/model-handlers.ts:22-40`，`adapter.testModelProfile` 直转后端命令 `POST /api/providers/test`）。
+>
+> SSRF／DNS Rebinding／重定向／私网／云元数据／敏感 Header 转发面归「**后端职责（前端不做）**」；前端只有形状与长度预检（`main/ipc/channels.ts` 的 schema 上界）与连接面板 Endpoint 规范化（`main/connection/connection-config.ts`），**二者都不是 SSRF 防护**。
+>
+> 收口依据：`docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md` §2.1（核对表第 11 项「证据缺口；7D 收口确认——后端职责（前端不做）」）与 doc 10 §10.2。
 
 流程：填写 → 本地校验 → 一次性提交凭据 → 类型化能力测试 → 保存 Profile → 可选立即设为当前模型。测试必须使用最小数据，失败时保留表单并给出可执行错误；未经用户确认不能因为测试失败自动改用其他服务。
 
@@ -136,7 +151,9 @@ Endpoint 安全规则：远程 Provider 默认只允许 HTTPS；需要连接 `lo
 - 转写结果只进入草稿，不自动发送、不创建语音消息；原始音频默认不保留；
 - 删除被输入法转写使用的 STT Profile 前，必须先选择替代项或关闭输入法转写。
 
-> **阶段 4 批次 B 落地（2026-08-16，语音子页）：** 转写专用 STT 下拉已实现——数据源 `modelServiceStore.profiles` 过滤 **`type==='stt' && enabled && executionLocation==='backend'`**（D-P20：desktop/local profile 会 `STT_PROFILE_NOT_FOUND`，不列），绑 **`settingsStore.dictation.sttProfileId`**（本地设置，D-P14，非激活选择数据源），含「使用全局活动 STT」空选项；**删除被转写引用的 STT Profile → 自动清空 `dictation.sttProfileId`（回退全局活动 STT）+ toast**。转写插入位置仅 `追加草稿末尾 / 替换当前选区`（`dictationInsertMode` 两值，D-P4）——**「光标级插入」列为后续**（P4-B 子集）。
+> **阶段 4 批次 B 落地（2026-08-16，语音子页）：** 转写专用 STT 下拉已实现——数据源 `modelServiceStore.profiles` 过滤 **`type==='stt' && enabled && executionLocation==='backend'`**（D-P20：desktop/local profile 会 `STT_PROFILE_NOT_FOUND`，不列），绑 **`settingsStore.dictation.sttProfileId`**（本地设置，D-P14，非激活选择数据源），含「使用全局活动 STT」空选项；**删除被转写引用的 STT Profile → 自动清空 `dictation.sttProfileId`（回退全局活动 STT）+ toast**。转写插入位置仅 `追加草稿末尾 / 替换当前选区`（`settings.dictation.insertMode` 两值，D-P4）——**「光标级插入」列为后续**（P4-B 子集）。
+>
+> 字段口径（**2026-09-14 更正，C11**）：真实字段是 `settings.dictation.insertMode`，schema 见 `apps/desktop/src/shared/schemas/ipc-response.ts:299`（`DictationSettingsSchema`，`z.enum(['append','replace_selection'])`），默认 `'append'`；**原文写的 `dictationInsertMode` 在代码中 0 命中**。
 
 ### 2.7 切换规则
 
@@ -322,6 +339,8 @@ interface AuthorizedCommandTemplate {
 目标模型加载失败时保持当前模型，不让角色栏空白。
 
 > **性能读数注记（2026-08-26，阶段 7 批次 C，观察项）：** Live2D 性能读数接入诊断页为节奏内观察项——本批已由性能测量集成 suite（`perf-gate.spec.ts`）复核「折叠后 rAF 停」（维持现状，不 dispose），但「CPU/GPU 数值实测读数接入诊断页」未纳入本批（视测量——若 Live2D 读数测量简单且价值高则纳入，否则记观察项，决策 D7C-07）；断语：Live2D 关闭后 CPU/GPU 下降幅度是「停渲染级」（rAF 停为代理证据）而非「释放资源级」（collapse 不 dispose，expand 无需重载恢复快）。**三态=已开发、未联调**。
+>
+> **2026-09-14 更正（已被取代，C4）：** 上句「三态=已开发、未联调」**已被取代**——阶段 7 已真实联调并收口（doc 16 §2 阶段状态表：7 = 「已真实联调并收口」；批次 C `docs/review/2026-08-27-阶段7批次C-真实联调验收.md`，批次 D 收口 `docs/review/2026-08-28-阶段7批次D-真实联调验收.md`）。原文保留不改，仅加标注；doc 10 §10.2 与 doc 12 §9.8 为同口径（已真实联调）。本条 D7C-07 观察项（Live2D 读数接入诊断页）已由批次 D「观察项重开」落地（doc 10 §10.2 批次 D 注记：`FrameBudget.getStats()` + `live2dStore.getStats()` + `CyDiagnosticsPane` 占位替换）。
 
 ### 7.2 字体与颜色
 
@@ -379,8 +398,12 @@ Renderer DevTools 是更高风险能力：它天然可以检查当前已渲染 D
 > - **连接诊断**：只读展示（status/serverUrl/protocolVersion/serverVersion/lastError），直接读 connectionStore，无新 IPC；
 > - **脱敏诊断导出**：单 JSON 文件（`diagnostics:export`，schemaVersion + manifest + summary + 日志段（每轮转文件尾 5MiB 行对齐，≤3 文件）+ 审计段（最近 30 天直读 `audit-*.jsonl` 全量，超 15MiB 截尾保留最新端）+ 段级 sha256）；导出前逐行二次脱敏（redact + sanitize，>1MiB 超长行整行丢弃并计数）；`showSaveDialog`（harness 落 `dirs.temp` 可自动断言）；审计 `diagnostics:exported`（summary 无路径）。
 > - **与 §8.2 列表差异（D7A-06 定案）**：「后端 Adapter 映射结果」由脱敏事件条目的领域事件名（`type` = BackendEvent 判别字段 `event`）承担展示（raw→domain 映射在 Adapter 侧完成，dev 面只展示 domain 名，原始帧内容永不进 Renderer）；「Live2D 帧耗时」**延 7C**（未导出可读统计则不扩展 API，本批显示「不可用」）。
+>
+> **2026-09-14 更正（已被取代，C4）：** 本注记的「Mock 驱动，标「已开发、未联调」」**已被取代**——阶段 7 批次 A 已于 2026-08-22 真机验收（`docs/review/2026-08-22-阶段7批次A-真实联调验收.md`），阶段 7 整体状态为「已真实联调并收口」（doc 16 §2）。原文保留不改，仅加标注。
 
 > **阶段 7 批次 B（2026-08-25，全局崩溃提示——非设置页，Mock 驱动，标「已开发、未联调」）：** 本批新增 **`CyRendererCrashBanner`** 全局崩溃提示条（挂在 `App.vue` 顶层），**不改设置页结构**——它不是设置在设置中心子页里，而是渲染进程崩溃后由新 Renderer 经 `getLastCrash` invoke 读 crash marker 后显示的**全局覆层横幅**（多行文案「应用曾崩溃并已重载…」，reload 后一次性读 marker）。沿用 doc 11 §9 保存和错误处理「错误处理不阻断主链路」风格；崩溃提示非实时 push（renderer 已死收不到）、一次性（读后清空）。若与现有断线横幅复用样式则不新增设置项。
+>
+> **2026-09-14 更正（已被取代，C4）：** 本注记的「Mock 驱动，标「已开发、未联调」」**已被取代**——阶段 7 批次 B 已于 2026-08-26 真机验收（`docs/review/2026-08-26-阶段7批次B-真实联调验收.md`），阶段 7 整体状态为「已真实联调并收口」（doc 16 §2）。原文保留不改，仅加标注。
 
 ## 9. 保存和错误处理
 
@@ -409,7 +432,7 @@ Renderer DevTools 是更高风险能力：它天然可以检查当前已渲染 D
 - [ ] 普通录音停止后只生成待发送语音输入，直接语音字幕不会写入文字草稿；
 - [ ] 按住说话转文字可以独立选择 STT Profile，只把最终文字写入草稿；
 - [ ] 后端转写明确提示音频上传，本机/Local Worker 明确展示本地模型状态；
-- [ ] 沙盒目录、路径黑名单和域名黑名单可管理；
+- [ ] 沙盒目录、路径黑名单和域名黑名单可管理；（**2026-09-14 标注，C11：本项在实现中不存在，且属「明确不落地」而非待办**——见 §1 阶段 6 批次 C 注记：沙盒/黑名单无管理 UI、`sandboxDirectories` 恒空、域名黑名单 = 仅已连接后端端点；`apps/desktop/src` 内 `sandboxDirectories`／`domainBlacklist` 均 0 命中）
 - [ ] 黑名单优先于历史授权；
 - [ ] 审批历史可查看且内容脱敏；
 - [ ] 已授权命令和目录可查看及撤销；
