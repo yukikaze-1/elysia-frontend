@@ -74,6 +74,8 @@
 
 阶段 8 暂缓的正式依据见 [阶段 8 暂缓决策记录](review/2026-08-29-阶段8暂缓决策记录.md)。
 
+- **会话级 Token 展示已落地（2026-09-15，`4e4e448`）**：用户拍板「要展示，位置在聊天输入栏下方」后，`session.token_stats` 从「有类型、有校验、无消费方」变成有消费方，界面为 Composer 容器下方的 `CySessionUsage`（「本会话累计」+「最近一轮」），**无数据整条隐藏（unknown ≠ 0）**；口径与不做项见 doc 02 §9.3／doc 03 §8，门禁与变异验证见 §3.1。`check:contract` 本机首次跑满三段（挂载 X99 契约 + traces）。
+
 ## 2. 阶段状态
 
 | 阶段 | 范围 | 当前状态 | 主要证据 |
@@ -879,7 +881,26 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 | `pnpm docs:check` | PASS |
 
 - **已完成（不需要产品决策的那半边）**：回放消息的**回复级** token 用量此前解析后整段丢弃 ⇒ 同一条回复「刚生成时有 model/usage 元数据行、重连回来后没有」。取证（X99 `66557628`）：WS 回放 `SessionMessageItem.token_usage` 是 typed `{rounds,turn_total}`、REST 归档是自由形状 `dict[str,Any]` ⇒ 抽出唯一映射点 `token-usage.ts`（实时帧与两条回放路径共用），REST 侧**正向形状确认**后才映射，不匹配即视为"没有用量"（不把半截数据凑成用量）。变异验证：映射行改 `if (false && …)` ⇒ 两条正向用例红、不匹配对照仍绿。
-- **仍未做（等口径）**：**会话级** `token_stats` —— 它与 `generation.completed.conversationUsage` 一样在渲染层**没有任何消费方**（`conversationUsage` 全 renderer 0 命中），纯管道无用户可见收益；需先定「要不要做已消耗 Token 展示」。另：新增的 context-loss 探针**未登记进 `ci.yml` 的 `integration-live2d` matrix**（那里逐文件列举）。
+- **仍未做（等口径）**：**会话级** `token_stats` —— 它与 `generation.completed.conversationUsage` 一样在渲染层**没有任何消费方**（`conversationUsage` 全 renderer 0 命中），纯管道无用户可见收益；需先定「要不要做已消耗 Token 展示」。另：新增的 context-loss 探针**未登记进 `ci.yml` 的 `integration-live2d` matrix**（那里逐文件列举）。（**两半均已被取代**：探针登记见 `02f535b`；「等口径」由用户 2026-09-15 拍板，**会话级展示已实现**，见下条。）
+
+**C2 的「会话级」半边：输入框下方 Token 条（2026-09-15，`4e4e448`）**
+
+| 门禁 | 结果（`4e4e448`，本机 Windows） |
+|---|---|
+| typecheck / lint | PASS |
+| `pnpm test` | PASS：**260 files / 3227 passed** + 6 expected-fail + 22 skipped（新增 6 个 spec 文件 / 42 条） |
+| `pnpm test:integration` | **42 files / 172 passed + 3 skipped、1 failed**；红的是 `renderer-crash.spec.ts`（60s 超时）**单跑绿**，连带 `renderer-crash-banner` 2 passed / 691ms ⇒ 负载型偶发、非回归；本批新增的 `session-usage.spec.ts` 随套件跑过 |
+| `pnpm docs:check` | PASS |
+| `verify:sensitive` | PASS（896 文件扫描，0 命中） |
+| `check:contract` | **三段全通过**（此前本机恒为 `NOT VERIFIED`／exit 2）：从 X99 拉 `frontend_contract` + `ws-v2-*.jsonl` traces 到临时目录后运行——WS v2 型覆盖 **36/36**、字段级帧 **12 契约文件 / 88 条逐字段相等**（含带 `token_stats` 的 session 帧与带 `conversationUsage` 的 chat 帧）、REST **16/16** |
+
+- **产品决定（用户 2026-09-15）**：会话级 Token **要展示**，位置 = 聊天输入栏**下方**（参考图只定位置，不约束指标）；**无数据 → 整条隐藏**。上一批「不建无消费方的管道」因此就地更新（doc 02 §12 → §9.3 注记）。
+- **数据链路（此前该字段的真相是"有类型、有校验、无消费方"）**：`session.token_stats` → `mapRawTokenStats`（与 `conversationUsage` **共用唯一映射点**，`source` 恒 `server_aggregate`）→ `onSessionReplay` 第三参 → `chat-service.pushReplay` → `ReplayPayloadSchema.usage`（optional）→ preload 过共享 schema（**非法只丢该项 + warn**，消息照常送达）→ `messageStore.sessionUsageByConversation`（按会话 ID 键控）。`lastTurnUsage` 从**消息表**派生（回放/重启后同样可得），不是记"最后一次 completed 的 usage"。
+- **寿命**：切换会话不清（按 id 隔离）、端点切换（`clearBackendData`）与删除会话清、瞬态断线重连**不清**——三条都有对应用例，其中前两条各有一处变异验证。
+- **诚实边界**：**unknown ≠ 0**（缺省隐藏、本次没给时保留上次已知值）；`ConversationTokenUsage` 只有 `total`+`byModel` ⇒ **不虚构**会话级 input/output、**算不出**会话级命中率，命中率只按**轮**（`Σcached/Σinput`，任一轮缺 `cached_tokens` 或 `cached>input` 即整项隐藏，`<1%` 不四舍五入成 `0%`）；不做轮次/步数、不做 tok/s。
+- **变异验证 15 处**（逐个回滚确认对应用例变红，全部 RED，文件按 SHA-256 校验还原）：实时/回放不记累计、累计不按会话键控、`lastTurnUsage` 取首条、preload 不过 schema、不挡 `cached>input`、部分轮次缺字段也求和、`<1%` 退化成 `0%`、无 `token_stats` 当 0、映射丢来源标签、无记录也写 `usage` 键、删除会话不清累计、端点切换不清累计、无数据也渲染整条、命中率缺失时不留 title 说明。集成判据取用户可见的**文本 + 几何位置**（token 条 `y` ≥ Composer 容器底边），不取内部状态。
+- **未做**：doc 02 §9.3 允许的「后端未提供时按去重 generation 求和并标注**本机累计**」这条兜底**未实现**——它会引入与后端并行的第二套累计口径（同屏两个都叫"累计"的数字），收益与代价不成比例，要做需先定界面如何区分两种口径。
+- **过程记录（对 `1754ffc` 那次教训的直接纠正）**：本批在**提交前**跑完全部门禁，且 typecheck **确实抓到**一处会被 vitest 漏掉的错误（`cy-session-usage.spec.ts` 的联合展开 TS2322/TS2345，与 `message.store.spec.ts` 已记录过的同一个坑）⇒ 修好后重跑全绿才提交，提交时门禁为绿。
 
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
