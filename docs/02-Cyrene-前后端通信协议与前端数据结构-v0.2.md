@@ -1015,9 +1015,9 @@ idle → connecting → connected
 
 **权威来源（与本表读数同等重要）：** 后端契约的权威副本**只有两个**——X99（`yomu@192.168.1.18:~/elysia-agent`，经 SSH 取回）与后端交接包。**本机若出现后端克隆，一律不得作为核验来源**：它不会自我声明过期，且可能只是部分副本；用它跑 `check:contract` 会得到**形态正确但来源错误**的读数（实测过一次 `36/36 + 16/16` 的假绿，只有 exit code 与"(0 条来自后端契约文件)"能揭示）。用户于 2026-09-14 已删除本机那份克隆，但**规则保留**——详见 [决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md) §3。
 
-**基线：** 2026-09-14 对权威后端实测（后端 `fc57b16d`，经 X99 取回 `frontend_contract/` + `traces/ws-v2-*.jsonl`），命令与口径见 [决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md)。**建立本表的直接动因**：这三处此前在本文档**一次都没出现**——`typing`、`character.state.changed`、`character.catalog.changed`（全文检索 0 命中），即"代码已认、文档未记"的静默漂移。
+**基线：** 2026-09-15 对权威后端复测（后端 `099f38b9`，经 X99 取回 `frontend_contract/` + `traces/ws-v2-*.jsonl`）——此为本节第二次核验（首测 2026-09-14 为 `fc57b16d`），结论一致；命令与口径见 [决策记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md)。**建立本表的直接动因**：这三处此前在本文档**一次都没出现**——`typing`、`character.state.changed`、`character.catalog.changed`（全文检索 0 命中），即“代码已认、文档未记”的静默漂移。
 
-后端 `ServerMessage` 判别联合实测 **42 型**。前端口径分三块：
+后端 `ServerMessage` 判别联合实测 **42 型**。**算式（2026-09-15 更正）：`42 = 36 门禁核对面 + 6 后端有而前端滞后`**——初稿曾写“42 = 36 + 1 前端私有 + 6 推迟”，算术上 36+1+6=43 已自相矛盾，归类上也错（那“1”不是前端私有，见下表第 2 行）。前端口径另见下表：
 
 <!-- ▼ FRAME-INVENTORY：机器校验锚点，勿改动本行格式。格式为「`WS_V2_FRAME_TYPES`(N)`: <反引号包裹的类型，逗号分隔>`」；
      由 tests/unit/contract-doc-frame-inventory.spec.ts 与 scripts/check-backend-contract.mjs 的 WS_V2_FRAME_TYPES 做**集合相等**比对。
@@ -1026,11 +1026,13 @@ idle → connecting → connected
 
 | 类别 | 型数 | 说明 |
 |---|---|---|
-| 门禁核对面（前端已认且后端实有） | **36** | `check:contract` 实测 `36/36`，且 `traces/` 内 14 个 `ws-v2-*.jsonl` 共 **88 条帧**解析后逐字段相等 |
-| 前端已认、后端 `ServerMessage` 未检出 | **1** | `character.catalog.changed`（多角色 FE-A 为"两侧任一就绪即可对拍"预先入白名单；门禁只做子集判定，故**不会**因前端多认而报错） |
+| 门禁核对面（前端已认且后端实有） | **36** | `check:contract` 实测 `36/36`；traces 里 `ws-v2-*.jsonl` 磁盘上 **14 个**，脚本按 `!n.includes('-legacy-')` **只读 12 个**，共 **88 条帧**解析后逐字段相等（另有 2 条合成探针 → 门禁报“90 条”） |
+| 前端已认、后端 `ServerMessage` 未检出 | **1** | `character.catalog.changed`（多角色 FE-A 为“两侧任一就绪即可对拍”预先入白名单；门禁只做子集判定，故**不会**因前端多认而报错）。**2026-09-15 实测**：该名在整个后端副本的 `contract.schema.json`/`contract.raw.ts`/`ws_message/*.py`/`rest.py` 中 **0 命中**，仅存在于后端设计文档 |
 | 后端有、前端有意滞后（只 warn） | **6** | `capabilities`、`command`、`live2d.directive`、`service_mode_result`、`transcription`、`wake` |
 
-另有三型**不在** `ServerMessage` 联合内，故不计入上述 42 型，但**仍被前端白名单接纳**，一并记录于此以免再次漏记：`typing`（兼容帧）、`character.state.changed`（多角色角色状态帧）、`character.catalog.changed`（见上表第 2 类）。
+**前端侧另有 12 型 client→server 帧**（后端在 `ClientMessage` 联合内，门禁不比对 client 帧，故不计入上表任何一类）：`audio.cancel`、`dictation.start/stop/cancel`、`tool.status`、`voice.commit`、`voice.discard`、`voice.record.start/stop`、`voice_session.start/stop/cancel`。前端 raw-schemas 去重后共 **50 型** = 36 核对面 + 1 `character.catalog.changed` + 1 `live2d.directive`（后端已转为 deferred、前端已实现）+ 12 client→server。
+
+**⚠️ 已被 2026-09-15 复测取代（原文保留）：** 初稿在此写“另有三型**不在** `ServerMessage` 联合内……`typing`（兼容帧）、`character.state.changed`（多角色角色状态帧）、`character.catalog.changed`”。**实测三型中只有 `character.catalog.changed` 不在**：`typing` 与 `character.state.changed` **都在** `ServerMessage` 内，且正是 36/36 里被逐字段检查的两型（证据：`frontend_contract/ws_message/chat.py:118`、`character.py:22`、`contract.schema.json:18040`/`:18013` 的 discriminator mapping）。原句还与上一段自相矛盾（上段说 36，此句又说其中两型不计入 42）。**该散文句无门禁守护**——`contract-doc-frame-inventory.spec.ts` 只守白名单那一行的集合相等，故这类描述只能靠复测发现。
 
 **三条必须与上表同时读的口径：**
 
