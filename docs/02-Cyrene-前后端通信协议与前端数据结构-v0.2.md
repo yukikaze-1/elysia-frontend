@@ -193,6 +193,11 @@ interface ConversationPage {
 - 后端**额外提供 `active`**（是否当前活动会话）——前端 `Conversation` 需增补该字段，多会话高亮依赖它（**已被取代，2026-08-11 `e8bb3ee`**：该字段**未**加进 `Conversation`，活动会话改由连接态承载 `ConnectionState.activeConversationId`，见 `shared/contracts/backend.ts:27`；消费处 `renderer/src/stores/conversation.store.ts:443,454`）；
 - 后端会话列表无 `lastMessagePreview`/`tokenUsage`/`lastModel`/`lastEmotion`；会话级 Token 累计经 `generation.completed.conversationUsage` 或 `session` 回放的 `token_stats` 获取，非列表接口直接给出。
 
+> **C2 口径更正（2026-09-15 契约评审）：** 上句描述的是**后端把数据放在哪里**，它成立；但**前端目前的处置是"不消费"**，这一点此前没写，导致"可获取"被读成"已展示"。逐条实况：
+> - **回复级 `usage`：已消费**——`generation.completed.usage` 写进 `Message.usage`，消息气泡据此显示 model/usage 元数据行。**2026-09-15 起回放路径也不再丢弃**（`session` 回放的 `SessionMessageItem.token_usage` 与 REST 归档 `Message.token_usage` 经同一映射点 `main/transport/protocol-v2/token-usage.ts` 落进 `Message.usage`；REST 侧该字段是自由形状 `dict[str,Any]`，按正向形状确认后才映射）。
+> - **会话级累计：不消费（有意）**——`generation.completed.conversationUsage` 与 `session.token_stats` 在 `src/renderer` **均无消费方**（`conversationUsage` 全 renderer 0 命中），即界面上**没有**"已消耗 Token"展示。Adapters 层不为此建未使用的管道：**没有消费方的管道就是会腐烂的死代码**。将来要做展示时，管道与展示一起建（展示位置与口径属产品决定，未定）。
+> - 与 §13 的 `EmotionState`/`ModelIdentity`/`TokenUsage.cachedInput` 等的处理同一条纪律：**文档不得把"字段存在"写成"功能存在"**。
+
 前端需要的逻辑操作：
 
 | 操作 | 输入 | 输出 |
@@ -324,7 +329,7 @@ interface MessageContextQuery {
 - `segmentId + index` 标识同一回复内的句子或多媒体分段；`segment.completed` 不得让前端结束整条回复；
 - `model` 表示该条回复实际使用的模型，不能只展示设置页当前选择；
 - `emotion.intensity` 若存在必须规范化到 0～1；未知 `code` 以安全的“未知/原始标签”展示，不得被解释为 CSS 类、动作文件或资源路径；
-- `tokenUsage` 同时支持回复级与会话级累计，前端不得用字符数冒充服务端 Token；
+- `tokenUsage` 同时支持回复级与会话级累计，前端不得用字符数冒充服务端 Token；（**C2 补充，2026-09-15**：回复级已消费并展示；会话级**当前无消费方、界面上不展示**，见 §12 的 C2 口径更正）
 - `cachedInput` 是 `input` 的子集，不重复加到 `total`；正常情况下 `total = input + output`，后端字段不满足时 Adapter 记录协议告警而不是在 UI 静默修正；
 - 客户端只展示后端明确提供的 `inner_voice` 产品字段，不从内部推理、调试日志或其他隐藏字段推断内容；
 - `inner_voice` 使用独立、可折叠的低强调区域，`public_reply` 是主要回复；

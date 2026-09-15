@@ -248,6 +248,12 @@ jobs:
           - electron-live2d-core.spec.ts
           - electron-live2d-motion.spec.ts
           - electron-live2d-settings.spec.ts
+          # 2026-09-15（J 取证）：GPU 上下文丢失后的像素探针。它是**唯一**在触发 `WEBGL_lose_context`
+          # 之后复查画布的用例（其余 Live2D 用例只断言 draw 调用数/首帧像素），故必须进 CI，
+          # 否则「重建后状态就绪却空白」这类回归在自动化里无人看着。
+          # 环境差异已用双支断言吸收：CI Linux（swrast）大概率与开发机一样落「回退」支
+          # （那时断言"像素为 0"）；一旦哪台机器走到「就绪」支，则要求像素 > 0。
+          - electron-live2d-context-loss.spec.ts
     runs-on: [self-hosted, Linux, X64, fe-linux]
     # self-hosted 掉线时 job 会一直排队（托管 runner 不会），必须有硬上限
     timeout-minutes: 45
