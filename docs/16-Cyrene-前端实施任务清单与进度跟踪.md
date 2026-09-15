@@ -737,6 +737,23 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
   （tool-policy +15、tool-service +4、real-backend +2），另 **1 条既有断言按语义变更改写**
   （`frame-mapper.spec` 的 `'riskLevel' in ev === false` → 直映断言，变更理由已就地写明）。
 
+**S5-B2 / S5-B6 落地批次（2026-09-15，附件 fileRef + 设计风格归属）**
+
+- **范围**：附件链的「不可猜文件引用」结构性修法（S5-B2，H-01 的另一半）与 `ui/设计风格.md` 的治理归属（S5-B6）。
+  逐项证据、实测读数与**如实声明的残余风险**见 [决策记录](review/2026-09-15-S5-B2附件fileRef与设计风格归属-决策记录.md)。
+- **门禁（本机，全绿）**：`pnpm typecheck` PASS；`pnpm lint` PASS；`pnpm test` PASS（**255 files / 3153 passed +
+  6 expected fail + 22 skipped**；新增 `file-ref.spec` 7 条）；`pnpm docs:check` PASS（20 core / **91** review /
+  40 superpowers / 42 archived）；`pnpm -F @cyrene/desktop verify:sensitive` PASS（扫描 **888** 文件）。
+- **`pnpm test:integration`（本机 Windows）**：**40 files / 168 passed + 3 skipped，3 failed**（套件含新增的
+  `h01-fileref-probe.spec.ts`，该文件**通过**）。三个红项——`electron-live2d-core` B7 切换竞态、
+  `renderer-crash`、`renderer-crash-banner`——**三个一起单跑全绿（14/14，50.25s）** ⇒ 判为**负载相关的环境性 flake
+  而非回归**（同一轮里 `renderer-crash` 已是连续第二次此类表现，见上一批次行）。**未重跑整套**，
+  故本轮「整套绿」这一状态**未取得**。
+- **IPC 面 +1 通道**：`attachments:register-file-ref`（声明面 `IpcChannels` / 装配面 Main handler / 可达面 preload
+  三处同时登记，`ipc-surface-alignment.spec.ts` 自动对齐通过；预算声明表同步登记）。
+- **未做**：**未做变异验证**；`fileRef` 的**真实文件**路径（真 OS 拖入/选择）在集成层**无自动化覆盖**——
+  集成夹具只能构造合成 File（`DataTransfer`+`new File`），那恰好落进 `bytes` 分支，故该分支由 preload 单测覆盖。
+
 **UI 走查与精修批次的状态归口（2026-09-15，本文件此前缺记，按「当前状态只写 doc 16」补齐）**
 
 > 背景：`docs/2026-08-29-UI真机走查问题记录.md` 与 `docs/2026-08-29-UI精修整改清单.md` 自带一份「执行状态」块（含 `c58781e` 等提交），而本文件此前**完全没有**这批 UI 走查/精修的记录 ⇒ 与 doc 00「当前状态只写 doc 16」冲突、形成第二份状态台账（2026-09-14 review 记为需人裁决项，2026-09-15 裁决「写进 doc 16」，本节即该裁决落地）。**两份走查/清单文档的状态块保留为历史证据，实时状态一律以本文件为准。**
@@ -808,11 +825,11 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 | `S5-A15e` | `tool-executors.ts` 懒下载 dialog 的实测前提 | **前提已失效**（已改为经 `defaultDialogService`）⇒ **需重新实测，未测** | 下方 ④ |
 | `S5-A16` | H-06／H-07 侦察（两处与评审措辞不符 + mock 确定性缺陷） | **缺陷已修**（`07c71dd`） | `§3.1` |
 | `S5-B1` | H-01 取舍：完整默认黑名单（`/tmp`、`%TEMP%` 下的附件被拒） | **已定案**，代价明确、改一处即可放开 | 下方 `S5-B1` 原文 |
-| `S5-B2` | H-01 **结构性修法**（Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造） | **部分落地（2026-09-14/15）**：删掉第二个未受守卫的 `path → fs` 解析点（`UploadContent.path` 与 `readUploadBytes` 回退，改为 `bytes` 必填）；**「不可猜 fileRef」本身未实现**——同帧下 Main 无法区分 preload 与页面主世界的 invoke，仅靠 `fileRef` 只是把字符串挪了位置，且「只收字节」与已声明的 4 MiB IPC 上限相冲突。⇒ **仍未结，需要一条明确的取舍** | 下方 `S5-B2` 原文 + [契约门禁核验与漂移收口记录](review/2026-09-14-契约门禁对权威后端核验与文档漂移收口-决策记录.md) |
+| `S5-B2` | H-01 **结构性修法**（Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造） | **已完成（2026-09-15）**：`UploadFileDescriptor.path` **已从 IPC 面移除**，改由 Main 的 `fileRef` 表解析（`file-ref.ts`：32 字节 CSPRNG、TTL 10min、容量 256、重连清空）；唯一铸造点是 preload 经 `attachments:register-file-ref` 换 token。**不是 HMAC**——`isTrustedSenderFor` 无法区分 preload 与页面主世界的 invoke，信任锚只能是 Main 自己的内存。命中后 realpath／userData／黑名单／大小／魔数复核**逐条照旧**。 | doc 07 §9.2 + [决策记录](review/2026-09-15-S5-B2附件fileRef与设计风格归属-决策记录.md) |
 | `S5-B3` | H-11b renderer 半边（持久化故障对用户可见） | **已完成**（2026-09-13，含 `CyPersistenceBanner` 全局挂载与错误码拆分，变异 4 次） | 下方 `S5-B3` 原文 + `§3.1` |
 | `S5-B4` | M-19 设置保存失败不可见 | **已修**（2026-09-13；并修掉「设置文件隔离失败会让应用起不来」） | 下方原文 + `§3.1` |
 | `S5-B5` | M-20 其余 6 处 `--cy-accent` 文本误用 | **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`；`color: var(--cy-accent)` 现 0 命中）**⇒ 不再需要用户决定** | 下方 `S5-B5` 原文 |
-| `S5-B6` | `ui/设计风格.md` 的归属（收进 `docs/` 治理体系 or 标注为参考资料） | **未定 —— 仍需产品决定**（该文件已在响应式口径上与 doc 03 冲突，且 `docs:check` 与 doc 00 均不覆盖） | 下方 `S5-B6` 原文 + `§1` 治理问题② |
+| `S5-B6` | `ui/设计风格.md` 的归属（收进 `docs/` 治理体系 or 标注为参考资料） | **已定（2026-09-15）：纳入治理并与 doc 03 分权**——状态定为**参考**、补元数据头、写进 doc 00 §5.1 专项清单、§35 就地标注「四档尺寸是设计稿目标分辨率、断点以 doc 03 为准」；位置仍在 `ui/`（不参与 `docs:check`） | [决策记录](review/2026-09-15-S5-B2附件fileRef与设计风格归属-决策记录.md) + doc 00 §5.1 |
 | `S5-B7` | 全量评审报告原样保留（不改写其历史主张） | **已遵守**（R-09 的更正经 `§1`／`§3.1` 记录，不回头改报告正文） | 下方 `S5-B7` 原文 |
 | `S5-B8` | `85f2602` 的 check-runs 数为 0（该 UI 大改从未被 CI 验证） | **已由后继提交的 CI 覆盖**（本地门禁亦已补齐）；作为历史事实保留 | `§1` 治理问题① |
 

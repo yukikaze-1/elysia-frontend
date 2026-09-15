@@ -208,6 +208,29 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 
 沙盒目录不是全局放行：路径黑名单始终优先。长期目录授权绑定规范化路径、工具范围、后端身份和有效期，并可以从设置页撤销。
 
+> **附件链的「不可猜文件引用」（S5-B2，2026-09-15 落地）。** 附件上传是唯一必须让「本地文件」从 UI 侧跨到
+> Main 的通道（Main 得自己读盘再上传），因此它此前是「Renderer 指认本地路径」的唯一入口。本项把它结构性
+> 收口为 **Main 签发的 `fileRef`**：
+>
+> - **IPC 面已无 `path`**：`UploadFileDescriptor` 只接受 `fileRef`（Main 的表）或 `bytes`（对端已有数据）。
+>   对端再也无法在本通道上命名主机路径（`tests/unit/attachments-contracts.spec.ts` 有类型级 + schema 级守护）。
+> - **唯一铸造点**：preload 的 `webUtils.getPathForFile` 拿到路径后**立刻**经 `attachments:register-file-ref`
+>   换 token（`main/attachments/file-ref.ts`）；路径只留在 Main 的表里，token 由 32 字节 CSPRNG 生成，
+>   与路径之间没有可计算关系（不是哈希，无法反推）。TTL 10 分钟、表容量 256（超限逐最旧）、重连即清空。
+> - **为什么不是 HMAC 签名**：`isTrustedSenderFor` 只校验 webContents + mainFrame + URL ⇒ Main **无法区分**
+>   preload 世界与页面主世界的 invoke（同一帧），任何「只存在于 preload 的秘密」都在对端可达面上。
+>   能当信任锚的只有 **Main 自己的内存**。
+> - **未变的部分**：命中 token 之后，realpath 规范化、userData 排除、`PATH_BLACKLIST_DEFAULTS` 黑名单、
+>   大小与魔数复核**逐条照旧**。本表只回答「这个路径是谁登记过的」，不回答「这个路径是否安全」。
+> - **实测依据与残余风险**：`tests/integration/h01-fileref-probe.spec.ts`（**常驻回归门禁**）实测
+>   `webUtils.getPathForFile` 对 JS 构造的 `File` 恒返空串、对被替换原型的对象直接抛错 ⇒ 表里的路径只可能
+>   来自真实 OS 拖入/选中。**该门禁的意义在于：这条性质是上游行为，一旦 Electron 改变它，preload 就会把
+>   对端指定的路径登记进表、防线静默失效——故该 spec 对此是硬断言。**
+> - **另一方面如实记录**：`bytes` 分支（粘贴型/无文件句柄）仍可被直调，对端能把任意字节 POST 到**当前已连接
+>   后端**并取得后端附件引用；受每类型大小上限/聚合上限/文件数上限约束，且对端本就能 fetch/WS 出网 ⇒
+>   单独看**无额外权限提升**，唯一新增能力是「往会话里塞一个后端附件」。本项**不主张**已消除该面。
+
+
 ### 9.3 截图
 
 - 每次用户选择；
