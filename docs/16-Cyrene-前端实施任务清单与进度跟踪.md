@@ -869,6 +869,18 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **⚠️ 过程失误如实记录**：`1754ffc` 是**在同一条命令里跑门禁 + 提交 + 推送**发出的，而那次 `pnpm lint` **是红的**（一行多余的 `as` 断言）——即该提交未满足本节维护规则里的「门禁先过」。已由 `9144170` 修复，并把这条记在这里而不是悄悄抹掉。
 - **未做**：新探针**未登记进 `ci.yml` 的 `integration-live2d` matrix**（该 matrix 逐文件列举），故 CI 不会跑它；**C2**（`token_stats` 消费）仍因缺消费方而待产品口径。
 
+**C2 的「按消息」半边（2026-09-15，`3db11b2`）**
+
+| 门禁 | 结果（`3db11b2`，本机 Windows） |
+|---|---|
+| typecheck / lint | PASS |
+| `pnpm test` | PASS：**255 files / 3185 passed** + 6 expected-fail + 22 skipped |
+| `pnpm test:integration` | **41 files / 170 passed + 3 skipped、2 failed**；两个红文件**单跑全绿**（`electron-voice` + `renderer-crash-banner` = 17 passed）⇒ 负载型偶发、非回归；本批新增的 `electron-live2d-context-loss` 已随套件跑过 |
+| `pnpm docs:check` | PASS |
+
+- **已完成（不需要产品决策的那半边）**：回放消息的**回复级** token 用量此前解析后整段丢弃 ⇒ 同一条回复「刚生成时有 model/usage 元数据行、重连回来后没有」。取证（X99 `66557628`）：WS 回放 `SessionMessageItem.token_usage` 是 typed `{rounds,turn_total}`、REST 归档是自由形状 `dict[str,Any]` ⇒ 抽出唯一映射点 `token-usage.ts`（实时帧与两条回放路径共用），REST 侧**正向形状确认**后才映射，不匹配即视为"没有用量"（不把半截数据凑成用量）。变异验证：映射行改 `if (false && …)` ⇒ 两条正向用例红、不匹配对照仍绿。
+- **仍未做（等口径）**：**会话级** `token_stats` —— 它与 `generation.completed.conversationUsage` 一样在渲染层**没有任何消费方**（`conversationUsage` 全 renderer 0 命中），纯管道无用户可见收益；需先定「要不要做已消耗 Token 展示」。另：新增的 context-loss 探针**未登记进 `ci.yml` 的 `integration-live2d` matrix**（那里逐文件列举）。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
