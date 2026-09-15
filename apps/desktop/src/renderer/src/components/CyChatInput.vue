@@ -15,6 +15,7 @@ import { useSettingsStore } from '../stores/settings.store'
 import { useHistoryViewerStore } from '../stores/historyViewer.store'
 import CyAttachmentQueue from './CyAttachmentQueue.vue'
 import CyEmojiPicker from './CyEmojiPicker.vue'
+import CySessionUsage from './CySessionUsage.vue'
 import CyVoicePending from './CyVoicePending.vue'
 import CyRealtimeBar from './CyRealtimeBar.vue'
 import CyDictationHint from './CyDictationHint.vue'
@@ -509,6 +510,9 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
           </button>
         </div>
       </div>
+      <!-- C2（会话级半边，2026-09-15）：token 统计条——**输入框下方**（框外），只读、不参与发送门。
+           未知即整条隐藏（后端无该会话记录 ≠ 累计 0），故不需要"空态"占位。 -->
+      <CySessionUsage />
     </template>
     <!-- P4-B 实时会话：输入区替换为实时状态条（聆听 + 字幕 + 轮次 + 停止） -->
     <CyRealtimeBar v-else />

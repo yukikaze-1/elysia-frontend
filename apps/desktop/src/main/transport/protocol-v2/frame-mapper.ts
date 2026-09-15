@@ -9,7 +9,7 @@ import type {
   RawFrame, RawGenerationCompleted, RawGenerationFailed,
   RawSegmentChannel, RawSegmentKind, RawTokenUsage, RawConversationUsage
 } from './raw-types'
-import { mapRawTokenUsage } from './token-usage'
+import { mapRawTokenStats, mapRawTokenUsage } from './token-usage'
 
 export interface FrameMapperOptions {
   connectionId?: string
@@ -496,7 +496,11 @@ export class FrameMapper {
     })
   }
 
+  /**
+   * 会话级累计同样只留一个映射点（`token-usage.ts`）——`session.token_stats` 与
+   * `generation.completed.conversationUsage` 是同一形状的一种事实，两条路径必须给出同样的领域对象。
+   */
   private mapConversationUsage(raw: RawConversationUsage): ConversationTokenUsage {
-    return { total: raw.total, byModel: raw.byModel, source: 'server_aggregate' }
+    return mapRawTokenStats(raw)
   }
 }

@@ -175,6 +175,36 @@ describe('conversationStore', () => {
     expect(store.items.map((c) => c.id)).toEqual(['c2'])
   })
 
+  // C2 展示半边（2026-09-15）：会话级 token 累计的两条清理路径。
+  it('remove 非激活会话：连带清掉该会话的 token 累计（按会话键控的表不得留下已删会话）', async () => {
+    const store = useConversationStore()
+    const messageStore = useMessageStore()
+    store.$patch({ currentId: 'c1' })
+    messageStore.loadReplay('c1', [], { total: 500, byModel: { m1: 500 }, source: 'server_aggregate' })
+    expect(messageStore.sessionUsageByConversation['c1']?.total).toBe(500)
+
+    store.$patch({ currentId: 'c2' })   // 删除的是**非**激活会话：resetConversation 不会被调用，只有 purge 路径能清
+    mockApi.deleteConversation.mockResolvedValue(undefined)
+    mockApi.listConversations.mockResolvedValue({ items: [convB], hasMore: false })
+    await store.remove('c1')
+    expect(messageStore.sessionUsageByConversation['c1']).toBeUndefined()
+  })
+
+  it('端点切换（clearBackendData）→ 会话级 token 累计整体清空（数字属于旧后端）', () => {
+    const store = useConversationStore()
+    const messageStore = useMessageStore()
+    const connection = useConnectionStore()
+    connection.setState({ status: 'connected', connectionId: 'ep-a', serverUrl: 'https://a.example/api' })
+    store.setConnectionState(connection.state)
+    store.$patch({ currentId: 'c1' })
+    messageStore.loadReplay('c1', [], { total: 999, byModel: {}, source: 'server_aggregate' })
+    expect(Object.keys(messageStore.sessionUsageByConversation)).toEqual(['c1'])
+
+    connection.setState({ status: 'connected', connectionId: 'ep-b', serverUrl: 'https://b.example/api' })
+    store.setConnectionState(connection.state)
+    expect(messageStore.sessionUsageByConversation).toEqual({})
+  })
+
   it('remove 当前激活会话:currentId 清空 + messageStore 清空(不悬空,L1)', async () => {
     const store = useConversationStore()
     const messageStore = useMessageStore()

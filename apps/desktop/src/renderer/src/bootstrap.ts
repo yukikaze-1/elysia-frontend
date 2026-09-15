@@ -3,13 +3,13 @@
 // 启动代次守卫(epoch)防迟到 snapshot 覆盖已收到的新 push(D1,不改 ConnectionState 契约)。
 // G2(P1-1/P2-2):先 hydratePersistence 水合 draft/cache,再取连接 snapshot——disconnected 分支离线水合,
 // connected 分支缓存不进入 messageStore(只作内存储备,由 initializeConnected+activate 覆盖)。
-import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedEvent, ConnectionState, Conversation, Live2DDirectiveEvent, SessionPersistenceState } from '@shared/contracts'
+import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedEvent, ConnectionState, Conversation, ConversationTokenUsage, Live2DDirectiveEvent, SessionPersistenceState } from '@shared/contracts'
 import type { PublicError } from './utils/public-error'
 import type { DesktopApiLike } from './stores/desktop-api.types'
 
 export interface BootstrapStores {
   connection: { setState(s: ConnectionState): void; setError(e: PublicError): void }
-  message: { applyEvent(e: unknown): void; handleConnectionStateChange(s: ConnectionState): void; loadReplay(conversationId: string, messages: unknown[]): void }
+  message: { applyEvent(e: unknown): void; handleConnectionStateChange(s: ConnectionState): void; loadReplay(conversationId: string, messages: unknown[], usage?: ConversationTokenUsage): void }
   conversation: {
     onConnected(connectionId?: string): Promise<void>
     onActiveConversationAppeared(activeId: string): Promise<void>
@@ -274,7 +274,7 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
       stores.message.applyEvent(e)
     })
     api.onChatState((s) => { stateEpoch++; applyChatState(s) })
-    api.onChatReplay(({ conversationId, messages }) => stores.message.loadReplay(conversationId, messages))
+    api.onChatReplay(({ conversationId, messages, usage }) => stores.message.loadReplay(conversationId, messages, usage))
     api.onChatError((err) => stores.connection.setError(err))
     // H-04：退出前持久化 flush。ack 无论 flush 成败都要发（fail-open），否则 Main 只能等满超时预算。
     api.onPersistFlushRequest(() => {

@@ -79,8 +79,11 @@
 - 流式消息缓冲；
 - 父回复到有序句子/多媒体分段的映射；
 - 消息级 Token、实际模型和心情；
+- 会话级 Token 累计（服务端口径，按会话 ID 归属）；
 - 发送确认状态；
 - 不保存渲染后的 HTML。
+
+> **C2 展示半边注记（2026-09-15）：** `messageStore` 增 `sessionUsageByConversation`（`Record<conversationId, ConversationTokenUsage>`）与其派生 `currentSessionUsage`、`lastTurnUsage`。为什么落在本 store 而不是新开一个：它是**唯一**同时看得到实时 `generation.completed.conversationUsage`、回放 `session.token_stats`（随 `chat:replay` 到达）、以及"这一代属于哪个会话"归属表与传输栅栏的地方——换一个 store 收这份数据就得把三者各复制一遍。寿命：按会话 ID 键控（切换会话不清、切回仍在），**端点切换**（`clearBackendData`）与**删除会话**（`remove`）清，瞬态断线重连**不清**。**有意不写进消息表**——它不是任何一条消息的属性，混进 `Message` 会跟着消息去分页/缓存/去重，产生第二份真相。`lastTurnUsage` 从**消息表**派生（回放/重启后同样可得），而不是记"最后一次 completed 的 usage"。契约与口径见 doc 02 §9.3 注记。
 
 ### 3.5 `toolStore`
 

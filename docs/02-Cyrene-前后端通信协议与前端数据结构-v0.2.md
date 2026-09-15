@@ -453,6 +453,15 @@ interface GenerationCompletedPayload {
 
 `usage` 表示本次生成的实际用量；`conversationUsage` 表示后端定义的会话累计用量，不等于“当前上下文窗口大小”。优先展示后端累计值；后端未提供时，前端只能对去重后的已完成 generation 做明确标注为“本机累计”的求和，不能把重复完成事件、重试失败或字符估算计入真实 Token。
 
+> **落地注记（2026-09-15，C2 展示半边）：** 输入框下方的会话级 Token 条已实现（`CySessionUsage`，见 doc 03 §8）。口径与来源逐条固定如下，**凡后端不给的都不显示**：
+>
+> - **会话累计**取服务端口径，两条来源同形、同一个映射点（`main/transport/protocol-v2/token-usage.ts::mapRawTokenStats`，`source` 恒 `server_aggregate`）：实时 `generation.completed.conversationUsage`，以及 **WS `session.token_stats`**——后者是本次新接上的：它此前被 raw schema 接纳后**整段丢弃**（有类型、有校验、无消费方），于是"会话累计"只在本次连接内生成过一次之后才存在，重连/重启打开历史会话时是空的。后端 X99 取证：`ws_handler._send_session_replay` 取 `token_tracker.get_session_stats(sid)`（严格按 sid，无记录返回 0/空），无记录时 `token_stats=None`。
+> - **无记录 ≠ 累计 0**：`token_stats`/`conversationUsage` 缺省时界面**整条不显示**，不写 `0 tokens`、不写占位。契约上 `GenerationCompletedEventSchema.conversationUsage` 与 `ReplayPayloadSchema.usage` 都是 optional，二者缺省的语义都是"后端这次没给"，**不是"归零"**（本次没给时保留上一次已知值）。
+> - **`ConversationTokenUsage` 只有 `total` + `byModel`**，故**不虚构** input/output，也**算不出会话级缓存命中率**——后者的分母要每轮 cached/input 全量留存，而会话累计里没有。
+> - **缓存命中率**因此只作为**最近一轮**的派生显示：`Σrounds.cached_tokens / Σrounds.input_tokens`，**任一轮缺 `cached_tokens` 即整项隐藏**（部分求和会系统性低估，比不显示更糟）；`cached > input` 时同样隐藏（口径不符时不夹到 100%）。
+> - **有意未做**：本文允许的「后端未提供时按去重 generation 求和并标注本机累计」这条兜底**没有实现**——它需要在前端维护一份与后端并行的累计口径，收益是"旧后端也有数"，代价是同一屏可能出现两个都叫"累计"的数字。当前选择是**只显示后端权威值**；若将来要支持旧后端，需先定界面如何区分两种口径。
+> - **归属与寿命**：按会话 ID 键控（切换会话不串号、切回仍在），端点切换（`clearBackendData`）与删除会话时清除；瞬态断线重连**不清**（同一后端同一会话，清了只会让数字闪回空档，且重连回放本就带来权威值）。
+
 ### 9.4 失败
 
 ```typescript

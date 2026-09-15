@@ -146,6 +146,24 @@ describe('chat-service', () => {
     svc.dispose()
   })
 
+  // C2 展示半边（2026-09-15）：会话级累计随回放同行送达。
+  it('pushReplay 带 usage → 载荷含会话级累计；不带 → 载荷里没有该键（undefined ≠ 累计 0）', () => {
+    const { deps, sent } = makeDeps()
+    const svc = createChatService(deps)
+    svc.pushReplay('conv-1001', [], { total: 1234, byModel: { 'm-a': 1234 }, source: 'server_aggregate' })
+    svc.pushReplay('conv-1002', [])
+    const replays = sent.filter((s) => s.channel === 'chat:replay').map((s) => s.payload as Record<string, unknown>)
+    expect(replays[0]).toEqual({
+      conversationId: 'conv-1001',
+      messages: [],
+      usage: { total: 1234, byModel: { 'm-a': 1234 }, source: 'server_aggregate' }
+    })
+    // 关键：无记录时不写 `usage: undefined` 之外的东西，也不补 0——键不存在
+    expect('usage' in replays[1]).toBe(false)
+    expect(replays[1]).toEqual({ conversationId: 'conv-1002', messages: [] })
+    svc.dispose()
+  })
+
   it('connect 成功 → audit connection:connect connected', async () => {
     const { deps } = makeDeps({ audit: vi.fn() })
     const svc = createChatService(deps)

@@ -21,7 +21,7 @@ import type {
 } from '@shared/contracts/backend'
 export type { ConnectionState, ConnectionStatus } from '@shared/contracts/backend'
 import type { Conversation, CreateConversationInput, Page, PageQuery } from '@shared/contracts/conversation'
-import type { ClientRequestRef, Message, SendMessageInput } from '@shared/contracts/message'
+import type { ClientRequestRef, ConversationTokenUsage, Message, SendMessageInput } from '@shared/contracts/message'
 import type {
   CharacterArchiveResult,
   CharacterDetail,
@@ -86,6 +86,7 @@ import type {
   RawUserAck
 } from './protocol-v2/raw-types'
 import { FrameMapper } from './protocol-v2/frame-mapper'
+import { mapRawTokenStats } from './protocol-v2/token-usage'
 import { RestMapper, compareBySortKey, pairToolCalls } from './protocol-v2/rest-mapper'
 import { parseRestActivateResult, parseRestMessagesPage, parseRestSessionDetail, parseRestSessions, RestSessionSummarySchema, parseAttachmentUploadResponse, parseAttachmentSignResponse, parseRestMessageContext, parseRestSearchMessages, parseRestStickerList, parseRestProviders, parseRestProviderTest, parseRestTtsVoices, parseRestTtsPreview } from './protocol-v2/rest-schemas'
 import {
@@ -137,7 +138,17 @@ export interface RealBackendOptions {
   now?: () => number
   wsFactory?: (url: string, headers: Record<string, string>) => WebSocketLike
   onProtocolWarning?: (warning: ProtocolWarning) => void
-  onSessionReplay?: (conversationId: string, messages: Message[]) => void
+  /**
+   * 会话回放推送。
+   *
+   * `usage` 是 `session.token_stats` → 领域 `ConversationTokenUsage`（服务端按会话 id 累计）。
+   * 2026-09-15 追加：该字段此前**被 schema 接纳后整段丢弃**（`RawSessionMessage.token_stats`
+   * 只有类型与校验、没有消费方），于是会话级累计只在"这次连接内生成过一次"之后才存在，
+   * 重连/重启打开历史会话时是空的。第三个参数为 undefined 表示**后端没有该会话的记录**
+   * （X99 `token_tracker.get_session_stats(sid)` 无记录返回 0/空 → `_send_session_replay` 置 None），
+   * 与"累计为 0"是两件事，消费方必须区分（界面隐藏而不是显示 0）。
+   */
+  onSessionReplay?: (conversationId: string, messages: Message[], usage?: ConversationTokenUsage) => void
   onError?: (error: CyreneError) => void
   /** 帧解析/提炼失败告警（L-4/D6C-09d；测试注入 spy 断言；缺省静默） */
   logger?: { warn(msg: string, extra?: Record<string, unknown>): void }
@@ -629,7 +640,11 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       this.setState({ ...this.state, activeConversationId: frame.conversationId })
       this.mapper?.setActiveConversationId(frame.conversationId)
       const messages = pairToolCalls(frame.messages.map((m) => this.restMapper.toDomainMessageFromReplay(m, frame.conversationId as string)))
-      this.options.onSessionReplay?.(frame.conversationId, messages)
+      this.options.onSessionReplay?.(
+        frame.conversationId,
+        messages,
+        frame.token_stats ? mapRawTokenStats(frame.token_stats) : undefined
+      )
     } else {
       // C5（2026-09-15 契约评审）：`sessionBuffer` 原设计是「缺 conversationId 的旧后端回放先缓冲、
   // 待 REST active:true 解析后投递」——那条投递路径**从未实现**，字段写进去就再也不出来，

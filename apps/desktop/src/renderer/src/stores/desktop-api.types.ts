@@ -39,6 +39,7 @@ import type {
   ConnectionState,
   Conversation,
   ConversationMessagesQuery,
+  ConversationTokenUsage,
   CreateConversationInput,
   CredentialStatus,
   DictationStartInput,
@@ -133,7 +134,7 @@ export interface DesktopApiLike {
   listStickers(): Promise<StickerManifest>
   onChatEvent(handler: (event: BackendEvent) => void): () => void
   onChatState(handler: (state: ConnectionState) => void): () => void
-  onChatReplay(handler: (payload: { conversationId: string; messages: Message[] }) => void): () => void
+  onChatReplay(handler: (payload: { conversationId: string; messages: Message[]; usage?: ConversationTokenUsage }) => void): () => void
   onChatError(handler: (err: PublicError) => void): () => void // P0-01:bootstrap 需消费 Main 错误推送
   // —— 阶段 3 G2 持久化面 ——
   hydratePersistence(): Promise<SessionPersistenceState>

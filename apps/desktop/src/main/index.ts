@@ -6,7 +6,7 @@ import { realpath } from 'fs/promises'
 import { release as osRelease, type as osType } from 'node:os'
 import { BACKEND_TOKEN_KEY, BACKEND_TOKEN_ORIGIN_KEY, PushChannels, isKeyAllowed } from '@shared/contracts'
 import type { ConnectionState } from '@shared/contracts/backend'
-import type { Message } from '@shared/contracts/message'
+import type { ConversationTokenUsage, Message } from '@shared/contracts/message'
 import { applyTestAppDataOverride, installAppIdentity, expectedUserDataBase, resolveAppDataFlavor, setAppDataFlavor } from './app/lifecycle'
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
@@ -288,7 +288,7 @@ async function main(): Promise<void> {
       // A-8（D6B-11）：重连成功（connected）→ 工具服务重发未确认终态 + 清 selected-set；首次连接无记录为 no-op
       if (state.status === 'connected') void toolBridge.svc?.reconnect()
     }
-    const onReplay = (conversationId: string, messages: Message[]) => chatBridge.svc?.pushReplay(conversationId, messages)
+    const onReplay = (conversationId: string, messages: Message[], usage?: ConversationTokenUsage) => chatBridge.svc?.pushReplay(conversationId, messages, usage)
     // FE-E1：Mock 角色服务与聊天 Mock 通过装配层注入不可变 binding 快照，二者仍保持独立。
     const mockCharacterBackend = useMock ? new MockCharacterBackend() : undefined
     const adapter: BackendAdapter = useMock

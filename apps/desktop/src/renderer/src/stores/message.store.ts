@@ -8,15 +8,17 @@
 // - loadReplay 纯缓冲(currentId 未设→pendingReplay,由 applyPendingReplay 补应用,design §4.1.3);migrateKey 竞态守卫(I1);
 // - handleConnectionStateChange 断线先清 local-* pending 乐观消息(I5),再处理 in-flight → interrupted(F11:清理在早退之前)。
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type {
   BackendEvent,
   CharacterBindingSnapshot,
   CharacterGenerationRef,
   ConnectionState,
+  ConversationTokenUsage,
   Message,
   MessageAttachment,
-  MessagePage
+  MessagePage,
+  TokenUsage
 } from '@shared/contracts'
 import { StreamAccumulator } from '@shared/domain'
 import { api } from './desktop-api'
@@ -143,7 +145,22 @@ export const useMessageStore = defineStore('message', () => {
    */
   let characterProfilesRequired = false
   /** loadReplay 纯缓冲:currentId 未设时暂存,由 applyPendingReplay(id) 应用(design §4.1.3) */
-  const pendingReplay = ref<{ conversationId: string; messages: Message[] }>()
+  const pendingReplay = ref<{ conversationId: string; messages: Message[]; usage?: ConversationTokenUsage }>()
+  /**
+   * 会话级 token 累计（**服务端权威口径**，按会话 id 归属）。
+   *
+   * 为什么不是"当前会话一个值"：切换会话再切回来时数字应当还在（后端那次会话的事实没变），
+   * 而切换瞬间又绝不能把上一个会话的累计显示成新会话的——键控是同时满足这两点的最小结构。
+   * 为什么放在本 store：它是唯一同时看得到**实时** `generation.completed.conversationUsage`、
+   * **回放** `session.token_stats`、以及"这一代属于哪个会话"归属表（`generationByConversation`）
+   * 与传输栅栏（`generationSessionById`）的地方；换一个 store 收这份数据就必须把三者再复制一遍。
+   *
+   * 有意**不写进消息表**：它不是任何一条消息的属性，混进 `Message` 会让"会话累计"跟着消息
+   * 去分页/缓存/去重，产生第二份真相。
+   *
+   * 生命周期：切换会话**不清**（按 id 隔离）；端点切换（`clearBackendData`）与删除会话清。
+   */
+  const sessionUsageByConversation = ref<Record<string, ConversationTokenUsage>>({})
   /** 领域守卫丢弃计数(测试断言/调试;只记类型与 ID,不记正文,design §4.2.1) */
   const droppedEvents = ref(0)
   /** Pagination request owners: reset/switch can revoke an old token without
@@ -162,6 +179,56 @@ export const useMessageStore = defineStore('message', () => {
     console.warn('cyrene:guard:drop', { type, conversationId, generationId })
     droppedEvents.value++
   }
+
+  /**
+   * 记入一次会话级累计。`undefined` 有意**不是**"归零"：它表示这次来源没有给出累计
+   * （后端无该会话记录 / 帧里没带该字段），此时保留上一次已知值——把"这次没说"当成
+   * "累计变成 0"会让界面上的数字无故归零，那是在编数据。
+   */
+  function recordSessionUsage(conversationId: string | undefined, usage: ConversationTokenUsage | undefined): void {
+    if (!conversationId || !usage) return
+    sessionUsageByConversation.value = { ...sessionUsageByConversation.value, [conversationId]: usage }
+  }
+
+  /** 删除会话联动（conversation.store.deleteConversation）：只清该会话那一项 */
+  function purgeConversationUsage(conversationId: string): void {
+    if (!(conversationId in sessionUsageByConversation.value)) return
+    const next = { ...sessionUsageByConversation.value }
+    delete next[conversationId]
+    sessionUsageByConversation.value = next
+  }
+
+  /**
+   * 端点切换（`conversation.store.clearBackendData`）：**全部**清掉。
+   * 这些数字是"某个后端的某个会话"的累计，换了后端就不再是关于当前事实的陈述。
+   * 与瞬态断线重连**刻意不同**：那还是同一个后端同一个会话，清掉会让重连前后数字闪回空档，
+   * 而重连后的回放本就会带来权威值。
+   */
+  function purgeAllSessionUsage(): void {
+    sessionUsageByConversation.value = {}
+  }
+
+  /** 当前会话的服务端累计（无记录 → undefined，界面据此隐藏整条，不显示 0） */
+  const currentSessionUsage = computed(() => {
+    const id = sessionConversationId.value
+    return id ? sessionUsageByConversation.value[id] : undefined
+  })
+
+  /**
+   * 当前会话**最近一轮**服务端上报用量——取消息表里最后一条带 `usage` 的助手消息。
+   *
+   * 为什么从消息表派生而不是记"最后一次 generation.completed 的 usage"：
+   * ①消息的 `usage` 在回放（WS session 与 REST 归档两条路径，C2 已补映射）后同样存在，
+   *   于是重启/重连打开历史会话时"最近一轮"仍然正确，而只记内存事件会在重启后凭空消失；
+   * ②它随消息一起被栅栏/去重管着，不需要第二套归属判据。
+   */
+  const lastTurnUsage = computed<TokenUsage | undefined>(() => {
+    for (let i = order.value.length - 1; i >= 0; i--) {
+      const message = byId.value[order.value[i]]
+      if (message?.role === 'assistant' && message.usage) return message.usage
+    }
+    return undefined
+  })
 
   /**
    * H-10：生成静默看门狗到期。
@@ -714,6 +781,9 @@ export const useMessageStore = defineStore('message', () => {
         if (event.generationId !== activeGenerationId.value) break
         acc.apply(event)
         finalizeAssistant(acc.getState().messageId, acc)
+        // 会话级累计（C2 展示半边）：只在**归属与栅栏都通过之后**记录——迟到/跨代/异会话的 completed
+        // 已被上面几道守卫挡掉，故这里不需要第二套判据（这正是把状态放在本 store 的原因）。
+        recordSessionUsage(conv, event.conversationUsage)
         const finalMsg = byId.value[acc.getState().messageId]
         if (finalMsg) {
           // Cache persistence is asynchronous too.  Keep the same transport
@@ -1047,7 +1117,7 @@ export const useMessageStore = defineStore('message', () => {
   }
 
   /** 重连回放核心路径(P2-2):匹配当前会话 → 按 messageId 去重插入;未设 currentId → 纯缓冲;不匹配 → 丢弃(design §4.1.3/4.2.2) */
-  function loadReplay(conversationId: string, messages: Message[]): void {
+  function loadReplay(conversationId: string, messages: Message[], usage?: ConversationTokenUsage): void {
     const validated = validateMessageConversationIds(messages, conversationId, 'replay')
     if (!validated) return
     const cur = sessionConversationId.value
@@ -1058,13 +1128,16 @@ export const useMessageStore = defineStore('message', () => {
         return
       }
       for (const m of accepted) upsertMessage(m)
+      // 累计与消息同一批次、同一会话身份：整批被字符身份守卫拒绝时**连它一起不采**，
+      // 避免出现"消息没落地、页脚却显示了这个会话的累计"这种半应用状态。
+      recordSessionUsage(conversationId, usage)
       return
     }
     if (cur === undefined) {
       // Do not validate against a missing binding yet.  The active session is
       // established by activate(), which calls applyPendingReplay and applies
       // the same strict guard before inserting anything.
-      pendingReplay.value = { conversationId, messages: validated }
+      pendingReplay.value = { conversationId, messages: validated, ...(usage ? { usage } : {}) }
       return
     }   // 未激活前一律缓冲(活动会话晚到由 onActiveConversationAppeared 补激活)
     guardDropReplay(conversationId)
@@ -1079,6 +1152,7 @@ export const useMessageStore = defineStore('message', () => {
         reportMessageProtocolError('replay.pending.character', id)
       } else {
         for (const m of accepted) upsertMessage(m)
+        recordSessionUsage(id, pendingReplay.value.usage)
       }
     }
     pendingReplay.value = undefined
@@ -1335,6 +1409,11 @@ export const useMessageStore = defineStore('message', () => {
     connectionEpoch,
     pendingReplay,
     droppedEvents,
+    sessionUsageByConversation,
+    currentSessionUsage,
+    lastTurnUsage,
+    purgeConversationUsage,
+    purgeAllSessionUsage,
     hasMoreBefore,
     beforeCursor,
     loadingOlder,

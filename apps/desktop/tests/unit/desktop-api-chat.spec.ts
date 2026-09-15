@@ -129,6 +129,33 @@ describe('desktopApi chat 面', () => {
     unsub()
   })
 
+  // C2 展示半边（2026-09-15）：聊天回放载荷里的会话级累计——合法则透传，非法只丢该项（消息照常送达）。
+  it('onChatReplay: usage 合法 → 透传；非法 → 只丢 usage 且 warn，消息不受牵连', async () => {
+    const { desktopApi, mockIpc } = await importDesktopApi()
+    const received: Array<{ conversationId: string; messages: unknown[]; usage?: unknown }> = []
+    const unsub = desktopApi.onChatReplay((p) => received.push(p))
+
+    mockIpc.emit('chat:replay', {
+      conversationId: 'c1',
+      messages: [],
+      usage: { total: 1833, byModel: { 'm-a': 1833 }, source: 'server_aggregate' }
+    })
+    expect(received[0].usage).toEqual({ total: 1833, byModel: { 'm-a': 1833 }, source: 'server_aggregate' })
+
+    // 非法：负数 / 缺 source / byModel 值非数字 —— 一条都不该进界面
+    mockIpc.emit('chat:replay', { conversationId: 'c2', messages: [], usage: { total: -1, byModel: {}, source: 'server_aggregate' } })
+    mockIpc.emit('chat:replay', { conversationId: 'c3', messages: [], usage: { total: 1, byModel: {} } })
+    mockIpc.emit('chat:replay', { conversationId: 'c4', messages: [], usage: { total: 1, byModel: { 'm-a': 'x' }, source: 'server_aggregate' } })
+    expect(received.slice(1)).toEqual([
+      { conversationId: 'c2', messages: [] },
+      { conversationId: 'c3', messages: [] },
+      { conversationId: 'c4', messages: [] }
+    ])
+    expect(console.warn).toHaveBeenCalledWith('cyrene:replay:drop-invalid-usage', { conversationId: 'c2' })
+
+    unsub()
+  })
+
   it('onChatReplay: preload MessageSchema 解析后保留 character generation ref', async () => {
     const { desktopApi, mockIpc } = await importDesktopApi()
     const received: Array<{ messages: Message[] }> = []

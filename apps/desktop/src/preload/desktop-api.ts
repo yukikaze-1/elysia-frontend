@@ -39,6 +39,7 @@ import type {
   ConnectionState,
   Conversation,
   ConversationMessagesQuery,
+  ConversationTokenUsage,
   CreateConversationInput,
   DictationStartInput,
   DictationStopInput,
@@ -120,6 +121,7 @@ import {
   ClientRequestRefSchema,
   ConnectionStateSchema,
   ConversationSchema,
+  ConversationUsageSchema,
   DiagnosticsDevEventSchema,
   DiagnosticsExportResultSchema,
   DiagnosticsStateSchema,
@@ -255,10 +257,16 @@ function isConnectionState(v: unknown): v is ConnectionState {
   return ConnectionStateSchema.safeParse(v).success
 }
 
-/** 会话回放推送载荷：{conversationId, messages}（RealBackend onSessionReplay 桥接） */
+/** 会话回放推送载荷：{conversationId, messages, usage?}（RealBackend onSessionReplay 桥接） */
 interface ReplayPayload {
   conversationId: string
   messages: Message[]
+  /**
+   * 会话级服务端累计 token（`session.token_stats`）。
+   * **缺省与"累计为 0"不同义**：缺省表示后端没有该会话的记录（X99 `get_session_stats` 无记录返回 0/空
+   * → `_send_session_replay` 置 `None`），消费方据此隐藏整条而不是显示一个"0 tokens"。
+   */
+  usage?: ConversationTokenUsage
 }
 
 function isReplayPayload(v: unknown): v is ReplayPayload {
@@ -267,8 +275,14 @@ function isReplayPayload(v: unknown): v is ReplayPayload {
     Array.isArray((v as ReplayPayload).messages)
 }
 
-/** 会话回放逐条过滤（E2：不整批拒绝）：MessageSchema.safeParse 逐条校验，非法条目丢弃 + warn，
- *  合法条目保留；返回仅含合法 Message 的回放载荷（conversationId 原样保留）。 */
+/**
+ * 会话回放逐条过滤（E2：不整批拒绝）：MessageSchema.safeParse 逐条校验，非法条目丢弃 + warn，
+ * 合法条目保留；返回仅含合法 Message 的回放载荷（conversationId 原样保留）。
+ *
+ * `usage` 同样过共享 schema（不手写结构判断）：它是"后端给的累计"，形状漂移必须在信任边界挡住，
+ * 而不是把一个可疑数字送进界面。**非法只丢 usage**——回放消息本身仍然送达，一条坏掉的统计
+ * 不该让整批历史消失（与逐条消息同款取舍）。
+ */
 function filterReplayMessages(payload: ReplayPayload): ReplayPayload {
   const messages: Message[] = []
   payload.messages.forEach((msg, index) => {
@@ -276,7 +290,13 @@ function filterReplayMessages(payload: ReplayPayload): ReplayPayload {
     if (parsed.success) messages.push(parsed.data)
     else console.warn('cyrene:replay:drop-invalid-message', { conversationId: payload.conversationId, index })
   })
-  return { conversationId: payload.conversationId, messages }
+  let usage: ConversationTokenUsage | undefined
+  if (payload.usage !== undefined) {
+    const parsed = ConversationUsageSchema.safeParse(payload.usage)
+    if (parsed.success) usage = parsed.data
+    else console.warn('cyrene:replay:drop-invalid-usage', { conversationId: payload.conversationId })
+  }
+  return { conversationId: payload.conversationId, messages, ...(usage ? { usage } : {}) }
 }
 
 /** connect 无参：endpoint/token 由 Main 侧 connection-config 持有，renderer 不再传任意 URL */

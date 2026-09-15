@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { TokenUsageSchema } from './events'
+import { ConversationUsageSchema, TokenUsageSchema } from './events'
 import { BackendFeatureFlagsSchema, CharacterBindingSnapshotSchema, CharacterGenerationRefSchema, CharacterIdSchema } from './character'
 import type { ActiveModelSelection, AppearanceSettings, DesktopCallStatus, DiagnosticsDevEvent, DiagnosticsExportResult, DiagnosticsState, Live2dModelFileResult, Live2DModelSummary, Live2DSettings, ModelProfile, ModelProfileTestResult, PerformanceMode, RendererCrashEvent, SettingsPatch, SettingsState, ToolsSettings, TtsPreviewOutcome, TtsVoice, TtsVoiceListResult } from '@shared/contracts'
 import type { CreateConversationInput } from '@shared/contracts/conversation'
@@ -243,7 +243,9 @@ export const FileRefRegisterResponseSchema = z.object({ fileRef: z.string().min(
 
 export const ReplayPayloadSchema = z.object({
   conversationId: z.string().min(1),
-  messages: z.array(MessageSchema)
+  messages: z.array(MessageSchema),
+  /** 会话级服务端累计（`session.token_stats`）；缺省 = 后端无该会话记录（≠ 0），消费方据此隐藏整条 */
+  usage: ConversationUsageSchema.optional()
 })
 
 // —— 阶段 4 批次 A：模型服务 / TTS 出参 schema（严格镜像 shared/contracts/model.ts，C1）——

@@ -260,6 +260,9 @@ export const useConversationStore = defineStore('conversation', () => {
     for (const id of oldIds) cache.purge(id)
     if (oldCurrentId) oldMessageConversationIds.add(oldCurrentId)
     for (const id of oldMessageConversationIds) messageStore.resetConversation(id)
+    // 会话级 token 累计是"某个后端的某个会话"的事实，换端点后不再是关于当前事实的陈述——
+    // 与列表/缓存/消息同一条栅栏清掉（只清当前会话不够：按会话键控的表里可能留着别的会话的数字）。
+    messageStore.purgeAllSessionUsage()
     // Any in-flight activation belongs to the old backend even if the
     // transport happened to reuse a connection id.
     epoch++
@@ -744,6 +747,7 @@ export const useConversationStore = defineStore('conversation', () => {
       }
       useDraftStore().purge(id)   // 删除联动:清内存草稿/锚点 + 取消待写（G2，spec §4.4.1）
       useCacheStore().purge(id)   // 删除联动:清消息快照（G2，spec §4.5.1）
+      useMessageStore().purgeConversationUsage(id)   // 删除联动:清该会话的 token 累计（按会话键控的表否则会留下已删会话的数字）
       // R2（2026-09-15 评审）：附件队列已按会话分桶，删除会话要连带清掉那一桶并释放其 File/bytes 强引用
       // （`clearFor` 此前没有调用方——队列按会话归属落地后它才第一次有了真实意义）。
       useAttachmentStore().clearFor(id)
