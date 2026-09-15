@@ -795,6 +795,26 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **本文件口径声明**：上列提交号与批次归属**转抄自走查文档的状态块**，本次未逐个提交复核 diff；走查文档自带的行号/类名已注明「引用前先与当前代码对拍」（其组件行号随后续批次多处变更）。
 - **2026-09-15 追加的一条代码补齐**：整改清单 §3「滚动容器预留滚动条空间」点名四容器，此前只有 2 处有 `scrollbar-gutter: stable`（消息区、向导体），**会话列表 / 历史查看器 / 设置内容区三处缺**（2026-09-14 review 记为「代码不足、文档对」）⇒ 已补齐，本节该条转为**已满足**。
 
+**五路并行评审后的修复批次（2026-09-15，`83e326d`＋`28727cb`＋`7d31030`）**
+
+> 入口：[五路并行全量评审发现汇总](review/2026-09-15-五路并行全量评审发现汇总.md)。本批按用户点选的范围做 A~E 五组；**未做的项逐条列在末尾**。
+
+| 门禁 | 命令 | 结果（`7d31030`，本机 Windows） |
+|---|---|---|
+| 类型检查 | `pnpm typecheck` | PASS |
+| Lint | `pnpm lint` | PASS |
+| 单元测试 | `pnpm test` | PASS：**255 files / 3165 passed** + 6 expected-fail + 22 skipped（本批净增 10 条：会话分桶 4、媒体地址策略 3、抖动 1、completing 2） |
+| 集成测试 | `pnpm test:integration` | **一轮：38/40 files、167 passed + 3 skipped、4 failed**；两个红文件**单跑全绿**（`dev-form-renderer` 6/6、`electron-live2d-settings` 9/9）⇒ 负载型偶发，非回归；**「整套绿」本轮仍未取得** |
+| 文档结构 | `pnpm docs:check` | PASS（20 core / 94 review / 40 superpowers / 42 archived） |
+| 敏感扫描 | `pnpm -F @cyrene/desktop verify:sensitive` | PASS（894 文件扫描、556 行规则豁免、63 行 allowlist） |
+
+- **A（S5-B2 三处过度声称）已完成**：① `fileRef` 表「重连清空」接线（`onConnectionTeardown`）；② `bytes` 分支改按**真实** `byteLength` 判限（schema 层受 4 MiB IPC 不变量、handler 按 kind 复核、`fileRef` 分支用 `stat` 真值，并补上 `uploadBatch` 此前**完全缺失**的聚合复核）；③ 路径类失败公开面统一（去存在性 oracle），原因只进 Main 日志。
+- **B（三条无断言的安全回归）已完成**：① 媒体签名 URL 地址策略（同源放行；否则仅公网**字面 IP**；域名一律拒——含 DNS 可解析到回环的情形）——这是对阶段 3「D1 不强同源」的**收窄**，代价已写进 doc 07 §9.2；② 7 处 Main 侧 fetch 全部 `redirect:'error'`（此前默认 follow ⇒ 后端可控 307/308 可让 Main 以用户身份重发请求体）；③ `uploadAttachments` 补连接态门禁。
+- **C（三条用户可见高危）已完成**：附件队列改**按会话分桶** + 上传在途切会话不投递（回原会话 ready + 可见提示）；`send` 改三态返回且**队列闸门前移**（此前「有失败附件但本次无 ready 附件」会把文本照发并报成功）；`completing` 补 UI 出口。
+- **D（一行级批）已完成**：`onPaste` 的 `preventDefault` 提到 `await` 前；重连退避加抖动（随机源可注入）；两处 `limit`/游标补 `.max()`；fail-safe 弹窗/stderr 补 `redactSensitiveValues`（审计口径不动）。
+- **E（文档类）已完成**：五处 Forge 残留（含 `package.json:31` 的 `make` echo——评审只数到四处）、两处失效占位 README、`docs/00` 两处过期口径、doc 09 §5 的 `make` 语义行、UI 精修清单的两条 404 链接。**并顺手收口了产生那条 404 的门禁盲区**：`docs:check` 的链接检查扩到 `docs/` 全部根文档（含非编号），**过变异验证**（改回 `../` 即红）。`archive/**` 与 `review/**` 正文链接仍刻意排除（历史快照按当时目录结构书写），其断链现状记在汇总 §7。
+- **本批未做（如实记录）**：① 未做**变异验证**（判别力以「新用例在旧实现下会红」的方式设计，但未逐个回滚取证）；② `test:integration` 只跑了一轮，未取得整套绿；③ doc 01 §5 推荐目录树里其它不存在的条目（`assets/live2d/`、`tests/e2e/`）未动；④ 非编号文档的**元数据与行宽**仍不受 `docs:check` 约束，`ui/` 仍在治理外（S5-B6 裁决明文接受）；⑤ 首轮评审的其余条目（契约 C2/C4/C5/C7/C8/C10/C11/C12、渲染 R5/R6/R8～R14、Live2D L1～L9、CI Q2～Q14）**未在本批范围内**。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
