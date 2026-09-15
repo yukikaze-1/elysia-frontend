@@ -6,6 +6,8 @@ import {
   blinkTarget,
   breathTarget,
   mouthLevelTarget,
+  resetBlinkScheduleCache,
+  blinkOpenLevelReference,
   PARAM_EYE_L_OPEN,
   PARAM_EYE_R_OPEN,
   PARAM_ANGLE_Z,
@@ -17,6 +19,49 @@ import {
 function fixedClock(fixed: number): AnimClock {
   return { random: () => fixed }
 }
+
+// L8（2026-09-15 Live2D 评审）：眨眼调度从「每帧从 t=0 重放整条时间轴」改为**增量展开 + 二分查询**。
+// 这类改动最容易悄悄改掉动画语义（抽样次数错位、时间回退未重建），故用**逐点对拍**把等价性钉住：
+// 同一种子/速率下，增量实现与朴素参照实现在整条时间轴上必须**逐点相同**。
+describe('L8：眨眼调度增量化的等价性（与朴素参照实现逐点对拍）', () => {
+  const SEED_CLOCK = 0.42
+  const seed = Math.floor(SEED_CLOCK * 0xffffffff)
+  const eyeParams = new Set([PARAM_EYE_R_OPEN])
+
+  it('单调前进的时间轴上逐点一致（2 个速率 × 300s @0.05s 步长）', () => {
+    for (const rate of [1, 2]) {
+      resetBlinkScheduleCache()   // 两侧各自冷启动，序列从头比
+      for (let i = 0; i <= 6000; i++) {
+        const t = i * 0.05
+        const inc = blinkTarget(t, eyeParams, fixedClock(SEED_CLOCK), rate)[PARAM_EYE_R_OPEN]
+        const naive = blinkOpenLevelReference(t, seed, rate)
+        expect(inc, `rate=${rate} t=${t}`).toBe(naive)
+      }
+    }
+  })
+
+  it('时间回退（reset/seek）后仍与朴素实现一致——缓存必须重建而不是继续用错位游标', () => {
+    resetBlinkScheduleCache()
+    // 先跑到 120s（缓存已展开一批窗口），再回退到 30s 逐点比对
+    for (let i = 0; i <= 2400; i++) blinkTarget(i * 0.05, eyeParams, fixedClock(SEED_CLOCK), 1)
+    for (let i = 0; i <= 600; i++) {
+      const t = i * 0.05
+      const inc = blinkTarget(t, eyeParams, fixedClock(SEED_CLOCK), 1)[PARAM_EYE_R_OPEN]
+      expect(inc, `回退 t=${t}`).toBe(blinkOpenLevelReference(t, seed, 1))
+    }
+  })
+
+  it('长时间运行（1 小时后）仍逐点一致——这正是修复的动机（旧实现每帧重放 t 秒）', () => {
+    resetBlinkScheduleCache()
+    // 以 1s 步长推进到 3600s，再在尾部逐点比对（旧实现在此处每帧要模拟约 758 次眨眼）
+    for (let t = 0; t <= 3600; t += 1) blinkTarget(t, eyeParams, fixedClock(SEED_CLOCK), 1)
+    for (let i = 0; i <= 200; i++) {
+      const t = 3600 + i * 0.05
+      const inc = blinkTarget(t, eyeParams, fixedClock(SEED_CLOCK), 1)[PARAM_EYE_R_OPEN]
+      expect(inc, `长会话 t=${t}`).toBe(blinkOpenLevelReference(t, seed, 1))
+    }
+  })
+})
 
 describe('breathTarget（呼吸正弦）', () => {
   it('含 ParamAngleZ 时返回该参数的正弦（纯 sine，周期 ~2s；t 处与 CubismBreath 公式对齐）', () => {
