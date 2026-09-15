@@ -85,6 +85,12 @@ export const useLive2dStore = defineStore('live2d', () => {
   /** L3/L4（2026-09-15 Live2D 评审）：status 实时镜像 + 渲染期 error 订阅的退订句柄 */
   let unsubStatus: (() => void) | null = null
   let unsubError: (() => void) | null = null
+  /**
+   * L1（2026-09-15 Live2D 评审）：生命周期世代。`init` 开始时自增并记住自己的世代，每个 await 之后自查；
+   * `dispose` 也自增使在途 init 立即失效。没有它时「加载中关开关/卸载面板」会让在途 `createModel`
+   * 把模型装进已被丢弃的 controller —— 纹理永不释放、status 被置回 ready 形成僵尸态。
+   */
+  let lifecycleGeneration = 0
   let stateSourceHandle: Live2dStateSource | null = null
   // 渲染面可见性（多套 UI 基础，2026-09-10）：由 UI 层显式告知，而非本 store 去读 layout store。
   // 「面板是否可见」是 UI 布局决策；功能层只消费结果。此前 setupVisibilityWatch 直接
@@ -225,6 +231,12 @@ export const useLive2dStore = defineStore('live2d', () => {
     if (controller) return controller
     const ctrl = buildController()
     controller = ctrl
+    // L1：先退掉可能残留的旧订阅再覆写句柄——旧实现在此处直接覆写 unsubDevice/unsubState，
+    // 一旦走到这条路径（controller 被重建）旧订阅就永久泄漏且继续驱动已死的实例。
+    unsubDevice?.(); unsubDevice = null
+    unsubState?.(); unsubState = null
+    unsubStatus?.(); unsubStatus = null
+    unsubError?.(); unsubError = null
     // device_lost（adapter 渲染 tick 抛 Live2DGpuLostError）→ C2 重建一次（rebuildAfterLost；失败镜像 fallback）
     // C-18：连续 device_lost 达 GPU_LOST_MAX → 停止自动重建，固定 fallback（gpuDowngraded 冻结）。
     // 每次 lost 前检查——已降级则不再触发（用户切模型/重启用/init 成功清零 gpuDowngraded）。
@@ -341,6 +353,9 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   async function init(c: HTMLCanvasElement): Promise<void> {
+    // L1：本次 init 的世代。任何一次 dispose（或新的 init）都会使旧世代失效——见下方每个 await 后的自查。
+    const gen = ++lifecycleGeneration
+    const stale = (): boolean => gen !== lifecycleGeneration
     // 始终取模型清单（选单 options + 可用性判断）；list 失败 fail-open：空列表 + 静态头像回退，不阻塞启动。
     //
     // 2026-09-10：**不再静默吞掉失败**。此前是 `.catch(() => [])`，清单拉取失败与
@@ -350,6 +365,7 @@ export const useLive2dStore = defineStore('live2d', () => {
       error.value = `模型清单读取失败：${e instanceof Error ? e.message : String(e)}`
       return []
     })
+    if (stale()) return // L1：清单回来前已被 dispose/新的 init 取代 → 不再继续装配
     const l2d = useSettingsStore().live2d
     if (!l2d.enabled) {
       // 关闭态：不创建渲染循环、不 load（面板显示「Live2D 已关闭」）；status 保持 unloaded
@@ -373,6 +389,12 @@ export const useLive2dStore = defineStore('live2d', () => {
     setupVisibilityWatch() // C2：可见性接线（「布局可见 ∧ enabled」→ setVisibility；immediate 先推当前值）
     try {
       await ctrl.init(c)
+      if (stale()) {
+        // L1：加载在途被 dispose/新 init 取代 ⇒ **卸载刚建好的 controller**（释放纹理/GL 引用），
+        // 绝不把 ready 置回去（旧实现会留下"画布已不在但仍报就绪"的僵尸态）。
+        ctrl.unload()
+        return
+      }
       syncFromController()
     } catch (e) {
       // 控制器初始化异常（list/adapter 抛）：镜像其状态 + 记录 error，不向上传播（不阻塞启动/不 unhandled）
@@ -384,6 +406,10 @@ export const useLive2dStore = defineStore('live2d', () => {
     if (chosen && models.value.some((m) => m.id === chosen && m.available) && ctrl.modelId !== chosen) {
       try {
         await ctrl.switchModel(chosen)
+        if (stale()) {
+          ctrl.unload() // L1：同上——切换到一半被 dispose 取代，卸载而不是继续装配
+          return
+        }
         syncFromController()
       } catch (e) {
         // 已选模型加载失败：保留默认模型，记录 error（不静默回退）
@@ -392,6 +418,9 @@ export const useLive2dStore = defineStore('live2d', () => {
       }
     }
     // M1：init 完成（含已选覆盖 switch）后才放行用户 switch；此时装配状态编排（controller 已 ready）
+    // L1：装配前后各查一次世代——上面两个 await 之间可能发生 dispose（`ready = true` 与口部/状态源装配
+    // 都**不能**作用在已卸载的 controller 上）。
+    if (stale()) { ctrl.unload(); return }
     // Task 5：把当前 settings 表现字段一次性推给 controller（handle 已就绪；此后 Panel 对每次 setLive2d
     // 变更单独推送同款）。autoMotions/lipSync/performanceMode/scale/offset 的「设置→controller」接线落点。
     ctrl.setAutoMotions(l2d.autoMotions)
@@ -453,6 +482,11 @@ export const useLive2dStore = defineStore('live2d', () => {
   }
 
   function dispose(): void {
+    // L1（2026-09-15 Live2D 评审）：世代栅栏——dispose 使所有在途 init 失效。
+    // 修复前 `init` 的每个 await 之后无条件继续（`ready = true` + 装口部/状态源），于是「加载中关闭开关 /
+    // 卸载面板」会让在途 `createModel` 把模型装进**已被丢弃的 controller**：纹理永不释放（2048² 约 33MB VRAM），
+    // 且 status 会被置回 ready 形成僵尸态。递增世代后，init 在 await 边界自查并中止 + unload。
+    lifecycleGeneration++
     stateSourceHandle?.unsub() // 退订 stateSource（停 watch + 清 N1 mood/error 回退 timers）
     stateSourceHandle = null
     unsubMouthWatch?.() // C1：退订口部接线（停 watch）

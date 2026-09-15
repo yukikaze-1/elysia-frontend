@@ -483,6 +483,30 @@ describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 �
     store.dispose()
   })
 
+  // L1（2026-09-15 Live2D 评审）：init 与 dispose 之间没有世代栅栏时，「加载中关开关 / 卸载面板」会让
+  // 在途 `createModel` 把模型装进**已被丢弃的 controller**：纹理永不释放（2048² 约 33MB VRAM），
+  // 且 status 会被置回 ready 形成僵尸态。判别力：去掉 init 里的 `stale()` 自查 ⇒ 本条红（status 变 ready）。
+  it('L1：init 在途被 dispose 取代 → 不置 ready、不装状态源，且卸载刚建好的 controller', async () => {
+    const { adapter, ctrl } = installFakes()
+    const { store } = freshStore()
+    const unloadSpy = vi.spyOn(ctrl, 'unload')
+    let release: (v: FakeHandleLike) => void = () => {}
+    adapter.createModel = vi.fn(() => new Promise<FakeHandleLike>((res) => { release = res }))
+
+    const pending = store.init(fakeCanvas)
+    await vi.waitFor(() => { expect(store.status).toBe('loading') })
+    store.dispose()   // 加载在途卸载面板 / 关开关
+    release({
+      update: vi.fn(), draw: vi.fn(), destroy: vi.fn(), getParameterIdList: vi.fn(() => []),
+      getMotionFileWhitelist: vi.fn(() => []), getExpressionFileWhitelist: vi.fn(() => []),
+      setParam: vi.fn(), setViewTransform: vi.fn(), startMotion: vi.fn(async () => {}),
+      startExpression: vi.fn(async () => {}), stopMotion: vi.fn(), stopAll: vi.fn()
+    })
+    await pending
+    expect(store.status, '僵尸态：dispose 之后不得再置 ready').toBe('unloaded')
+    expect(unloadSpy, '在途建好的 controller 必须被卸载（否则纹理永不释放）').toHaveBeenCalled()
+  })
+
   it('M1：init 完成前 switchModel 被串行化（不执行切换、置 error）', async () => {
     installFakes({ models: [MODEL_HARU, MODEL_LIL] })
     const { store, settings } = freshStore()

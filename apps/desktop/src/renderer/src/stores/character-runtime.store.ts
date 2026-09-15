@@ -354,6 +354,13 @@ export const useCharacterRuntimeStore = defineStore('character-runtime', () => {
 
   /** Binding selection is owned by the conversation coordinator, not by WS events. */
   function setActiveBinding(binding: CharacterBindingSnapshot | undefined, conversationId?: string): void {
+    // L9（2026-09-15 Live2D 评审）：切到**另一个实例**时释放上一个实例的 revision 键控缓存。
+    // 这些条目按 revision 累积（`follow_latest` 会话每次状态变更都可能落一个新键），此前只有断连/换 source
+    // 才清空 ⇒ 长会话里持续增长、且每次事件都要遍历该实例的全部 revision 键。`clearInstance` 一直存在
+    // 却**没有任何调用方**——这里补上它唯一的正确调用点（实例不再在前台，重进时会按需重新拉取）。
+    const prevInstance = activeBinding.value?.characterInstanceId
+    const nextInstance = binding?.characterInstanceId
+    if (prevInstance && prevInstance !== nextInstance) clearInstance(prevInstance)
     activeBinding.value = binding ? cloneValue(binding) : undefined
     activeConversationId.value = conversationId
     if (binding) projectInstance(binding.characterInstanceId)

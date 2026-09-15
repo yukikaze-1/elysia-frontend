@@ -266,4 +266,20 @@ describe('characterRuntimeStore FE-F1a', () => {
     store.handleStateChanged(event(1, 1, 'conversation-a', 'legacy 新来源'))
     expect(store.activeState).toMatchObject({ stateVersion: 1, currentActivity: 'legacy 新来源' })
   })
+
+  // L9（2026-09-15 Live2D 评审）：revision 键控缓存此前**只增不减**（`clearInstance` 存在却没有调用方），
+  // `follow_latest` 会话每次状态变更都可能落一个新键，长会话里持续增长、且每次事件都要遍历该实例的全部 revision 键。
+  // 判别力：去掉 setActiveBinding 里那两行 ⇒ 本条红（切走后旧实例的缓存仍在）。
+  it('L9：切到另一个 instance 时释放旧实例的 revision 键控缓存', async () => {
+    getCharacterState.mockResolvedValue(state(1, 1, '旧实例状态'))
+    const store = useCharacterRuntimeStore()
+    store.setActiveBinding(binding(1, 'conversation-a'), 'conversation-a')   // instance-shared
+    await store.loadState('instance-shared')
+    expect(store.statesByInstanceId['instance-shared']).toBeDefined()
+
+    // 切到另一个实例（不同 characterInstanceId）
+    store.setActiveBinding({ ...binding(1, 'conversation-b'), characterInstanceId: 'instance-other' }, 'conversation-b')
+    expect(store.statesByInstanceId['instance-shared'], '旧实例缓存必须释放').toBeUndefined()
+    expect(store.stateStatus['instance-shared']).toBeUndefined()
+  })
 })
