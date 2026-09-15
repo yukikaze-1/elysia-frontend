@@ -1000,13 +1000,13 @@ apps/
 | Markdown | markdown-it 或同类方案  |
 | 代码高亮     | Shiki 或同类方案        |
 | Live2D   | Cubism SDK for Web |
-| 打包       | Electron Forge     |
+| 打包       | electron-builder   |
 | 单元测试     | Vitest             |
 | 端到端测试    | Playwright         |
 | 后端       | Python + FastAPI   |
 | 后端校验     | Pydantic           |
 
-Electron Forge 可作为打包、生成平台安装产物和后续发布流程的统一构建入口；实际采用前应结合目标平台验证。
+electron-builder 可作为打包、生成平台安装产物和后续发布流程的统一构建入口；实际采用前应结合目标平台验证。（工具链决策见 F-11 裁决，2026-09-15：统一 electron-builder。）
 
 ---
 

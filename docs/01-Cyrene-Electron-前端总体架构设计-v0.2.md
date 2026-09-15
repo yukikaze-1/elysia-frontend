@@ -199,7 +199,7 @@ apps/desktop/
 │   ├── unit/
 │   ├── integration/
 │   └── e2e/
-└── forge.config.ts
+└── electron-builder.yml
 ```
 
 `shared/contracts` 仅存放跨进程契约；不要把依赖 Electron 或 Vue 的实现放入该目录。

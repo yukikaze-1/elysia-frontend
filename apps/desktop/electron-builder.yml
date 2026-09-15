@@ -1,4 +1,4 @@
-# apps/desktop/electron-builder.yml —— 阶段 1 最小未分发包（Forge 全量安装包留阶段 8）
+# apps/desktop/electron-builder.yml —— 阶段 1 最小未分发包（全量安装包留阶段 8，工具同为 electron-builder）
 appId: com.cyrene.desktop
 productName: Cyrene
 directories:

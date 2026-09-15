@@ -104,7 +104,7 @@ test            单元测试
 test:integration 集成测试
 test:e2e        端到端测试
 package         生成未分发包
-make            生成平台安装产物
+make            阶段 8 占位（未实现，非零退出防假绿）
 verify:artifact 校验产物内容和安全配置
 ```
 

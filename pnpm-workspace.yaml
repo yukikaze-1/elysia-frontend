@@ -13,7 +13,7 @@ allowBuilds:
   vue-demi: true
 
 # pnpm 11 的非认证设置统一放 pnpm-workspace.yaml(写在 .npmrc 会失效)。
-# nodeLinker=hoisted:Electron Forge/原生模块在 pnpm 严格布局下易出问题,使用扁平布局;
+# nodeLinker=hoisted:electron-builder/原生模块在 pnpm 严格布局下易出问题,使用扁平布局;
 # engineStrict=true:严格校验 Node 版本,与 .nvmrc 一致。
 nodeLinker: hoisted
 engineStrict: true

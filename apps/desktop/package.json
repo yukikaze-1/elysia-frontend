@@ -28,7 +28,7 @@
     "test:stage-h-runner": "vitest run --config vitest.config.mts tests/unit/stage-h-runner.spec.ts",
     "ensure:electron": "node -e \"require('electron')\"",
     "test:e2e": "echo 'E2E(Playwright 发布链) 仍为占位——本命令未实现，非零退出防假绿；会启动 Electron 的自动化测试请用 pnpm test:integration（默认静默窗口）或 pnpm test:integration:visible（可视化调试）' && exit 1",
-    "make": "echo 'Forge 打包留待阶段 8 配置——本命令未实现，非零退出防假绿' && exit 1",
+    "make": "echo '阶段 8 打包留待配置——本命令未实现，非零退出防假绿' && exit 1",
     "package": "electron-vite build && node scripts/package-app.mjs",
     "verify:artifact": "node scripts/verify-artifact.cjs",
     "verify:sensitive": "node scripts/verify-sensitive.mjs",
