@@ -12,6 +12,7 @@ export interface PublicError {
   retryAfterMs?: number
   idempotencyDurable?: boolean
   currentRevision?: number
+  currentStateVersion?: number   // D-2：状态版本冲突码携带（与 currentRevision 不同源）
   issues?: Array<{ severity: 'error' | 'warning'; code: string; path: string; message: string }>
 }
 
@@ -37,6 +38,10 @@ export function parsePublicError(message: string): PublicError {
     else if (m[1] === 'currentRevision') {
       const value = Number(m[2])
       if (Number.isSafeInteger(value) && value >= 1) out.currentRevision = value
+    } else if (m[1] === 'currentStateVersion') {
+      // D-2：与 currentRevision 同款校验（安全整数 + ≥1 才收下，畸形值静默丢弃不污染 UI）
+      const value = Number(m[2])
+      if (Number.isSafeInteger(value) && value >= 1) out.currentStateVersion = value
     } else if (m[1] === 'issues' && m[2].length <= 32_768) {
       try {
         const decoded: unknown = JSON.parse(decodeURIComponent(m[2]))

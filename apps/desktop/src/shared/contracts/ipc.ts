@@ -113,6 +113,10 @@ export interface IpcErrorBody {
   retryAfterMs?: number
   idempotencyDurable?: boolean
   currentRevision?: number
+  /** D-2（2026-09-15 裁决「前端补两处」）：状态版本冲突的当前版本号。
+   *  与 `currentRevision` 区分：前者是「角色/档案修订号」，后者是「角色公开状态版本」（`stateVersion`），
+   *  两者后端各自发码（`CHARACTER_STATE_VERSION_CONFLICT` + `currentStateVersion`）。 */
+  currentStateVersion?: number
   issues?: Array<{ severity: 'error' | 'warning'; code: string; path: string; message: string }>
 }
 

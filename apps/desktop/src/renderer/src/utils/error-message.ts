@@ -37,6 +37,8 @@ const ERROR_TEXT: Record<string, string> = {
   CHARACTER_ARCHIVED: '该角色已归档，不能继续编辑或用于新会话。',
   CHARACTER_REVISION_CONFLICT: '角色版本已更新。请重新加载最新版本，或选择另存为新角色。',
   CHARACTER_STATE_CONFLICT: '角色版本已更新。请重新加载最新版本，或选择另存为新角色。',
+  // D-2（2026-09-15）：mock 后端实际发的是带 VERSION 的码；此前未收录 ⇒ 该错误会掉进泛化回退文案
+  CHARACTER_STATE_VERSION_CONFLICT: '角色版本已更新。请重新加载最新版本，或选择另存为新角色。',
   CHARACTER_STORAGE_UNAVAILABLE: '本地草稿存储暂时不可用；请稍后重试。',
   STORAGE_UNAVAILABLE: '本地草稿存储暂时不可用；请稍后重试。',
   CHARACTER_PREVIEW_FAILED: '临时预览失败，请检查连接或稍后重试。',

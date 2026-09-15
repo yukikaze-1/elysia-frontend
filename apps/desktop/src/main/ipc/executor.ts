@@ -18,6 +18,10 @@ function truncateCodepoints(s: string, max: number): string {
 }
 
 const REVISION_DETAIL_CODES = new Set(['CHARACTER_REVISION_CONFLICT', 'USER_PROFILE_REVISION_CONFLICT'])
+/** D-2（2026-09-15 裁决「前端补两处」）：状态版本冲突码白名单——此前 `CHARACTER_STATE_VERSION_CONFLICT`
+ *  既不在本表也不被 renderer 识别 ⇒ mock 后端发的该码会**静默降级**为泛化错误（用户看不到「版本已变」）。
+ *  前端只认 `CHARACTER_STATE_CONFLICT`、mock 发 `CHARACTER_STATE_VERSION_CONFLICT`，两者现同时纳入。 */
+const STATE_VERSION_DETAIL_CODES = new Set(['CHARACTER_STATE_VERSION_CONFLICT', 'CHARACTER_STATE_CONFLICT'])
 const VALIDATION_DETAIL_CODES = new Set(['CHARACTER_VALIDATION', 'CHARACTER_RESERVED_CONTENT'])
 
 export interface IpcHandlerOptions { sanitize: MessageSanitizer; channel?: string; logger?: Logger }
@@ -49,6 +53,7 @@ export function createIpcHandler<TReq, TRes>(
           backendCode?: string; code?: string; retryable?: boolean; requestId?: string
           clientRequestId?: string; retryAfterMs?: number; idempotencyDurable?: boolean
           currentRevision?: number
+          currentStateVersion?: number
           issues?: unknown
         }
         const backendCode = details.backendCode ?? details.code   // 兼容既有 error 帧路径 details.code
@@ -60,6 +65,8 @@ export function createIpcHandler<TReq, TRes>(
         if (typeof details.retryAfterMs === 'number') error.retryAfterMs = details.retryAfterMs
         if (typeof details.idempotencyDurable === 'boolean') error.idempotencyDurable = details.idempotencyDurable
         if (backendCode && REVISION_DETAIL_CODES.has(backendCode) && Number.isSafeInteger(details.currentRevision) && (details.currentRevision ?? 0) >= 1) error.currentRevision = details.currentRevision
+        // D-2：状态版本冲突的版本号（同一白名单纪律：仅已知码 + 安全整数 + ≥1 才上提）
+        if (backendCode && STATE_VERSION_DETAIL_CODES.has(backendCode) && Number.isSafeInteger(details.currentStateVersion) && (details.currentStateVersion ?? 0) >= 1) error.currentStateVersion = details.currentStateVersion
         if (backendCode && VALIDATION_DETAIL_CODES.has(backendCode) && Array.isArray(details.issues)) {
           const issues = details.issues.slice(0, 20).flatMap((item) => {
             if (!item || typeof item !== 'object') return []

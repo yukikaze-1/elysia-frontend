@@ -28,12 +28,15 @@ export type CharacterEditorOperationStatus = 'idle' | 'loading' | 'success' | 'e
 export type CharacterEditorSaveStatus = 'idle' | 'saving' | 'success' | 'error' | 'conflict'
 
 export interface CharacterEditorConflict {
-  /** 已知两种冲突码：`CHARACTER_REVISION_CONFLICT`／`CHARACTER_STATE_CONFLICT`。
+  /** 已知冲突码三种：`CHARACTER_REVISION_CONFLICT`／`CHARACTER_STATE_CONFLICT`／
+   *  `CHARACTER_STATE_VERSION_CONFLICT`（D-2 2026-09-15：mock 后端实际发带 VERSION 的码，此前未认）。
    *  原写成 `'A' | 'B' | string` —— 字面量被 `string` 吞掉，属冗余类型成分
    *  （`no-redundant-type-constituents`，2026-09-13 type-aware 全集）；已知取值写在注释里，
    *  判据（是否冲突、走哪条提示）由消费侧按值比较，不靠类型面。 */
   backendCode: string
   currentRevision?: number
+  /** D-2：状态版本冲突码携带的当前 `stateVersion`（与 currentRevision 不同源） */
+  currentStateVersion?: number
   message: string
 }
 
@@ -106,6 +109,7 @@ function errorFromValidation(result: CharacterValidationResult): PublicError {
 
 function isRevisionConflict(error: PublicError): boolean {
   return error.backendCode === 'CHARACTER_REVISION_CONFLICT' || error.backendCode === 'CHARACTER_STATE_CONFLICT'
+    || error.backendCode === 'CHARACTER_STATE_VERSION_CONFLICT'   // D-2：mock 后端实发码，此前落到非冲突分支
 }
 
 export const useCharacterEditorStore = defineStore('character-editor', () => {
@@ -897,7 +901,7 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
       saveError.value = parsed
       if (isRevisionConflict(parsed)) {
         saveStatus.value = 'conflict'
-        conflict.value = { backendCode: parsed.backendCode ?? parsed.code, ...(parsed.currentRevision !== undefined ? { currentRevision: parsed.currentRevision } : {}), message: parsed.message }
+        conflict.value = { backendCode: parsed.backendCode ?? parsed.code, ...(parsed.currentRevision !== undefined ? { currentRevision: parsed.currentRevision } : {}), ...(parsed.currentStateVersion !== undefined ? { currentStateVersion: parsed.currentStateVersion } : {}), message: parsed.message }
       } else if (saveStatus.value !== 'error') saveStatus.value = 'error'
       schedulePersistIfDirty()
       throw cause

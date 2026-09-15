@@ -176,6 +176,7 @@ function formatIpcError(error: import('@shared/contracts').IpcErrorBody): Error 
   if (typeof error.retryAfterMs === 'number') parts.push(`retryAfterMs=${error.retryAfterMs}`)
   if (typeof error.idempotencyDurable === 'boolean') parts.push(`idempotencyDurable=${error.idempotencyDurable}`)
   if (typeof error.currentRevision === 'number') parts.push(`currentRevision=${error.currentRevision}`)
+  if (typeof error.currentStateVersion === 'number') parts.push(`currentStateVersion=${error.currentStateVersion}`)   // D-2
   if (error.issues?.length) {
     // 结构化错误来自 Main，但仍需防 malformed surrogate / 非可序列化替身
     // 让 contextBridge 错误格式化本身抛错；超出预算时安全省略 issues。
