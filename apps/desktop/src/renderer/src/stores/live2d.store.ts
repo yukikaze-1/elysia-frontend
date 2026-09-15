@@ -82,6 +82,9 @@ export const useLive2dStore = defineStore('live2d', () => {
   let controller: Live2DController | null = null
   let unsubDevice: (() => void) | null = null
   let unsubState: (() => void) | null = null
+  /** L3/L4（2026-09-15 Live2D 评审）：status 实时镜像 + 渲染期 error 订阅的退订句柄 */
+  let unsubStatus: (() => void) | null = null
+  let unsubError: (() => void) | null = null
   let stateSourceHandle: Live2dStateSource | null = null
   // 渲染面可见性（多套 UI 基础，2026-09-10）：由 UI 层显式告知，而非本 store 去读 layout store。
   // 「面板是否可见」是 UI 布局决策；功能层只消费结果。此前 setupVisibilityWatch 直接
@@ -239,6 +242,22 @@ export const useLive2dStore = defineStore('live2d', () => {
     unsubState = ctrl.on('state', (s) => {
       if (s) characterState.value = s as CharacterState
     })
+    // L3（2026-09-15 Live2D 评审）：`status` 此前只在「每次 controller 调用的 await 之后」手工镜像
+    // （`syncFromController`），于是 `loading` 态**在界面上永不可达**——init/切换期间面板仍宣称
+    // 「就绪 · 旧模型」，而相关 UI 分支（`v-else-if="status === 'loading'"` 与两处 case 文案）是死代码；
+    // 同时它是 L1 的使能条件（dispose 判断依赖 status）。controller 每次都 `emit('status')`，
+    // 这里直接订阅即可让状态迁移实时可见（保留 syncFromController 作为兜底，重复写同值无副作用）。
+    unsubStatus = ctrl.on('status', (s) => {
+      if (s) status.value = s as Live2DControllerStatus
+      if (controller) modelId.value = controller.modelId
+    })
+
+    // L4（同批评审）：controller 的 'error' 事件此前**没有任何订阅者** ⇒ 渲染 tick 内的非 GPU 异常
+    // （`drawModel`/physics/动作解码抛错）每帧被 catch 后 emit 出去、无人接收，画布死了而徽标仍显示
+    // 「就绪」，用户与诊断页都拿不到原因。这里接住并落到 `error`（与加载期失败同一展示面）。
+    unsubError = ctrl.on('error', (e) => {
+      error.value = e instanceof Error ? e.message : String(e)
+    })
     return ctrl
   }
 
@@ -394,6 +413,12 @@ export const useLive2dStore = defineStore('live2d', () => {
       const effective = await ctrl.switchModel(next)
       syncFromController()
       consecutiveLost = 0; gpuDowngraded = false // C-18：用户主动切模型成功 → 连续失败/降级清零（主动恢复入口）
+      // L2（2026-09-15 Live2D 评审）：controller 的串行化守卫在「上一次切换仍在途」时**直接返回旧 id 且不抛错**，
+      // 于是 store 走"成功"分支、用户点了 C 而界面停在 B，全程零提示（`restoreDefaults` 与在途切换相撞同理）。
+      // 守卫本身是有意设计（仅持久化生效 id，见 D5B-10），所以不动判据，只把"这次选择没生效"说出来。
+      if (effective !== next) {
+        error.value = '切换进行中，本次选择未生效（已保留当前模型）'
+      }
       // D5B-10/T6：持久化「实际生效 id」而非无条件 next——守卫丢弃（切换中/同模型幂等）时持久化旧 id，消除
       // 「已加载 a 却持久化 b」窄竞态
       useSettingsStore().setLive2d({ modelId: effective })
@@ -440,6 +465,10 @@ export const useLive2dStore = defineStore('live2d', () => {
     unsubDevice = null
     unsubState?.() // 退订 'state' 事件镜像
     unsubState = null
+    unsubStatus?.() // L3：退订 'status' 事件镜像
+    unsubStatus = null
+    unsubError?.() // L4：退订渲染期 'error'
+    unsubError = null
     if (controller) {
       controller.unload() // 全量释放（含 adapter.destroy：unregister contextlost + 清 GL 引用）
       controller = null

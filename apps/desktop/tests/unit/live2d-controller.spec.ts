@@ -145,6 +145,22 @@ describe('Live2DController 批次 B 内核', () => {
     expect(handle.startMotion).toHaveBeenCalledTimes(1)
   })
 
+  // L7（2026-09-15 Live2D 评审）：白名单只保证「文件在清单里」，不保证「此刻读得到」——文件被删/损坏时
+  // `startExpression`/`startMotion` 会 reject，而此前是 fire-and-forget ⇒ unhandledrejection，只打一行 console。
+  // 判别力：去掉 controller 里的 `.catch(...)` ⇒ 本条的 errors 断言红（并会留下未处理拒绝）。
+  it('L7：白名单内文件读取失败 → emit error（不再是未处理的承诺拒绝）', async () => {
+    const h = makeHarness()
+    stubHandle(h.adapter, { expressions: ['expressions/happy.exp3.json'] })
+    await h.ctrl.init(fakeCanvas)
+    const errors: unknown[] = []
+    h.ctrl.on('error', (e) => errors.push(e))
+    h.getHandle().startExpression = vi.fn(async () => { throw new Error('HTTP 404') })
+
+    expect(h.ctrl.setExpression('expressions/happy.exp3.json')).toBe(true)   // 仍返回 true（白名单命中、已分派）
+    await vi.waitFor(() => { expect(errors).toHaveLength(1) })
+    expect((errors[0] as Error).message).toBe('HTTP 404')
+  })
+
   it('setExpression：白名单内 → startExpression；白名单外 → 忽略', async () => {
     const h = makeHarness()
     stubHandle(h.adapter, { expressions: ['expressions/happy.exp3.json'] })

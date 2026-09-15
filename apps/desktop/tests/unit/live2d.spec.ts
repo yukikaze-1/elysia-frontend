@@ -446,6 +446,43 @@ describe('live2dStore Task 4：switchModel 生效 id 持久化（D5B-10）+ M1 �
     expect(settings.live2d.modelId).toBe('haru') // 持久化生效 id 而非请求目标 lil
   })
 
+  // L3（2026-09-15 Live2D 评审）：`store.status` 此前只在「每次 controller 调用的 await 之后」手工镜像
+  // （syncFromController），于是 `loading` 态**在界面上永不可达**——init/切换期间面板仍宣称「就绪 · 旧模型」，
+  // 而相关 UI 分支（`v-else-if="status === 'loading'"` 与两处 case 文案）是死代码；它同时是 L1 的使能条件。
+  // 修法：订阅 controller 的 'status' 事件。判别力：去掉该订阅（回到只靠 syncFromController）⇒ 本条红。
+  it('L3：init 期间 store.status 实时反映 loading（不再只在 await 之后镜像）', async () => {
+    const { adapter } = installFakes()
+    const { store } = freshStore()   // 本文件的 Pinia 装配在 freshStore 里（无全局 beforeEach）
+    let release: (v: FakeHandleLike) => void = () => {}
+    adapter.createModel = vi.fn(() => new Promise<FakeHandleLike>((res) => { release = res }))
+    const pending = store.init(fakeCanvas)
+    await vi.waitFor(() => { expect(store.status).toBe('loading') })   // 手工镜像时代这里是 'unloaded'
+    release({
+      update: vi.fn(), draw: vi.fn(), destroy: vi.fn(), getParameterIdList: vi.fn(() => []),
+      getMotionFileWhitelist: vi.fn(() => []), getExpressionFileWhitelist: vi.fn(() => []),
+      setParam: vi.fn(), setViewTransform: vi.fn(), startMotion: vi.fn(async () => {}),
+      startExpression: vi.fn(async () => {}), stopMotion: vi.fn(), stopAll: vi.fn()
+    })
+    await pending
+    expect(store.status).toBe('ready')
+    store.dispose()
+  })
+
+  // L2（2026-09-15 Live2D 评审）：controller 的串行化守卫在「上一次切换仍在途」时**直接返回旧 id 且不抛错**，
+  // 于是 store 走"成功"分支 —— 用户点了 C、界面停在 B，全程零提示。守卫本身是有意设计（只持久化生效 id），
+  // 故不动判据，只把"这次选择没生效"说出来。判别力：去掉 store 里那段 `effective !== next` ⇒ 本条红。
+  it('L2：controller 守卫丢弃切换（返回旧 id）时给出可见提示，且只持久化生效 id', async () => {
+    const { ctrl } = installFakes({ models: [MODEL_HARU, MODEL_LIL] })
+    const { store, settings } = freshStore()
+    await store.init(fakeCanvas)
+    expect(store.status).toBe('ready')
+    vi.spyOn(ctrl, 'switchModel').mockResolvedValue('haru')   // 守卫路径：请求 lil，生效仍是 haru
+    await store.switchModel('lil')
+    expect(store.error).toContain('未生效')
+    expect(settings.live2d.modelId).toBe('haru')   // 只持久化生效 id（D5B-10 语义未变）
+    store.dispose()
+  })
+
   it('M1：init 完成前 switchModel 被串行化（不执行切换、置 error）', async () => {
     installFakes({ models: [MODEL_HARU, MODEL_LIL] })
     const { store, settings } = freshStore()

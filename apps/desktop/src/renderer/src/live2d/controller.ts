@@ -354,7 +354,12 @@ export class Live2DController {
     if (!handle || !this.expressionWhitelist.has(file)) return false
     const modelId = this.currentId
     if (!modelId) return false
-    void handle.startExpression(modelId, file)
+    // L7（2026-09-15 Live2D 评审）：白名单只保证「文件在清单里」，不保证「此刻读得到」——
+    // 模型目录内的文件被删/损坏时 `fetchResource` 会 reject，而这里是 fire-and-forget ⇒ 未处理的承诺拒绝
+    // 落到全局 unhandledrejection handler，只打一行 console，UI 完全没有反馈。接住并转成可见的表现层降级。
+    void handle.startExpression(modelId, file).catch((e: unknown) => {
+      this.emit('error', e instanceof Error ? e : new Error('表情播放失败'))
+    })
     return true
   }
 
@@ -399,7 +404,11 @@ export class Live2DController {
         handle.stopMotion(priority) // 回退（Controller 层仲裁；底层按 stopAll 语义）
       }, timeoutMs)
     )
-    void handle.startMotion(modelId, file, priority)
+    // L7（同 setExpression）：动作文件读取/解码失败此前是 fire-and-forget ⇒ unhandledrejection。
+    // 接住并 emit 'error'（store 已订阅，落可见的 error 面）。
+    void handle.startMotion(modelId, file, priority).catch((e: unknown) => {
+      this.emit('error', e instanceof Error ? e : new Error('动作播放失败'))
+    })
     return true
   }
 

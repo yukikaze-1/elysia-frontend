@@ -454,7 +454,9 @@ describe('RealBackend WS 连接', () => {
         send: () => {}, close: () => {}, readyState: 1
       }
     }
-    const b = new RealBackend({ now: () => Date.now(), wsFactory, reconnectBaseDelayMs: 100 })
+    // S7/C9：退避现带随机抖动，而本用例用**真实计时**断言「30ms 时仍在 reconnecting（100ms 退避未到）、
+    // 180ms 时已重连」。钉住随机源使退避回到确定性满值（100ms），否则抖动可能让它提前触发而改变观测窗口。
+    const b = new RealBackend({ now: () => Date.now(), wsFactory, reconnectBaseDelayMs: 100, random: () => 1 })
     await b.connect({ serverUrl: 'http://x', token: 't' })
     expect(b.getConnectionState().status).toBe('connected')
     await new Promise((resolve) => setTimeout(resolve, 30)) // setTimeout(0) 掉线已触发 → reconnecting(100ms 退避未到)
