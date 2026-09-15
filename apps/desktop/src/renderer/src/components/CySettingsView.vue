@@ -279,6 +279,7 @@ onBeforeUnmount(() => { triggerElement = null })
   flex: 1 1 0;
   min-width: 0;
   overflow-y: auto;   /* 内容区内部滚动，面板不溢出窗口 */
+  scrollbar-gutter: stable;   /* D4-UI（2026-09-15，整改清单 §3）：滚动条出现/消失不改变内容宽度 */
   padding: var(--cy-space-8) var(--cy-space-9);
   background: color-mix(in srgb, var(--cy-pane) 92%, transparent);
   /* 问题 7（字型级重渲染）：hover 重绘时字形在合成层边界/亚像素相位间重光栅化产生 ~1px 上移。

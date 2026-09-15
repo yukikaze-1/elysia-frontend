@@ -279,6 +279,9 @@ function activateConv(id: string): void {
   border-right: 1px solid var(--cy-border);
   backdrop-filter: blur(18px) saturate(110%);
   overflow-y: auto;
+  /* D4-UI（2026-09-15，整改清单 §3）：滚动条出现/消失不改变内容宽度 ⇒ 不横跳。
+     与 CyMessageList.vue 的 .cy-messages / CyProfileWizard.vue 的 .cy-wizard-body 同款。 */
+  scrollbar-gutter: stable;
 }
 
 .cy-pane-heading {

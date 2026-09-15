@@ -192,14 +192,20 @@ P1：置顶、归档、分组。
 - Inner Voice 使用低强调底色、明确标签和可折叠区域；
 - Public Reply 位于主要阅读区，视觉权重更高；
 - 两种通道可以包含多个有序分段并分别流式更新，不生成多条独立 Assistant 消息；
-- 回复组按全局 `segmentIndex` 形成一条时间线；相邻 Inner Voice 分段在它们出现的位置合并成低强调可折叠块，相邻 Public Reply 分段显示为主回复气泡。若后端再次切回 Inner Voice，则在该位置创建新的 Inner Voice 块，不能把所有 Inner Voice 强行移到顶部而破坏顺序；
+- ~~回复组按全局 `segmentIndex` 形成一条时间线；相邻 Inner Voice 分段在它们出现的位置合并成低强调可折叠块，相邻 Public Reply 分段显示为主回复气泡。若后端再次切回 Inner Voice，则在该位置创建新的 Inner Voice 块，不能把所有 Inner Voice 强行移到顶部而破坏顺序；~~ **本行已被 U-3 裁决取代（2026-09-15）——见下方注记。**
 - Inner Voice 缺失时不显示空区域；
 - 默认复制只复制 Public Reply；“复制完整回复”按全局时间线保留 Inner Voice/Public Reply 标签和顺序；
 - TTS 默认只朗读 Public Reply；
 - 不把调试信息或模型隐藏推理当作 Inner Voice 展示。
 
-> **⚠️ 待裁决：本行「不能把所有 Inner Voice 强行移到顶部而破坏顺序」与现行代码相反（2026-09-15 复核；★「文档对、代码错」）。** `CyMessageBubble.vue:99-108` 按 `channel` 分成两个 computed，模板 `:215-223` 把**全部** `inner_voice` 分段（按 `segmentIndex` 排序）放进同一个置顶 `<details>`，`:227-244` 才渲染 `public_reply` ⇒ **交错顺序在实现里已经丢失**（默认折叠还使位置信息更不可见）。现有 fixture 的 inner_voice 恰在 index 0，故目前只是**潜在缺陷**；后端一旦按 doc 02 允许的方式交错即暴露。
-> **本条按"文档对、代码错"处理，不就地改口径**：是改代码（按 `segmentIndex` 在位置处开新块）还是改本行规格，**属产品决定**。在裁决前，本行仍是有效规格；**请勿据代码现状回改文档**。反证与取证见 [维护文档全面 review 报告](review/2026-09-14-维护文档全面review-报告.md) §16.4 的 U-3。
+> **U-3 裁决（2026-09-15，产品决定：改规格、接受置顶行为）**：上一行「不能把所有 Inner Voice 强行移到顶部而破坏顺序」
+> 及其下「待裁决」注记作废。**现行规格改为**：一条 Assistant 消息内 **Inner Voice 分段整体收集并置顶**为
+> 一个低强调可折叠块，**Public Reply 分段随后按 `segmentIndex` 顺序主区展示**；两者不做跨通道交错。
+> 实施形态即既有代码（`CyMessageBubble.vue` 按 `channel` 分两个 computed，模板把全部 `inner_voice`
+> 放进同一个置顶 `<details>`，再渲染 `public_reply`）——**代码不改**。
+> 同时作废的还有验收清单里「并保持全局顺序」一句（见本文 §… 验收清单对应行）。
+> **代价如实记录**：通道间的时间交错信息在展示层不可见（默认折叠更弱化位置感）；若日后要求交错，
+> 属**规格变更**而非缺陷修复。裁决依据与取证见 [维护文档全面 review 报告](review/2026-09-14-维护文档全面review-报告.md) §16.4 的 U-3。
 
 ### 7.4 Markdown 与多媒体
 
@@ -497,7 +503,7 @@ P0 操作：
 - [ ] 流式输出期间滚动规则符合预期；
 - [ ] 同一条 AI 消息的 Inner Voice 与 Public Reply 视觉分区清晰；
 - [ ] 同一 `responseId` 的连续句子呈现为一个回复组，只显示一组头像、时间和操作区；
-- [ ] Inner Voice/Public Reply 分段可以独立流式更新、折叠和复制，并保持全局顺序；
+- [ ] Inner Voice/Public Reply 分段可以独立流式更新、折叠和复制（**「并保持全局顺序」已于 2026-09-15 按 U-3 裁决删除**——现行规格是 Inner Voice 置顶、Public Reply 主区，不做跨通道交错，见 §7.3 注记）；
 - [ ] 回复级和会话级 Token、实际模型与心情显示清晰；
 - [ ] 图片、视频和音频消息具有可用的预览、播放、错误和下载状态；
 - [ ] 历史消息懒加载后可视位置稳定；会话搜索、聊天历史组合查询和来源跳转可用；

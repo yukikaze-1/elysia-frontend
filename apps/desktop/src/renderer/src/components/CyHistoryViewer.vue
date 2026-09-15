@@ -347,7 +347,7 @@ const announceText = computed(() => {
 .cy-history-state { padding: 28px 0; color: var(--cy-muted); text-align: center; font-size: var(--cy-font-lg); }
 /* 虚拟化：grid → flex column，去 gap（gap 不入实测行高）/ header margin → padding（margin 不入 ResizeObserver border-box 高度），
    否则 prefix 前缀和与真实布局不符、锚点恢复失效（<=1px 断言失败）。 */
-.cy-history-results { flex: 1 1 0; display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; overflow-y: auto; overflow-anchor: none; min-height: 120px; }
+.cy-history-results { flex: 1 1 0; display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; overflow-y: auto; overflow-anchor: none; min-height: 120px; scrollbar-gutter: stable; }   /* D4-UI（2026-09-15，整改清单 §3）：滚动条出现/消失不改变内容宽度 */
 .cy-history-day { display: block; padding: var(--cy-space-2) 0 var(--cy-space-1-5); margin: 0; color: var(--cy-muted); font-size: var(--cy-font-md); font-weight: 500; }
 .cy-vlist-row { display: block; padding: 0 0 var(--cy-space-3); }   /* F-1：grid gap:6px 改为 padding-bottom（计入 ResizeObserver border-box，恢复同组 item 间距） */
 .cy-vlist-pad { flex-shrink: 0; }
