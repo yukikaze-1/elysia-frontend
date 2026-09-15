@@ -1,0 +1,8 @@
+提交信息更正（如实声明）：本提交的**文件内容包含 D4-15 的两项改动**——`real-backend.ts` 的
+`assertBackendOrigin()` 域名黑名单接线（三个带 Bearer 的直写 fetch）与 `tool-policy.ts` 的
+`isPathWithinSandbox()` 沙盒目录层（含 `tool-service` 的 `deps.sandboxDirectories` 注入面，
+F-06 仍为空集），以及 `real-backend.spec.ts` 的 2 条守卫用例。
+
+原因是这两项与本提交的 D4-1 改动落在同一批文件的重叠区间，无法在不使用部分暂存（`add -p`）
+的前提下干净拆分；提交信息因此**低估了本提交的内容**。完整说明见
+`docs/review/2026-09-15-维护文档review十项裁决落地-决策记录.md` §6。
