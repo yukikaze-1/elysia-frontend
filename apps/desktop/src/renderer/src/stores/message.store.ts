@@ -630,6 +630,19 @@ export const useMessageStore = defineStore('message', () => {
           guardDropEvent('generation.started.character', event.conversationId, event.generationId)
           break
         }
+        // C4（2026-09-15 契约评审）：同一个 `generationId` 的**重复** `generation.started`
+        // （后端重发、将来若引入在途回放、或双通道投递）此前会无条件重建 accumulator 并把
+        // `assistantSegments` 清空 —— 已渲染的正文消失、usage/model 被覆盖，违反
+        // 「一代 = 一条 assistant 消息 + 有序分段」。此处按 generationId 幂等：
+        // 只补身份字段（model / 角色快照），**不重建 accumulator、不清空分段、不动状态**。
+        if (activeGenerationId.value === event.generationId) {
+          const dupMessageId = accumulator.value?.getState().messageId ?? event.messageId
+          const dup = dupMessageId ? byId.value[dupMessageId] : undefined
+          if (dup && !dup.model && event.model) dup.model = event.model
+          if (dup && !dup.character && characterIdentity) dup.character = cloneValue(characterIdentity.snapshot)
+          guardDropEvent('generation.started.duplicate', event.conversationId, event.generationId)
+          break
+        }
         // The renderer has one active accumulator.  If a backend starts a
         // newer generation before the prior one terminates, close the prior
         // local stream and remove its identity maps so a late terminal cannot

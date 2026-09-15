@@ -80,6 +80,13 @@ export interface GenerationCompletedEvent extends BackendEventEnvelope {
   characterId?: string
   characterInstanceId?: string
   characterRevision?: number
+  /**
+   * C7（2026-09-15 契约评审）：**整段缺失**标记——由 Main 的 frame-mapper 判定
+   * （它看得到全部 `generation.segment.started`，含不进事件流的 status 段）。
+   * 为 true 时 Renderer 把该回复落 `completing`（UI 明示「可能不完整」），而不是当作完整回复。
+   * 仅在内部分发通道上传递，不上后端 wire。
+   */
+  segmentGap?: boolean
 }
 
 export interface GenerationFailedEvent extends BackendEventEnvelope {

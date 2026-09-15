@@ -181,7 +181,10 @@ export class StreamAccumulator {
     if (event.conversationUsage) this.state.conversationUsage = event.conversationUsage
     if (event.model) this.state.model = event.model
     if (event.emotion) this.state.emotion = event.emotion
-    this.state.status = this.hasGap() ? 'completing' : 'completed'
+    // C7（2026-09-15 契约评审）：`hasGap()` 此前只看**段内** `pendingChunks`——整段丢失（segment.started
+    // 从未到达）在终态后表现为一条正常 `completed` 的**更短回复**。缺口由 mapper 判定（它看得到全部段，
+    // 含不进事件的 status 段），经 `segmentGap` 传到这里；与段内缺口一样落 `completing`，由 UI 明示「可能不完整」。
+    this.state.status = (this.hasGap() || event.segmentGap === true) ? 'completing' : 'completed'
   }
 
   private ensureSegment(segmentId: string, segmentIndex: number, channel: SegmentChannel, kind: SegmentKind): SegmentAccumulatorState {

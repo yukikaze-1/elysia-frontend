@@ -119,7 +119,8 @@ export const GenerationCompletedEventSchema = BackendEventEnvelopeSchema.extend(
   finishReason: z.string().optional(),
   characterId: eventIdentityText().optional(),
   characterInstanceId: eventIdentityText().optional(),
-  characterRevision: z.number().int().min(1).optional()
+  characterRevision: z.number().int().min(1).optional(),
+  segmentGap: z.boolean().optional()   // C7：整段缺失标记（Main 判定，见 contracts/events.ts）
 }).strict()
 
 export const GenerationFailedEventSchema = BackendEventEnvelopeSchema.extend({

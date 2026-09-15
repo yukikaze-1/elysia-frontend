@@ -310,6 +310,11 @@ interface MessageContextQuery {
 - Adapter 必须把 `inner_voice` + `content` 归一化为前端 `assistantSegments[]`（inner_voice 段 + public_reply 段），**不得把归档 `inner_voice` 原文当独立字段展示**；归档消息无 `status/segmentId`，状态由 Adapter 按有无完成事件推导；
 - 前端 `Message.status` 枚举含 `interrupted`；后端归档无此字段，由 Adapter 在重连回放时依据「消息无对应 `generation.completed`」推导（§16）。
 
+> **C12 口径补充（2026-09-15 契约评审）：** 归档 `parts` 的**校验严格度在两条路径上是有意不同的**，因为它对应后端**两份不同的形状**——
+> REST 归档（`rest.py ArchivePart`）是 `parts: [{content: str}]`，故 `rest-schemas.ts` 按 **`content` 必填**校验（缺字段整页 `SCHEMA_VALIDATION_FAILED`）；
+> WS 回放（`ws_message/_types.py: SessionMessageItem.parts: Optional[list[dict[str, str]]]`）是**自由形状**，故 `raw-schemas.ts` 只做 `z.array(z.unknown())`。
+> 这不是"同一字段两套口径"的疏漏，而是两个来源各自的真值；**若后端把 WS 侧也收敛成 `ArchivePart`，这里应同步收紧**（否则 WS 侧会继续放行畸形 parts，而 REST 侧会整页失败——同一份数据两条路径两种命运）。
+
 约束：
 
 - 用户发送前生成 `clientMessageId`，重试时保持不变；
@@ -669,6 +674,11 @@ interface Live2DDirective {
 > **批次 C 契约更正注记（2026-08-18，D5C-07）：** `state` 枚举由早前版本的**八值**更正为**七值**——**剔除 `error`**（上表已反映）。理由：`error`（优先级 3）为 **client 派生态**（doc 05 §6 error=3 必须 client 驱动），不可被后端任意注入覆盖 thinking/speaking；raw wire 层 `.strict()` 下携带 `state:'error'` 的帧会**整帧拒**（fail-closed，连合法 expression/motion 一并丢弃），此行为已在批次 C 决策记录明示。其余七值、`priority∈0-3`（客户端钳制 ≤1 作建议强度上限）、`durationMs∈[0,30_000]`（motion 以 15s 封顶）均为批次 C 冻结契约。wire 实发见 §19 映射表 `live2d.directive` 行。
 
 **已确认映射（2026-08-08）：** 后端建连下发 `expression{expression, intensity?}`（当前心情）；流式中心情经 `generation.completed.mood` 落位；v1 `capabilities.live2d_static_image` 提供 Live2D 静态图路径（v2 由 `server_info.services` 取代 capabilities，静态图字段在 v1 保留）。`expression` 字段是心情**代码/标签**（如「开心」），不是 CSS 类或资源路径——前端经本地映射表转 `Live2DDirective`，未知代码以「未知/原始标签」安全展示（§7 约束同款规则）。
+
+> **C11 口径更正（2026-09-15 契约评审）：** 上句「前端经本地映射表转 `Live2DDirective`」只对**带角色身份**的表现帧成立。实测实现（`main/transport/protocol-v2/frame-mapper.ts` 的 `expression` 分支）是：
+> **带完整角色三元组**（`characterId`+`characterInstanceId`+`characterRevision`）→ 映射为表现事件；**没有身份**（迁移期旧后端、或建连握手那一帧）→ **整帧忽略（返回 null），且不告警**。
+> 也就是说：**legacy 形态下建连的"当前心情"不会生效**，首屏心情要等第一条 `generation.completed.mood`。这是**有意保留**的旧语义（原注释写「忽略握手帧」），多角色设计稿 §CHAR-FE-10 只记录了 `features.characterProfiles=true` 时的丢弃口径，未记 legacy 分支——本节把它补上，避免把「已忽略」读成「已映射」。
+> 若将来要在 legacy 下也生效，需要先决定它的归属（无身份的全局表现 vs 写入连接态的 `initialExpression`），而不是直接放开 mapper 的判据。
 
 ## 13. 模型服务与语音数据结构
 

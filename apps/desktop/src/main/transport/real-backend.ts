@@ -82,7 +82,6 @@ import type {
   RawErrorMessage,
   RawServerInfo,
   RawSessionMessage,
-  RawSessionMessageItem,
   RawToolStatus,
   RawUserAck
 } from './protocol-v2/raw-types'
@@ -296,7 +295,6 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   private state: ConnectionState = { status: 'disconnected' }
   private mapper?: FrameMapper
   private readonly restMapper = new RestMapper()
-  private sessionBuffer: RawSessionMessageItem[] = []
   private reconnectAttempts = 0
   private reconnectTimer?: ReturnType<typeof setTimeout>
   private handshakeTimer?: ReturnType<typeof setTimeout>
@@ -467,7 +465,6 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
 
     this.activeVoice = undefined
     this.ttsBuffers.clear()
-    this.sessionBuffer = []
     this.services = undefined
     // FrameMapper owns segment/audio identity tables. Do not let one survive
     // into B even if a stale audio_end callback is delivered later.
@@ -629,18 +626,16 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
 
   private handleSession(frame: RawSessionMessage): void {
     if (frame.conversationId) {
-      if (this.sessionBuffer.length > 0) {
-        // B-6:旧回放缓冲被替换(新会话帧自带 conversationId)
-        this.warn('SESSION_BUFFER_REPLACED', `活动会话 ${frame.conversationId} 到达,丢弃 ${this.sessionBuffer.length} 条未归属回放缓冲`)
-      }
       this.setState({ ...this.state, activeConversationId: frame.conversationId })
       this.mapper?.setActiveConversationId(frame.conversationId)
       const messages = pairToolCalls(frame.messages.map((m) => this.restMapper.toDomainMessageFromReplay(m, frame.conversationId as string)))
-      this.sessionBuffer = []
       this.options.onSessionReplay?.(frame.conversationId, messages)
     } else {
-      // B-6:旧后端 session 帧缺 conversationId → 缓冲,待活动会话经 REST active:true 解析后投递(Task 5)
-      this.sessionBuffer = frame.messages
+      // C5（2026-09-15 契约评审）：`sessionBuffer` 原设计是「缺 conversationId 的旧后端回放先缓冲、
+  // 待 REST active:true 解析后投递」——那条投递路径**从未实现**，字段写进去就再也不出来，
+  // 且连告警都没有（回放静默丢失）。权威后端当前 `conversationId` 必填，故该分支今天不可达。
+      // 处置：**删掉死字段 + 显式告警**（fail-loud，不再留一个"看起来会投递"的状态）。
+      this.warn('SESSION_REPLAY_UNATTRIBUTED', `session 帧缺 conversationId，${frame.messages.length} 条回放无法归属会话，已丢弃`)
     }
   }
 
@@ -1094,7 +1089,6 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     }
     this.activeVoice = undefined // P4-B:显式 disconnect 即语音会话失效(同重连语义),防重连后语音输入锁死(task-4 review Important)
     this.ttsBuffers.clear()
-    this.sessionBuffer = []
     this.services = undefined
     const ws = this.ws
     // Retire before close: ws libraries may synchronously invoke close/error

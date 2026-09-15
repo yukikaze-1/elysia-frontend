@@ -43,7 +43,7 @@ function segmentCompleted(segmentId: string, index: number): BackendEvent {
   }
 }
 
-function completed(): BackendEvent {
+function completed(over: Partial<Extract<BackendEvent, { event: 'generation.completed' }>> = {}): BackendEvent {
   return {
     eventId: 'e-done',
     sequence: 99,
@@ -52,7 +52,8 @@ function completed(): BackendEvent {
     responseId: 'rsp-1',
     usage: { input: 10, output: 20, total: 30, source: 'provider_reported' },
     model: 'm1',
-    emotion: 'happy'
+    emotion: 'happy',
+    ...over
   }
 }
 
@@ -186,6 +187,26 @@ describe('StreamAccumulator 流式归组', () => {
     acc.apply(delta('seg-1', 0, 2, '第三块')) // 序号 1 缺失
     acc.apply(completed())
     expect(acc.getState().status).toBe('completing')
+  })
+
+  // C7（2026-09-15 契约评审）：段内 deltaSequence 无缺口、但**整段**丢失（由 mapper 经 segmentGap 告知）
+  // 时同样必须落 completing——否则一条少了整段的回复会被当作完整回复。
+  // 判别力：去掉 applyCompleted 里的 `|| event.segmentGap === true` ⇒ 本条红（状态会是 completed）。
+  it('C7：segmentGap（整段缺失，由 mapper 判定）→ 终态同样落 completing', () => {
+    const acc = new StreamAccumulator()
+    acc.apply(started())
+    acc.apply(delta('seg-1', 0, 0, '完整的这一段'))
+    acc.apply(completed({ segmentGap: true }))
+    expect(acc.getState().status).toBe('completing')
+    expect(acc.toAssistantSegments()[0].text).toContain('完整的这一段')   // 已有的正文不丢
+  })
+
+  it('C7：无 segmentGap 的正常完成仍是 completed（对照，避免误报）', () => {
+    const acc = new StreamAccumulator()
+    acc.apply(started())
+    acc.apply(delta('seg-1', 0, 0, '完整'))
+    acc.apply(completed())
+    expect(acc.getState().status).toBe('completed')
   })
 
   it('中断保留已提交文本,状态为 interrupted', () => {

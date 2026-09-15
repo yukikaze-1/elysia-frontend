@@ -18,14 +18,33 @@ export interface FrameMapperOptions {
 
 /** segment 元数据缓存(从 segment.started 建立;channel 用 raw 三值以便 status 过滤) */
 interface SegmentMeta {
+  generationId: string
   segmentIndex: number
   channel: RawSegmentChannel
   kind: RawSegmentKind
 }
 
+/**
+ * C8（2026-09-15 契约评审）：`segmentMeta` 此前**只以 `segmentId` 为键**，跨代不校验、终态也不清理。
+ * 后果两条：① 若两代复用同一 `segmentId`（或某代中途 failed 留下陈旧条目），后续 delta 会被**静默**
+ * 按上一代的 `channel/kind/segmentIndex` 归位——连 UI 通道都可能错；② 已终态的条目永不释放，
+ * 单连接内缓慢增长。
+ *
+ * 现在键含代（`generationId\0segmentId`）：跨代查找自然落空（delta 走既有的 PROTOCOL_MISMATCH 分支，
+ * 整帧丢弃 + warn，而不是错归因），且终态帧按代回收全部条目。
+ */
+const segmentKey = (generationId: string, segmentId: string): string => `${generationId}\u0000${segmentId}`
+
 export class FrameMapper {
   private nextSequence = 1
   private segmentMeta = new Map<string, SegmentMeta>()
+  /**
+   * C7（2026-09-15 契约评审）：每代**实际出现过的** `segmentIndex` 集合。
+   * 停在这里而不是在 Renderer 判缺口，是因为 mapper 看得到全部 `generation.segment.started`
+   * ——**包括 channel=status 的段**（它们不进事件流，若在 Renderer 判会天然"跳号"而误报）。
+   * 终态时若 `max-min+1 !== 个数`，说明中间有段从未到达 ⇒ 整段丢失，标 `segmentGap`。
+   */
+  private segmentIndexesByGeneration = new Map<string, Set<number>>()
   /** audio_start 建立的身份表；audio_end/cancel wire 无需重复身份，transport 通过此表续接。 */
   private audioIdentityByStream = new Map<number, CharacterEventIdentity>()
   private activeConversationId?: string
@@ -178,7 +197,10 @@ export class FrameMapper {
   }
 
   private mapSegmentStarted(frame: Extract<RawFrame, { type: 'generation.segment.started' }>): BackendEvent | null {
-    this.segmentMeta.set(frame.segmentId, { segmentIndex: frame.segmentIndex, channel: frame.channel, kind: frame.kind })
+    this.segmentMeta.set(segmentKey(frame.generationId, frame.segmentId), { generationId: frame.generationId, segmentIndex: frame.segmentIndex, channel: frame.channel, kind: frame.kind })
+    const seen = this.segmentIndexesByGeneration.get(frame.generationId) ?? new Set<number>()
+    seen.add(frame.segmentIndex)
+    this.segmentIndexesByGeneration.set(frame.generationId, seen)
     if (frame.channel === 'status') return null
     return {
       ...this.envelope(),
@@ -192,7 +214,7 @@ export class FrameMapper {
   }
 
   private mapDelta(frame: Extract<RawFrame, { type: 'generation.delta' }>): BackendEvent | null {
-    const meta = this.segmentMeta.get(frame.segmentId)
+    const meta = this.segmentMeta.get(segmentKey(frame.generationId, frame.segmentId))
     if (!meta) {
       throw new CyreneError(CyreneErrorCode.PROTOCOL_MISMATCH, `delta 帧找不到 segment meta: ${frame.segmentId}`)
     }
@@ -217,7 +239,7 @@ export class FrameMapper {
   }
 
   private mapSegmentCompleted(frame: Extract<RawFrame, { type: 'generation.segment.completed' }>): BackendEvent | null {
-    const meta = this.segmentMeta.get(frame.segmentId)
+    const meta = this.segmentMeta.get(segmentKey(frame.generationId, frame.segmentId))
     const channel = meta?.channel ?? frame.channel
     if (channel === 'status') {
       return null // 保留 status meta(供其迟到 delta 过滤返回 null,不抛 PROTOCOL_MISMATCH)
@@ -234,7 +256,7 @@ export class FrameMapper {
       kind: kind,
       ...(frame.content !== undefined ? { content: frame.content } : {})
     }
-    this.segmentMeta.delete(frame.segmentId) // 普通段映射结束后清理(docs/18 §8.4)
+    this.segmentMeta.delete(segmentKey(frame.generationId, frame.segmentId)) // 普通段映射结束后清理(docs/18 §8.4)
     return event
   }
 
@@ -245,6 +267,8 @@ export class FrameMapper {
         message: `generation ${frame.generationId} completeness 异常: ${frame.completeness}`
       })
     }
+    this.releaseGeneration(frame.generationId)
+    const segmentGap = this.detectSegmentGap(frame.generationId)
     return {
       ...this.envelope(),
       event: 'generation.completed',
@@ -256,11 +280,34 @@ export class FrameMapper {
       model: frame.model,
       ...(frame.mood ? { emotion: frame.mood } : {}),
       ...(frame.finishReason ? { finishReason: frame.finishReason } : {}),
+      ...(segmentGap ? { segmentGap: true } : {}),
       ...this.characterIdentity(frame)
     }
   }
 
+  /**
+   * C7：整段缺失判定。**只在「有正向证据」时报**：出现了索引 k 与某个 > k+1 的索引，
+   * 而 k+1..max 之间存在从未出现的索引 ⇒ 中间确有段没到。一代只出现过一个段（或一个都没有）时不报。
+   */
+  private detectSegmentGap(generationId: string): boolean {
+    const seen = this.segmentIndexesByGeneration.get(generationId)
+    this.segmentIndexesByGeneration.delete(generationId)
+    if (!seen || seen.size === 0) return false
+    const indexes = [...seen]
+    const min = Math.min(...indexes)
+    const max = Math.max(...indexes)
+    const gap = indexes.length !== max - min + 1
+    if (gap) {
+      this.onProtocolWarning({
+        code: ProtocolWarningCode.MAPPER_SEGMENT_GAP,
+        message: `generation ${generationId} 的分段索引不连续（收到 ${indexes.length} 个，区间 ${min}..${max}）⇒ 有整段未到达，已标记「可能不完整」`
+      })
+    }
+    return gap
+  }
+
   private mapFailed(frame: RawGenerationFailed): BackendEvent {
+    this.releaseGeneration(frame.generationId) // C8：终态回收该代全部 segment meta（此前的无界增长点）
     return {
       ...this.envelope(),
       event: 'generation.failed',
@@ -276,9 +323,16 @@ export class FrameMapper {
     }
   }
 
+  /** C8：终态时回收该代全部 segment meta（键含 generationId，故按前缀精确匹配） */
+  private releaseGeneration(generationId: string): void {
+    const prefix = `${generationId}\u0000`
+    for (const key of this.segmentMeta.keys()) {
+      if (key.startsWith(prefix)) this.segmentMeta.delete(key)
+    }
+  }
+
   /** generation 角色身份透传（CHAR-FE-08；undefined 不写键，迁移期 optional） */
-  private characterIdentity(frame: { characterId?: string; characterInstanceId?: string; characterRevision?: number }) {
-    return {
+  private characterIdentity(frame: { characterId?: string; characterInstanceId?: string; characterRevision?: number }) {    return {
       ...(frame.characterId !== undefined ? { characterId: frame.characterId } : {}),
       ...(frame.characterInstanceId !== undefined ? { characterInstanceId: frame.characterInstanceId } : {}),
       ...(frame.characterRevision !== undefined ? { characterRevision: frame.characterRevision } : {})

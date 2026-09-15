@@ -273,6 +273,22 @@ describe('messageStore 流式应用', () => {
     expect(store.droppedEvents).toBe(0)
   })
 
+  // C4（2026-09-15 契约评审）：重复的 generation.started 此前会无条件重建 accumulator 并把
+  // assistantSegments 清空 ⇒ 已渲染正文消失、用量/模型被覆盖。
+  // 判别力：去掉 message.store 里那段幂等分支 ⇒ 本条的第二、三条断言红（分段被清空）。
+  it('C4：同一 generationId 的重复 generation.started 幂等——已累积分段不清空、状态不变', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent({ eventId: 'e2', sequence: 2, event: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'public_reply', kind: 'text' })
+    store.applyEvent({ eventId: 'e3', sequence: 3, event: 'generation.delta', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'public_reply', kind: 'text', deltaSequence: 0, text: '已渲染的正文' })
+    expect(store.byId['msg-1']?.assistantSegments?.[0]?.text).toContain('已渲染的正文')
+
+    store.applyEvent(started())   // 后端重发同一条 started
+    expect(store.byId['msg-1']?.assistantSegments?.[0]?.text, '分段必须还在').toContain('已渲染的正文')
+    expect(store.byId['msg-1']?.status).toBe('streaming')
+    expect(store.droppedEvents).toBe(1)   // 去重可见（不是静默忽略）
+  })
+
   it('中间事件查 generationByConversation:非当前/查无 → 丢弃', () => {
     const store = useMessageStore()
     // 查无:started 未到达,delta 无表可查

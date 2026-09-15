@@ -64,6 +64,61 @@ describe('FrameMapper raw → 领域', () => {
     expect(() => mapper.mapFrame({ type: 'generation.delta', generationId: 'gen-1', segmentId: 'seg-x', segmentIndex: 0, deltaSequence: 0, delta: 'x' })).toThrow(CyreneError)
   })
 
+  // —— C8（2026-09-15 契约评审）：元数据键含代 + 终态回收 ——
+  it('C8：segment meta 按代键控——另一代的同 id 段不会被静默错归因（抛 PROTOCOL_MISMATCH 而非按上一代 channel 归位）', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1' })
+    mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'inner_voice', kind: 'text' })
+    // 新一代复用同一个 segmentId，但**没有**再发 segment.started
+    mapper.mapFrame({ type: 'generation.started', generationId: 'gen-2', messageId: 'msg-2' })
+    expect(() => mapper.mapFrame({ type: 'generation.delta', generationId: 'gen-2', segmentId: 'seg-1', segmentIndex: 0, deltaSequence: 0, delta: 'x' }))
+      .toThrow(CyreneError)
+  })
+
+  it('C8：终态（completed/failed）回收该代全部 segment meta——终态后的迟到 delta 不再被归位', () => {
+    const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1' })
+    mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, channel: 'public_reply', kind: 'text' })
+    mapper.mapFrame({ type: 'generation.completed', generationId: 'gen-1', messageId: 'msg-1', model: 'm', channel: 'public_reply', finishReason: 'stop', usage: { rounds: [{ model: 'm', input_tokens: 1, output_tokens: 1, total_tokens: 2, round_num: 1 }], turn_total: 2 } })
+    expect(() => mapper.mapFrame({ type: 'generation.delta', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 0, deltaSequence: 1, delta: 'late' }))
+      .toThrow(CyreneError)
+  })
+
+  // —— C7（2026-09-15 契约评审）：整段缺失检测 ——
+  it('C7：分段索引不连续 ⇒ 终态标 segmentGap + MAPPER_SEGMENT_GAP 告警', () => {
+    const { warnings, onWarning } = collectWarnings()
+    const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1', onProtocolWarning: onWarning })
+    mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-0', segmentIndex: 0, channel: 'public_reply', kind: 'text' })
+    // 索引 1 从未到达（整段丢失），直接来 2
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-2', segmentIndex: 2, channel: 'inner_voice', kind: 'text' })
+    const done = mapper.mapFrame({ type: 'generation.completed', generationId: 'gen-1', messageId: 'msg-1', model: 'm', channel: 'public_reply', finishReason: 'stop', usage: { rounds: [{ model: 'm', input_tokens: 1, output_tokens: 1, total_tokens: 2, round_num: 1 }], turn_total: 2 } }) as GenerationCompletedEvent
+    expect(done.segmentGap).toBe(true)
+    expect(warnings.some((w) => w.code === ProtocolWarningCode.MAPPER_SEGMENT_GAP)).toBe(true)
+  })
+
+  it('C7：索引连续 ⇒ 不标 segmentGap（避免对完整回复误报"不完整"）', () => {
+    const { warnings, onWarning } = collectWarnings()
+    const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1', onProtocolWarning: onWarning })
+    mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-0', segmentIndex: 0, channel: 'public_reply', kind: 'text' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 1, channel: 'inner_voice', kind: 'text' })
+    const done = mapper.mapFrame({ type: 'generation.completed', generationId: 'gen-1', messageId: 'msg-1', model: 'm', channel: 'public_reply', finishReason: 'stop', usage: { rounds: [{ model: 'm', input_tokens: 1, output_tokens: 1, total_tokens: 2, round_num: 1 }], turn_total: 2 } }) as GenerationCompletedEvent
+    expect(done.segmentGap).toBeUndefined()
+    expect(warnings.some((w) => w.code === ProtocolWarningCode.MAPPER_SEGMENT_GAP)).toBe(false)
+  })
+
+  it('C7：status 段计入索引空间——只有 status 段缺失不会被误判（它不进事件流，但在 mapper 视野内）', () => {
+    const { warnings, onWarning } = collectWarnings()
+    const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1', onProtocolWarning: onWarning })
+    mapper.mapFrame({ type: 'generation.started', generationId: 'gen-1', messageId: 'msg-1' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-s', segmentIndex: 0, channel: 'status', kind: 'text' })
+    mapper.mapFrame({ type: 'generation.segment.started', generationId: 'gen-1', segmentId: 'seg-1', segmentIndex: 1, channel: 'public_reply', kind: 'text' })
+    const done = mapper.mapFrame({ type: 'generation.completed', generationId: 'gen-1', messageId: 'msg-1', model: 'm', channel: 'public_reply', finishReason: 'stop', usage: { rounds: [{ model: 'm', input_tokens: 1, output_tokens: 1, total_tokens: 2, round_num: 1 }], turn_total: 2 } }) as GenerationCompletedEvent
+    expect(done.segmentGap).toBeUndefined()
+    expect(warnings).toHaveLength(0)
+  })
+
   it('segmentIndex 与缓存不一致告警且以 meta 为准', () => {
     const { warnings, onWarning } = collectWarnings()
     const mapper = new FrameMapper({ connectionId: 'conn-1', activeConversationId: 'conv-1', onProtocolWarning: onWarning })
