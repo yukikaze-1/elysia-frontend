@@ -805,6 +805,9 @@ export const useMessageStore = defineStore('message', () => {
         conversationId,
         text,
         clientRequestId,
+        // C10（2026-09-15 契约评审）：本地乐观消息一直带着 `clientMessageId`，但**从不上行**。
+        // 后端接受该字段（X99 取证）⇒ 现在把**同一个值**发给它，使本地身份与 wire 身份一致。
+        clientMessageId: clientRequestId,
         ...(stickerId ? { stickerId } : {}),
         ...(attachments?.length
           ? { attachments: attachments.map((a) => ({ attachmentId: a.attachmentId, kind: a.kind, mime: a.mediaType })) }

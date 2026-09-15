@@ -148,6 +148,17 @@ export interface SendMessageInput {
   conversationId: string
   text: string
   clientRequestId: string
+  /**
+   * C10（2026-09-15 契约评审）：**客户端本地消息 ID**——`clientRequestId` 管"这一次请求"（幂等/ACK 关联），
+   * 本字段管"这一条用户消息"（重发时请求 id 可能变化/复用，而本地乐观气泡始终是同一条）。
+   *
+   * 取证（X99 `66557628`）：后端 `V2TextMessage` 接受可选 `clientMessageId`
+   * （`frontend_contract/ws_message/chat.py:199`），并在接受/拒绝 ACK 里回显（`_types.py:323,342`）。
+   * **但 REST 归档不带该字段（`rest.py` 0 命中）、WS 回放条目也不带** ⇒ 前端**无法**据此把
+   * 「ACK 超时后置 failed 的本地气泡」与「回放/REST 带回的同一条消息」合并。
+   * 故本字段当前的作用是**给后端一个稳定的客户端身份**，不是前端对账；对账那一半属后端改造（记 doc 18）。
+   */
+  clientMessageId?: string
   /** 已上传附件引用（wire AttachmentRef 提示值；服务端以记录为准） */
   attachments?: MessageAttachmentRef[]
   /** 阶段 3 G4：贴图消息发送（text 可空；wire stickerId 透传，D8） */

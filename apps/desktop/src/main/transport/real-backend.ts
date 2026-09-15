@@ -1137,6 +1137,10 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       this.pendingAcks.set(input.clientRequestId, { resolve, reject, timer })
     })
     const payload: Record<string, unknown> = { type: 'text', content: input.text, clientRequestId: input.clientRequestId, conversationId: input.conversationId }
+    // C10（2026-09-15 契约评审）：把「这一条用户消息」的本地 id 一并上行——后端 `V2TextMessage` 接受
+    // 可选 `clientMessageId`（X99 `66557628` 取证）并在 ACK 里回显。**注意**：对方归档/回放不带该字段，
+    // 所以它现在只是"给后端一个稳定身份"，前端对账那一半被后端能力挡住（见 SendMessageInput 注释与 doc 18）。
+    if (input.clientMessageId) payload.clientMessageId = input.clientMessageId
     if (input.attachments?.length) payload.attachments = input.attachments
     if (input.stickerId) payload.stickerId = input.stickerId   // 阶段 3 G4：贴图消息 wire（D8）
     try {

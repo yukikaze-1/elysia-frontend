@@ -777,6 +777,13 @@ Main Adapter 必须处理以下差异：
 - 协议版本不兼容时显式拒绝，而不是把未知版本静默降级为 v1；
 - 发布 Electron 可消费的版本化 schema/生成包，并给 schema 加版本或 hash；
 - 用当前契约生成新的 golden traces，归档 traces 不再进入测试。
+- **（2026-09-15 新提，C-18-2：`clientMessageId` 的回程缺口）** 后端已接受并在 ACK 里回显 `clientMessageId`
+  （X99 `66557628`：`frontend_contract/ws_message/chat.py:199` 可选、`_types.py:323/342` 的接受/拒绝 ACK 均带），
+  前端也已在 text 帧上行该字段（与本地乐观消息同值）。**但归档与回放两条回程都不带它**：
+  `frontend_contract/rest.py` **0 命中**、WS 回放条目（`SessionMessageItem`）也不含该字段。
+  ⇒ 前端**无法**把「ACK 超时后置 failed 的本地气泡」与「回放/REST 带回的同一条已受理消息」合并，
+  只能呈现两条用户消息（`upsertMessage` 仅按 `messageId` 去重）。**请后端在归档与回放条目中透出
+  `clientMessageId`**；在此之前前端不伪造对账能力（`SendMessageInput.clientMessageId` 的注释已写明这一点）。
 
 ## 16. Claude Code 建议修改顺序
 

@@ -331,6 +331,31 @@ describe('RealBackend WS 连接', () => {
     await b.disconnect()
   })
 
+  // C10（2026-09-15 契约评审）：本地乐观消息一直带 `clientMessageId`，但**从不上行**（只有 voice.commit 带）。
+  // 后端接受该字段（X99 `66557628`：`ws_message/chat.py:199` 可选）⇒ text 帧现在带上同一个值。
+  // 判别力：去掉 real-backend 里那行 `payload.clientMessageId = …` ⇒ 本条红。
+  it('C10：text 帧带上 clientMessageId（与本地乐观消息同值）', async () => {
+    const sent: string[] = []
+    const fakeWs = {
+      send: (raw: string) => { sent.push(raw) },
+      close: () => {}, readyState: 1,
+      on: (ev: string, cb: (arg?: unknown) => void) => {
+        if (ev === 'message') {
+          cb(Buffer.from(JSON.stringify({ type: 'session', conversationId: 'conv-1', messages: [], token_stats: { total: 0, byModel: {} } })))
+          cb(Buffer.from(JSON.stringify({ type: 'server_info', protocol_version: '2.0', server_version: 'v', features: {}, services: {}, connectionId: 'c' })))
+        }
+      }
+    }
+    const b = new RealBackend({ now: () => Date.now(), wsFactory: () => fakeWs, ackTimeoutMs: 30 })
+    await b.connect({ serverUrl: 'http://x', token: 't' })
+    const pending = b.sendMessage({ conversationId: 'conv-1', text: 'hi', clientRequestId: 'c1', clientMessageId: 'cm-1' })
+    const textFrame = sent.map((s) => JSON.parse(s) as Record<string, unknown>).find((f) => f.type === 'text')
+    expect(textFrame, '必须发出了 text 帧').toBeDefined()
+    expect(textFrame?.clientMessageId).toBe('cm-1')
+    await expect(pending).rejects.toThrow()   // 无 ACK → 超时（本用例只关心已发出的帧）
+    await b.disconnect()
+  })
+
   it('sendMessage → ack accepted → ClientRequestRef', async () => {
     const b = makeBackend()
     await b.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'sk-test' })
