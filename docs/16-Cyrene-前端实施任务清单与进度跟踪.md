@@ -55,7 +55,7 @@
   - **Linux 侧 GPU 进程「必然崩溃」已定位并修复（2026-09-12，run `34695059951` 取证）**：该 run 的 `integration (shard 1/3)` 红在 `trust-boundary.spec.ts:33`——**启动后第一次** `page.evaluate` 报 `Target page, context or browser has been closed`，`rerun --failed` 即绿。根因由内核日志坐实：GPU 进程在 Mesa 软件光栅器里**确定性**段错误（当天 2207 条 `segfault … in swrast_dri.so`、同一指令偏移），Chromium 重试耗尽后 `FATAL: GPU process isn't usable. Goodbye.` **主动杀掉整个浏览器进程**。
     - 最小复现（X99，最小 Electron 窗口、`xvfb-run -a`，每档 3 次一致）：**默认参数每次启动必崩 3 次且 WebGL 恒 null**；`--disable-gpu` 与 `--use-angle=swiftshader --enable-unsafe-swiftshader` 均为 **0 次**；`--no-sandbox` / `GALLIUM_DRIVER=llvmpipe|softpipe` / `LIBGL_ALWAYS_SOFTWARE=1` 全部无效，`--in-process-gpu` 更糟（Electron 自身 139 退出）。
     - 处置（**不放宽任何断言**）：`launchApp` 在 linux 注入 `--disable-gpu`（调用方显式给了 GL 后端则跳过，否则会盖掉 SwiftShader），`verify-artifact.cjs` 两处启动同源处理；用例观测面逐字不变（本就无 WebGL）。Windows 侧不动（非 Mesa 路径，无可复现证据）。证据与边界见决策记录 §10.10。
-    - 验证（X99 runner 真实工作区直跑，跑完还原）：**非 live2d 集成套件 `26 files / 129 tests` 全绿、267s**，整轮 swrast 段错误增量 **0**（修复前同一台机每 run 数百条），顺带快约 60s。**仍不能宣布 flake 清零**——这只覆盖「启动期 GPU 崩溃」一族。
+    - 验证（X99 runner 真实工作区直跑，跑完还原）：**非 live2d 集成套件 `26 files / 129 tests` 全绿、267s**，整轮 swrast 段错误增量 **0**（修复前同一台机每 run 数百条），顺带快约 60s。**仍不能宣布 flake 清零**——这只覆盖「启动期 GPU 崩溃」一族。 〔**2026-09-16 范围更正：这是一处只落在测试侧的修复**——`--disable-gpu` 只出现在 `tests/integration/helpers/app.ts` 与 `scripts/verify-artifact.cjs`，`src/main/**` 零命中、`disableHardwareAcceleration` 全仓 0 命中 ⇒ **产品侧没有任何 GPU 回退**，无 GPU/无 3D 的 Linux VM 与容器里用户拿到的就是崩溃。该缺口已登记为「设计优先」立项，不得按「已修复」读。〕
     - **修复后的首次 CI 实测（`34696556216` @ `b2f35a2`）：8/8 全绿、墙钟 348s（5.8 分钟，对照 §10.9 的 412s），整轮 swrast 段错误增量 0**。逐 job：shard 2m52s/2m11s/1m05s、live2d 3m33s、windows 2m54s、check 2m08s、unit 1m16s、artifact 48s。单轮数据，不作趋势结论。
   - **并发 job 互相误杀已定位并修复（2026-09-12，run `34696875971`）**：下一轮 `shard 1/3` 又红——swrast 仍是 0，红的是另一族：`generation-stall-recovery` 的 `beforeAll` 在首个点击上报 `Target page, context or browser has been closed`。**两份日志 pid 直接对上**：`shard 2/3` 的 globalSetup 在 13:37:34.518 `回收 1 个…main=943529（6 进程）`，而 943529 正是 `shard 1/3` 正在用的 app，其用例 13:37:34.680 失败（**相隔 160ms**）。
     - 根因：孤儿回收器的识别判据**不区分是哪一次运行**，而三个 runner 实例是**同一台机器、同一个进程表**——`orphan-apps.ts` 头部「CI 用一次性 runner，该机制只在开发者本机出现」的前提被自建 runner 推翻。每个 job 同一时刻只跑一个 app ⇒ 每次只杀 1 个，恰好表现为「每轮只红 1 例、每次用例不同」。**这是自建 runner 的第二个同类陷阱**（第一个是 pnpm store / `~/setup-pnpm` 共享）：把「独占一台机器」的假设带进「多 job 共用一台机器」。
@@ -528,7 +528,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 三项均按「修 → 变异验证 → 提交」完成，且**每项都查了真实边界**，其中两项与报告的表述有出入：
 
 - **H-03 流式渲染（`91704c8`）**：`utils/debounce-trailing.ts` 是纯防抖，token 间隔 <80ms 时回调永不触发；且 `debounce-trailing.spec.ts:11-13` 把该语义钉成了正确行为（「测试保护了 bug」的实例）。新增 `utils/throttle.ts`（首沿立即＋冷却窗口固定＋尾沿必达），删除旧 util 与其 spec。变异：改回防抖 → 两个 spec 共 7 条全红，组件层实测**流进行中 0 次非空采样**（与该 bug 的用户可见表现逐字对应）。
-- **H-04 退出 flush（`bc66099`）**：新增下行契约（`app:persist-flush-request` / `app:persist-flush-done`），Main 在 before-quit 等 ack，复用既有 steps 有序 await 与 1500ms 超时。另修掉一个真 bug：`onTimeout` 抛错会从定时器回调逃逸（退出期即未捕获异常），由本轮单测抓到。
+- **H-04 退出 flush（`bc66099`）**：新增下行契约（`app:persist-flush-request` / `app:persist-flush-done`），Main 在 before-quit 等 ack，复用既有 steps 有序 await 与 1500ms 超时。另修掉一个真 bug：`onTimeout` 抛错会从定时器回调逃逸（退出期即未捕获异常），由本轮单测抓到。 〔**2026-09-16 更正：本条在 Windows/Linux 的真实退出路径上从未生效过一次**——关最后一个窗口时 `before-quit` 触发时窗口已销毁、`deliver()` 恒返回 false；当时那条 e2e 走的是 `app.quit()` 的反时序，故对它零判别力。修复与判别性用例见 §3.1 的 2026-09-16 批次记录。〕
 - **但报告的「草稿丢失」一半不成立**：关窗时 `createShutdownHandler` 先 preventDefault，随后 `adapter.disconnect()` 向仍存活的 Renderer 推 `disconnected`，`message.store.ts:1064` 的**既有断线 flush** 已把当前会话草稿落盘（否证实验：同时禁用两条路径后草稿才不落盘）。真正会丢的是**没有既有 teardown flush 的那一批**——设置／布局／角色草稿／非当前会话草稿；实测移除退出 flush 后 **`settings.json` 根本没被写出来**。
 - **H-02 贴底跟随＋可复制（`f4466e4`）**：三处改动中**只有 `commitScrollHeights` 的贴底重锚是承重的**（变异后 e2e 立刻红于「距底部 551px」——根因是估高→实测高修正让 scrollHeight 增长、锚点恢复把用户留在离底部数百像素处）；`onRowResized`／`items.length` 两处跟随针对流式增长，语义正确但本 e2e 无法证明，已如实标注为 reasoned addition。可复制侧修了「正文可选中」与「消息级复制操作行」两条，**右键 Edit 菜单未做**。
 
@@ -861,6 +861,8 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 
 - **L8 已完成**：眨眼调度从「每帧从 t=0 重放整条时间轴」（1 小时 ≈ 1500 次抽样/帧，随时长线性增长）改为**增量展开 + 二分查询**。先核对了语义前提——`animClock.random()` 返回**每实例常量种子**，故"同一 seed 逐帧稳定回放"是有意设计，问题只在重复计算前缀。**判别用逐点对拍**：单调 300s（2 速率）、时间回退、1 小时长会话尾部，每点与保留的朴素参照实现完全相同；**变异验证**（错误提交抽样）⇒ 三条全红。
 - **C10 已部分落地（另一半被后端挡住）**：先取证（X99 `66557628`）——后端**接受**文本帧的可选 `clientMessageId`（`ws_message/chat.py:199`）并在 ACK 回显（`_types.py:323/342`），但 **`rest.py` 0 命中、WS 回放条目也不带** ⇒「ACK 超时后与回放消息自动合并」这半边**前端做不了**。已做：text 帧上行该字段（此前只有 `voice.commit` 带）；未声称对账能力，缺口据实记 **doc 18 §15.2 `C-18-2`**（请后端在归档/回放透出）。变异验证：payload 赋值改 `undefined` ⇒ 用例红。
+  - **〔2026-09-16 更正：本条当时的「已做」不成立〕** `clientMessageId` 虽由 renderer 填入、preload 原样透传、adapter 也确实会读，但 Main 的 `chatSendSchema` **没有声明该字段**，被 zod 默认 strip 在 IPC 边界丢掉（`real-backend.ts` 的 `if (input.clientMessageId)` 永不成立）。
+  - 已补 schema 一行并经 IPC 断言（见 §3.1 的 2026-09-16 批次）。**`C-18-2` 跨仓请求此前建立在这个假前提上，请以此更正为准。**
 - **仍未做**：**C2**（`session.token_stats` 消费）——链路已摸清，但渲染层对**会话级用量没有任何消费方**（`conversationUsage` 同样 0 命中），纯管道无用户可见收益，**需先定「要不要做用量展示」这个产品口径**；**J**（L5 GPU 重建后「非透明像素 > 0」的真机取证）——需新增集成探针。
 
 **J 取证：GPU 上下文丢失探针（2026-09-15，`1754ffc`＋`9144170`）**
@@ -902,6 +904,32 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **未做**：doc 02 §9.3 允许的「后端未提供时按去重 generation 求和并标注**本机累计**」这条兜底**未实现**——它会引入与后端并行的第二套累计口径（同屏两个都叫"累计"的数字），收益与代价不成比例，要做需先定界面如何区分两种口径。
 - **过程记录（对 `1754ffc` 那次教训的直接纠正）**：本批在**提交前**跑完全部门禁，且 typecheck **确实抓到**一处会被 vitest 漏掉的错误（`cy-session-usage.spec.ts` 的联合展开 TS2322/TS2345，与 `message.store.spec.ts` 已记录过的同一个坑）⇒ 修好后重跑全绿才提交，提交时门禁为绿。
 
+**全仓工程级审计报告裁决批（2026-09-16，`764b679`）**
+
+> 输入：[2026-09-16 全仓工程级代码与架构审计报告](review/2026-09-16-全仓工程级代码与架构审计报告.md)（15 路只读审计 + 6 路对抗复核；0 P0 / 6 P1 / 约 60 P2 / 约 70 P3）。用户裁决（逐项经 `ask_user_question` 确认）：**本批做四条用户可见 P1 + `clientMessageId` + 文档订正**；心跳（P1-3）与 real 装配冒烟（P1-4）**单独立项、先定设计**，不在本批。报告自我定性为「问题目录而非工作队列」，故未按条目逐条勾选。
+
+| 门禁 | 结果（`764b679`，本机 Windows） |
+|---|---|
+| typecheck / lint | PASS |
+| `pnpm test` | PASS：**261 files / 3258 passed** + 6 expected-fail + 22 skipped（新增 1 个 spec 文件；本批新增 31 条） |
+| `pnpm test:integration` | **42 files：1 failed / 41 passed；177 用例：1 failed / 173 passed + 3 skipped**。唯一红 = `electron-live2d-settings.spec.ts` 的 B6 布局用例（`countNonTransparentPx` 轮询超时）——**正是审计报告自己记录过的同一个用例、同一种症状**；该文件**单跑 9/9 通过（47.5s）** ⇒ 负载/时序敏感，非本批回归。（诚实附注：**首次运行我并发跑了其它 vitest/门禁负载**，那次另有 `electron-live2d-core` 像素轮询与 `renderer-crash` marker 轮询两个红；三个文件**逐个单独复跑全绿** ⇒ 首次读数不作判据，最终以上面这次**独占运行**为准。运行卫生是我的失误，已记入决策记录 §7。） |
+| `pnpm docs:check` | PASS（20 核心文档 / **96** review 记录 / 40 superpowers / 42 archive） |
+| `verify:sensitive` | PASS（905 文件扫描，368 排除，63 行 allowlist） |
+
+- **P1-1 退出前 flush 在真实退出路径上恒空转（H-04 在生产从未生效）**：`deliver()` 读 `getMainWindow()`，而 Windows/Linux 关最后一个窗口时事件顺序是 `close → closed`（此处 `setMainWindow(null)`）`→ window-all-closed → app.quit() → before-quit` ⇒ before-quit 时恒返回 false（fail-open 立即 resolve）。renderer 侧也无 `beforeunload`/`pagehide`/`unload` 补偿通道（**全仓 0 命中，本批复核确认**）。
+  - 修法：`main-window` 的 `win.on('close')` 一次性 `preventDefault` → await requester（自带 700ms 预算）→ `destroy()`；钩子经模块级 `setBeforeCloseFlush` 注册（`focusOrDefer` 重建的窗口不带 opts，per-opts 会丢——沿用 `crashSink` 同款理由）；`before-quit` 那条通道保留不变。
+  - 为什么 `destroy()` 而不是再 `close()`：这里 flush 已完成，destroy 直接进 `closed`，避免二次 close 递归；renderer 无 `beforeunload` 处理器，跳过它不丢行为。未采纳报告备选②（renderer 侧 `beforeunload` + 同步 IPC）——会引入同步 IPC，报告自己也列为次选。
+- **P1-2 看门狗对工具事件失明**：工具等待期间那一代**合法地**不发 `generation.*`，而后端审批上界 60s > 前端窗口 50s（常量倒挂，后端口径与 wire 形状取证见 doc 02 §10 的 ⚠️ 注记）。
+  - 修法：`tool.store` 增派生量 `toolWorkActive`（`visibleLiveOrder` 里非终态记录，**含 `running`**——`waitingForApproval` 只认 `awaiting_permission`，不够），经 bootstrap 的 **sync watch** 镜像进 `messageStore.setToolWorkActive`；看门狗增 `setHold`，工具活动期间窗口放宽到 **180s 且保持有限**。
+  - **未采纳报告建议的「暂停计时」**：`tool.store` 记录没有客户端过期，一条丢失的终态事件会让「工具有活动」永久为真 ⇒ 纯暂停等于把 H-10 这张网永久关掉（而它存在的理由正是丢终态）。`hold` 有意跨 `disarm/arm` 存活（`clearForGeneration` 让 `awaiting_permission` 跨代保留）。
+- **P1-5 向导取消后续体仍写共享 store**：提交续体加 `submitGeneration` 栅栏，`onUnmounted` 与 `closeWizard` 都使在途续体失效；`activate`（切全局激活模型服务，后果更重的一半）与后续落库因此停止。**未采纳「提交中禁用取消」**——禁用会把用户锁在可能永不返回的请求里；栅栏让取消真正生效且随时可退。另修 `cancelEdit` 不清 `testResult` ⇒ 重开向导显示上一次的「测试通过」（过期绿灯）。边界：取消发生在 `saveProfile` **已发出之后**时，那次远端写入无法收回（无补偿删除接口），据实记录。
+- **P1-6 dictation 会话标识竞态**：第二次 start 的失败分支按「我这次失败」清理**共享**态 ⇒ 第一次随后建立采集并置 `dictating`，但 id 与 capture 已被清空 ⇒ `stopDictation` 早退、`capture?.stop()` 无处可调 ⇒ **麦克风持续采集且无停止入口**（该标识无任何事件回写，不可自愈）。可达路径是「按住 → 松开 → 立刻再按」（UI 的 hold 标记在松开时已清，挡不住）。修法两层：`dictationStartInFlight` in-flight 门（第二次 start 直接拒绝且不碰任何共享态）+ `dictationOwner` 世代判据（await 之后所有共享态写入须仍持有本世代，被接管者走 `abandonDictationStart` 收尾）；`stopDictation`/`cancelDictation` 递增世代以接管。
+- **P2 `clientMessageId` 被 IPC schema 剥掉**：`chatSendSchema` 补一行 `clientMessageId: z.string().min(1).optional()`（与 `voiceCommitSchema` 对齐；取可选，因为 schema 的职责是不吞掉调用方发来的字段，而不是新增必填门）。补**经 IPC 跳**的断言（既有用例直调 adapter，故对这条缺陷零判别力）。
+- **变异验证 16 处**（逐个回滚确认对应用例变红，文件按 SHA-256 校验字节还原）：P1-2 八处（bootstrap 不镜像、忽略 hold、setHold 不重启、disarm 清 hold、常量退化、store 空操作、`toolWorkActive` 恒 false、只认 awaiting）、P1-5 三处（栅栏恒真、取消不失效、不清测试结果）、P1-6 两处（去掉 in-flight 门、停止不接管世代）、P2 两处（schema 不声明、放宽 `min(1)`）、P1-1 一处（移除关窗接线）。**其中 15 处 RED**；唯一 GREEN 是 P1-6「放弃时不停采集」——它在本修法下**不可达**（唯一的接管来源 `stop`/`cancel` 自身已停采集），属**有意保留的纵深防御**，据实记在此处而不是删掉或假装被覆盖。
+- **P1-1 的判别力对照（本批最有价值的一次变异）**：移除 `setBeforeCloseFlush` 接线后，**新用例（真实关窗路径）红、旧用例（`app.quit()` 路径）仍绿**——这就地证明了报告"旧用例对缺陷零判别力"的判断。新用例同时断言 `page.isClosed()`，确保"在 close 上 preventDefault 一次"不会把退出卡住。
+- **仍未做（不谎称已修）**：**P1-3**（零客户端 WS 存活检测：`real-backend.ts` 无 ping/keepalive 源，half-open 连接不可发现，界面停留在假 `connected`）与 **P1-4**（42 个 Electron 集成用例 100% 观测 mock 装配，且 `CYRENE_BACKEND:'mock'` 写在 `opts.env` 之后**不可被调用方覆盖**，打包形态恒 real ⇒ 主目标平台的 real 装配在 Electron 层零端到端覆盖）——两项按用户裁决**单独立项、先定设计**，登记见 §4.2。其余 P2/P3 条目本轮未动。
+- **本轮对既有台账的更正（以追加注记方式，不改写历史原文）**：doc 16 的 H-04 条目、Linux GPU「已修复」、C10「已上 wire」三处；doc 02 §9.3 之前与 §12 的两处、doc 03 §8 之前、doc 06 §3.3/§3.5 注记各一处「会话级 Token 无消费方」——共 **5 处 Token 漂移**（审计报告列了 3 处，实际多出 doc 02 的 §12 行内注记与 doc 06 §3.5 注记两处，**这批漂移正是本仓上一批（`4e4e448`）的漏**：新增了落地注记却没有就地作废旧断言）。报告附录 C 列的六条台账更正同样以追加注记方式落在本记录，不逐条改写 2026-09-15 的历史原文。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
@@ -930,6 +958,17 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 `EXT-01` **不受阶段 8 状态影响**：阶段 8 暂缓与否、H 组决策是否齐备，都不改变这条阻塞；反之它也不构成阶段 5 的追溯性未完成项（阶段 5「已真实联调」记录的是运行时集成证据，该证据不构成可对外分发的许可依据）。**2026-09-12 更新**：用户明确本项目仅供本人自用、SDK 为个人授权、所谓发布即本人自己安装 ⇒ `EXT-01` 的约束面（对外分发的产物）**没有实例**，阻塞解除，整改计划的 `P0-7` 随之解除。**注意本记录不做"已合规"结论**：2026-09-10 记录的实测事实（无 EULA 正文、无逐模型承诺、`lil` 来源仍是本地临时目录、vendor 三树无许可门禁）**全部继续成立**，只是在本使用范围下不再构成阻塞；一旦出现对外分发或多人使用，阻塞原样恢复。详见[个人使用范围与阻塞解除决策记录](review/2026-09-12-EXT-01-个人使用范围与阻塞解除-决策记录.md)。
 
 **2026-09-12 补正**：上句「`P0-7` 随之解除」只覆盖了 P0-7 的 `EXT-01` 半边；另一半（`asar: false` 的处置）由 [P0-7 asar 与产物完整性范围解除决策记录](review/2026-09-12-P0-7-asar与产物完整性范围解除-决策记录.md) 单独解除，两者合并后 P0-7 才是完整解除。
+
+### 4.2 待设计立项（审计 P1-3 / P1-4，非阶段 8 决策）
+
+> 2026-09-16 用户裁决：这两条是六条 P1 中唯二「要新建机制而非修缺陷」的，**单独立项、先定设计**，不塞进修复批（混在一起会让"修复必红"的变异验证失去意义）。**在立项完成前，任何人不得把它们读作已修或已覆盖。**
+
+| ID | 缺口（审计报告条目） | 现状证据 | 立项前必须先定的口径 |
+|---|---|---|---|
+| AUD-01 | **零客户端 WS 存活检测**（报告 P1-3，违反 `docs/07:155`） | `real-backend.ts` 全文件无 ping/keepalive/`setInterval` 心跳源；建 socket 只传 `{headers, perMessageDeflate:false}`（无 `autoPong` 声明）；唯一状态来源是被动的 `close`/`error` ⇒ half-open（NAT 超时、休眠唤醒、对端 SIGKILL 未发 FIN）不可发现，界面停在假 `connected`，发送被静默吞掉后报成 `TIMEOUT`，且无自动恢复路径 | ① 心跳频率与后端负载/移动网络的取舍；② **复用既有帧**还是新增帧类型（报告建议复用，且不得新造状态机）；③ 判失活后走**既有**重连路径的哪一条；④ 判定阈值（如连续 2 次未回） |
+| AUD-02 | **Electron 集成套件 100% 观测 mock 装配，且注入不可覆盖**（报告 P1-4） | `tests/integration/helpers/app.ts` 把 `CYRENE_BACKEND: 'mock'` 写在 `...(opts.env ?? {})` **之后** ⇒ 调用方无法覆盖；`config/backend-mode.ts` 在 `isPackaged` 时**恒**返回 `real` ⇒ 打包形态（用户唯一会运行的形态）在 Electron 层零端到端覆盖；`windows` job 明写不启动 Electron | ① 是否放开 `CYRENE_BACKEND` 覆盖（注意它是"三项隔离不变量"之一，放开要写清边界）；② real 冒烟的夹具形态——本地起最小 ws/http 夹具，还是指向真实后端；③ 纳入哪条 CI（可与 `linux-runtime` 取证 workflow 合并）；④ 与 mock/real **共享契约测试**（报告 P2）是否同批 |
+
+> 附：报告另有一条**产品侧缺口**同属"先定口径"类——**Linux 无 GPU 回退**（`--disable-gpu` 只在测试脚手架与 `verify-artifact`，`src/main/**` 零命中，`disableHardwareAcceleration` 全仓 0 命中）。要么在 `src/main` 增加启动期 GPU 可用性判定与回退，要么在文档明确"仅支持有硬件 GL 的 Linux 桌面"。**当前两种都没做**，故 §1 的 Linux GPU 条目按"测试侧修复 + 产品侧缺口"读。
 
 ## 5. 下一步
 
