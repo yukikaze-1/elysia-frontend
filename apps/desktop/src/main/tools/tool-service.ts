@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import { computeParamHash, canonicalJsonStringify } from './param-hash'
 import type { RegisteredTool } from './tool-registry'
-import { isPathBlacklisted, isPathWithinRoot, normalizeToolPath } from './tool-policy'
+import { computeLocalRisk, isPathBlacklisted, isPathWithinRoot, normalizeToolPath, normalizeReportedRisk, type RiskLevel } from './tool-policy'
 import { redactToolArguments } from './input-summary'
 import { createExecutors, ToolExecError, type ExecResult } from './tool-executors'
 import { computeTextDiff, detectTextFormat } from './text-diff'
@@ -16,6 +16,13 @@ export interface DesktopToolRequest {
   runtime: 'desktop'; arguments: Record<string, unknown>
   reason?: string; expiresAt: number; paramHash?: string
   conversationId?: string   // 归属会话（real-backend 从 activeConversationId 注入；mock 从 activeConversationId 注入）
+  // —— D4-1（2026-09-15 裁决「补代码」）：wire 侧风险元数据入参（此前被丢弃）——
+  /** 后端 `tool.request.riskLevel` 上报值（原始 unknown；非枚举值在重算中按 high 处理） */
+  reportedRiskLevel?: unknown
+  /** 后端 `permissionRequired`（仅审计记录，不改变本地授权判定——判定权威在本地注册表） */
+  permissionRequired?: boolean
+  /** 后端 `approvalAuthority`（同上：仅审计记录） */
+  approvalAuthority?: string
 }
 export interface FilePickerOptions { title: string; filters: { name: string; extensions: string[] }[] }
 export interface CaptureSourceInfo { sourceId: string; sourceName: string; thumbnailDataUrl: string }
@@ -32,6 +39,10 @@ export interface ToolServiceDeps {
   pushEvent: (ev: PublicToolEvent) => void
   selectedExemptTtlMs?: number
   allowRoots?: string[]
+  /** D4-15（2026-09-15 裁决「补代码」）：生效的沙盒（预授权）目录集——realpath 规范化目录。
+   *  F-06 拍板值仍为**空集**（零预授权），故缺省不改变任何授权结果；提供该注入面是为了让重算的
+   *  「沙盒内受控」分支有唯一入口，避免将来逐处 `startsWith` 复制包含性判定。 */
+  sandboxDirectories?: string[]
   isWayland?: boolean               // 注入（测试用）；缺省 isWaylandSession() env 判定（A-4）
   executorOverride?: (rec: ToolRecord, realPath?: string) => Promise<ExecResult>   // 测试注入（B-1/M12）
   selectedAdd?: (realPath: string) => void   // selected-set 写闭包（A-14：tool-service 注入；executor 可选调用）
@@ -50,6 +61,8 @@ export interface ToolRecord {
   captureSources?: PublicToolEvent['captureSources']; capturePreview?: PublicToolEvent['capturePreview']
   expiresAt: number; paramHash?: string; arguments_: Record<string, unknown>; toolVersion: string
   statusSent: boolean; realPath?: string        // L1：决策链 step 5 normalize 缓存（executor/串行锁读取）
+  /** D4-1：本地风险重算产物（决策链 step 8 前写入；审计 riskLevel 的唯一来源，不再直接读注册表常量） */
+  riskLevel?: RiskLevel
   attachments?: ToolAttachment[]                // M2：完成时缓存（重连重发复用 URL，D6B-11）
 }
 export interface ToolService {
@@ -120,7 +133,11 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       pathSummary: rec.pathSummary, resultSummary: rec.resultSummary, error: rec.error,
       truncated: rec.truncated, durationMs: rec.durationMs, startedAt: rec.startedAt, finishedAt: rec.finishedAt,
       attachmentCount: rec.attachmentCount, dataFlowNote: rec.dataFlowNote, diff: rec.diff,
-      captureSources: rec.captureSources, capturePreview: rec.capturePreview, occurredAt: new Date().toISOString(), ...extra,
+      captureSources: rec.captureSources, capturePreview: rec.capturePreview,
+      // D4-1：重算后的风险等级随事件下发（权限窗/工具卡片可解释「为什么这一次要确认」）；
+      // 注意它**不含参数原文**，只是三档枚举，与 D6-07「安全元数据不进 Renderer」不冲突（枚举本身非敏感）。
+      riskLevel: rec.riskLevel,
+      occurredAt: new Date().toISOString(), ...extra,
     })
   }
   function wireSend(rec: ToolRecord, status: ToolWireStatus, extra: Partial<ToolStatusCommand> = {}): Promise<void> {
@@ -231,7 +248,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const id = idOf(callId); const rec = id ? records.get(id) : undefined
     if (!rec || rec.status !== 'awaiting_permission') throw new ToolServiceError('TOOL_STATE_INVALID', 'callId 不在等待授权态')
     const timer = timers.get(rec.id); if (timer) { clearTimeout(timer); timers.delete(rec.id) }
-    audit('tool:decision', rec, { permissionDecision: decision, riskLevel: deps.registry.get(rec.toolName)?.localRisk })
+    audit('tool:decision', rec, { permissionDecision: decision, riskLevel: rec.riskLevel })
     if (decision === 'deny') {
       rec.status = 'rejected'; rec.finishedAt = new Date().toISOString()
       await wireSend(rec, 'rejected')
@@ -515,6 +532,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     if (req.paramHash !== undefined && req.paramHash !== computeParamHash(req.arguments)) return reject(req, 'PARAM_HASH_MISMATCH', '参数哈希不一致')
     // 5 full realpath + 黑名单（isPathTool）
     let realPath: string | undefined
+    let blacklisted = false
     if (tool.isPathTool) {
       const p = req.arguments['path']
       if (typeof p === 'string') {
@@ -523,7 +541,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
           realPath = r.realPath
         } catch { return reject(req, 'PATH_UNSAFE', '路径不安全') }   // lint：e 未使用 → 省略绑定
         const rp = realPath   // 局部 const 供闭包（TS CFA 不把外层 let 窄化传入闭包）
-        const blacklisted = isPathBlacklisted(rp, undefined, { platform: deps.platform })
+        blacklisted = isPathBlacklisted(rp, undefined, { platform: deps.platform })
           && !(deps.allowRoots ?? []).some(root => isPathWithinRoot(rp, root, deps.platform))
         if (blacklisted) return reject(req, 'PATH_BLOCKLISTED', '路径被黑名单拦截')
       }
@@ -534,10 +552,19 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, conversationId: req.conversationId, toolName: req.toolName, title: tool.title,
       status: 'requested', reason: req.reason, inputSummary: redactToolArguments(req.arguments), pathSummary: derivePathSummary(req.arguments),
       dataFlowNote: tool.dataFlowNote, expiresAt: req.expiresAt, paramHash, arguments_: req.arguments, toolVersion: req.toolVersion,
-      statusSent: false, realPath, startedAt: new Date().toISOString() }
+      statusSent: false, realPath, startedAt: new Date().toISOString(),
+      // D4-1：本地风险重算（黑名单命中/后端上报值/参数三者共同决定；不再直读注册表常量）
+      riskLevel: computeLocalRisk({ base: tool.localRisk, reported: req.reportedRiskLevel, args: req.arguments, realPath,
+        blacklisted, sandboxRoots: deps.sandboxDirectories ?? [], platform: deps.platform }) }
     records.set(rec.id, rec); byCallId.set(req.callId, rec.id)
     evictIfNeeded()   // L-1（D6C-09a）：超 MAX_RECORDS 逐最旧终态（新记录 requested 非终态不逐出）
-    audit('tool:request-received', rec)
+    audit('tool:request-received', rec, {
+      riskLevel: rec.riskLevel,
+      // D4-1：后端上报值与本地重算值的对照（审计可解释「为什么是这个等级」；未知/畸形上报值归 high 后落审计，不落原文）
+      ...(normalizeReportedRisk(req.reportedRiskLevel) !== undefined ? { backendRiskLevel: normalizeReportedRisk(req.reportedRiskLevel) } : {}),
+      ...(req.permissionRequired !== undefined ? { permissionRequired: req.permissionRequired } : {}),
+      ...(req.approvalAuthority !== undefined ? { approvalAuthority: req.approvalAuthority } : {}),
+    })
     // 9 wire accepted（步骤 1~6 通过即发——先于预读与授权判定，spec step 9/M1/A-12 一致性）
     await wireSend(rec, 'accepted')
     // 7 write 授权前预读 + Diff（A2/L7；预读失败（FILE_TOO_LARGE/FILE_IS_BINARY）→ terminal failed，A-15）
@@ -557,7 +584,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
       : (req.toolName === 'desktop.file.read' && realPath && isExempt(realPath)) ? 'auto'
       : 'prompt'
     if (decision === 'auto') {
-      if (grant) audit('tool:decision', rec, { permissionDecision: 'allow_scoped', permissionGrantId: grant.id, riskLevel: tool.localRisk })   // N-7：grant 命中审计（豁免命中不审计 allow_scoped）
+      if (grant) audit('tool:decision', rec, { permissionDecision: 'allow_scoped', permissionGrantId: grant.id, riskLevel: rec.riskLevel })   // N-7：grant 命中审计（豁免命中不审计 allow_scoped）；D4-1：等级取重算值
       await run(rec, tool)
     } else {
       rec.status = 'awaiting_permission'; awaitingQueue.push(rec.id)

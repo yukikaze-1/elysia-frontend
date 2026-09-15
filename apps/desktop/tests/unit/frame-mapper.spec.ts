@@ -362,7 +362,7 @@ describe('阶段 6 批次 A 工具帧映射（Task 4）', () => {
     expect(fail.success).toBe(false)
     expect(fail.error).toEqual({ code: 'NETWORK', message: '超时' }) // 未知键不透传
   })
-  it('tool.request → ToolRequestEvent 脱敏 emit（arguments/安全元数据不在事件内；toolVersion/expiresAt 必填直映）', () => {
+  it('tool.request → ToolRequestEvent 脱敏 emit（arguments/paramHash 不在事件内；toolVersion/expiresAt 必填直映）', () => {
     const ev = new FrameMapper({ connectionId: 'c' }).mapFrame({ type: 'tool.request', callId: 'call_1', toolName: 'desktop.file.read', toolVersion: '1.0', runtime: 'desktop', sourceCallId: 'tc_1', arguments: { path: '/etc/passwd', resource_handle: 'h' }, reason: '读取文件', riskLevel: 'medium', permissionRequired: true, approvalAuthority: 'client', paramHash: 'h', expiresAt: '2026-08-20T12:00:00Z', requestId: 'req_1' }) as ToolRequestEvent
     expect(ev.event).toBe('tool.request')
     expect(ev.sourceCallId).toBe('tc_1')
@@ -370,8 +370,14 @@ describe('阶段 6 批次 A 工具帧映射（Task 4）', () => {
     expect(ev.expiresAt).toBe('2026-08-20T12:00:00Z')
     expect(ev.inputSummary).toBe('path=<redacted>, resource_handle=<str:1>')
     expect('arguments' in ev).toBe(false)
-    expect('riskLevel' in ev).toBe(false)
     expect('paramHash' in ev).toBe(false)
+    // D4-1（2026-09-15）：风险元数据**改为直映**（此前 `'riskLevel' in ev === false`）。
+    // 语义变更的理由：`ToolRequestEvent` 是 **Main 内部领域事件**（real-backend 的 tool.request case 消费后
+    // 交给 tool-service 重算/审计），不是 `tool:event` 通道——下发 Renderer 的是 `PublicToolEvent`（D6-07），
+    // 那条通道仍然无 arguments/paramHash/expiresAt，且只带重算后的三档枚举。
+    expect(ev.riskLevel).toBe('medium')
+    expect(ev.permissionRequired).toBe(true)
+    expect(ev.approvalAuthority).toBe('client')
   })
   it('action → null 且不告警（onProtocolWarning 未被调用）', () => {
     const warnings: string[] = []

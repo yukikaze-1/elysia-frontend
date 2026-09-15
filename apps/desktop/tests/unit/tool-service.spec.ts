@@ -20,12 +20,16 @@ interface ToolEv {
   captureSources?: unknown[]
   capturePreview?: { sourceId?: string; sourceName?: string; previewDataUrl: string; width?: number; height?: number; bytes?: number }
   resultSummary?: string
+  riskLevel?: string   // D4-1：本地重算等级（PublicToolEvent.riskLevel）
 }
 /** 测试审计收集接口（按本文件断言字段最小建模；AuditEvent 可赋值） */
 interface AuditEv {
   type?: string
   permissionDecision?: string
   cancelSource?: string
+  riskLevel?: string          // D4-1：本地重算等级
+  backendRiskLevel?: string   // D4-1：wire 上报值（归一后）
+  permissionRequired?: boolean
 }
 
 /**
@@ -116,6 +120,31 @@ describe('决策链', () => {
     const { svc, events } = mkService()
     await svc.handleRequest(mkReq({ arguments: { path: '/tmp/cyrene-fixtures/a.txt' } }))
     expect(events.at(-1)!.status).toBe('awaiting_permission')
+  })
+  // —— D4-1（2026-09-15 裁决「补代码」）：本地风险重算入链 ——
+  it('重算等级随公开事件下发，且后端上报更高时抬升（只升不降）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ arguments: { path: '/tmp/cyrene-fixtures/a.txt' }, reportedRiskLevel: 'high' }))
+    expect(events.at(-1)!.riskLevel).toBe('high')   // base=medium(read) → 上报 high 抬升
+  })
+  it('后端上报更低不降级：write（base=high）配 reportedRiskLevel=safe 仍为 high', async () => {
+    writeFileSync(join(FIXTURES, 'w.txt'), 'old\n')
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ toolName: 'desktop.file.write', arguments: { path: `${FIXTURES}/w.txt`, content: 'new\n' }, reportedRiskLevel: 'safe' }))
+    expect(events.at(-1)!.riskLevel).toBe('high')
+  })
+  it('畸形上报值按 high 处理（不静默忽略、不降级）', async () => {
+    const { svc, events } = mkService()
+    await svc.handleRequest(mkReq({ arguments: { path: '/tmp/cyrene-fixtures/a.txt' }, reportedRiskLevel: 'critical' }))
+    expect(events.at(-1)!.riskLevel).toBe('high')
+  })
+  it('审计记录本地等级与后端上报值两栏（可解释「为什么是这个等级」）', async () => {
+    const { svc, audit } = mkService()
+    await svc.handleRequest(mkReq({ arguments: { path: '/tmp/cyrene-fixtures/a.txt' }, reportedRiskLevel: 'safe', permissionRequired: true }))
+    const rec = audit.find(a => a.type === 'tool:request-received')!
+    expect(rec.riskLevel).toBe('medium')        // base=medium(read)，上报 safe 不抬升
+    expect(rec.backendRiskLevel).toBe('safe')
+    expect(rec.permissionRequired).toBe(true)
   })
   it('write 授权前预读 + Diff 随 awaiting 事件下发（L7；fixture 前置，H8）', async () => {
     writeFileSync(`${FIXTURES}/w.txt`, 'old')

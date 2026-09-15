@@ -723,6 +723,46 @@ describe('RealBackend uploadAttachments / signAttachmentUrl（spec §4.5/§3.2�
     } finally { close() }
   })
 
+  // —— D4-15（2026-09-15 裁决「补代码」）：域名黑名单（凭据只发往已连接后端端点）——
+  // `isDomainAllowed` 此前只有定义与单测、生产 0 调用；现将三个带 Bearer 的直写 fetch 接线到它。
+  // 判据是「目标 URL 的 origin」命中允许集（默认 = 已连接端点 origin，反代 path 前缀不计入 origin）。
+  //
+  // **如实声明边界**：三个调用点的 URL 都由 serverUrl 自身拼出 ⇒ 断言在当前调用形态下恒真（测试无法
+  // 构造出「异源目标」而不改产品代码）。故这两条用例断言的是**接线本身**（守卫真的在路径上、且真的会
+  // 阻断 fetch），而不是「已挡住一次真实攻击」。把它当 SSRF 防护会高估它——它挡的是「将来改用非自身
+  // 拼出的地址」这一类回归。
+  it('域名黑名单：上传路径上确实有守卫——放行形态 fetch 发生，未连接/畸形端点形态拒发且 fetch 未发生', async () => {
+    const { port, close } = await uploadServer((_req, _chunks) => {})
+    try {
+      // ① 基线形态：端点自身 origin 在允许集 ⇒ 断言放行，fetch 真的发生
+      const okFetch = vi.fn(async () => new Response(JSON.stringify({ attachments: [] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      const ok = new RealBackend({ now: () => Date.now(), fetchImpl: okFetch as unknown as typeof fetch })
+      await ok.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      await ok.uploadAttachments([{ name: 'a.png', mediaType: 'image/png', size: 2, bytes: new Uint8Array([0x89, 0x50]) }])
+      expect(okFetch).toHaveBeenCalledTimes(1)
+      await ok.disconnect()
+
+      // ② fail-closed 形态：未连接（serverUrl 空）⇒ 允许集为空 ⇒ 拒发，fetch 未发生
+      // （不能改用「畸形 serverUrl + connect」：那一步在 establishWs 就抛 SyntaxError，到不了上传路径）
+      const badFetch = vi.fn(async () => new Response('{}', { status: 200 }))
+      const bad = new RealBackend({ now: () => Date.now(), fetchImpl: badFetch as unknown as typeof fetch })
+      await expect(bad.uploadAttachments([{ name: 'a.png', mediaType: 'image/png', size: 2, bytes: new Uint8Array([0x89, 0x50]) }]))
+        .rejects.toMatchObject({ code: CyreneErrorCode.NOT_CONNECTED })
+      expect(badFetch).not.toHaveBeenCalled()
+    } finally { close() }
+  })
+  it('域名黑名单：额外允许集是并集（不缩小端点自身）——配了异源不影响同源上传', async () => {
+    const { port, close } = await uploadServer((_req, _chunks) => {})
+    try {
+      const backend = new RealBackend({ now: () => Date.now(), allowedDomainOrigins: ['https://other.example'] })
+      await backend.connect({ serverUrl: `http://127.0.0.1:${port}`, token: 'tok' })
+      const files: UploadContent[] = [{ name: 'a.png', mediaType: 'image/png', size: 2, kind: 'image', bytes: new Uint8Array([0x89, 0x50]) }]
+      const infos = await backend.uploadAttachments(files)
+      expect(infos[0].attachmentId).toBe('att_up1')
+      await backend.disconnect()
+    } finally { close() }
+  })
+
   it('signAttachmentUrl 带 Bearer 调 /sign 解析 AttachmentSignResult', async () => {
     const { port, close } = await uploadServer((_req, _chunks) => {})
     try {

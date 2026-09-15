@@ -385,7 +385,11 @@ export class FrameMapper {
       ...(frame.reason !== undefined ? { reason: frame.reason } : {}),
       ...(inputSummary !== undefined ? { inputSummary } : {}),
       expiresAt: frame.expiresAt,
-      ...(frame.requestId !== undefined ? { requestId: frame.requestId } : {})
+      ...(frame.requestId !== undefined ? { requestId: frame.requestId } : {}),
+      // D4-1（2026-09-15）：风险元数据直映（仅 Main 消费；重算与审计用，不随 PublicToolEvent 下发 Renderer）
+      ...(frame.riskLevel !== undefined ? { riskLevel: frame.riskLevel } : {}),
+      ...(frame.permissionRequired !== undefined ? { permissionRequired: frame.permissionRequired } : {}),
+      ...(frame.approvalAuthority !== undefined ? { approvalAuthority: frame.approvalAuthority } : {})
     }
   }
 

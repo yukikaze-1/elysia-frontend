@@ -121,6 +121,7 @@ import type { CharacterServiceBackendPort } from '../characters/character-backen
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
 import type { DesktopToolRequest } from '../tools/tool-service'
+import { isDomainAllowed } from '../tools/tool-policy'   // D4-15：域名黑名单（凭据只发往已连接后端端点）
 
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
@@ -151,6 +152,14 @@ export interface RealBackendOptions {
   restTimeoutMs?: number  // 默认 10000;REST 请求超时,测试注入小值
   uploadTimeoutMs?: number  // 默认 60000;附件上传长超时(非 10s,spec §4.4),测试注入小值
   switchTimeoutMs?: number  // 默认 10000;switch_model/set_tts_voice result 帧等待超时,测试注入小值
+  /**
+   * D4-15：域名黑名单允许集（origin 列表，精确匹配）。
+   *
+   * 默认允许集只有「已连接端点」（`serverUrl` 的 origin）——即 doc 04 §7.4 的「上传/连接仅限已连接
+   * 后端端点」。本选项用于显式放行**额外的受信端点**（典型场景：主端点 + 反代/对象存储网关），
+   * 缺省为空 ⇒ 不产生任何额外放行面。绝不接受通配符或子域匹配（缩小口径只能靠显式列举）。
+   */
+  allowedDomainOrigins?: string[]
 }
 
 /** ack 关联的 pending 发送(按 clientRequestId 幂等) */
@@ -300,6 +309,36 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   private lastSocketClosedAt?: number
   private disconnected = false
   private serverUrl = ''
+
+  /**
+   * D4-15（2026-09-15 裁决「补代码」）：域名黑名单——**凭据只发往已连接后端端点**。
+   *
+   * doc 04 §7.4「域名黑名单 = 上传/连接仅限已连接后端端点（`ConnectionConfig` baseUrl origin）」，
+   * 但此前 `isDomainAllowed` 只有定义与单测、**生产零调用**（review C5/D4-15）。本方法是唯一接线点：
+   * 三个带 Bearer 的直写 fetch（`uploadAttachments` / `uploadToolAttachment` / `readToolAttachment`）
+   * 在发请求前必须过一遍。
+   *
+   * **判据**：目标 URL 的 origin 必须命中**允许集**——`serverOrigin`（配置端点，反代 path 前缀不计入
+   * origin）并集 `options.allowedDomainOrigins`（若配置）。默认允许集即单一端点，等同于「只发往后端」。
+   *
+   * **如实声明边界（勿把本守卫当 SSRF 防护）**：三个调用点的目标 URL 都由 `serverUrl`/`serverOrigin`
+   * 自身拼出，故在**当前**代码里本断言恒真。它的价值是①把「domain 黑名单」从零调用变为**唯一且显式**的
+   * 收口点（review C5/D4-15 的原文指控成立）；②给后续任何改用「非自身拼出的 URL」的取值留一处
+   * fail-closed 的闸门——例如将来按后端返回的绝对上传地址直传；③端点畸形时**拒发**而非默默打空请求。
+   *
+   * 失败即**拒发**（不降级、不改写目标）——凭据泄露比上传失败严重。
+   */
+  private assertBackendOrigin(targetUrl: string): void {
+    const allowed = [this.serverOrigin, ...(this.options.allowedDomainOrigins ?? [])].filter((o): o is string => !!o)
+    if (allowed.length === 0) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，域名黑名单无法比对')
+    if (!allowed.some((origin) => isDomainAllowed(targetUrl, origin))) {
+      throw new CyreneError(CyreneErrorCode.INVALID_INPUT, '目标地址不在已连接后端端点之内（域名黑名单）')
+    }
+  }
+  /** 允许集基线：配置端点的 origin（`serverUrl` 可能带反代 path 前缀，origin 不含 path；畸形/空 → undefined） */
+  private get serverOrigin(): string | undefined {
+    try { return this.serverUrl ? new URL(this.serverUrl).origin : undefined } catch { return undefined }
+  }
   private token = ''
   /**
    * Local source ownership for the current explicit connection. This is
@@ -561,6 +600,11 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
             toolVersion: frame.toolVersion, runtime: 'desktop', arguments: frame.arguments, reason: frame.reason,
             expiresAt: Date.parse(frame.expiresAt), paramHash: frame.paramHash,
             conversationId: this.state.activeConversationId,
+            // D4-1（2026-09-15 裁决「补代码」）：此前被丢弃的三个风险元数据字段——riskLevel 进本地重算，
+            // permissionRequired 进审计。approvalAuthority 仍不使用（本地授权判定权威在注册表，doc 04 §7.4）。
+            reportedRiskLevel: frame.riskLevel,
+            permissionRequired: frame.permissionRequired,
+            approvalAuthority: frame.approvalAuthority,
           })
         } catch (e) {
           // C-10（#18）：非 Error 抛掷归一——`(e as Error).message` 对非 Error 得 undefined，改用 instanceof 判
@@ -1381,6 +1425,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
 
   async uploadAttachments(files: UploadContent[], opts?: { signal?: AbortSignal }): Promise<AttachmentInfo[]> {
     if (!this.serverUrl) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
+    this.assertBackendOrigin(this.serverUrl)
     const sourceGeneration = this.sourceGeneration
     const uploadTimeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS
     const timeoutController = new AbortController()
@@ -1790,6 +1835,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     if (this.state.status !== 'connected' || !this.state.connectionId) throw new CyreneError(CyreneErrorCode.TOOL_UPLOAD_FAILED, '缺少连接标识')
     const sourceGeneration = this.sourceGeneration
     const serverUrl = this.serverUrl
+    this.assertBackendOrigin(serverUrl)
     const form = new FormData()
     const ext = mime === 'image/png' ? 'png' : mime === 'text/plain' ? 'txt' : mime.split('/')[1] ?? 'bin'
     // bytes 为调用方 Uint8Array；BlobPart 需 ArrayBufferView<ArrayBuffer>（uploadAttachments 同款 cast，TS2322 兼容）
@@ -1833,6 +1879,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     if (!this.serverUrl || this.state.status === 'disconnected') {
       throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, '未连接，无法读取工具附件')
     }
+    this.assertBackendOrigin(this.serverUrl)
     const sourceGeneration = this.sourceGeneration
     const controller = new AbortController()
     const timeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS

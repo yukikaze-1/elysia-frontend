@@ -198,6 +198,12 @@ export interface ToolRequestEvent extends BackendEventEnvelope {
   inputSummary?: string     // 本地脱敏摘要（redactToolArguments；原始 arguments 永不进 Renderer）
   expiresAt: string         // wire 必填（桥 request_timeout 绝对过期；批次 B 权限窗超时兜底，review C2 修正）
   requestId?: string
+  // —— D4-1（2026-09-15 裁决「补代码」）：wire 风险元数据直映 ——
+  // **仅 Main 消费**（real-backend 显式读它们并交给 tool-service 重算/审计）；本事件不经 `tool:event`
+  // 下发 Renderer——D6-07 的公开事件是 `PublicToolEvent`，两者是不同通道，勿混用。
+  riskLevel?: string        // wire 为 str（safe/medium/high）；非枚举值在重算中按 high 处理
+  permissionRequired?: boolean
+  approvalAuthority?: string   // 记录用：授权判定权威仍在本地注册表（doc 04 §7.4），该字段不参与判定
 }
 
 /** Backend 工具开始（展示生命周期；callId = sourceCallId 同值） */

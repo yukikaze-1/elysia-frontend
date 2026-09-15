@@ -60,6 +60,10 @@ export interface PublicToolEvent {
    *  `sourceName` 是**必需**字段——它就是"所选屏/窗"的人类可读标识（枚举快照里已有，Main 直接带上）。
    *  width/height/bytes 为可选（mock 注入面没有真实缩略图，取不到尺寸）。 */
   capturePreview?: { sourceId: string; sourceName: string; previewDataUrl: string; width?: number; height?: number; bytes?: number }
+  /** D4-1（2026-09-15 裁决「补代码」）：**本地重算**后的风险等级（三档枚举）。
+   *  与 D6-07 不冲突——下发的不是权重参数或原始 arguments，只是「这次调用被判为哪一档」，
+   *  供权限窗/卡片解释为何需要确认。后端上报值经归一后只作为**下限**参与重算，不进事件。 */
+  riskLevel?: 'safe' | 'medium' | 'high'
   occurredAt: string
 }
 

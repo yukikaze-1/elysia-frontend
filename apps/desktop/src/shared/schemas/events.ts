@@ -232,7 +232,9 @@ export const Live2DDirectiveEventSchema = BackendEventEnvelopeSchema.extend({
 }).strict()
 
 // —— 阶段 6 批次 A（F-6-03）：工具双轨领域事件 schema 镜像（spec §3.3；缺镜像 → preload parseBackendEvent 丢弃，P4-B 先例）——
-// 事件判别字段 event 与 wire 帧名一致；tool.request 无安全元数据字段（arguments/riskLevel/... 不在事件模型，strict 整帧拒，D6-07）。
+// 事件判别字段 event 与 wire 帧名一致；tool.request 保留 wire 风险元数据的**直映**（D4-1 2026-09-15：
+// 这三个字段此前被判为「不在事件模型」而未镜像，导致 Main 侧读取需绕过 schema；现按契约直映，
+// 仅 Main 的 real-backend 消费，Renderer 侧走 `PublicToolEvent`（D6-07），两个通道不混用）。
 
 /** 桌面工具执行请求（脱敏公开事件；toolVersion/expiresAt wire 必填直映） */
 export const ToolRequestEventSchema = BackendEventEnvelopeSchema.extend({
@@ -245,7 +247,10 @@ export const ToolRequestEventSchema = BackendEventEnvelopeSchema.extend({
   reason: z.string().optional(),
   inputSummary: z.string().optional(),
   expiresAt: z.string().min(1),
-  requestId: z.string().optional()
+  requestId: z.string().optional(),
+  riskLevel: z.string().optional(),          // D4-1：wire str 直映（非枚举值由重算归 high）
+  permissionRequired: z.boolean().optional(),
+  approvalAuthority: z.string().optional()
 }).strict()
 /** Backend 工具开始（callId = sourceCallId 同值） */
 export const ToolStartedEventSchema = BackendEventEnvelopeSchema.extend({

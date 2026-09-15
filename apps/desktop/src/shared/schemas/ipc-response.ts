@@ -144,6 +144,7 @@ export const PublicToolEventSchema = z.object({
   diff: ToolDiffSchema.optional(),
   captureSources: z.array(CaptureSourceSchema).optional(),
   capturePreview: CapturePreviewSchema.optional(),
+  riskLevel: z.enum(['safe', 'medium', 'high']).optional(),   // D4-1：本地重算等级（枚举，非参数原文）
   occurredAt: z.string(),
 }).strict()
 

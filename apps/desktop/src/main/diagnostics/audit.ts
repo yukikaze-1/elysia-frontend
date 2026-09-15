@@ -23,6 +23,10 @@ export interface AuditEvent {
   permissionGrantId?: string   // 目录授权 grant.id（tool:decision allow_scoped / grant:* 携带）
   toolName?: string            // 工具名（审计事件字段化，回读按工具过滤）
   backendIdentity?: string     // 授权时连接指纹（grant 匹配绑定）
+  // —— D4-1（2026-09-15 裁决「补代码」）：风险重算可解释性 ——
+  backendRiskLevel?: 'safe' | 'medium' | 'high'   // wire 上报值（归一后；畸形值归 high，不落原文）
+  permissionRequired?: boolean                    // wire 上报的 permissionRequired（仅记录，判定权威在本地）
+  approvalAuthority?: string                      // wire 上报的 approvalAuthority（仅记录，判定权威在本地）
 }
 export interface Auditor { audit(event: AuditEvent): Promise<void>; close(): Promise<void> }
 

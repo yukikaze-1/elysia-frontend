@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isPathBlacklisted, isPathWithinRoot, normalizeToolPath, PATH_BLACKLIST_DEFAULTS, isDomainAllowed, PolicyError } from '../../src/main/tools/tool-policy'
+import { computeLocalRisk, isPathBlacklisted, isPathWithinRoot, isPathWithinSandbox, normalizeReportedRisk, normalizeToolPath, PATH_BLACKLIST_DEFAULTS, isDomainAllowed, PolicyError } from '../../src/main/tools/tool-policy'
 
 const posixPlatform = { platform: 'posix' as const }
 
@@ -73,5 +73,76 @@ describe('isDomainAllowed', () => {
   it('同源放行 / 异源拒', () => {
     expect(isDomainAllowed('https://api.example.com/up', 'https://api.example.com')).toBe(true)
     expect(isDomainAllowed('https://evil.example.com/up', 'https://api.example.com')).toBe(false)
+  })
+})
+
+// —— D4-1（2026-09-15）：本地风险重算 ——
+describe('normalizeReportedRisk（wire 上报值归一）', () => {
+  it('合法三档原样返回', () => {
+    expect(normalizeReportedRisk('safe')).toBe('safe')
+    expect(normalizeReportedRisk('medium')).toBe('medium')
+    expect(normalizeReportedRisk('high')).toBe('high')
+  })
+  it('缺省（undefined/null/空串）→ undefined（视为未上报，不参与抬升）', () => {
+    expect(normalizeReportedRisk(undefined)).toBeUndefined()
+    expect(normalizeReportedRisk(null)).toBeUndefined()
+    expect(normalizeReportedRisk('')).toBeUndefined()
+  })
+  it('**未知/畸形值一律归 high**（不做静默降级，也不忽略）', () => {
+    expect(normalizeReportedRisk('critical')).toBe('high')
+    expect(normalizeReportedRisk('SAFE')).toBe('high')
+    expect(normalizeReportedRisk(3)).toBe('high')
+    expect(normalizeReportedRisk({ level: 'high' })).toBe('high')
+    expect(normalizeReportedRisk([])).toBe('high')
+  })
+})
+
+describe('computeLocalRisk（本地重算：只升不降）', () => {
+  it('无上报值时取注册表常量', () => {
+    expect(computeLocalRisk({ base: 'medium' })).toBe('medium')
+    expect(computeLocalRisk({ base: 'safe' })).toBe('safe')
+  })
+  it('后端上报更高 → 抬升到上报值（本地风险覆盖后端风险，但不低于它）', () => {
+    expect(computeLocalRisk({ base: 'safe', reported: 'high' })).toBe('high')
+    expect(computeLocalRisk({ base: 'medium', reported: 'high' })).toBe('high')
+  })
+  it('后端上报更低 → **不降级**（绝不因为后端说低就降低本地等级）', () => {
+    expect(computeLocalRisk({ base: 'high', reported: 'safe' })).toBe('high')
+    expect(computeLocalRisk({ base: 'medium', reported: 'safe' })).toBe('medium')
+  })
+  it('畸形上报值按 high 参与抬升', () => {
+    expect(computeLocalRisk({ base: 'safe', reported: 'nonsense' })).toBe('high')
+  })
+  it('黑名单命中 → 恒 high（压过一切，含 base=safe）', () => {
+    expect(computeLocalRisk({ base: 'safe', blacklisted: true })).toBe('high')
+    expect(computeLocalRisk({ base: 'safe', reported: 'safe', blacklisted: true })).toBe('high')
+  })
+  it('**参数参与判定**：带 content 的路径工具（写覆盖）→ high（此前只看工具名）', () => {
+    expect(computeLocalRisk({ base: 'medium', realPath: '/tmp/cyrene-fixtures/a.txt', args: { path: '/tmp/cyrene-fixtures/a.txt', content: 'x' } })).toBe('high')
+  })
+  it('参数不影响判定时退化为「注册表常量与上报值的较大者」', () => {
+    expect(computeLocalRisk({ base: 'safe', args: { region: null } })).toBe('safe')
+    expect(computeLocalRisk({ base: 'medium', args: { path: '/x' } })).toBe('medium')
+  })
+  it('沙盒命中不改变等级（本函数不降级；沙盒只影响授权默认策略）', () => {
+    expect(computeLocalRisk({ base: 'medium', realPath: '/srv/sandbox/a.txt', args: { path: '/srv/sandbox/a.txt' }, sandboxRoots: ['/srv/sandbox'], platform: 'posix' })).toBe('medium')
+  })
+})
+
+// —— D4-15（2026-09-15）：沙盒目录层 ——
+describe('isPathWithinSandbox', () => {
+  it('F-06 拍板值：空集 ⇒ 恒 false（零预授权不产生新的自动执行路径）', () => {
+    expect(isPathWithinSandbox('/srv/sandbox/a.txt', [], 'posix')).toBe(false)
+  })
+  it('段边界包含性：目录内命中、同前缀兄弟目录不命中', () => {
+    expect(isPathWithinSandbox('/srv/sandbox/a.txt', ['/srv/sandbox'], 'posix')).toBe(true)
+    expect(isPathWithinSandbox('/srv/sandbox', ['/srv/sandbox'], 'posix')).toBe(true)
+    expect(isPathWithinSandbox('/srv/sandbox2/a.txt', ['/srv/sandbox'], 'posix')).toBe(false)
+  })
+  it('空串根被忽略（不因畸形配置把「所有路径」放行）', () => {
+    expect(isPathWithinSandbox('/etc/passwd', [''], 'posix')).toBe(false)
+  })
+  it('Windows 大小写语义一致', () => {
+    expect(isPathWithinSandbox('C:\\Work\\Sb\\a.txt', ['c:\\work\\sb'], 'windows')).toBe(true)
   })
 })
