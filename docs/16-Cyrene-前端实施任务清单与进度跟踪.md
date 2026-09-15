@@ -815,6 +815,24 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **E（文档类）已完成**：五处 Forge 残留（含 `package.json:31` 的 `make` echo——评审只数到四处）、两处失效占位 README、`docs/00` 两处过期口径、doc 09 §5 的 `make` 语义行、UI 精修清单的两条 404 链接。**并顺手收口了产生那条 404 的门禁盲区**：`docs:check` 的链接检查扩到 `docs/` 全部根文档（含非编号），**过变异验证**（改回 `../` 即红）。`archive/**` 与 `review/**` 正文链接仍刻意排除（历史快照按当时目录结构书写），其断链现状记在汇总 §7。
 - **本批未做（如实记录）**：① 未做**变异验证**（判别力以「新用例在旧实现下会红」的方式设计，但未逐个回滚取证）；② `test:integration` 只跑了一轮，未取得整套绿；③ doc 01 §5 推荐目录树里其它不存在的条目（`assets/live2d/`、`tests/e2e/`）未动；④ 非编号文档的**元数据与行宽**仍不受 `docs:check` 约束，`ui/` 仍在治理外（S5-B6 裁决明文接受）；⑤ 首轮评审的其余条目（契约 C2/C4/C5/C7/C8/C10/C11/C12、渲染 R5/R6/R8～R14、Live2D L1～L9、CI Q2～Q14）**未在本批范围内**。
 
+**评审剩余条目的清理（F/H 批，2026-09-15，`a7678de`＋`cf80c50`＋`825f659`）**
+
+> 续上一节（A~E 批）。本批只做**契约小件**与 **Live2D 小件**；较大的 G（`token_stats` 消费、`clientMessageId` 上 wire）、I（Live2D init/dispose 世代栅栏、blink 时间轴）、J（GPU 重建像素取证）**未做**。
+
+| 门禁 | 结果（`825f659`，本机 Windows） |
+|---|---|
+| typecheck / lint | PASS |
+| `pnpm test` | PASS：**255 files / 3176 passed** + 6 expected-fail + 22 skipped |
+| `pnpm test:integration` | **未跑**（F 改 mapper/store、H 改 live2d store/controller，两批都应复跑） |
+| `pnpm docs:check` | PASS |
+
+- **F（契约小件）已完成**：① 重复 `generation.started` 幂等（此前会清空已渲染分段）；② **整段缺失**检测——由 mapper 判定（它看得到含 status 段的全部 `segment.started`）并标 `segmentGap`，终态落 `completing`，复用上一批补的 UI 出口；③ `segmentMeta` 改按 `generationId+segmentId` 键控 + 终态回收（此前跨代静默错归因 + 无界增长）；④ `sessionBuffer` 死字段删除，该分支改为**显式丢弃 + 告警**；⑤ C11/C12 **只改文档**（代码是对的：legacy `expression` 无身份即忽略、归档 `parts` 两条路径对应后端两份形状）。
+- **F 的取证**：C7 的判定口径取自 X99 上 12 份真实 traces（3 个 generation 含分段帧，索引全连续、无 status 段）——**样本小**，故实现取保守口径并留了"不误报"的对照用例。
+- **H（Live2D 小件）已完成**：① `store.status` 改事件订阅（此前 `loading` 在界面上**永不可达**、切换期间虚报 ready）；② controller `'error'` 事件接住（此前无任何订阅者，渲染期异常画布死了而徽标仍「就绪」）；③ 切换被串行化守卫丢弃时给出可见提示（此前用户点了 C、界面停在 B、零提示）；④ 口型 `attach()` 返回真实结果（此前 store 无条件置「已挂载」，探针把"没挂上"与"没在说话"压成同一读数）；⑤ 动作/表情播放失败不再落成未处理拒绝。
+- **变异验证**（本批含上一批缺的那一环）：去掉 `segmentGap` 判据 ⇒ 对应用例红；禁用重复 started 幂等分支 ⇒ 红；去掉 `'status'` 订阅 ⇒ 红；三处还原即绿。
+- **顺带修掉一处被抖动暴露的假绿**：`real-backend.spec.ts` 的重连退避用例用真实计时断言观测窗口，退避加抖动后间歇变红 ⇒ 钉住随机源（断言强度不变）。
+- **本批未做（如实记录）**：G（`session.token_stats` 消费、`clientMessageId` 上 wire）、I（L1 世代栅栏、L8 blink 时间轴重放）、J（L5 像素取证）、L9（character-runtime 缓存清理）、集成套件复跑。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
