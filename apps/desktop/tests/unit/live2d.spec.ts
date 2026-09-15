@@ -639,7 +639,7 @@ describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFact
     const seq = [0.2, 0.4, 0.6, 0.8]
     let i = 0
     setMouthSourceFactory(() => ({
-      attach: vi.fn(),
+      attach: vi.fn(() => true),   // L6：attach 现返回"是否真的挂上"，替身必须如实返回 true
       detach: vi.fn(),
       sample: vi.fn(() => seq[i++ % seq.length]),
       dispose: vi.fn()
@@ -671,7 +671,7 @@ describe('live2dStore 批次 C（C1）：口部采样接线 + setMouthSourceFact
   it('mockMouthLevel=step 时选合成源（不调用注入工厂）；未设时用注入工厂源', async () => {
     installFakes({ models: [MODEL_HARU] })
     let factoryCalled = false
-    const fakeSrc = { attach: vi.fn(), detach: vi.fn(), sample: vi.fn(() => 0), dispose: vi.fn() }
+    const fakeSrc = { attach: vi.fn(() => true), detach: vi.fn(), sample: vi.fn(() => 0), dispose: vi.fn() }
     setMouthSourceFactory(() => { factoryCalled = true; return fakeSrc })
     // case 1：runtime 水合 step → 合成 step 源胜（工厂不调用）
     mockApi.getRuntimeInfo.mockResolvedValueOnce({ mode: 'mock', packaged: false, mockMouthLevel: 'step' })

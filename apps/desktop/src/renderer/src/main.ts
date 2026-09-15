@@ -109,7 +109,9 @@ if (import.meta.env.DEV || import.meta.env.MODE === 'test') {
         autoReadReply: boolean
         ttsAudioElPresent: boolean
       }
-      getMouthInfo: () => { kind: 'step' | 'sine' | 'real' | null; moved: boolean; settled: boolean }
+      // L6（2026-09-15）：kind 增加 'degraded'（attach 真的没挂上）——此前它与 'real'/'step'/'sine'
+      // 混为一谈，探针无法区分「attach 失败」与「确实没在说话」。
+      getMouthInfo: () => { kind: 'step' | 'sine' | 'real' | 'degraded' | null; moved: boolean; settled: boolean }
       // 阶段 6 批次 B（Task 7）：工具实时区探针（Task 8 集成测试消费）
       getToolState: () => {
         records: Record<string, import('@shared/contracts/tool').ToolCallRecord>

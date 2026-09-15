@@ -111,7 +111,7 @@ export const useLive2dStore = defineStore('live2d', () => {
   let mockMouthLevel: 'step' | 'sine' | undefined
   /** C1 集成诊断（2026-08-19）：口部数据源种类（'step'/'sine' = mockMouthLevel 水合生效 / 'real' = Analyser）。
    *  集成失败转储用——区分「合成包络源未水合（读静音 → 恒 0）」与「attach/播放断链」。 */
-  const mouthSourceKind = ref<'step' | 'sine' | 'real' | null>(null)
+  const mouthSourceKind = ref<'step' | 'sine' | 'real' | 'degraded' | null>(null)
   /** C1 集成稳健化（2026-08-19）：口部运动持久标志——tick 采到非零置 `mouthMoved`；attach 时重置、detach
    *  （窗口结束归零）时若 moved 则置 `mouthSettled`。供集成测试轮询**持久状态**而非瞬态采样——CI 上 SwiftShader
    *  渲染饱和 renderer 主线程时，`page.evaluate`/timer 采样会被饿死（3.75s 一次），瞬态窗口抓不住；持久标志
@@ -193,8 +193,11 @@ export const useLive2dStore = defineStore('live2d', () => {
       [() => useVoiceStore().tts.playing, ttsAudioElement],
       ([playing, el]) => {
         if (playing && el && mouthSource) {
-          mouthSource.attach(el)
-          mouthAttached = true
+          // L6（2026-09-15 Live2D 评审）：按 attach 的**真实结果**置位，而不是无条件 true——
+          // 无 AudioContext / 元素被占用时此前 store 认为"已挂载"，于是每帧 sample 恒 0、口型不动，
+          // 而测试探针 `getMouthInfo()` 仍报 kind:'real'，把「attach 没成功」与「确实没在说话」压成同一读数。
+          mouthAttached = mouthSource.attach(el)
+          if (!mouthAttached) mouthSourceKind.value = 'degraded'   // 供诊断/探针区分"没挂上"
           mouthMoved.value = false // C1 稳健化：新 TTS 会话重置「曾非零/已归零」标志（集成测据此轮询持久态）
           mouthSettled.value = false
         } else {

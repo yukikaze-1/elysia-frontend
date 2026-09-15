@@ -14,7 +14,12 @@ import { computeMouthLevel } from './mouth-level'
 
 /** 口部数据源：attach 挂音频元素 / detach 断开 / sample 采样当前电平 [0,1] / dispose 释放。 */
 export interface MouthLevelSource {
-  attach(el: HTMLAudioElement): void
+  /**
+   * L6（2026-09-15 Live2D 评审）：返回**是否真的挂上**。失败路径（无 AudioContext / 元素被其它 graph 占用 /
+   * 连接异常）此前一律静默 `return`，而签名是 `void` —— 调用方（store）无从区分「没挂上」与「确实没在说话」，
+   * 于是 `mouthAttached` 与测试探针 `getMouthInfo()` 把两者压成同一读数。
+   */
+  attach(el: HTMLAudioElement): boolean
   detach(): void
   sample(): number
   dispose(): void
@@ -62,8 +67,8 @@ export function createTtsMouthSource(analyserFactory?: () => AnalyserPair): Mout
   }
 
   return {
-    attach(next: HTMLAudioElement): void {
-      if (attached && el === next) return // 同元素已挂幂等
+    attach(next: HTMLAudioElement): boolean {
+      if (attached && el === next) return true // 同元素已挂幂等
       if (sourceEl && sourceEl !== next) {
         // 换元素：旧 sourceNode 终生只绑旧元素（再对其 createMediaElementSource 会抛 InvalidStateError）→
         // 全量释放后为新元素重建
@@ -79,7 +84,7 @@ export function createTtsMouthSource(analyserFactory?: () => AnalyserPair): Mout
           analyser = pair.analyser
         } else {
           const Ctx = globalThis.AudioContext
-          if (typeof Ctx !== 'function') return // 无 AudioContext（headless）→ 静默降级（sample 恒 0）
+          if (typeof Ctx !== 'function') return false // 无 AudioContext（headless）→ 降级（sample 恒 0），但不谎报已挂
           context = new Ctx()
           ownedContext = context
           analyser = context.createAnalyser()
@@ -91,23 +96,24 @@ export function createTtsMouthSource(analyserFactory?: () => AnalyserPair): Mout
         } catch {
           // 元素已被其它 graph 占用等异常 → 清理；attach 不抛（sample 恒 0 降级）
           disposeGraph()
-          return
+          return false
         }
       }
       // 重连 + 恢复（detach 只断链 + suspend，此处重连 + resume，复用同一 sourceNode）
       const an = analyser
       const ctx = context
-      if (!sourceNode || !an || !ctx) return
+      if (!sourceNode || !an || !ctx) return false
       try {
         sourceNode.connect(an)
         an.connect(ctx.destination)
         void ctx.resume()
       } catch {
         disposeGraph()
-        return
+        return false
       }
       buf = new Float32Array(an.fftSize)
       attached = true
+      return true
     },
     detach(): void {
       disconnectGraph()
@@ -142,7 +148,7 @@ export function createStepMouthSource(): MouthLevelSource {
   let attached = false
   let i = 0
   return {
-    attach(): void { attached = true; i = 0 },
+    attach(): boolean { attached = true; i = 0; return true },
     detach(): void { attached = false; i = 0 },
     sample(): number {
       if (!attached) return 0
@@ -159,7 +165,7 @@ export function createSineMouthSource(): MouthLevelSource {
   let attached = false
   let i = 0
   return {
-    attach(): void { attached = true; i = 0 },
+    attach(): boolean { attached = true; i = 0; return true },
     detach(): void { attached = false; i = 0 },
     sample(): number {
       if (!attached) return 0
