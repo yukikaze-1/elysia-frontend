@@ -116,8 +116,29 @@ describe('Silent Test Window Mode：测试运行期间的窗口行为', () => {
     const launched = await launchApp(undefined, { windowMode: 'silent' })
     const { app, page } = launched
     try {
-      // ① 窗口层：确实不可见（否则本用例的前提不成立）
-      expect((await windowFacts(app)).isVisible).toBe(false)
+      // ① 窗口层：**必须按出帧保活形态判定**，不能无条件断言不可见。
+      //    2026-09-15 修（代码侧疑点 3）：本行原为无条件的 `expect(isVisible).toBe(false)`，
+      //    与上一个用例 `:102-109` 的判据**形式矛盾**——那边写明保活有两条路径，回退形态（平台不提供
+      //    beginFrameSubscription 或重试耗尽）下窗口**是被映射的**（`isVisible === true`），
+      //    靠 opacity 0 + skipTaskbar 保持不打扰。静默模式只有这两种形态，故两个 spec 不可能同时全绿；
+      //    「窗口会不会被映射」不是本用例要验的东西，本用例验的是**隐藏/不映射之后 renderer 是否仍然活着**。
+      //    现在与 :102-109 用**同一判据**（同一份 presentation 留痕），两种形态下各自成立。
+      //
+      //    顺序承重：保活是**异步**落定的（订阅挂在 dom-ready，无帧时重试，重试耗尽才回退）⇒ 必须
+      //    **先等它定下来、再读 presentation**。反过来读会拿到 `'pending'`，被 `!== 'unmapped'` 判成
+      //    回退形态而误报（本轮实测踩到：拿到 pending → 断言 isVisible=true 失败）。
+      await expect.poll(
+        async () => (await windowPresentation(app))?.frameKeepAlive,
+        { timeout: 10_000, interval: 200 },
+      ).not.toBe('pending')
+      const presentation = await windowPresentation(app)
+      const facts0 = await windowFacts(app)
+      if (presentation?.frameKeepAlive === 'unmapped') {
+        expect(facts0.isVisible, 'unmapped 保活形态下窗口绝不映射').toBe(false)
+      } else {
+        expect(facts0.isVisible, '回退保活形态下窗口被映射（靠不透明度 0 保持不打扰）').toBe(true)
+        if (process.platform !== 'linux') expect(facts0.opacity, '回退形态必须先置不透明度 0').toBe(0)
+      }
 
       // ② 文档可见性：Chromium 对"从未显示过"的窗口不置 hidden —— 应用的渲染门（CyLive2DPanel 的
       //    documentVisible）因此保持活跃，Live2D 等渲染回路不会被静默模式停掉。

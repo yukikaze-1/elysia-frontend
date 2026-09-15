@@ -60,4 +60,43 @@ describe('tool-history', () => {
     const rows = readAuditEvents(dir, { limit: 30 })
     expect(rows).toHaveLength(30)
   })
+
+  // —— 2026-09-15 修（代码侧疑点 2）：**单文件超过 limit 时保留的必须是最新 N 条** ——
+  // 修前：循环「读满 limit 即停」是从文件**头部**（=当天最早）收集，末尾 ts 倒序只是把这 N 条陈旧条目
+  // 内部排序 ⇒ 设置页显示「当日最早 200 条」。修后：逐文件日期倒序 + 文件内**逐行倒序**收集。
+  //
+  // 时间戳必须**合法且逐条递增**：原先此处用 `10:00:${i}` 拼秒位，i>59 时得到
+  // `2026-09-15T10:00:259:00Z` 这种非法 ISO——`Date` 解不出、字符串比较也不按数值走，
+  // 于是「留下的是哪一批」根本断言不了（本轮写这条用例时实测踩到）。
+  // 下面的 `secAt` 用「分钟 = 10 + ⌊i/60⌋、秒 = i % 60」，对 i ≤ 3599 既有唯一值也保持字典序递增。
+  const secAt = (daysAgo: number, i: number): string =>
+    isoAt(daysAgo, `1${String(Math.floor(i / 60)).padStart(1, '0')}:${String(i % 60).padStart(2, '0')}`)
+
+  it('单文件超过 limit → 保留**最新** N 条（不是最早的 N 条）', () => {
+    const total = 260
+    const limit = 200
+    const lines = Array.from({ length: total }, (_, i) =>
+      JSON.stringify({ ts: secAt(0, i), type: 'tool:decision', callId: `c${i}` }))
+    writeFileSync(join(dir, auditFile(0)), lines.join('\n'))
+    const rows = readAuditEvents(dir, { limit })
+    expect(rows).toHaveLength(limit)
+    expect(rows.at(0)!.ts, '首条应是最新一条').toBe(secAt(0, total - 1))
+    expect(rows.at(-1)!.ts, '末条应是保留窗口里最旧的一条').toBe(secAt(0, total - limit))
+    // 承重断言：修前最早的那条会**出现在结果里**（这正是缺陷的可观测形态）
+    expect(rows.some((r) => r.ts === secAt(0, 0)), '不得包含全文件最早的那条（修前的缺陷形态）').toBe(false)
+    expect(rows.every((r) => r.ts >= secAt(0, total - limit))).toBe(true)
+  })
+  it('多日窗口：跨文件仍取最新 N 条（新的一天优先，且不因旧文件先读而被截断）', () => {
+    // 旧的一天 150 条、新的一天 150 条；limit 200 ⇒ 应留下「新的一天 150 条 + 旧的一天最新 50 条」
+    const mk = (daysAgo: number, i: number): string => JSON.stringify({ ts: secAt(daysAgo, i), type: 'tool:decision' })
+    writeFileSync(join(dir, auditFile(1)), Array.from({ length: 150 }, (_, i) => mk(1, i)).join('\n'))
+    writeFileSync(join(dir, auditFile(0)), Array.from({ length: 150 }, (_, i) => mk(0, i)).join('\n'))
+    const rows = readAuditEvents(dir, { limit: 200 })
+    expect(rows).toHaveLength(200)
+    const dayOld = isoAt(1, '00:00').slice(0, 10)
+    const dayNew = isoAt(0, '00:00').slice(0, 10)
+    expect(rows.filter((r) => r.ts.startsWith(dayNew)), '当天 150 条全部保留').toHaveLength(150)
+    expect(rows.filter((r) => r.ts.startsWith(dayOld)), '前一天只保留最新的 50 条').toHaveLength(50)
+    expect(rows.filter((r) => r.ts.startsWith(dayOld)).some((r) => r.ts === secAt(1, 0)), '前一天最早的条目应被截掉').toBe(false)
+  })
 })

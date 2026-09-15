@@ -22,16 +22,29 @@ export function readAuditEvents(dir: string, opts: { limit?: number; days?: numb
   try { files = readdirSync(dir).filter((f) => AUDIT_DATE_RE.test(f)).sort().reverse() }   // 文件名倒序（日期新→旧）
   catch { return [] }   // 目录不存在 → 空态（不阻塞设置页，fail-open）
   const cutoff = Date.now() - days * 86_400_000
-  const entries: HistoryEntry[] = []
+  /** 保序插入缓冲：文件内按**时间倒序**取（新→旧），整批取满后再按 ts 倒序输出。
+   *
+   *  **为什么要缓冲（2026-09-15 修，代码侧疑点 2）**：原实现「读满 `limit` 即停」+ 末尾 ts 倒序切片
+   *  ⇒ 当日文件里**从头**（=当天最早）收集到 `limit` 条就停，再排序只是把这 N 条陈旧条目内部排好序。
+   *  结果：设置页审批历史显示的是「当日最早的 200 条」而不是「最近的 200 条」——跨天尚可（文件名倒序，
+   *  新的一天先读），**单日超过 200 条时完全错**。
+   *
+   *  现在的形状：逐文件（文件名倒序 = 日期新→旧）、文件内**逐行倒序**（当天新→旧）收集，
+   *  `limit` 只束缚**总量**；末尾的 ts 倒序排序因此对「保留下来的就是最新 N 条」这一步是幂等的。
+   *  代价：单文件会整份读入（原先也是 `readFileSync` 整份读，只是提前 return）——读面仍有界（≤7 文件）。 */
+  const newestFirst: HistoryEntry[] = []
+  let stopped = false
   for (const file of files) {
-    if (entries.length >= limit) break
+    if (stopped) break
     const [, y, m, d] = file.match(AUDIT_DATE_RE)!
     const dayMs = new Date(`${y}-${m}-${d}T00:00:00Z`).getTime()
     if (dayMs < cutoff) continue   // 超 HISTORY_DAYS 边界
     let text: string
     try { text = readFileSync(join(dir, file), 'utf8') } catch { continue }
-    for (const line of text.split('\n')) {
-      if (entries.length >= limit) break
+    const lines = text.split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (newestFirst.length >= limit) { stopped = true; break }   // 取满即停：此时手里的已是最新 N 条
+      const line = lines[i]
       if (!line.trim()) continue
       let raw: Record<string, unknown>
       try { raw = JSON.parse(line) as Record<string, unknown> } catch {
@@ -39,7 +52,7 @@ export function readAuditEvents(dir: string, opts: { limit?: number; days?: numb
         continue
       }
       if (typeof raw.type !== 'string' || !(raw.type.startsWith('tool:') || raw.type.startsWith('grant:'))) continue
-      entries.push({
+      newestFirst.push({
         ts: typeof raw.ts === 'string' ? raw.ts : '', type: raw.type,
         callId: str(raw.callId), toolId: str(raw.toolId), status: str(raw.status),
         permissionDecision: str(raw.permissionDecision), permissionGrantId: str(raw.permissionGrantId),
@@ -49,6 +62,6 @@ export function readAuditEvents(dir: string, opts: { limit?: number; days?: numb
       })
     }
   }
-  return entries.sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit)   // ts 倒序
+  return newestFirst.sort((a, b) => b.ts.localeCompare(a.ts))   // ts 倒序（保留的就是最新 N 条，排序不改成员）
 }
 function str(v: unknown): string | undefined { return typeof v === 'string' ? v : undefined }

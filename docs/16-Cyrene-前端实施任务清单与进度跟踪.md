@@ -737,7 +737,37 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
   （tool-policy +15、tool-service +4、real-backend +2），另 **1 条既有断言按语义变更改写**
   （`frame-mapper.spec` 的 `'riskLevel' in ev === false` → 直映断言，变更理由已就地写明）。
 
-**S5-B2 / S5-B6 落地批次（2026-09-15，附件 fileRef + 设计风格归属）**
+**代码侧三条疑点修复批次（2026-09-15，review §18.2 的前三条）**
+
+- **范围**：review §18.2 逐条复核后确认的 3 条代码侧疑点（第 4 条 `state-machine.ts` 经复核**重新定性**，
+  见本节末）。用户 2026-09-15 指示「做代码侧 3 条疑点」。
+- **① `live2d-fixture.ts` 的 lil 源路径错误**（**测试覆盖被静默掏空**）：夹具拼
+  `tmp/live2d/修女莉尔免费版/修女莉尔免费版`，磁盘实为 `tmp/修女莉尔免费版/修女莉尔免费版`（多一层 `live2d`）
+  ⇒ `existsSync` 恒 false ⇒ 三处 `if (lilInstalled)` 分支（`-core.spec.ts:59/113/121`、`-motion.spec.ts:66`）
+  是**真空体**（既不算 passed 也不算 skipped）⇒「无动作模型优雅降级」零覆盖且无任何提示。
+  **已修**并在夹具里补一行 `[l2d-fixture] lil=installed|absent（源目录 …）` 读数。
+  **本机实测**：修复后 `lil=installed`；`electron-live2d-core` **12/12**、`-motion` **7/7** 全绿
+  （B2「lil 无动作模型切换优雅不崩」用例**真的执行了**，此前是空跑）。
+  **CI 边界如实声明**：lil 模型不入 git（`.gitignore:48` 的 `tmp/`），**CI 上仍不会有该分支**——
+  修复消除的是「无声」，不是「CI 覆盖」；CI 上会看到 `lil=absent`。
+- **② `tool-history.ts` 分页取反**（**用户可见行为**）：原实现「读满 `limit` 即停」是从文件**头部**（当天最早）
+  收集，末尾 ts 倒序只是把这 N 条陈旧条目内部排序 ⇒ 设置页审批历史显示「**当日最早的 200 条**」而非最近 200 条
+  （跨天尚可；单日超 200 条时完全错）。**已修**：逐文件日期倒序 + 文件内**逐行倒序**收集，`limit` 只束总量。
+  **新增 2 条单测**（单文件 260 条 → 留最新 200；跨日 150+150 → 留当天 150 + 前一天最新 50），
+  **并过变异验证**：把内层循环改回正序 ⇒ 两条用例**同时红**，还原即绿。
+- **③ `silent-window-mode.spec.ts` 断言自相矛盾**（**测试侧**）：`:120` 无条件断言
+  `isVisible === false`，而 `:102-109` 写明保活有**两条**路径、回退形态下窗口**是被映射的**（靠 opacity 0 不打扰）
+  ⇒ 两种形态只有一种能全绿。**已修**：本用例改用与 `:102-109` **同一判据**（同一份 presentation 留痕）。
+  **顺序承重**：保活是异步落定的，必须**先 poll 等定、再读 presentation**——本轮第一版写成先读后 poll，
+  拿到 `'pending'` 被误判成回退形态而报错，已修正并把它写进注释。**实测**：`silent-window-mode` 3 passed + 1 skipped。
+- **④ `state-machine.ts` 注释与常量集合不自洽 —— 经复核重新定性，未改**：实测
+  `listening_start`/`working_start`/`waiting_permission_start` 三个事件**在全仓没有任何生产者**，
+  `waiting_permission` 的生产路径走 `state-source` 的 `toolWaiting`；且 `controller.ts:293-296` 与
+  `state-source.ts:5` **明写「生产只走 setState，不用 onEvent」**（N2 评审项）⇒ `onEvent` 那套优先级仲裁
+  **在生产里从不执行**，只被 `live2d-state.spec.ts` 调用。上引注释说的「驱动源 null」**本身正确**，
+  缺的是「`onEvent` 为生产死代码」这一句，故 review 的「注释与常量集合不自洽」**判错了机制**。本轮**未改**。
+
+
 
 - **范围**：附件链的「不可猜文件引用」结构性修法（S5-B2，H-01 的另一半）与 `ui/设计风格.md` 的治理归属（S5-B6）。
   逐项证据、实测读数与**如实声明的残余风险**见 [决策记录](review/2026-09-15-S5-B2附件fileRef与设计风格归属-决策记录.md)。

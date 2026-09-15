@@ -31,7 +31,19 @@ const REPO = fileURLToPath(new URL('../../../../../', import.meta.url))  // 仓�
 const CLI_SCRIPT = join(ROOT, 'scripts/live2d-install.mjs')
 const CLI_ARGS = ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', '--experimental-strip-types', CLI_SCRIPT]
 const HARU_SRC = join(REPO, 'third_party/CubismSdkForWeb-5-r.5/CubismSdkForWeb-5-r.5/Samples/Resources/Haru')
-const LIL_SRC = join(REPO, 'tmp/live2d', '修女莉尔免费版', '修女莉尔免费版') // 用户模型双层目录（内层含 model3.json）
+/**
+ * lil 用户模型源目录（**不入 git**，`.gitignore:48` 的 `tmp/` 之下，仅本机存在）。
+ *
+ * **2026-09-15 修（S5-B2 同批的代码侧疑点 1）：此处原写 `tmp/live2d/修女莉尔免费版/修女莉尔免费版`，
+ * 而磁盘上的实际布局是 `tmp/修女莉尔免费版/修女莉尔免费版`（多了一层 `live2d`）**——
+ * 于是 `existsSync` 恒 false、`lilInstalled` 恒 false，三处 `if (lilInstalled)` 分支
+ * （`electron-live2d-core.spec.ts:59/113/121`、`-motion.spec.ts:66`）成为**真空体**：
+ * 既不算 passed 也不算 skipped，**「无动作模型优雅降级」在 CI 上零覆盖且无任何提示**。
+ * 该错误路径在 doc 05 §15.1 与旧 spec 里是同源的，文档侧已改，夹具侧本轮补上。
+ *
+ * **本机显式检查**：`installLive2dMaster()` 会把结果落到 `[l2d-fixture] lil=…` 日志，便于确认分支真的跑了。
+ */
+const LIL_SRC = join(REPO, 'tmp', '修女莉尔免费版', '修女莉尔免费版')
 // 确定性切换目标：lil 的 8192px 大纹理超出 SwiftShader MAX_TEXTURE_SIZE（集成实测装载即失败），
 // 故另装官方 Wanko（1024px，最小史样）作可靠 switch/持久化点击对象——如实记录于报告（偏离 brief 的切换目标选择）。
 const WANKO_SRC = join(REPO, 'third_party/CubismSdkForWeb-5-r.5/CubismSdkForWeb-5-r.5/Samples/Resources/Wanko')
@@ -62,6 +74,9 @@ async function installModels(root: string): Promise<{ haru: boolean; lil: boolea
     await runCli(['--model-dir', LIL_SRC, '--id', 'lil', '--display-name', '修女莉尔'])
     lil = true
   }
+  // **必须留下读数**：lil 不在 git 里，缺它时分支静默跳过——2026-09-15 之前正是因为这个"没有输出"
+  // 让一条错误的源路径藏了很久（分支成了真空体）。此处显式打印，本机跑一次即可确认装没装。
+  console.log(`[l2d-fixture] lil=${lil ? 'installed' : 'absent'}（源目录 ${LIL_SRC}${lil ? '' : ' 不存在 ⇒ 相关分支跳过'}）`)
   return { haru: true, lil, wanko: true }
 }
 
