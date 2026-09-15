@@ -718,6 +718,25 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **H-05 变异验证**：真实删除 `ToolCallRecordSchema.diff` → `tsc` 红于 `contract-mirror.spec.ts(49,18) TS2344`（证明门禁确实抓得住评审所指缺口）；移除基座 `.strict()` → 3 条用例红并点名非 strict 成员。
 - **本轮第二次「无效变异」**：第一次「从允许表移除条目」我误写成只加注释、条目仍在（跑出假绿），重做后才真正变红。这与前几批的「变异未改变代码路径」同族，已作为固定检查项：**变异后必须确认目标代码真的变了**。
 
+**十项裁决落地批次（2026-09-15，`4e1b3d3`／`1a066a5`／`ecf3248`／`dfbc08d`／`e27d98e`）**
+
+- **范围**：review 报告 §18.1 的十项人裁决项——四项补代码（D4-1 本地风险重算、D4-15 域名黑名单 + 沙盒目录层、
+  UI §3 三处 `scrollbar-gutter`、D-2 状态冲突码），其余六项改文档/改结构（F-4 后端复测、F-11 打包工具定选、
+  D4-2 占位口径、U-3 规格改写、UI 状态归口进本文件、§5 稳定 ID 化）。**逐项对照与证据见
+  [十项裁决落地决策记录](review/2026-09-15-维护文档review十项裁决落地-决策记录.md)。**
+- **门禁（本机，全绿）**：`pnpm typecheck` PASS；`pnpm lint` PASS（`--max-warnings=0`）；
+  `pnpm test` PASS（**254 files / 3142 passed + 6 expected fail + 22 skipped，19.37s**）；
+  `pnpm docs:check` PASS（20 core / **91** review / 40 superpowers / 42 archived）；
+  `pnpm -F @cyrene/desktop verify:sensitive` PASS（扫描 887 文件、按规则豁免 556 行、allowlist 63 行）。
+- **`pnpm test:integration`（本机 Windows，2026-09-15）**：**39 files / 169 passed + 3 skipped，
+  1 failed**，套件 402.46s。唯一红项 `renderer-crash.spec.ts` 单跑**立即通过**（1.2s）⇒ 判为**环境性 flake 而非回归**
+  （与 §1 记的 `34695059951` 同族：整套 400s 负载下渲染/审计落盘的时序预算不够；本批代码改动与本 spec
+  无交集——改动面是 tool-service / real-backend 的 HTTP 断言 / 三个 Vue 组件的 CSS / IPC 错误字段）。
+  **未重跑整套**，故本轮「整套绿」这一状态**未取得**，如实记为「1 例 flake」。
+- **未做变异验证**（本批以「新增能力 + 单元断言」为主）；新增断言共 **21 条**
+  （tool-policy +15、tool-service +4、real-backend +2），另 **1 条既有断言按语义变更改写**
+  （`frame-mapper.spec` 的 `'riskLevel' in ev === false` → 直映断言，变更理由已就地写明）。
+
 **UI 走查与精修批次的状态归口（2026-09-15，本文件此前缺记，按「当前状态只写 doc 16」补齐）**
 
 > 背景：`docs/2026-08-29-UI真机走查问题记录.md` 与 `docs/2026-08-29-UI精修整改清单.md` 自带一份「执行状态」块（含 `c58781e` 等提交），而本文件此前**完全没有**这批 UI 走查/精修的记录 ⇒ 与 doc 00「当前状态只写 doc 16」冲突、形成第二份状态台账（2026-09-14 review 记为需人裁决项，2026-09-15 裁决「写进 doc 16」，本节即该裁决落地）。**两份走查/清单文档的状态块保留为历史证据，实时状态一律以本文件为准。**
