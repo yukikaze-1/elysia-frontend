@@ -9,6 +9,7 @@ import type {
   RawFrame, RawGenerationCompleted, RawGenerationFailed,
   RawSegmentChannel, RawSegmentKind, RawTokenUsage, RawConversationUsage
 } from './raw-types'
+import { mapRawTokenUsage } from './token-usage'
 
 export interface FrameMapperOptions {
   connectionId?: string
@@ -481,30 +482,18 @@ export class FrameMapper {
     }
   }
 
+  /**
+   * C2（2026-09-15 契约评审）：映射逻辑已抽到 `token-usage.ts` —— 同一份 wire 形状在**回放**两条路径上
+   * （WS `session` 的 `SessionMessageItem.token_usage`、REST 归档 `Message.token_usage`）此前整段丢弃。
+   * 此处只保留"实时帧"的告警接线，映射语义不变。
+   */
   private mapUsage(raw: RawTokenUsage): TokenUsage {
-    const sumTotal = raw.rounds.reduce((s, r) => s + r.total_tokens, 0)
-    const mapped: TokenUsage = {
-      input: raw.rounds.reduce((s, r) => s + r.input_tokens, 0),
-      output: raw.rounds.reduce((s, r) => s + r.output_tokens, 0),
-      total: raw.turn_total,
-      source: 'provider_reported',
-      rounds: raw.rounds.map((r) => ({
-        ...(r.model ? { model: r.model } : {}),
-        inputTokens: r.input_tokens,
-        outputTokens: r.output_tokens,
-        totalTokens: r.total_tokens,
-        ...(r.cached_tokens !== undefined ? { cachedTokens: r.cached_tokens } : {}),
-        ...(r.reasoning_tokens !== undefined ? { reasoningTokens: r.reasoning_tokens } : {}),
-        roundNum: r.round_num
-      }))
-    }
-    if (sumTotal !== raw.turn_total) {
+    return mapRawTokenUsage(raw, ({ sumTotal, turnTotal }) => {
       this.onProtocolWarning({
         code: ProtocolWarningCode.MAPPER_TOKEN_SUM_MISMATCH,
-        message: `usage Σtotal_tokens(${sumTotal}) !== turn_total(${raw.turn_total}),保留服务端 turn_total`
+        message: `usage Σtotal_tokens(${sumTotal}) !== turn_total(${turnTotal}),保留服务端 turn_total`
       })
-    }
-    return mapped
+    })
   }
 
   private mapConversationUsage(raw: RawConversationUsage): ConversationTokenUsage {

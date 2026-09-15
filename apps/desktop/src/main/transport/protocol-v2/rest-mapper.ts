@@ -2,6 +2,7 @@ import type { Conversation } from '@shared/contracts/conversation'
 import type { Message, MessageRole, MessageToolInfo } from '@shared/contracts/message'
 import type { CharacterGenerationRef } from '@shared/contracts/character'
 import type { ChatHistoryItem, ChatHistoryPage, MessagePage, StickerManifest } from '@shared/contracts'
+import { isRawTokenUsageLike, mapRawTokenUsage } from './token-usage'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import type { ToolCallRecord } from '@shared/contracts/tool'
 import type { RawSessionMessageItem } from './raw-types'
@@ -31,6 +32,13 @@ interface MessageSource {
   error_type?: string
   duration_ms?: number | null
   truncated?: boolean
+  /**
+   * C2（2026-09-15 契约评审）：回复级 token 用量。两条回放路径都会给到它——
+   * WS `session` 的 `SessionMessageItem.token_usage` 是**typed** `{rounds, turn_total}`（X99 `_types.py:244`），
+   * REST 归档的 `Message.token_usage` 在契约里是**自由形状** `dict[str, Any]`（`rest.py:280`）。
+   * 故此处按 `unknown` 收下，由 `assemble` 做**正向形状确认**后再映射；不匹配即视为"该消息没有可用用量"。
+   */
+  token_usage?: unknown
   character?: RestCharacterBindingSnapshot   // 多角色 FE-A：消息角色审计快照（CHAR-FE-07）
 }
 
@@ -129,6 +137,10 @@ export class RestMapper {
       createdAt: src.timestamp ?? '',
       status: 'completed'
     }
+    // C2（2026-09-15 契约评审）：回放消息此前**丢弃** token 用量 ⇒ 历史消息界面上没有 model/usage 元数据行，
+    // 而新生成的回复有（同一份数据两种命运）。这里按**正向形状确认**映射：REST 侧该字段是自由形状，
+    // 不匹配就当作"没有用量"，绝不把半截数据凑成看起来正常的用量。
+    if (isRawTokenUsageLike(src.token_usage)) base.usage = mapRawTokenUsage(src.token_usage)
     if (role === 'user' || role === 'tool') {
       base.content = extractText(src.content, src.parts)
     } else if (role === 'assistant') {

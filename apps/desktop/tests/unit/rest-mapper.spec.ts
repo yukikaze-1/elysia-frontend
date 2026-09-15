@@ -112,6 +112,35 @@ describe('RestMapper', () => {
     expect(anchor?.content).toBeUndefined()
   })
 
+  // C2（2026-09-15 契约评审）：回放消息的 token 用量此前**整段丢弃** ⇒ 历史消息在界面上没有
+  // model/usage 元数据行，而新生成的回复有（同一份数据两种命运）。判别力：去掉 assemble 里那行映射 ⇒ 红。
+  it('C2：回放项 token_usage（typed {rounds,turn_total}）→ 映射进 Message.usage', () => {
+    const replay: RawSessionMessageItem = {
+      role: 'assistant', message_id: 'msg-5', timestamp: '2026-08-11T00:00:04.000Z', content: '回复',
+      token_usage: { rounds: [{ model: 'm1', input_tokens: 10, output_tokens: 5, total_tokens: 15, round_num: 1 }], turn_total: 15 }
+    }
+    const m = mapper.toDomainMessageFromReplay(replay, 'conv-1')
+    expect(m.usage).toMatchObject({ input: 10, output: 5, total: 15, source: 'provider_reported' })
+    expect(m.usage?.rounds?.[0]).toMatchObject({ model: 'm1', inputTokens: 10, outputTokens: 5, totalTokens: 15, roundNum: 1 })
+  })
+
+  it('C2：REST 侧 token_usage 是自由形状（dict[str,Any]）——**不匹配就不映射**，不把半截数据凑成用量', () => {
+    const rest: RestMessage = {
+      message_id: 'msg-6', role: 'assistant', content: '回复', timestamp: '2026-08-11T00:00:05.000Z',
+      token_usage: { some_future_shape: true }   // 后端将来可能换形状：正向确认失败 ⇒ 视为"没有可用用量"
+    }
+    const m = mapper.toDomainMessage(rest, 'conv-1')
+    expect(m.usage).toBeUndefined()
+  })
+
+  it('C2：REST 侧形状吻合时同样映射（同一映射点，两条路径不各写一份）', () => {
+    const rest: RestMessage = {
+      message_id: 'msg-7', role: 'assistant', content: '回复', timestamp: '2026-08-11T00:00:06.000Z',
+      token_usage: { rounds: [{ input_tokens: 3, output_tokens: 4, total_tokens: 7, round_num: 1 }], turn_total: 7 }
+    }
+    expect(mapper.toDomainMessage(rest, 'conv-1').usage).toMatchObject({ input: 3, output: 4, total: 7 })
+  })
+
   it('toDomainMessageFromReplay:回放项 name/mood 处理', () => {
     const replay: RawSessionMessageItem = {
       role: 'tool', message_id: 'msg-4', timestamp: '2026-08-11T00:00:03.000Z',
