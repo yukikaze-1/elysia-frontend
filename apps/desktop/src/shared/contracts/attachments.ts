@@ -28,7 +28,7 @@ export interface PendingSticker {
 
 export type PendingSendItem = PendingAttachment | PendingSticker
 
-/** 上传文件描述符（Renderer→Preload 携带 file?/bytes?；Preload 以 webUtils 注入 path；IPC 至 Main 时 path?/bytes? 二选一） */
+/** 上传文件描述符（Renderer→Preload 携带 file?/bytes?；Preload 以 webUtils 注入**不可猜 fileRef**；IPC 至 Main 时 fileRef?/bytes? 二选一） */
 export interface UploadFileDescriptor {
   localId: string
   name: string
@@ -36,9 +36,23 @@ export interface UploadFileDescriptor {
   mediaType: string
   source: AttachmentSource
   kind?: AttachmentKind      // 校验阶段魔数判定的每文件 kind（P2-3：批量上传按文件 kind；可省略由后端魔数判定）
-  path?: string              // 仅 Preload 注入；Renderer 永不构造
-  bytes?: Uint8Array         // 仅粘贴型（pathless）
+  /**
+   * **S5-B2（2026-09-15）：不可猜文件引用**——Main 签发的会话内 token，由 Main 自己维护的
+   * `fileRef → realpath` 表解析。Preload 是**唯一**铸造点（`webUtils.getPathForFile` 的产物立刻登记换 token），
+   * `fileRef` 本身不含路径信息。
+   *
+   * **为什么要有它**：原设计此处是 Renderer 可传的裸 `path` 字符串。虽然实测证明 Renderer **伪造不出**
+   * 指向任意主机路径的 `File`（合成 File 的 `getPathForFile` 恒返空串，见
+   * `tests/integration/h01-fileref-probe.spec.ts`），但「路径由对端命名」这件事本身就是边界上的弱点：
+   * 它把安全性寄托在 Chromium 的 `getPathForFile` 行为上，且 Main 侧无从区分「用户真的选了这个文件」
+   * 与「对端说它选了」。改为 token 后，**Main 自己的表**成为信任锚——Renderer 只能引用 Main 登记过的文件。
+   */
+  fileRef?: string           // 仅 Preload 注入（Main 签发）；Renderer 永不构造，也无从构造
+  bytes?: Uint8Array         // 仅粘贴型（无文件句柄）
 }
+
+/** 文件引用登记响应（Preload → Main：递上 preload 解析出的真实路径，换回不可猜 token） */
+export interface FileRefRegisterResponse { fileRef: string }
 
 /** 校验结果（per-file） */
 export interface FileValidationResult { localId: string; ok: boolean; kind?: AttachmentKind; reason?: string; message?: string }

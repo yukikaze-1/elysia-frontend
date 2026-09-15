@@ -1,6 +1,7 @@
 // tests/unit/desktop-api-attachments.spec.ts
-// Task 11:preload attachments 面（spec §4.2/§3.2，D5）——webUtils.getPathForFile 注入 path、pathless 走 bytes、
-// path 不入返回面。env=node：mock 'electron' 的 ipcRenderer + webUtils。
+// Task 11:preload attachments 面（spec §4.2/§3.2，D5）——真实文件经 webUtils 解析后**登记换不可猜
+// fileRef**（S5-B2 2026-09-15：不再把路径写进 IPC 描述符）、pathless 走 bytes、fileRef/路径都不入返回面。
+// env=node：mock 'electron' 的 ipcRenderer + webUtils。
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { IpcChannels } from '@shared/contracts'
 
@@ -25,49 +26,86 @@ async function importApi() {
   return mod.desktopApi
 }
 
+/** S5-B2 后 preload 对每个真实文件会先打一次 `fileRefsRegister` 换 token，再打目标通道。
+ *  本 helper 把 mock 做成「按通道分流」，并保持调用序可断言。 */
+function mockByChannel(byChannel: Record<string, unknown>, fallback: unknown = { ok: true, data: [] }): void {
+  mockIpc.invoke.mockImplementation(async (channel: string) =>
+    channel in byChannel ? byChannel[channel] : fallback)
+}
+const REF_DATA = { ok: true, data: { fileRef: 'fileref_minted_1' } }
+
 beforeEach(() => {
   mockIpc.invoke.mockReset()
   mockWebUtils.getPathForFile.mockReset()
 })
 
 describe('desktopApi attachments 面', () => {
-  it('attachmentsValidate：真实文件经 webUtils 注入 path（path 在 invoke 入参，不在返回面）', async () => {
+  it('attachmentsValidate：真实文件经 webUtils 解析 → 先登记换 fileRef，描述符里**没有路径**', async () => {
     const api = await importApi()
     mockWebUtils.getPathForFile.mockReturnValue('/tmp/a.png')
-    mockIpc.invoke.mockResolvedValue({ ok: true, data: [{ localId: 'l1', ok: true, kind: 'image' }] })
+    mockByChannel({
+      [IpcChannels.fileRefsRegister]: REF_DATA,
+      [IpcChannels.attachmentsValidate]: { ok: true, data: [{ localId: 'l1', ok: true, kind: 'image' }] },
+    })
     const res = await api.attachmentsValidate({ files: [{ localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'picker', file: {} as File }] })
     expect(res).toEqual([{ localId: 'l1', ok: true, kind: 'image' }])
     expect(mockWebUtils.getPathForFile).toHaveBeenCalledTimes(1)
-    expect(mockIpc.invoke).toHaveBeenCalledWith(IpcChannels.attachmentsValidate, {
-      files: [{ localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'picker', path: '/tmp/a.png' }]
-    })
+    // ① 登记：路径交给 Main 换 token（这是全仓唯一的 fileRef 铸造点）
+    expect(mockIpc.invoke).toHaveBeenNthCalledWith(1, IpcChannels.fileRefsRegister, { path: '/tmp/a.png' })
+    // ② 目标通道：只带 token，**不带 path**
+    const payload = mockIpc.invoke.mock.calls[1][1] as { files: Array<Record<string, unknown>> }
+    expect(payload.files[0].fileRef).toBe('fileref_minted_1')
+    expect('path' in payload.files[0], 'S5-B2：路径不得进入 IPC 描述符').toBe(false)
   })
-  it('attachmentsValidate：pathless 文件（getPathForFile 返回空串）→ 走 bytes，path 缺省', async () => {
+  it('attachmentsValidate：pathless 文件（getPathForFile 返回空串）→ 走 bytes，fileRef 缺省，且不登记', async () => {
     // P1-2：f.file 为 JS 构造 File（粘贴项）时 getPathForFile 返 ''，但 bytes 必须保留——
-    // 断言 bytes 为 Uint8Array 且 length 正确；旧 else-if 实现下此断言必挂（descriptor 无 path 无 bytes）
+    // 断言 bytes 为 Uint8Array 且 length 正确；旧 else-if 实现下此断言必挂（descriptor 无 fileRef 无 bytes）
     const api = await importApi()
     mockWebUtils.getPathForFile.mockReturnValue('')
     mockIpc.invoke.mockResolvedValue({ ok: true, data: [{ localId: 'l1', ok: true, kind: 'file' }] })
     const bytes = new ArrayBuffer(2)
     await api.attachmentsValidate({ files: [{ localId: 'l1', name: 'a.bin', size: 2, mediaType: 'application/octet-stream', source: 'paste', file: {} as File, bytes }] })
-    const payload = mockIpc.invoke.mock.calls[0][1] as { files: Array<{ path?: string; bytes?: Uint8Array }> }
-    expect(payload.files[0].path).toBeUndefined()
+    // 没有路径 ⇒ 不产生登记调用（只有目标通道那一次）
+    expect(mockIpc.invoke).toHaveBeenCalledTimes(1)
+    expect(mockIpc.invoke).toHaveBeenNthCalledWith(1, IpcChannels.attachmentsValidate, expect.anything())
+    const payload = mockIpc.invoke.mock.calls[0][1] as { files: Array<{ fileRef?: string; bytes?: Uint8Array }> }
+    expect(payload.files[0].fileRef).toBeUndefined()
     expect(payload.files[0].bytes).toBeInstanceOf(Uint8Array)
     expect((payload.files[0].bytes as Uint8Array).length).toBe(2)
   })
-  it('P2-7：path 与 bytes 同时存在 → 优先 path，不填 bytes（保证二选一，zod refine 不整条拒）', async () => {
+  it('P2-7：有真实路径与 bytes 同时存在 → 优先 fileRef，不填 bytes（保证二选一，zod refine 不整条拒）', async () => {
     const api = await importApi()
     mockWebUtils.getPathForFile.mockReturnValue('/tmp/a.png')   // 真实路径
-    mockIpc.invoke.mockResolvedValue({ ok: true, data: [{ localId: 'l1', ok: true, kind: 'image' }] })
+    mockByChannel({
+      [IpcChannels.fileRefsRegister]: REF_DATA,
+      [IpcChannels.attachmentsValidate]: { ok: true, data: [{ localId: 'l1', ok: true, kind: 'image' }] },
+    })
     await api.attachmentsValidate({ files: [{ localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'paste', file: {} as File, bytes: new ArrayBuffer(2) }] })
-    const payload = mockIpc.invoke.mock.calls[0][1] as { files: Array<{ path?: string; bytes?: Uint8Array }> }
-    expect(payload.files[0].path).toBe('/tmp/a.png')
-    expect(payload.files[0].bytes).toBeUndefined()   // path 非空时不再填 bytes
+    const payload = mockIpc.invoke.mock.calls[1][1] as { files: Array<{ fileRef?: string; bytes?: Uint8Array }> }
+    expect(payload.files[0].fileRef).toBe('fileref_minted_1')
+    expect(payload.files[0].bytes).toBeUndefined()   // fileRef 非空时不再填 bytes
   })
-  it('attachmentsUpload：invoke 带 uploadId + files（path/bytes 二选一）', async () => {
+  it('同一 File 在 validate 与 upload 两次调用间复用同一 token（不重复登记）', async () => {
+    const api = await importApi()
+    const file = {} as File
+    mockWebUtils.getPathForFile.mockReturnValue('/tmp/reuse.png')
+    mockByChannel({
+      [IpcChannels.fileRefsRegister]: REF_DATA,
+      [IpcChannels.attachmentsValidate]: { ok: true, data: [{ localId: 'l1', ok: true, kind: 'image' }] },
+      [IpcChannels.attachmentsUpload]: { ok: true, data: { uploadId: 'u1', attachments: [] } },
+    })
+    await api.attachmentsValidate({ files: [{ localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'picker', file }] })
+    await api.attachmentsUpload({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'picker', file }] })
+    const registerCalls = mockIpc.invoke.mock.calls.filter((c) => c[0] === IpcChannels.fileRefsRegister)
+    expect(registerCalls, '同一 File 只登记一次').toHaveLength(1)
+  })
+  it('attachmentsUpload：invoke 带 uploadId + files（fileRef/bytes 二选一）', async () => {
     const api = await importApi()
     mockWebUtils.getPathForFile.mockReturnValue('/tmp/v.mp4')
-    mockIpc.invoke.mockResolvedValue({ ok: true, data: { uploadId: 'u1', attachments: [{ attachmentId: 'att_1', kind: 'video', mediaType: 'video/mp4' }] } })
+    mockByChannel({
+      [IpcChannels.fileRefsRegister]: REF_DATA,
+      [IpcChannels.attachmentsUpload]: { ok: true, data: { uploadId: 'u1', attachments: [{ attachmentId: 'att_1', kind: 'video', mediaType: 'video/mp4' }] } },
+    })
     const res = await api.attachmentsUpload({ uploadId: 'u1', files: [{ localId: 'l1', name: 'v.mp4', size: 1, mediaType: 'video/mp4', source: 'picker', file: {} as File }] })
     expect(res.attachments).toHaveLength(1)
     expect(mockIpc.invoke).toHaveBeenCalledWith(IpcChannels.attachmentsUpload, expect.objectContaining({ uploadId: 'u1' }))
@@ -114,17 +152,24 @@ describe('H-01：Renderer 无法把 path 注入 IPC 边界', () => {
     await api.attachmentsValidate({ files: [forged as never] })
     const payload = mockIpc.invoke.mock.calls[0][1] as { files: Array<Record<string, unknown>> }
     expect('path' in payload.files[0], '伪造 path 竟然抵达了 IPC —— preload 的字段白名单被改坏了').toBe(false)
+    expect('fileRef' in payload.files[0], '伪造 path 不得被提升成 fileRef').toBe(false)
     expect(payload.files[0]).toEqual({ localId: 'l1', name: 'x', size: 1, mediaType: 'text/plain', source: 'picker' })
   })
 
-  it('行为级 B：伪造 path ＋ 真实 file ⇒ getPathForFile 赢（伪造值被覆盖）', async () => {
+  it('行为级 B：伪造 path ＋ 真实 file ⇒ 只有 webUtils 的结果能被登记，伪造值被覆盖', async () => {
     const api = await importApi()
     mockWebUtils.getPathForFile.mockReturnValue('/real/a.png')
-    mockIpc.invoke.mockResolvedValue({ ok: true, data: [] })
+    mockByChannel({
+      [IpcChannels.fileRefsRegister]: REF_DATA,
+      [IpcChannels.attachmentsValidate]: { ok: true, data: [] },
+    })
     const forged = { localId: 'l1', name: 'x', size: 1, mediaType: 'image/png', source: 'picker', file: {} as File, path: '/etc/shadow' }
     await api.attachmentsValidate({ files: [forged as never] })
-    const payload = mockIpc.invoke.mock.calls[0][1] as { files: Array<Record<string, unknown>> }
-    expect(payload.files[0].path).toBe('/real/a.png')
+    // 登记的是 getPathForFile 的产物（/real/a.png），不是伪造的 /etc/shadow
+    expect(mockIpc.invoke).toHaveBeenNthCalledWith(1, IpcChannels.fileRefsRegister, { path: '/real/a.png' })
+    const payload = mockIpc.invoke.mock.calls[1][1] as { files: Array<Record<string, unknown>> }
+    expect(payload.files[0].fileRef).toBe('fileref_minted_1')
+    expect(JSON.stringify(payload), '伪造路径不得出现在 IPC 载荷的任何位置').not.toContain('/etc/shadow')
   })
 
   it('行为级 C：upload 通道同样吃不到伪造 path', async () => {

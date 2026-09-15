@@ -8,6 +8,7 @@ import type { BackendAdapter, UploadContent } from '../transport/backend-adapter
 import type { SafeOpenPlatform } from '../persistence/safe-open'
 import { precheckFiles, sniffKind, sizeLimitFor, wireKindHint } from './attachment-policy'
 import { isPathBlacklisted } from '../tools/tool-policy'
+import type { FileRefRegistry } from './file-ref'
 
 export interface UploadFs {
   realpath(p: string): Promise<string>
@@ -20,6 +21,11 @@ export interface UploadServiceDeps {
   backend: Pick<BackendAdapter, 'uploadAttachments'>
   userDataBase: () => string
   platform: SafeOpenPlatform
+  /**
+   * S5-B2（2026-09-15）：不可猜文件引用表（Main 签发 token → 路径）。
+   * 缺省不提供 ⇒ 任何带 `fileRef` 的描述符一律 fail-closed（`forbidden_path`）：这条链**永远不接受裸路径**。
+   */
+  fileRefs?: FileRefRegistry
   fs?: UploadFs
 }
 
@@ -32,14 +38,14 @@ function isInside(root: string, p: string): boolean {
 /**
  * 敏感路径黑名单（H-01，2026-09-11）。
  *
- * 背景：`UploadFileDescriptor.path` 是 **Renderer 可传的裸字符串**（`channels.ts` 只限长度 1024），
- * Main 侧此前的唯一边界是「排除 userData 一个目录」+「须为普通文件」+「按魔数嗅探的大小上限」。
+ * 背景：附件链此前的唯一边界是「排除 userData 一个目录」+「须为普通文件」+「按魔数嗅探的大小上限」。
  * 工具域早就有 `PATH_BLACKLIST_DEFAULTS`（`~/.ssh`、`~/.aws`、`~/.gnupg`、`.env`、`.git-credentials`…），
  * 但它**在这条链上一次都没被调用**——于是「Renderer 被攻陷 → 读任意文件 → POST 到任意 HTTPS 主机」
  * 这条链条成立（违反 CLAUDE.md 的进程边界不变量：Renderer 不得指认本地路径）。
  *
- * 本条为**止血**：只把既有黑名单接进来，不改 preload↔Main 的附件契约（`path` 仍在）。
- * 结构性修法（Main 签发不可猜 fileRef、`path` 只由 `webUtils.getPathForFile` 铸造）另议，见 doc 16 §5。
+ * 本条为**止血**：只把既有黑名单接进来。
+ * **结构性修法已于 2026-09-15 落地（S5-B2）**：`UploadFileDescriptor.path` 已从 IPC 面移除，改由 Main 签发的
+ * 不可猜 `fileRef`（`file-ref.ts`）解析 ⇒ 对端再也无法在本通道上命名主机路径。
  * 传入的必须是 realpath 后的路径——黑名单按 realpath 段边界匹配，符号链接已在此之前解开。
  */
 function blacklistMessage(realPath: string, platformKind: 'posix' | 'windows'): string | undefined {
@@ -87,13 +93,26 @@ export class UploadService {
   private readonly platform: SafeOpenPlatform
   private readonly backend: UploadServiceDeps['backend']
   private readonly userDataBase: () => string
+  private readonly fileRefs?: FileRefRegistry
   private readonly active = new Map<string, AbortController>()
 
   constructor(deps: UploadServiceDeps) {
     this.backend = deps.backend
     this.userDataBase = deps.userDataBase
     this.platform = deps.platform
+    this.fileRefs = deps.fileRefs
     this.fs = deps.fs ?? realFs()
+  }
+
+  /**
+   * S5-B2：把 `fileRef` 解析回路径。**这是本文件里唯一的「token → 路径」入口**，也是结构性修法的承重点。
+   *
+   * fail-closed 三态：未提供 registry / token 未知 / token 已过期 ⇒ 一律 `undefined`，
+   * 由调用方转成 `forbidden_path`（**不是**「无法读取文件」——那是"路径合法但读不到"，
+   * 两者混在一起会让伪造 token 与真实 IO 故障在日志里无法区分）。
+   */
+  private resolveFileRef(fileRef: string): string | undefined {
+    return this.fileRefs?.resolve(fileRef)
   }
 
   async validateFiles(descriptors: UploadFileDescriptor[]): Promise<FileValidationResult[]> {
@@ -114,20 +133,26 @@ export class UploadService {
         results.push({ localId: d.localId, ok: false, reason: perFile.reason, message: perFile.reason === 'size_limit' ? '超过该类型大小上限' : '不支持的文件类型' })
         continue
       }
-      if (d.path) {
+      const source = d.fileRef !== undefined ? this.resolveFileRef(d.fileRef) : undefined
+      if (d.fileRef !== undefined && source === undefined) {
+        // S5-B2：未知/过期 token —— 与「路径被黑名单拦」同类（禁止面），不落成 not_readable
+        results.push({ localId: d.localId, ok: false, reason: 'forbidden_path', message: '文件引用无效或已过期，请重新选择文件' })
+        continue
+      }
+      if (source !== undefined) {
         try {
-          const real = await this.fs.realpath(d.path)
+          const real = await this.fs.realpath(source)
           if (isInside(this.userDataBase(), real)) {
             results.push({ localId: d.localId, ok: false, reason: 'forbidden_path', message: '拒绝上传应用数据目录内的文件' })
             continue
           }
-          // H-01：工具域既有黑名单在这条链上从未被调用
+          // H-01：工具域既有黑名单在这条链上此前从未被调用
           const blocked = blacklistMessage(real, this.platform.kind)
           if (blocked) {
             results.push({ localId: d.localId, ok: false, reason: 'forbidden_path', message: blocked })
             continue
           }
-          const fd = await this.fs.open(d.path, this.platform.existingReadFlags)
+          const fd = await this.fs.open(source, this.platform.existingReadFlags)
           let st
           try { st = await fd.stat() } finally { await fd.close() }
           if (!st.isFile()) {
@@ -135,11 +160,11 @@ export class UploadService {
             continue
           }
           const head = new Uint8Array(HEAD_LEN)
-          const hfd = await this.fs.open(d.path, this.platform.existingReadFlags)
+          const hfd = await this.fs.open(source, this.platform.existingReadFlags)
           let bytesRead = 0
           try { bytesRead = (await hfd.read(head, 0, HEAD_LEN)).bytesRead } finally { await hfd.close() }
           const kind = sniffKind(head.subarray(0, bytesRead))
-          const fsStat = await this.fs.stat(d.path)
+          const fsStat = await this.fs.stat(source)
           if (fsStat.size > sizeLimitFor(kind)) {
             results.push({ localId: d.localId, ok: false, reason: 'size_limit', message: '超过该类型大小上限' })
             continue
@@ -151,7 +176,7 @@ export class UploadService {
       } else if (d.bytes) {
         results.push({ localId: d.localId, ok: true, kind: sniffKind(d.bytes.subarray(0, HEAD_LEN)) })
       } else {
-        results.push({ localId: d.localId, ok: false, reason: 'invalid', message: '缺少 bytes/path' })
+        results.push({ localId: d.localId, ok: false, reason: 'invalid', message: '缺少 bytes/fileRef' })
       }
     }
     return results
@@ -163,34 +188,37 @@ export class UploadService {
     try {
       const uploads: UploadContent[] = []
       for (const d of descriptors) {
-        if (d.path) {
-          // P2-2：敏感范围复验（realpath+isInside，与 validateFiles 同级防御，防 Renderer 伪造 path）
-          const real = await this.fs.realpath(d.path)
+        const source = d.fileRef !== undefined ? this.resolveFileRef(d.fileRef) : undefined
+        if (d.fileRef !== undefined && source === undefined) {
+          throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `文件引用无效或已过期: ${d.localId}`)
+        }
+        if (source !== undefined) {
+          // P2-2：敏感范围复验（realpath+isInside，与 validateFiles 同级防御）
+          const real = await this.fs.realpath(source)
           if (isInside(this.userDataBase(), real)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `拒绝上传应用数据目录内的文件: ${d.localId}`)
-          // H-01：与 validateFiles 同级复验（防 Renderer 绕过校验直接 upload）
+          // H-01：与 validateFiles 同级复验（防对端绕过校验直接 upload）
           const blocked = blacklistMessage(real, this.platform.kind)
           if (blocked) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `${blocked}: ${d.localId}`)
-          // 上传前 fs.stat 复验：实际大小与普通文件（防 Renderer 伪造描述符/队列状态漂移，spec §4.5）
-          const st = await this.fs.stat(d.path)
+          // 上传前 fs.stat 复验：实际大小与普通文件（防描述符/队列状态漂移，spec §4.5）
+          const st = await this.fs.stat(source)
           if (!st.isFile()) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件不是普通文件: ${d.localId}`)
           // P2-1：kind 复验与 validateFiles 统一用 sniffKind（魔数），不用 kindFromMime（MIME 可伪造）——查限一致
           const head = new Uint8Array(HEAD_LEN)
-          const hfd = await this.fs.open(d.path, this.platform.existingReadFlags)
+          const hfd = await this.fs.open(source, this.platform.existingReadFlags)
           let bytesRead = 0
           try { bytesRead = (await hfd.read(head, 0, HEAD_LEN)).bytesRead } finally { await hfd.close() }
           const kind = sniffKind(head.subarray(0, bytesRead))
           if (st.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
-          // H-01 结构性收窄（2026-09-14）：**不再把 path 传给后端层**——这里读成 bytes 后，路径到此为止。
-          // （原先同时传 path，使 real-backend 留了一个无 realpath/无黑名单的 `fs.readFile(path)` 回退；
-          //   实测那条回退从未执行。现 `UploadContent.bytes` 必填 ⇒「path → fs」全仓只剩本文件一处。）
-          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind: wireKindHint(kind, d.mediaType), bytes: new Uint8Array(await this.fs.readFile(d.path)) })
+          // H-01 结构性修法（S5-B2，2026-09-15）：路径来自 **Main 自己的 `fileRef` 表**（对端无从命名），
+          // 且这里读成 bytes 后路径到此为止（`UploadContent.bytes` 必填）⇒「path → fs」全仓只剩本文件一处。
+          uploads.push({ name: d.name, mediaType: d.mediaType, size: st.size, kind: wireKindHint(kind, d.mediaType), bytes: new Uint8Array(await this.fs.readFile(source)) })
         } else if (d.bytes) {
           // P2-1：bytes 分支也按魔数嗅探 kind 复验大小（此前无大小复验）
           const kind = sniffKind(d.bytes.subarray(0, HEAD_LEN))
           if (d.size > sizeLimitFor(kind)) throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件超过大小上限: ${d.localId}`)
           uploads.push({ name: d.name, mediaType: d.mediaType, size: d.size, kind: wireKindHint(kind, d.mediaType), bytes: d.bytes })
         } else {
-          throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件缺少 bytes/path: ${d.localId}`)
+          throw new CyreneError(CyreneErrorCode.INVALID_INPUT, `附件缺少 bytes/fileRef: ${d.localId}`)
         }
       }
       // P1-1：把 active controller 的 signal 传给 backend——cancel(uploadId) abort 后，RealBackend 经

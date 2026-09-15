@@ -35,7 +35,9 @@ const LIMIT_CHECKS: Array<{ label: string; base: Record<string, unknown>; schema
   { label: 'search query maxLength >= 512', base: { scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 10 }, schema: chatQueryHistorySchema, field: 'query', min: 512, over: 'x'.repeat(513) },
   { label: 'send content maxLength >= 65536', base: { conversationId: 'c1', clientRequestId: 'r1' }, schema: chatSendSchema, field: 'text', min: 65536, over: 'x'.repeat(65537) },
   { label: 'voice commit text maxLength >= 10240', base: { recordingId: 'r1', conversationId: 'c1', clientRequestId: 'r1', clientMessageId: 'm1' }, schema: voiceCommitSchema, field: 'text', min: 10240, over: 'x'.repeat(10241) },
-  { label: 'attachment path maxLength >= 1024', base: { localId: 'l1', name: 'a.log', size: 1, mediaType: 'text/plain', source: 'picker', kind: 'file' }, schema: UploadFileDescriptorSchema, field: 'path', min: 1024, over: 'x'.repeat(1025) },
+  // S5-B2（2026-09-15）：原「attachment path maxLength >= 1024」随 `path` 字段一并下线——
+  // 该字段已从 IPC 描述符移除，取而代之的是 Main 签发的不可猜 `fileRef`（上界 128）。
+  { label: 'attachment fileRef maxLength >= 128', base: { localId: 'l1', name: 'a.log', size: 1, mediaType: 'text/plain', source: 'picker', kind: 'file' }, schema: UploadFileDescriptorSchema, field: 'fileRef', min: 128, over: 'x'.repeat(129) },
 ]
 
 describe('ipc-limit（spec §4.1——D7A-13 值表：无界字段 maxLength 补值契约钉）', () => {

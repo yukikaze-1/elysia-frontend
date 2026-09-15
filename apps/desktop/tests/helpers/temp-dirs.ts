@@ -57,6 +57,9 @@ export const TEST_TEMP_PREFIXES: readonly string[] = [
   'cy-fw-t-',
   'cy-h11b-',
   'cy-h11b2-',
+  // S5-B2 取证探针（h01-fileref-probe.spec.ts）：探针文件目录 + 诊断 preload 目录
+  'cy-h01-probe-',
+  'cy-h01-preload-',
   'cy-hist-',
   'cy-int-ud-',
   'cy-l2d-master-',

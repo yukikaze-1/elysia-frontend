@@ -238,6 +238,8 @@ export const AttachmentCheckResultSchema = z.object({
   status: z.enum(['ok', 'expired', 'not_found', 'revoked', 'error']),
   reason: z.string().optional()
 })
+// S5-B2（2026-09-15）：fileRef 登记响应（preload 用）。token 格式由 Main 固定为 `fileref_<64 hex>`
+export const FileRefRegisterResponseSchema = z.object({ fileRef: z.string().min(1) })
 
 export const ReplayPayloadSchema = z.object({
   conversationId: z.string().min(1),

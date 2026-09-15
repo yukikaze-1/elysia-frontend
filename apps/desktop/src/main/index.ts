@@ -47,6 +47,7 @@ import { MockCharacterBackend } from './characters/mock-character-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
 import { UploadService } from './attachments/upload-service'
+import { createFileRefRegistry } from './attachments/file-ref'
 import { MediaService } from './attachments/media-service'
 import { defaultSafeOpenPlatform } from './persistence/safe-open'
 import { Live2DModelRegistry } from './live2d/model-registry'
@@ -520,10 +521,16 @@ async function main(): Promise<void> {
     chatBridge.svc = chatSvc
     // 阶段 3 G3 附件服务装配（spec §4.4/§4.5）：mediaSvc 需 connConfig.getEndpoint()（签发表 target 为后端 baseUrl），
     // 故放在 connConfig 创建之后、registerHandlers 之前；UploadService 经 adapter 直读盘（D5 路径只在 Main）。
+    //
+    // S5-B2（2026-09-15，H-01 结构性修法）：`fileRefs` 是**不可猜文件引用表**，也是本链路的信任锚——
+    // 附件链从此不接受任何裸路径（IPC schema 已移除 `path`），只接受 Main 自己签发的 token。
+    // 断线重连时清空（见 chatSvc 的 reconnect 装配点）：token 是会话内凭证，不跨连接复用。
+    const fileRefs = createFileRefRegistry()
     const uploadSvc = new UploadService({
       backend: adapter,
       userDataBase: expectedUserDataBase,
-      platform: defaultSafeOpenPlatform()
+      platform: defaultSafeOpenPlatform(),
+      fileRefs
     })
     const mediaSvc = new MediaService({
       backend: adapter,
@@ -544,7 +551,7 @@ async function main(): Promise<void> {
       },
       onTimeout: () => diagnostics?.logger.warn('persist-flush:timeout', { message: '退出前 Renderer 持久化 flush 未在预算内确认' })
     })
-    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, characterDrafts, attachments: { svc: uploadSvc, media: mediaSvc }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, characters: { service: characterService }, persistFlush, audit })
+    registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, characterDrafts, attachments: { svc: uploadSvc, media: mediaSvc, fileRefs }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, characters: { service: characterService }, persistFlush, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [
         // H-04：最先 flush Renderer 侧防抖态——它是最容易丢且最贴近用户输入的一批写入

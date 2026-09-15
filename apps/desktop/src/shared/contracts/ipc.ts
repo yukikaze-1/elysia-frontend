@@ -26,6 +26,7 @@ export const IpcChannels = {
   attachmentsUpload: 'attachments:upload',               // 阶段 3 G3：批量 multipart 上传（batch 原子）
   attachmentsCancel: 'attachments:cancel',               // 阶段 3 G3：上传取消（AbortController）
   attachmentsCheck: 'attachments:check',                 // 阶段 3 G3：媒体状态分类（重签后 Range-0 探测）
+  fileRefsRegister: 'attachments:register-file-ref',     // S5-B2：preload 登记真实路径换不可猜 fileRef（唯一铸造点）
   chatQueryHistory: 'chat:query-history',                // 阶段 3 G4：聊天历史统一查询（scope/query/localDate/category/分页）
   chatGetMessageContext: 'chat:get-message-context',     // 阶段 3 G4：来源跳转上下文窗口
   chatListStickers: 'chat:list-stickers',                // 阶段 3 G4：内置表情包清单（StickerManifest）

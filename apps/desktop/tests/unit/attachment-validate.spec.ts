@@ -27,9 +27,20 @@ function fakeFs(over: Partial<UploadFs> = {}): UploadFs {
 
 const desc = (p: Partial<UploadFileDescriptor>): UploadFileDescriptor => ({ localId: 'l1', name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', ...p })
 
+// S5-B2（2026-09-15）：描述符不再带裸 `path`，改带 Main 签发的 `fileRef`。本组用例的**意图一字未变**
+// （userData 范围 / 黑名单 / 非普通文件 / 大小限额），只是把「路径」从描述符字段移到桩 registry 里——
+// 这正对应改造后的真实结构：路径只存在于 Main 的表里。
+const REF = 'fileref_test'
+const refs = (path: string) => ({ issue: () => REF, resolve: (r: string) => (r === REF ? path : undefined), clear: () => {}, size: () => 1 })
+
 function svc(fs: UploadFs = fakeFs(), userDataBase = '/home/u/.cyrene'): UploadService {
-  return new UploadService({ backend: { uploadAttachments: async () => [] }, userDataBase: () => userDataBase, platform: posixPlatform, fs })
+  // 桩表指向一个中性路径：具体读什么由注入的假 fs 决定（realpath 覆写是各用例的实际判据入口）。
+  // 默认值必须落在**非黑名单**范围（同 HOME_DOC 的理由：`/home/u/...` 会命中「他人 home」规则）。
+  return new UploadService({ backend: { uploadAttachments: async () => [] }, userDataBase: () => userDataBase, platform: posixPlatform, fs, fileRefs: refs(`${HOME_DOC}/neutral.png`) })
 }
+
+/** 把「路径型描述符」写成 fileRef 形态（用例可读性用；具体路径由假 fs 的 realpath 决定） */
+const byRef = (p: Partial<UploadFileDescriptor>): UploadFileDescriptor => desc({ fileRef: REF, ...p })
 
 describe('UploadService.validateFiles', () => {
   it('数量 > 10 → 逐项 failed(too_many)', async () => {
@@ -39,27 +50,35 @@ describe('UploadService.validateFiles', () => {
     expect(r[0].ok).toBe(false)
     expect(r[0].reason).toBe('too_many')
   })
-  it('粘贴型（无 path，有 bytes）→ 魔数嗅探 kind + ok', async () => {
+  it('粘贴型（无 fileRef，有 bytes）→ 魔数嗅探 kind + ok', async () => {
     const r = await svc().validateFiles([desc({ source: 'paste', bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47]) })])
     expect(r).toEqual([{ localId: 'l1', ok: true, kind: 'image' }])
   })
   it('路径型 → 打开失败（非普通文件）→ failed(not_readable)', async () => {
     const fs = fakeFs({ open: async () => { throw new Error('EISDIR') } })
-    const r = await svc(fs).validateFiles([desc({ path: HOME_DOC })])
+    const r = await svc(fs).validateFiles([byRef({})])
     expect(r[0].ok).toBe(false)
     expect(r[0].reason).toBe('not_readable')
   })
   it('路径在 userData 敏感范围 → failed(forbidden_path)', async () => {
     const fs = fakeFs({ realpath: async () => '/home/u/.cyrene/credentials.json' })
-    const r = await svc(fs).validateFiles([desc({ path: '/home/u/.cyrene/credentials.json' })])
+    const r = await svc(fs).validateFiles([byRef({})])
     expect(r[0].ok).toBe(false)
     expect(r[0].reason).toBe('forbidden_path')
+  })
+
+  // S5-B2：未知/过期 token 走 forbidden_path（**不是** not_readable——伪造引用与真实 IO 故障必须可区分）
+  it('未知/过期 fileRef → failed(forbidden_path)，且明确文案', async () => {
+    const r = await svc().validateFiles([desc({ fileRef: 'fileref_forged' })])
+    expect(r[0].ok).toBe(false)
+    expect(r[0].reason).toBe('forbidden_path')
+    expect(r[0].message).toContain('引用无效或已过期')
   })
 
   // H-01（2026-09-11）：工具域既有的 PATH_BLACKLIST_DEFAULTS 此前在这条链上一次都没被调用
   it('路径在黑名单（/etc）→ failed(forbidden_path) + 明确文案', async () => {
     const fs = fakeFs({ realpath: async () => '/etc/passwd' })
-    const r = await svc(fs).validateFiles([desc({ path: '/etc/passwd' })])
+    const r = await svc(fs).validateFiles([byRef({})])
     expect(r[0].ok).toBe(false)
     expect(r[0].reason).toBe('forbidden_path')
     expect(r[0].message).toContain('敏感目录')
@@ -68,7 +87,7 @@ describe('UploadService.validateFiles', () => {
   it('合法用户目录不被黑名单误伤（否则附件功能整体不可用）', async () => {
     const target = `${HOME_DOC}/a.png`
     const fs = fakeFs({ realpath: async () => target })
-    const r = await svc(fs).validateFiles([desc({ path: target })])
+    const r = await svc(fs).validateFiles([byRef({})])
     expect(r[0].ok, '普通用户目录必须仍然可用').toBe(true)
   })
   it('聚合超 64MB → failed(too_large_aggregate)', async () => {
@@ -83,8 +102,8 @@ describe('UploadService.validateFiles', () => {
   it('P1-1：混合批次——单文件超限只 fail 该文件，其余合法文件 ok:true 继续（逐项校验，spec §4.3/§4.4）', async () => {
     const over = 11 * 1024 * 1024   // image 限 10MB
     const r = await svc().validateFiles([
-      desc({ localId: 'a', size: over, mediaType: 'image/png', path: `${HOME_DOC}/a.png` }),
-      desc({ localId: 'b', size: 10, mediaType: 'image/png', path: `${HOME_DOC}/b.png` })
+      desc({ localId: 'a', size: over, mediaType: 'image/png', fileRef: REF }),
+      desc({ localId: 'b', size: 10, mediaType: 'image/png', fileRef: REF })
     ])
     expect(r).toEqual([
       { localId: 'a', ok: false, reason: 'size_limit', message: '超过该类型大小上限' },

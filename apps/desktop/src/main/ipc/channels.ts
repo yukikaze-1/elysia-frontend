@@ -76,14 +76,22 @@ export const UploadFileDescriptorSchema = z.object({
   mediaType: z.string().min(1),
   source: z.enum(['picker', 'drag_drop', 'paste']),
   kind: z.enum(['image', 'video', 'audio', 'file', 'link']).optional(),
-  path: z.string().max(1024).optional(),   // D7A-13：attachment 路径 1024 上界（无界字段补值）
+  // S5-B2（2026-09-15）：**path 已从 IPC 面移除**，改为 Main 签发的不可猜 fileRef（见 file-ref.ts）。
+  // 对端再也无法在本通道上命名主机路径——它能做的只有「引用 Main 登记过的文件」。
+  fileRef: z.string().min(1).max(128).optional(),
   bytes: z.instanceof(Uint8Array).optional()
-}).refine((d) => (d.path !== undefined) !== (d.bytes !== undefined), { message: 'path/bytes 二选一' })
+}).refine((d) => (d.fileRef !== undefined) !== (d.bytes !== undefined), { message: 'fileRef/bytes 二选一' })
 
 export const attachmentsValidateSchema = z.object({ files: z.array(UploadFileDescriptorSchema).min(1).max(10) })
 export const attachmentsUploadSchema = z.object({ uploadId: z.string().min(1), files: z.array(UploadFileDescriptorSchema).min(1).max(10) })
 export const attachmentsCancelSchema = z.object({ uploadId: z.string().min(1) })
 export const attachmentsCheckSchema = z.object({ attachmentId: z.string().min(1) })
+
+// —— S5-B2：preload 把 webUtils.getPathForFile 的产物登记换 token（唯一铸造点；Main 才是信任锚）——
+// 入参是路径字符串：这条通道只被 preload 调用，且即便对端直调也无收益——它登记什么，就只能引用什么，
+// 而引用之后 realpath/userData/黑名单/大小/魔数复核逐条照旧（本通道不构成新的放行面）。
+export const fileRefsRegisterSchema = z.object({ path: z.string().min(1).max(4096) })
+
 
 // —— chat 历史查看器/表情 request schema（spec §4.3；响应 schema 在 shared/schemas/ipc-response）——
 export const chatQueryHistorySchema = z.object({

@@ -78,32 +78,40 @@ describe('附件/队列/上传契约（spec §4.2）', () => {
     expect(st.kind).toBe('sticker')
     expect(st.status).toBe('ready')
   })
-  it('UploadFileDescriptor 二选一承载 path/bytes（path 仅 Preload 注入）', () => {
+  it('UploadFileDescriptor 二选一承载 fileRef/bytes（fileRef 仅 Preload 注入，且**契约上已无 path**）', () => {
     const d: UploadFileDescriptor = { localId: 'l1', name: 'a.png', size: 1, mediaType: 'image/png', source: 'paste', bytes: new Uint8Array(2) }
-    expect(d.path).toBeUndefined()
+    expect(d.fileRef).toBeUndefined()
     expect(d.bytes).toBeInstanceOf(Uint8Array)
+    // S5-B2 承重断言：`path` 必须**不在** IPC 描述符契约里——对端无从在本通道上命名主机路径。
+    // （类型级判据：一旦有人把 path 加回来，`false` 无法赋给 `true` ⇒ typecheck 立即红。）
+    const noPathField: 'path' extends keyof UploadFileDescriptor ? false : true = true
+    expect(noPathField, 'UploadFileDescriptor 不得再有 path 字段（S5-B2）').toBe(true)
   })
-  it('IPC 四通道常量存在', () => {
+  it('IPC 五通道常量存在（S5-B2 新增 fileRefsRegister）', () => {
     expect(IpcChannels.attachmentsValidate).toBe('attachments:validate')
     expect(IpcChannels.attachmentsUpload).toBe('attachments:upload')
     expect(IpcChannels.attachmentsCancel).toBe('attachments:cancel')
     expect(IpcChannels.attachmentsCheck).toBe('attachments:check')
+    expect(IpcChannels.fileRefsRegister).toBe('attachments:register-file-ref')
   })
 })
 
 describe('IPC request/response schema（spec §4.2/§4.5）', () => {
-  it('attachmentsValidateSchema 收 files[1..10]，path/bytes 二选一', () => {
+  it('attachmentsValidateSchema 收 files[1..10]，fileRef/bytes 二选一', () => {
     const ok = attachmentsValidateSchema.safeParse({ files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'image/png', source: 'paste', bytes: new Uint8Array(2) }] })
     expect(ok.success).toBe(true)
-    const noBoth = attachmentsValidateSchema.safeParse({ files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'image/png', source: 'picker', path: '/tmp/a', bytes: new Uint8Array(2) }] })
-    expect(noBoth.success).toBe(false)   // path/bytes 二选一
+    const noBoth = attachmentsValidateSchema.safeParse({ files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'image/png', source: 'picker', fileRef: 'fileref_x', bytes: new Uint8Array(2) }] })
+    expect(noBoth.success).toBe(false)   // fileRef/bytes 二选一
     const empty = attachmentsValidateSchema.safeParse({ files: [] })
     expect(empty.success).toBe(false)    // min(1)
-    const over = attachmentsValidateSchema.safeParse({ files: Array.from({ length: 11 }, (_, i) => ({ localId: `l${i}`, name: 'a', size: 1, mediaType: 'x', source: 'picker' as const, path: '/tmp/a' })) })
+    const over = attachmentsValidateSchema.safeParse({ files: Array.from({ length: 11 }, (_, i) => ({ localId: `l${i}`, name: 'a', size: 1, mediaType: 'x', source: 'picker' as const, fileRef: 'fileref_x' })) })
     expect(over.success).toBe(false)     // max(10)
+    // S5-B2：裸 `path` 已不在本通道的 schema 上——递上去只会被当作未知键丢弃，且整条因缺 fileRef/bytes 而拒
+    const barePath = attachmentsValidateSchema.safeParse({ files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'x', source: 'picker', path: '/etc/passwd' }] })
+    expect(barePath.success, 'S5-B2：本通道不得再接受裸路径').toBe(false)
   })
   it('attachmentsUploadSchema 需 uploadId + files[1..10]', () => {
-    expect(attachmentsUploadSchema.safeParse({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'x', source: 'picker', path: '/tmp/a' }] }).success).toBe(true)
+    expect(attachmentsUploadSchema.safeParse({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'x', source: 'picker', fileRef: 'fileref_x' }] }).success).toBe(true)
     expect(attachmentsUploadSchema.safeParse({ files: [] }).success).toBe(false)
     expect(attachmentsUploadSchema.safeParse({ uploadId: '', files: [] }).success).toBe(false)
   })

@@ -96,6 +96,9 @@ export const IPC_CHANNEL_BUDGETS: Readonly<Record<string, ChannelBudget>> = {
   'attachments:validate': schemaBounded('≤10 个 descriptor'),
   'attachments:cancel': schemaBounded('uploadId'),
   'attachments:check': schemaBounded('attachmentId'),
+  // S5-B2（2026-09-15）：fileRef 铸造通道——入参是 preload 解析出的本机路径（≤4096），
+  // 出参是不可猜 token。本通道不承载用户数据，故按字段级上界声明。
+  'attachments:register-file-ref': schemaBounded('path ≤4096（preload 铸造点；出参为 Main 签发的 token）'),
   'voice:start-record': schemaBounded('recordingId'),
   'voice:stop-record': schemaBounded('recordingId'),
   'voice:discard': schemaBounded('recordingId'),

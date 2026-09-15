@@ -14,6 +14,7 @@ import type { SessionStore } from '../persistence/session-store'
 import { registerAttachmentsHandlers } from '../attachments/attachments-handlers'
 import type { UploadService } from '../attachments/upload-service'
 import type { MediaService } from '../attachments/media-service'
+import type { FileRefRegistry } from '../attachments/file-ref'
 import type { BackendAdapter } from '../transport/backend-adapter'
 import { registerModelHandlers } from '../models/model-handlers'
 import { registerSettingsHandlers } from '../settings/settings-handlers'
@@ -39,7 +40,7 @@ import type { PersistFlushRequester } from '../persistence/persist-flush'
 
 export function registerHandlers(deps: {
   credentials: CredentialStore; logger: Logger; chat: ChatService; connectionConfig: ConnectionConfig; sessionStore: SessionStore;
-  attachments: { svc: UploadService; media: MediaService }
+  attachments: { svc: UploadService; media: MediaService; fileRefs: FileRefRegistry }
   models: { adapter: BackendAdapter; media: MediaService }
   settings: { svc: SettingsService }
   voice: { adapter: BackendAdapter; media: MediaService }
@@ -61,7 +62,7 @@ export function registerHandlers(deps: {
   registerCredentialsHandlers(deps.credentials, { logger: deps.logger, sanitize, audit: deps.audit }, deps.connectionConfig)
   registerChatHandlers({ svc: deps.chat, sanitize, logger: deps.logger })
   registerPersistenceHandlers({ sessionStore: deps.sessionStore, sanitize, logger: deps.logger })
-  registerAttachmentsHandlers({ svc: deps.attachments.svc, media: deps.attachments.media, sanitize, logger: deps.logger })
+  registerAttachmentsHandlers({ svc: deps.attachments.svc, media: deps.attachments.media, fileRefs: deps.attachments.fileRefs, sanitize, logger: deps.logger })
   registerModelHandlers({ adapter: deps.models.adapter, media: deps.models.media, sanitize, logger: deps.logger })
   registerSettingsHandlers({ settings: deps.settings.svc, sanitize, logger: deps.logger })
   registerVoiceHandlers({ adapter: deps.voice.adapter, media: deps.voice.media, sanitize, logger: deps.logger })

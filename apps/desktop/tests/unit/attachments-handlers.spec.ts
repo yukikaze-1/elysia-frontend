@@ -19,7 +19,7 @@ describe('attachments handler（createIpcHandler 接线）', () => {
   })
   it('attachments:upload 成功 → ok:true 带 AttachmentsUploadResponse', async () => {
     const h = createIpcHandler(attachmentsUploadSchema, AttachmentsUploadResponseSchema, async () => ({ uploadId: 'u1', attachments: [] }), { sanitize, channel: 'attachments:upload', logger })
-    const res = await h({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'x', source: 'picker', path: '/tmp/a' }] })
+    const res = await h({ uploadId: 'u1', files: [{ localId: 'l1', name: 'a', size: 1, mediaType: 'x', source: 'picker', fileRef: 'fileref_x' }] })
     expect(res.ok).toBe(true)
   })
   it('request 非法 → ok:false SCHEMA_VALIDATION_FAILED', async () => {

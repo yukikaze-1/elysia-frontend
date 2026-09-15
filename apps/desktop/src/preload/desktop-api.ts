@@ -125,6 +125,7 @@ import {
   DiagnosticsStateSchema,
   EndpointResponseSchema,
   FileValidationResultSchema,
+  FileRefRegisterResponseSchema,
   GrantDirectoryResponseSchema,
   GrantListResponseSchema,
   HistoryResponseSchema,
@@ -428,27 +429,55 @@ async function openExternal(url: string): Promise<void> {
 // —— 阶段 3 G3 attachments 面（spec §4.2，D5：path 仅 Preload 注入，不入返回面）——
 export interface AttachmentInputFile { localId: string; name: string; size: number; mediaType: string; source: 'picker' | 'drag_drop' | 'paste'; kind?: 'image' | 'video' | 'audio' | 'file' | 'link'; file?: File; bytes?: ArrayBuffer }
 
-function toIpcDescriptor(f: AttachmentInputFile): Omit<import('@shared/contracts').UploadFileDescriptor, 'path' | 'bytes'> & { path?: string; bytes?: Uint8Array } {
+/**
+ * S5-B2（2026-09-15，H-01 结构性修法）：**fileRef 的唯一铸造点**。
+ *
+ * `webUtils.getPathForFile` 是 preload 世界里唯一能把 `File` 换成本机路径的 API；此处拿到路径后
+ * **立刻**经 `attachments:register-file-ref` 交给 Main 换一个不可猜 token，路径本身**不进入 IPC 描述符**。
+ *
+ * 实测依据（`tests/integration/h01-fileref-probe.spec.ts`）：该 API 对 JS 构造的 `File` 恒返空串、
+ * 对被替换原型的对象直接抛错 ⇒ 这里的路径只可能来自**真实 OS 拖入/选中**的文件。
+ */
+async function registerFileRef(path: string): Promise<string> {
+  const res = await invokeWithArgs<{ fileRef: string }>(IpcChannels.fileRefsRegister, { path })
+  return unwrap(res, FileRefRegisterResponseSchema).fileRef
+}
+
+/** 同一 `File` 对象在 validate 与 upload 两次调用间复用同一个 token（避免重复登记；
+ *  token 有 TTL，正常「拖入 → 点发送」远短于 TTL）。 */
+const fileRefByFile = new WeakMap<File, string>()
+
+async function fileRefForFile(file: File): Promise<string | undefined> {
+  const cached = fileRefByFile.get(file)
+  if (cached) return cached
+  const p = webUtils.getPathForFile(file)
+  if (!p) return undefined   // pathless（粘贴项/JS 构造 File）→ 走 bytes
+  const ref = await registerFileRef(p)
+  fileRefByFile.set(file, ref)
+  return ref
+}
+
+async function toIpcDescriptor(f: AttachmentInputFile): Promise<Omit<import('@shared/contracts').UploadFileDescriptor, 'fileRef' | 'bytes'> & { fileRef?: string; bytes?: Uint8Array }> {
   const out: Record<string, unknown> = { localId: f.localId, name: f.name, size: f.size, mediaType: f.mediaType, source: f.source }
   if (f.kind) out.kind = f.kind
-  // P2-7：优先 path（真实文件）；仅 path 为空才填 bytes——保证 path/bytes 二选一（zod refine 不整条拒）。
-  // 旧两个独立 if：粘贴项同时带真实 path（getPathForFile 命中）与 bytes 时二者都填 → refine 判 SCHEMA_VALIDATION_FAILED 整批拒。
+  // P2-7：优先 fileRef（真实文件）；仅取不到引用才填 bytes——保证 fileRef/bytes 二选一（zod refine 不整条拒）。
+  // 旧两个独立 if：粘贴项同时带真实路径（getPathForFile 命中）与 bytes 时二者都填 → refine 判 SCHEMA_VALIDATION_FAILED 整批拒。
   // JS 构造 File（粘贴项）getPathForFile 返 '' → 视为 pathless，bytes 保留（P1-2 语义不变）。
   if (f.file) {
-    const p = webUtils.getPathForFile(f.file)
-    if (p) out.path = p
+    const ref = await fileRefForFile(f.file)
+    if (ref) out.fileRef = ref
     else if (f.bytes) out.bytes = new Uint8Array(f.bytes)
   } else if (f.bytes) {
     out.bytes = new Uint8Array(f.bytes)
   }
-  return out as ReturnType<typeof toIpcDescriptor>
+  return out as Awaited<ReturnType<typeof toIpcDescriptor>>
 }
 
 async function attachmentsValidate(input: { files: AttachmentInputFile[] }): Promise<FileValidationResult[]> {
-  return unwrap(await invokeWithArgs<FileValidationResult[]>(IpcChannels.attachmentsValidate, { files: input.files.map(toIpcDescriptor) }), z.array(FileValidationResultSchema))
+  return unwrap(await invokeWithArgs<FileValidationResult[]>(IpcChannels.attachmentsValidate, { files: await Promise.all(input.files.map(toIpcDescriptor)) }), z.array(FileValidationResultSchema))
 }
 async function attachmentsUpload(input: { uploadId: string; files: AttachmentInputFile[] }): Promise<AttachmentsUploadResponse> {
-  return unwrap(await invokeWithArgs<AttachmentsUploadResponse>(IpcChannels.attachmentsUpload, { uploadId: input.uploadId, files: input.files.map(toIpcDescriptor) }), AttachmentsUploadResponseSchema)
+  return unwrap(await invokeWithArgs<AttachmentsUploadResponse>(IpcChannels.attachmentsUpload, { uploadId: input.uploadId, files: await Promise.all(input.files.map(toIpcDescriptor)) }), AttachmentsUploadResponseSchema)
 }
 async function attachmentsCancel(uploadId: string): Promise<void> {
   unwrap(await invokeWithArgs<void>(IpcChannels.attachmentsCancel, { uploadId }), z.undefined())

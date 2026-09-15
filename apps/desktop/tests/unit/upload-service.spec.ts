@@ -58,26 +58,35 @@ describe('UploadService.uploadBatch / cancel', () => {
 })
 
 // —— H-01（2026-09-11）：附件链此前完全没调用工具域既有的 PATH_BLACKLIST_DEFAULTS ——
-// `path` 是 Renderer 可传的裸字符串，唯一边界只有「排除 userData 一个目录」，
-// 于「~/.ssh、~/.aws、.env、.git-credentials」这类最敏感文件上没有任何拦截。
-// 本组用例钉住止血：黑名单在 validate 与 upload 两条链上都生效，且按 **realpath** 匹配。
+// 唯一边界只有「排除 userData 一个目录」，于「~/.ssh、~/.aws、.env、.git-credentials」这类最敏感文件上
+// 没有任何拦截。本组用例钉住止血：黑名单在 validate 与 upload 两条链上都生效，且按 **realpath** 匹配。
+//
+// S5-B2（2026-09-15）：描述符上的 `path` 已换成 Main 签发的 `fileRef`（`file-ref.ts` 的表）。
+// 本组用例的**意图一字未变**（黑名单仍按 realpath 拦），只是入口从「裸路径」变成「token → 路径」。
 describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
-  it('uploadBatch 路径落在黑名单 → 拒绝（renderer 绕过 validate 直接 upload 也拦得住）', async () => {
+  /** 桩 registry：把固定 token 映射到固定路径，等价于「Main 登记过一次这个文件」 */
+  const refsFor = (path: string) => ({
+    issue: () => 'fileref_stub',
+    resolve: (r: string) => (r === 'fileref_stub' ? path : undefined),
+    clear: () => {}, size: () => 1,
+  })
+
+  it('uploadBatch 路径落在黑名单 → 拒绝（绕过 validate 直接 upload 也拦得住）', async () => {
     const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
     const fs = fakeFs()
     fs.realpath = async () => '/etc/shadow'
-    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs })
-    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', path: '/tmp/looks-benign' }]))
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs, fileRefs: refsFor('/tmp/looks-benign') })
+    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_stub' }]))
       .rejects.toThrow(/敏感目录/)
     expect(uploadAttachments, '黑名单命中必须在上传前拦下').not.toHaveBeenCalled()
   })
 
-  it('uploadBatch 按 realpath 匹配——原始字符串无害但真实路径在敏感目录，同样拒绝', async () => {
+  it('uploadBatch 按 realpath 匹配——登记时无害、真实路径在敏感目录，同样拒绝', async () => {
     const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
     const fs = fakeFs()
     fs.realpath = async () => '/root/.ssh/id_rsa'
-    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs })
-    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', path: '/home/me/Desktop/innocent.txt' }]))
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs, fileRefs: refsFor('/home/me/Desktop/innocent.txt') })
+    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_stub' }]))
       .rejects.toThrow(/敏感目录/)
     expect(uploadAttachments).not.toHaveBeenCalled()
   })
@@ -89,9 +98,26 @@ describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
     const fs = fakeFs()
     const home = (await import('os')).homedir()
     fs.realpath = async () => `${home}/Documents/a.png`
-    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs })
-    const out = await svc.uploadBatch('u1', [{ localId: 'l1', name: 'a.png', size: 4, mediaType: 'image/png', source: 'picker', path: `${home}/Documents/a.png` }])
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs, fileRefs: refsFor(`${home}/Documents/a.png`) })
+    const out = await svc.uploadBatch('u1', [{ localId: 'l1', name: 'a.png', size: 4, mediaType: 'image/png', source: 'picker', fileRef: 'fileref_stub' }])
     expect(out).toHaveLength(1)
     expect(uploadAttachments).toHaveBeenCalledTimes(1)
+  })
+
+  // —— S5-B2 新增：token 是本链路的信任锚，未知/过期/缺表一律 fail-closed ——
+  it('未知 fileRef → 拒绝且不上传（伪造 token 拿不到任何文件）', async () => {
+    const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs: fakeFs(), fileRefs: refsFor('/home/me/ok.txt') })
+    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_forged' }]))
+      .rejects.toThrow(/引用无效或已过期/)
+    expect(uploadAttachments).not.toHaveBeenCalled()
+  })
+
+  it('未装配 fileRefs（缺表）→ 同样 fail-closed，不放行任何 fileRef', async () => {
+    const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
+    const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs: fakeFs() })
+    await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_any' }]))
+      .rejects.toThrow(/引用无效或已过期/)
+    expect(uploadAttachments).not.toHaveBeenCalled()
   })
 })
