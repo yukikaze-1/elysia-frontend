@@ -1,5 +1,6 @@
 // tests/unit/renderer-bootstrap.spec.ts
 import { describe, expect, it, vi } from 'vitest'
+import { reactive } from 'vue'
 import { createRendererBootstrap } from '../../src/renderer/src/bootstrap'
 import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedEvent, ConnectionState, SessionPersistenceState } from '@shared/contracts'
 
@@ -30,7 +31,7 @@ function makeFake() {
 function makeStores() {
   return {
     connection: { setState: vi.fn(), setError: vi.fn() },
-    message: { applyEvent: vi.fn(), handleConnectionStateChange: vi.fn(), loadReplay: vi.fn() },
+    message: { applyEvent: vi.fn(), handleConnectionStateChange: vi.fn(), loadReplay: vi.fn(), setToolWorkActive: vi.fn() },
     conversation: { onConnected: vi.fn(async () => {}), onActiveConversationAppeared: vi.fn(async () => {}), setOfflineCache: vi.fn(), activateLocal: vi.fn(async () => {}) },
     draft: { hydrate: vi.fn(), flushAll: vi.fn(async () => {}) },                    // G2 新增；flushAll：H-04
     cache: { hydrate: vi.fn() },                    // G2 新增
@@ -94,6 +95,49 @@ describe('createRendererBootstrap（P0-01 水合编排）', () => {
     api.rejectSnapshot(new Error('ipc failed'))
     await new Promise((r) => setTimeout(r, 0)) // .then().catch() 链需 2 个微任务冲刷（实测 1 次 flush 不够）
     expect(stores.connection.setError).toHaveBeenCalledWith(expect.objectContaining({ code: 'UNKNOWN' }))
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-09-16 审计 P1-2：工具活动 → 静默看门狗窗口的镜像
+//
+// 走 sync watch 而不是在工具事件旁路里补一次调用：桌面工具的 `awaiting_permission` 由
+// `tool:event` → `toolStore.upsertLocal` 写入，**不经过** bootstrap 的 `chat:event` 旁路，
+// 只在旁路里镜像会漏掉最需要覆盖的那条路径（等人工授权）。
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('createRendererBootstrap（2026-09-16 审计 P1-2：工具活动镜像）', () => {
+  function makeToolsDouble() {
+    // 必须用 reactive 而非裸 ref：bootstrap 读的是 `tools.toolWorkActive`（Pinia setup store
+    // 会把 ref 解包成值），裸 ref 在这里会是个恒真的对象，测出来的是假绿。
+    return reactive({
+      toolWorkActive: false,
+      init: vi.fn(),
+      applyBackendEvent: vi.fn(),
+      clearForGeneration: vi.fn(),
+      setActiveConversationId: vi.fn()
+    })
+  }
+
+  it('注册即镜像初值，且工具活动变化同步生效（无需 flush）', () => {
+    const api = makeFake(); const stores = makeStores()
+    const tools = makeToolsDouble()
+    createRendererBootstrap(api as never, { ...stores, tools } as never).register()
+
+    expect(stores.message.setToolWorkActive).toHaveBeenLastCalledWith(false)
+
+    tools.toolWorkActive = true
+    expect(stores.message.setToolWorkActive).toHaveBeenLastCalledWith(true)
+
+    tools.toolWorkActive = false
+    expect(stores.message.setToolWorkActive).toHaveBeenLastCalledWith(false)
+    expect(stores.message.setToolWorkActive).toHaveBeenCalledTimes(3)
+  })
+
+  it('未接线 toolStore 时镜像 false（不留下一个悬空的 true）', () => {
+    const api = makeFake(); const stores = makeStores()
+    createRendererBootstrap(api as never, stores as never).register()
+
+    expect(stores.message.setToolWorkActive).toHaveBeenCalledWith(false)
   })
 })
 

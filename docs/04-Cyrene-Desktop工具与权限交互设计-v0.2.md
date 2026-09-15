@@ -292,6 +292,11 @@ interface SecurityPolicy {
 请求用户审批
 ```
 
+> **⚠️ 2026-09-16 就地更正（审计报告 P2）：上图第二层「强制确认」在实现里不存在，且它与 grant 的先后关系与代码相反。**
+> 代码事实：**grant 命中即覆盖 prompt**（`tool-service.ts` 决策链），一次 30 天的目录授权可以静默覆盖 high 风险的写入确认；`tool-registry.ts` 的 `permissionMode='always_prompt'`（write/capture 用的是它）**全仓零读者**——没有任何代码按它决定"必须逐次确认"。
+> 这不是漏做，而是一次**已留档的产品决策反转**（见本节后文的拍板记录）：当时有意让有效授权压过逐次确认，以免用户已明确授权后仍被反复打断。故本条**只改文档表述，不按字面恢复 `always_prompt` 行为**——恢复它等于反转一个已决的产品语义，属产品决策而非缺陷修复。
+> 附图保留原文作为历史：其中「黑名单始终覆盖一切」成立、「请求用户审批」成立，争议只在被标注的这一层。
+
 黑名单始终覆盖沙盒和历史授权。路径先规范化并解析符号链接；域名转为规范形式后再匹配精确项和受控通配符。
 
 > **阶段 6 批次 B 注记（2026-08-20）**：决策链已落地为 `tool-service` 13 步（注册表+平台 → 参数 schema → callId 幂等 → paramHash 重算校验 → full realpath+黑名单 → Wayland 门禁 → write 授权前受控预读+Diff → 本地风险重算+授权判定 → wire `accepted`（步骤 1~6 校验通过即发，早于授权判定）→ 等待授权/超时/取消 → 决定 → 执行（outputSchema 校验）→ 状态机单向+断线重连+退出收尾），任一步失败返回结构化错误不继续。**F-06 拍板值（仅黑名单、零预授权）**：`sandboxDirectories` 恒空（本批不产出任何预授权目录）；**路径黑名单默认集** `PATH_BLACKLIST_DEFAULTS`（realpath 后按路径段边界匹配，含子目录）——POSIX 17 项系统目录（**含 `/tmp`**——测试 fixture 经 `CYRENE_MOCK_TOOL_ALLOW_ROOT` 显式注入 allowlist 放宽，生产默认不注入）+ 14 项用户敏感目录（`~/.ssh ~/.config ~/.gnupg ~/.password-store ~/.aws ~/.npm ~/.cache ~/.local（整树）~/.mozilla ~/.netrc ~/.bash_history ~/.Xauthority ~/.pki ~/.git-credentials` + dot-secret 精确项 `.env/.pypirc/.dockercfg` + `.kube/config` 路径段精确项）+ `/home/*` 排除当前用户 + Windows **8 项**（`C:\Windows C:\Program Files C:\Program Files (x86) C:\ProgramData C:\System Volume Information C:\$Recycle.Bin` + `~\AppData` + `~\AppData\Local\Temp`）+ `\\.\`/`\\?\`/ADS/保留名（CON/NUL/PRN/AUX/COM1-9/LPT1-9）/UNC 默认拒；**域名黑名单** = 上传/连接仅限已连接后端端点（`ConnectionConfig` baseUrl origin）。黑名单永远压过一切（决策优先级第 2 层），命中不弹窗（用户无法授权黑名单路径）。**F-07 拍板值（仅一次/拒绝最小闭环）**：四工具映射 select=safe/automatic（用户主动选择即授权）、read=medium/每次确认+selected-set 豁免、write/capture=high/强确认；`PermissionDecision` 只产出 `allow_once/deny`；allow_scoped（目录授权+有效期）与设置页授权管理/命令模板空态归批次 C。详见 `docs/review/2026-08-20-阶段6批次B-决策记录.md`。
@@ -333,6 +338,8 @@ interface SecurityPolicy {
 > 段边界 + 平台大小写语义的包含性判定，空串根忽略（不因畸形配置放行一切）；`tool-service` 增注入面
 > `deps.sandboxDirectories`（缺省空 ⇒ **不改变任何授权结果**）。⇒ 「沙盒目录默认策略」这一层当前**对空集生效**：
 > 零预授权，没有任何路径因「落在沙盒内」而免确认；**不产生新的自动执行路径**是本次落地的硬约束。
+>
+> **⚠️ 2026-09-16 就地更正（审计报告 P2，逐处读码复核）：上一段的「唯一入口」措辞会让读者以为这是一个生效中的安全层，实际它是空操作。** 逐条事实：`computeLocalRisk` 的 `sandboxRoots`/`platform` 形参是**死参数**（函数体从不读取）、`isPathWithinSandbox` 生产**零调用**、装配根也从未注入 `sandboxDirectories`；单测 `tool-policy.spec.ts` 的用例标题恰好记录了"沙盒命中不改变等级"。故两条结论同时成立：**今天无行为差异**（配置恒为空集），且**将来任何非空配置都会静默失效**。处置二选一——**接线**（注入 `sandboxDirectories` 并让风险计算真正读取）或**删除死码并把本节改写为「未实现」**；本轮按后者**未做任何接线**，因为凭空给一个安全层通电属于产品/安全决策而非缺陷修复。在此之前，**不得**把「沙盒目录」读作已生效的防护层。
 >
 > ④ **D-2 状态版本冲突码（2026-09-15 裁决「前端补两处」）**：前端此前只认 `CHARACTER_STATE_CONFLICT`，
 > 而 mock 后端实发 `CHARACTER_STATE_VERSION_CONFLICT` + `currentStateVersion`，且 `main/ipc/executor.ts` 的

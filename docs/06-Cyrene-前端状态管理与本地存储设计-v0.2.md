@@ -69,7 +69,7 @@
 - 每个会话的草稿引用。
 - 会话搜索查询、结果游标和累计 Token 摘要。
 
-> **落地更正（2026-09-15，对照代码逐字复核；指上方末行「会话搜索查询、结果游标和累计 Token 摘要」）：** 该项**未按本节形状落地**——① 没有 `searchStore`（全仓 grep `useSearchStore|searchStore` **0 命中**），历史查看器的查询/分页/范围态落在 `stores/historyViewer.store.ts`；会话列表内的搜索只是组件本地 `ref` 过滤**标题**（`components/CyConversationList.vue:31-36`，未含摘要，与 doc 03 §5.2「搜索会话标题和摘要」也不一致）。② **累计 Token 摘要没有消费方**：后端 `conversationUsage` 最远只到 `shared/domain/stream-accumulator.ts:181` 的 `state`，renderer 全仓 grep `conversationUsage` **0 命中**；文档设想的「后端缺失时按唯一 `generationId` 本机累计并标 `client_sum`」（§5 处理规则）**未实现**。本行按**设计期口径**读。
+> **落地更正（2026-09-15，对照代码逐字复核；指上方末行「会话搜索查询、结果游标和累计 Token 摘要」）：** 该项**未按本节形状落地**——① 没有 `searchStore`（全仓 grep `useSearchStore|searchStore` **0 命中**），历史查看器的查询/分页/范围态落在 `stores/historyViewer.store.ts`；会话列表内的搜索只是组件本地 `ref` 过滤**标题**（`components/CyConversationList.vue:31-36`，未含摘要，与 doc 03 §5.2「搜索会话标题和摘要」也不一致）。② **累计 Token 摘要没有消费方**：后端 `conversationUsage` 最远只到 `shared/domain/stream-accumulator.ts:181` 的 `state`，renderer 全仓 grep `conversationUsage` **0 命中**；文档设想的「后端缺失时按唯一 `generationId` 本机累计并标 `client_sum`」（§5 处理规则）**未实现**。本行按**设计期口径**读。 〔**2026-09-16 取代**：②中「没有消费方/0 命中」已不成立——会话级累计已消费并展示（§3.4 的 `sessionUsageByConversation` 与输入框下方 Token 条）；**但"后端缺失时按 `generationId` 本机累计并标 `client_sum`"这条兜底仍未实现**（有意不做，见 doc 02 §9.3）。①（`searchStore` 缺失）仍然成立。〕
 
 ### 3.4 `messageStore`
 
@@ -395,7 +395,7 @@ interface CredentialStatus {
 - 可由用户清除；
 - 设置容量和过期时间。
 
-> **就地更正（2026-09-15，对照代码逐字复核）：** 上列第三条中只有**滚动锚点**落在实现里（`ScrollAnchor` 随草稿存 `drafts-v1.json`：`main/persistence/session-store.ts:41`、`:330`），**「会话级 Token 摘要」与「资源索引摘要」在本机缓存里没有对应字段**——会话快照的落盘形状是 `CacheFile { schemaVersion, conversations, snapshots{ messages, updatedAt, lastSyncAt } }`（`:42`、`:40`），全仓 grep `resourceIndex|tokenSummary` **0 命中**；且后端 `conversationUsage` 到前端只走到 `StreamAccumulator`（`shared/domain/stream-accumulator.ts:181`），无消费者（见本文件 §3.3 注记）。⇒ 本行按**设计期口径**读，不得当作已交付能力。
+> **就地更正（2026-09-15，对照代码逐字复核）：** 上列第三条中只有**滚动锚点**落在实现里（`ScrollAnchor` 随草稿存 `drafts-v1.json`：`main/persistence/session-store.ts:41`、`:330`），**「会话级 Token 摘要」与「资源索引摘要」在本机缓存里没有对应字段**——会话快照的落盘形状是 `CacheFile { schemaVersion, conversations, snapshots{ messages, updatedAt, lastSyncAt } }`（`:42`、`:40`），全仓 grep `resourceIndex|tokenSummary` **0 命中**；且后端 `conversationUsage` 到前端只走到 `StreamAccumulator`（`shared/domain/stream-accumulator.ts:181`），无消费者（见本文件 §3.3 注记）。⇒ 本行按**设计期口径**读，不得当作已交付能力。 〔**2026-09-16 取代**：「无消费者」已不成立（会话级累计已消费并展示）。**但本条的主张仍然成立**：「会话级 Token 摘要」与「资源索引摘要」**在本机缓存文件里确实没有对应字段**（`CacheFile` 形状未变），Token 条的数据不落本机缓存、也不随缓存恢复——它按会话 ID 存在内存 store 里。〕
 
 Inner Voice 与 Public Reply 可以作为后端历史的一部分在当前会话内显示，但本地缓存将它们视为敏感聊天内容：不得进入日志或诊断包；清除会话缓存时一并删除；若产品启用“仅缓存 Public Reply”，Adapter 必须保留后端重新拉取 Inner Voice 的能力并在离线状态明确说明。
 

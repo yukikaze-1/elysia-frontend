@@ -29,6 +29,11 @@ export const chatSendSchema = z.object({
   conversationId: z.string().min(1),
   text: z.string().max(65_536),      // D7A-13：消息正文 64KiB 上界（无界字段补值；MAX_IPC_MESSAGE_BYTES 预算内）
   clientRequestId: z.string().min(1),
+  // 2026-09-16 审计 P2：**此前漏声明，字段被 zod 默认 strip 静默剥掉**（renderer 一直在填、
+  // preload 原样透传，Adapter 也一直在读 `input.clientMessageId`，唯独中间这一跳没有它）。
+  // 与 voiceCommitSchema 的 clientMessageId 对齐；此处取可选而非必填——schema 的职责是
+  // 「不吞掉调用方发来的字段」，而不是新增一道必填门（renderer 两条发送路径都恒填）。
+  clientMessageId: z.string().min(1).optional(),
   attachments: z.array(z.object({
     attachmentId: z.string().min(1),
     kind: z.enum(['image', 'video', 'audio', 'file', 'link']),

@@ -75,6 +75,52 @@ describe('退出前持久化 flush（H-04）', () => {
     }
   })
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 2026-09-16 审计 P1-1：**真实用户退出路径**（关最后一个窗口）。
+  //
+  // 上一条用例走的是 `closeApp()` → Playwright `ElectronApplication.close()` → `app.quit()`，
+  // 这条路径上 `before-quit` 触发时窗口仍存活，flush 能投递出去——**所以它对本缺陷零判别力**
+  // （审计报告的原话：该用例的价值恰恰在于它测不到）。
+  //
+  // Windows/Linux 用户关应用的唯一路径是点窗口 ✕，事件顺序经同版本 Electron 43.3.0 实测为：
+  //   win.close → win.closed（此处 getMainWindow() 已置 null）→ window-all-closed → app.quit() → before-quit
+  // 挂在 before-quit 上的 flush 此时 `deliver()` 恒返回 false（fail-open 立即 resolve），
+  // 而 Renderer 侧没有 beforeunload/pagehide/unload 补偿通道（全仓 0 命中）⇒ 防抖写静默丢失。
+  //
+  // 判别力：移除 `index.ts` 的 `setBeforeCloseFlush(...)` 接线 ⇒ 本条必红（上一条仍绿）。
+  // ───────────────────────────────────────────────────────────────────────────
+  it('点窗口 ✕ 关最后一个窗口：真实退出路径上的设置改动必须落盘【判别用例，2026-09-16 审计 P1-1】', async () => {
+    const launched = await launchApp()
+    try {
+      const { page } = launched
+      await connectAndActivateFirst(page)
+      await page.getByRole('button', { name: '设置', exact: true }).click()
+      await page.locator('.cy-settings-nav-item').filter({ hasText: '语音' }).first().click()
+      await expect.poll(() => page.locator('.cy-voice-pane').count(), POLL).toBe(1)
+
+      await page.getByLabel('TTS 自动朗读 AI 回复').click()
+      await expect.poll(() => page.getByLabel('TTS 自动朗读 AI 回复').isChecked(), POLL).toBe(false)
+
+      const settingsPath = findSettingsFile(launched.userData)
+      const before = settingsPath && existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : ''
+      expect(before.includes('"autoReadReply": false'), '防抖未到期时设置不应已落盘').toBe(false)
+
+      // 真实关窗：等价于用户点 ✕（不是 app.quit()，两者的 before-quit 时序相反）。
+      await launched.app.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0]?.close() })
+
+      // 窗口必须真的消失——本修复在 close 上 preventDefault 过一次，绝不能把退出卡住。
+      await expect.poll(() => page.isClosed(), POLL).toBe(true)
+
+      const after = findSettingsFile(launched.userData)
+      expect(after, 'settings.json 应存在').toBeDefined()
+      const parsed = JSON.parse(readFileSync(after!, 'utf8')) as { voice?: { autoReadReply?: boolean } }
+      expect(parsed.voice?.autoReadReply, '点 ✕ 前的设置改动必须已被关窗前 flush 落盘').toBe(false)
+    } finally {
+      await closeApp(launched, { keepUserData: true }).catch(() => { /* 窗口已关闭时 app.close 会抛——清理仍要继续 */ })
+      rmSync(launched.userData, { recursive: true, force: true })
+    }
+  })
+
   it('关窗前键入的当前会话草稿仍落盘【回归用例——兜底来自既有断线 flush，非本修复】', async () => {
     const launched = await launchApp()
     const draftsPath = join(launched.userData, 'Cyrene', DRAFTS_REL)

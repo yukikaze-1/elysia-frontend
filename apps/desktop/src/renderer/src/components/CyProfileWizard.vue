@@ -71,6 +71,26 @@ function splitList(v: string): string[] { return v.split(',').map((s) => s.trim(
 // —— apiKey 一次性输入：组件局部 ref，绝不入 store ——
 const apiKeyRef = ref('')
 
+// ───────────────────────────────────────────────────────────────────────────────
+// 2026-09-16 审计 P1-5：提交续体的 owner/世代栅栏。
+//
+// 缺陷：提交动作在 `await` 之后无条件继续执行——组件卸载不取消续体（无 AbortController、
+// 无 owner 栅栏、无 unmounted 标记），而提交进行中「取消」按钮**未禁用**（:215）。于是
+// 用户在请求在途时点「取消」→ 组件卸载、`cancelEdit` 清掉草稿槽，续体却照旧跑完：
+// 远端落库 profile **并切换全局激活模型服务**（影响后续所有对话的模型选择），零竞态、必然可达。
+//
+// 语义：取消 = 用户明示「不保留」。故所有 await 边界之后都必须重新判定「这次提交是否仍然有效」。
+// 取递增世代号而不是布尔量：连续两次提交也不会让前一次误以为自己是当前的。
+// 已知边界（诚实声明）：若取消发生在 `saveProfile` **已经发出之后**，那次远端写入无法收回
+// （没有补偿删除接口）；但 `activate`（切全局模型服务，后果更重的一半）与后续本地写都会停止。
+// ───────────────────────────────────────────────────────────────────────────────
+let submitGeneration = 0
+let unmounted = false
+function beginSubmit(): number { return ++submitGeneration }
+function isSubmitCurrent(token: number): boolean { return !unmounted && token === submitGeneration }
+/** 取消/卸载：让一切在途续体立即失效 */
+function invalidateSubmit(): void { submitGeneration++ }
+
 const overlay = ref<HTMLElement>()
 const nameInput = ref<HTMLInputElement>()
 let triggerElement: Element | null = null   // 打开前的活动元素(关闭后回焦点)
@@ -78,7 +98,11 @@ onMounted(() => {
   triggerElement = document.activeElement
   void nextTick(() => nameInput.value?.focus())
 })
-onUnmounted(() => { if (triggerElement instanceof HTMLElement) triggerElement.focus() })
+onUnmounted(() => {
+  unmounted = true
+  invalidateSubmit()   // P1-5：卸载即失效——组件没了，续体不得再写共享 store
+  if (triggerElement instanceof HTMLElement) triggerElement.focus()
+})
 
 const testBusy = computed(() => {
   const d = draft.value
@@ -107,11 +131,14 @@ async function onTestAndSave(): Promise<void> {
   const name = d.name.trim()
   const keyInput = apiKeyRef.value
   const baseUrlInput = d.baseUrl?.trim() || undefined   // P4-A final review：新 custom 未持久化 YAML，test 需透传 baseUrl 才能构造请求
+  const token = beginSubmit()
   await modelStore.testProfile({ type: d.type, provider: 'custom', model: name }, 'connectivity', keyInput || undefined, baseUrlInput)
-  const r = modelStore.testResult[`custom/${name}|connectivity`]
   apiKeyRef.value = ''   // 提交成功/失败后一律清空一次性密钥
+  if (!isSubmitCurrent(token)) return   // P1-5：用户已取消/组件已卸载 —— 不得再落库
+  const r = modelStore.testResult[`custom/${name}|connectivity`]
   if (r?.ok && !modelStore.error) {
     await modelStore.saveProfile({ ...d, name }, keyInput || undefined)
+    if (!isSubmitCurrent(token)) return
     if (!modelStore.error) closeWizard()
   }
   // 失败保留表单
@@ -123,16 +150,22 @@ async function onSaveAndActivate(): Promise<void> {
   const d = draft.value
   const name = d.name.trim()
   const keyInput = apiKeyRef.value
+  const token = beginSubmit()
   await modelStore.saveProfile({ ...d, name }, keyInput || undefined)
   apiKeyRef.value = ''
+  // P1-5 承重判定：取消后**绝不能**切换全局激活模型服务（它会改掉后续所有对话的模型选择）。
+  if (!isSubmitCurrent(token)) return
   if (!modelStore.error) {
     await modelStore.activate({ id: `custom/${name}`, type: d.type })
+    if (!isSubmitCurrent(token)) return
     if (!modelStore.error) closeWizard()
   }
 }
 
 /** 关闭向导：清理草稿槽（含 'new' 泄漏防护）+ 清 apiKey + 通知 pane 关闭 */
 function closeWizard(): void {
+  // P1-5：关闭 = 取消语义，必须让在途续体失效（成功路径上调用它时续体已跑完，无副作用）。
+  invalidateSubmit()
   modelStore.cancelEdit(draftKey.value)
   apiKeyRef.value = ''
   emit('close')

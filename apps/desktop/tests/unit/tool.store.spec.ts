@@ -46,6 +46,43 @@ describe('toolStore 三来路归一化', () => {
     s.upsertLocal({ ...mkLocal('completed', 'tc_a'), conversationId: 'conv-a' })
     expect(s.waitingForApproval).toBe(false)   // conv-b 的 awaiting 不计入当前会话
   })
+  // 2026-09-16 审计 P1-2：toolWorkActive 是看门狗放宽窗口的驱动量，必须覆盖「正在执行」而不只是 awaiting
+  // （后端等工具结果时那一代同样不发 generation.* 事件）。
+  describe('toolWorkActive（P1-2：工具活动驱动静默窗口放宽）', () => {
+    it('awaiting_permission 与 running 都算活动；终态不算', () => {
+      const s = useToolStore()
+      expect(s.toolWorkActive).toBe(false)
+      s.upsertLocal(mkLocal('awaiting_permission', 'tc_a'))
+      expect(s.toolWorkActive, '等授权期间那一代合法静默，必须放宽').toBe(true)
+      s.upsertLocal(mkLocal('completed', 'tc_a'))
+      expect(s.toolWorkActive).toBe(false)
+
+      s.upsertLocal(mkLocal('running', 'tc_b'))
+      expect(s.toolWorkActive, '正在执行同样不发 generation.* 事件').toBe(true)
+      s.upsertLocal(mkLocal('failed', 'tc_b'))
+      expect(s.toolWorkActive).toBe(false)
+    })
+    it('requested 也算活动（wire 六态里未终态即活动）', () => {
+      const s = useToolStore()
+      s.upsertLocal(mkLocal('requested', 'tc_req'))
+      expect(s.toolWorkActive).toBe(true)
+    })
+    it('只统计当前活动会话：他会话的工具不得延长本会话的静默窗口', () => {
+      const s = useToolStore()
+      s.upsertLocal({ ...mkLocal('running', 'tc_a'), conversationId: 'conv-a' })
+      s.upsertLocal({ ...mkLocal('running', 'tc_b'), conversationId: 'conv-b' })
+      s.setActiveConversationId('conv-a')
+      s.upsertLocal({ ...mkLocal('completed', 'tc_a'), conversationId: 'conv-a' })
+      expect(s.toolWorkActive, 'conv-b 仍在执行，但当前会话已无工具活动').toBe(false)
+    })
+    it('timeout / cancelled / rejected 都是终态（不得把窗口永久放宽）', () => {
+      const s = useToolStore()
+      for (const st of ['timeout', 'cancelled', 'rejected'] as const) {
+        s.upsertLocal(mkLocal(st, `tc_${st}`))
+      }
+      expect(s.toolWorkActive).toBe(false)
+    })
+  })
   it('backend 事件 → 只读记录（D6B-21：本地已存在不覆盖；判别键 event，代码 H5）', () => {
     const s = useToolStore(); s.upsertLocal(mkLocal('completed'))
     s.applyBackendEvent({ event: 'tool.completed', callId: 'tc_1', toolName: 'desktop.file.read', runtime: 'backend', success: false } as unknown as ToolBackendEvent)

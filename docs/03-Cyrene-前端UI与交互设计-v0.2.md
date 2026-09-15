@@ -185,7 +185,7 @@ P1：置顶、归档、分组。
 - 句子分段完成时不出现新的头像、未读数或通知；
 - 父级回复完成后统一显示输入、输出、总 Token、实际模型、心情和完成状态；
 
-> **落地更正（2026-09-15，对照代码逐字复核）——上一行只有「总 Token／实际模型／心情」落地：** 助手气泡的低权重元数据行渲染 `message.model`、`message.usage.total`（`CyMessageBubble.vue:248-251`）与 `message.emotion`（`:247`）；**「输入/输出 Token」从未显示**（`usage.input`/`usage.output` 在 renderer 组件里 0 命中），**「会话级 Token」也没有展示面**——后端 `conversationUsage` 只走到 `shared/domain/stream-accumulator.ts:181` 的 accumulator state，renderer 全域 0 命中。该行按**部分实现**读。
+> **落地更正（2026-09-15，对照代码逐字复核）——上一行只有「总 Token／实际模型／心情」落地：** 助手气泡的低权重元数据行渲染 `message.model`、`message.usage.total`（`CyMessageBubble.vue:248-251`）与 `message.emotion`（`:247`）；**「输入/输出 Token」从未显示**（`usage.input`/`usage.output` 在 renderer 组件里 0 命中），**「会话级 Token」也没有展示面**——后端 `conversationUsage` 只走到 `shared/domain/stream-accumulator.ts:181` 的 accumulator state，renderer 全域 0 命中。该行按**部分实现**读。 〔**2026-09-16 取代**：末句「会话级 Token 也没有展示面」已不成立——2026-09-15 起输入框下方常驻 Token 条（见 §8 的会话级落地注记）。前半句（输入/输出 Token 未单独显示）**仍然成立**：该条只显示累计总量与最近一轮总量，不拆 input/output。〕
 
 - 搜索、复制、重新生成、TTS 和反馈默认作用于整条回复，必要时可定位具体分段。
 

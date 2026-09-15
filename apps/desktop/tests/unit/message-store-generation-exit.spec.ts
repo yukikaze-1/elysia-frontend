@@ -18,7 +18,7 @@ import { useMessageStore } from '../../src/renderer/src/stores/message.store'
 import { useConversationStore } from '../../src/renderer/src/stores/conversation.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
 import { createDesktopApiMock } from './helpers/desktop-api'
-import { GENERATION_SILENCE_TIMEOUT_MS } from '../../src/renderer/src/utils/generation-watchdog'
+import { GENERATION_SILENCE_TIMEOUT_MS, TOOL_HOLD_SILENCE_TIMEOUT_MS } from '../../src/renderer/src/utils/generation-watchdog'
 import type { BackendEvent, GenerationDeltaEvent, GenerationStartedEvent } from '@shared/contracts'
 
 // I-06 / P2-10：原为手搓的 DesktopApiLike 全契约镜像（每个键裸 `vi.fn()`）。
@@ -154,5 +154,61 @@ describe('messageStore 生成出口（H-10）', () => {
 
     vi.advanceTimersByTime(GENERATION_SILENCE_TIMEOUT_MS * 2)
     expect(store.byId['msg-1']?.status, '断线已终结该流，看门狗不得再写').toBe('interrupted')
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 2026-09-16 审计 P1-2：工具活动期间不误杀
+  //
+  // 缺陷：看门狗只看 `generation.*` 事件，而工具等待期间那一代**合法地**一个都不发——
+  // 后端等人工审批上界 60s（`Module/tool/safety.py:399`），桌面工具执行上界 120s
+  // （`tool-registry.ts`），而 `generation.completed` 只在回合末发。60s > 50s ⇒
+  // 用户在审批窗上多停几秒，回复就被标成 interrupted、accumulator 被清，
+  // 其后到达的正文与终态帧被永久丢弃（`:760/:762/:781` 的守卫）。
+  // ───────────────────────────────────────────────────────────────────────────
+  it('⑨ 工具活动期间静默超过原窗口不得误杀（后端审批上界 60s > 50s）', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.setToolWorkActive(true) // 工具进入等待授权 / 执行中
+
+    // 51s：**原实现正是在这里判死的**——这就是本条修复的判别点
+    vi.advanceTimersByTime(GENERATION_SILENCE_TIMEOUT_MS + 1_000)
+    expect(store.byId['msg-1']?.status, '工具活动期间的静默是合法的，不得判死').toBe('streaming')
+    expect(store.activeGenerationId, '不得清掉活动代——否则后续正文与终态帧全被守卫丢弃').toBe('gen-1')
+    expect(store.lastError).toBeUndefined()
+
+    // 工具结束 → 回到常规窗口：此后满一个窗口无事件才收敛
+    store.setToolWorkActive(false)
+    vi.advanceTimersByTime(GENERATION_SILENCE_TIMEOUT_MS - 1)
+    expect(store.byId['msg-1']?.status).toBe('streaming')
+    vi.advanceTimersByTime(1)
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError?.code).toBe('GENERATION_STALLED')
+  })
+
+  it('⑩ 工具活动不是永久豁免：超过放宽窗口仍会收敛（H-10 不得被关掉）', () => {
+    // 反向守卫：若把「工具活动」实现成无限期暂停，一条丢失的工具终态事件就会让
+    // 这条出口永久失效——而 H-10 存在的理由恰恰是「后端丢终态」。
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.setToolWorkActive(true)
+
+    vi.advanceTimersByTime(TOOL_HOLD_SILENCE_TIMEOUT_MS - 1)
+    expect(store.byId['msg-1']?.status).toBe('streaming')
+
+    vi.advanceTimersByTime(1)
+    expect(store.byId['msg-1']?.status).toBe('interrupted')
+    expect(store.lastError?.code).toBe('GENERATION_STALLED')
+  })
+
+  it('⑪ 工具活动跨代保留：代在工具活动之后开始，同样得到放宽窗口', () => {
+    // `clearForGeneration` 有意让 awaiting_permission 跨代保留，故「工具有活动」可能早于
+    // `generation.started` 到达；若 hold 在 disarm/arm 时被清掉，这一代就会退回 50s 再被误杀。
+    const store = useMessageStore()
+    store.setToolWorkActive(true)
+    store.applyEvent(started())
+
+    vi.advanceTimersByTime(GENERATION_SILENCE_TIMEOUT_MS + 1_000)
+    expect(store.byId['msg-1']?.status).toBe('streaming')
+    expect(store.activeGenerationId).toBe('gen-1')
   })
 })

@@ -46,6 +46,17 @@ export const useToolStore = defineStore('tool', () => {
       || rec.conversationId === activeConversationId.value
   }))
   const waitingForApproval = computed(() => visibleLiveOrder.value.some(id => records.value[id]?.status === 'awaiting_permission'))
+  /**
+   * 2026-09-16 审计 P1-2：可见实时区是否有工具处于**非终态**（requested/awaiting_permission/running）。
+   *
+   * 与 `waitingForApproval` 的差别是它同时覆盖「已批准、正在执行」——后端等工具结果时那一代同样不发
+   * `generation.*` 事件（`generation.completed` 只在回合末发），所以窗口放宽不能只认 awaiting。
+   * 用 `visibleLiveOrder` 而非全量 `records`：他会话的工具不该延长本会话的静默窗口。
+   */
+  const toolWorkActive = computed(() => visibleLiveOrder.value.some(id => {
+    const s = records.value[id]?.status
+    return s !== undefined && !TERMINAL.includes(s)
+  }))
 
   function upsertRecord(id: string, rec: ToolCallRecord): boolean {
     const existing = records.value[id]
@@ -153,7 +164,7 @@ export const useToolStore = defineStore('tool', () => {
   async function pickSource(callId: string, sourceId: string): Promise<void> { await api.toolPickSource(callId, sourceId) }
   async function confirmUpload(callId: string): Promise<void> { await api.toolConfirmUpload(callId) }
   function liveRecords(): ToolCallRecord[] { return visibleLiveOrder.value.map(id => records.value[id]).filter(Boolean) }
-  return { records, liveOrder, activeConversationId, captureState, pendingPathSummary, pendingDiff, pendingDataFlowNote, waitingForApproval,
+  return { records, liveOrder, activeConversationId, captureState, pendingPathSummary, pendingDiff, pendingDataFlowNote, waitingForApproval, toolWorkActive,
     init, applyBackendEvent, upsertLocal, clearForGeneration, setActiveConversationId, clearApprovalLocal, decide, cancel, pickSource, confirmUpload, liveRecords,
     grantDirectory, listGrants, revokeGrant, listHistory }
 })

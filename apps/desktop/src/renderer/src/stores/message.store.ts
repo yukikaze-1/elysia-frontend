@@ -27,7 +27,7 @@ import { useConnectionStore } from './connection.store'
 import { useDraftStore } from './draft.store'
 import { useCacheStore } from './cache.store'
 import { cmpMsg } from '../utils/message-order'
-import { createGenerationWatchdog, GENERATION_SILENCE_TIMEOUT_MS } from '../utils/generation-watchdog'
+import { createGenerationWatchdog, GENERATION_SILENCE_TIMEOUT_MS, TOOL_HOLD_SILENCE_TIMEOUT_MS } from '../utils/generation-watchdog'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 import { emitSessionBoundary } from '../utils/session-boundary'
 import { cloneValue } from '@shared/domain'
@@ -258,8 +258,22 @@ export const useMessageStore = defineStore('message', () => {
 
   const watchdog = createGenerationWatchdog({
     timeoutMs: GENERATION_SILENCE_TIMEOUT_MS,
+    holdTimeoutMs: TOOL_HOLD_SILENCE_TIMEOUT_MS,
     onSilence: onGenerationSilence
   })
+
+  /**
+   * 2026-09-16 审计 P1-2：工具活动（等待授权/执行中）期间放宽静默窗口。
+   *
+   * 由 bootstrap 以 sync watch 镜像 `tool.store` 的派生量驱动——**不能**只在工具事件分支里调一次：
+   * 桌面工具的 `awaiting_permission` 走 `tool:event`（`tool.store.upsertLocal`），
+   * 根本不经过 bootstrap 的 `chat:event` 旁路；而它恰是需要放宽窗口的那条路径。
+   * 也不能从工具事件里取 `generationId`——wire `tool.request` 与 `PublicToolEvent` 都没有该字段
+   * （只有 `ToolCallRecord` 有），故这里只用布尔量，不动「哪一代」的判据。
+   */
+  function setToolWorkActive(active: boolean): void {
+    watchdog.setHold(active)
+  }
 
   /** 事件携带的 generationId（多数 generation.* 事件都有；会话/连接类事件没有） */
   function generationIdOf(event: BackendEvent): string | undefined {
@@ -1423,6 +1437,7 @@ export const useMessageStore = defineStore('message', () => {
     loadingEarlier,
     resetConversation,
     applyEvent,
+    setToolWorkActive,
     send,
     sendVoiceCommit,
     resendUserMessage,

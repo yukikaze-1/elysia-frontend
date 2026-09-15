@@ -756,6 +756,86 @@ describe('voiceStore', () => {
     expect(mockApi.voiceStopDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/) })
   })
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // 2026-09-16 审计 P1-6：dictation 共享会话标识的竞态
+  //
+  // 缺陷：`startDictation` 的失败分支按「我这次失败」清理**共享单例态**。用户
+  // 「按住 → 松开 → 立刻再按」即可命中：第一次 start 的 id 是 `await` 之后才记入的，
+  // 松开时 `stopDictation` 因 id 为空而早退；再按时 mode 仍是 idle ⇒ 第二次 start 进入、
+  // 被 Main 互斥门拒绝，其 catch 清掉共享的 dictationClientRequestId 与 capture ⇒
+  // 第一次随后成功建立采集并置 dictating，但停止入口已经没了 ⇒ **麦克风持续采集且不可自愈**
+  // （该标识全仓没有任何事件回写它，只能断线或重启）。
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('P1-6 dictation 竞态：in-flight 门 + 共享标识的 owner 判据', () => {
+    const flush = () => new Promise((r) => setTimeout(r, 0))
+
+    it('第二次 start 在 in-flight 期间被拒绝，且第一次建立的采集仍可正常停止', async () => {
+      const store = useVoiceStore()
+      let releaseCapture!: () => void
+      fake.start.mockImplementation(() => new Promise<void>((r) => { releaseCapture = () => r() }))
+      const first = store.startDictation()
+      await flush()   // 控制帧已成功、标识已记入，正挂起在采集启动（模拟 getUserMedia / 权限等待）
+
+      // 「松开立刻再按」：此刻 mode 仍是 idle，第二次 start 会一路走到 store 内部
+      await store.startDictation()
+
+      expect(mockApi.voiceStartDictation, '被 in-flight 门挡下：不得再发第二次控制帧').toHaveBeenCalledTimes(1)
+
+      releaseCapture()
+      await first
+
+      expect(store.mode).toBe('dictating')
+      await store.stopDictation()
+      expect(fake.stop, '第一次建立的采集必须仍能被停止——这正是原缺陷丢掉的入口').toHaveBeenCalled()
+      expect(mockApi.voiceStopDictation).toHaveBeenCalledTimes(1)
+    })
+
+    it('控制帧在途时停止（id 尚未记入）：该次 start 必须自我收尾，不得留下「在采集却无人能停」', async () => {
+      const store = useVoiceStore()
+      let releaseStart!: () => void
+      mockApi.voiceStartDictation.mockImplementationOnce(
+        () => new Promise((r) => { releaseStart = () => r({ clientRequestId: 'req_x' }) })
+      )
+      const running = store.startDictation()
+      await flush()
+
+      await store.stopDictation()   // id 仍为空 → 早退（正是报告描述的 t5）
+      releaseStart()
+      await running
+
+      expect(fake.start, '已被接管的 start 不得再开麦克风').not.toHaveBeenCalled()
+      expect(store.mode).toBe('idle')
+      expect(mockApi.voiceCancelDictation, '后端会话不得悬挂').toHaveBeenCalled()
+    })
+
+    it('采集启动在途时停止：start 收尾必须停掉已经起来的采集并保持 idle', async () => {
+      const store = useVoiceStore()
+      let releaseCapture!: () => void
+      fake.start.mockImplementation(() => new Promise<void>((r) => { releaseCapture = () => r() }))
+      const running = store.startDictation()
+      await flush()
+
+      await store.stopDictation()
+      releaseCapture()
+      await running
+
+      expect(store.mode, '被停止的 start 不得再进入 dictating').toBe('idle')
+      expect(fake.stop).toHaveBeenCalled()
+    })
+
+    it('in-flight 门不粘滞：正常一轮结束后可以再次开始', async () => {
+      const store = useVoiceStore()
+      await store.startDictation()
+      expect(store.mode).toBe('dictating')
+      const handler = subscribe(store)
+      handler(ev({ event: 'dictation.final', clientRequestId: 'req_1', text: '文本' }))
+      store.clearDictationFinal()   // 组件消费后回 idle
+      await store.startDictation()
+      expect(mockApi.voiceStartDictation).toHaveBeenCalledTimes(2)
+      expect(store.mode).toBe('dictating')
+    })
+  })
+
   it('dictation：micError——capture.start 拒绝 → micError + 模式回 idle + voiceCancelDictation', async () => {
     fake.start.mockRejectedValue(new Error('[IPC_ERROR] 无可用麦克风'))
     const store = useVoiceStore()

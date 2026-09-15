@@ -195,6 +195,7 @@ interface ConversationPage {
 
 > **C2 口径更正（2026-09-15 契约评审）：** 上句描述的是**后端把数据放在哪里**，它成立；但**前端目前的处置是"不消费"**，这一点此前没写，导致"可获取"被读成"已展示"。逐条实况：
 > - **回复级 `usage`：已消费**——`generation.completed.usage` 写进 `Message.usage`，消息气泡据此显示 model/usage 元数据行。**2026-09-15 起回放路径也不再丢弃**（`session` 回放的 `SessionMessageItem.token_usage` 与 REST 归档 `Message.token_usage` 经同一映射点 `main/transport/protocol-v2/token-usage.ts` 落进 `Message.usage`；REST 侧该字段是自由形状 `dict[str,Any]`，按正向形状确认后才映射）。
+> - **〔已被取代，2026-09-16〕** 紧跟的这条「会话级累计：不消费（有意）」描述的是 **2026-09-15 的实况**。同日用户即拍板要做展示，故会话级累计现在**已消费并展示**：输入框下方的 `CySessionUsage`（`sessionUsageByConversation` + 派生的 `lastTurnUsage`），见下文 §9.3 落地注记与 doc 03 §8。保留原文作为历史，不逐句改写；其中「不建没有消费方的管道」这条**纪律本身仍然成立**。
 > - **会话级累计：不消费（有意）**——`generation.completed.conversationUsage` 与 `session.token_stats` 在 `src/renderer` **均无消费方**（`conversationUsage` 全 renderer 0 命中），即界面上**没有**"已消耗 Token"展示。Adapters 层不为此建未使用的管道：**没有消费方的管道就是会腐烂的死代码**。将来要做展示时，管道与展示一起建（展示位置与口径属产品决定，未定）。
 > - 与 §13 的 `EmotionState`/`ModelIdentity`/`TokenUsage.cachedInput` 等的处理同一条纪律：**文档不得把"字段存在"写成"功能存在"**。
 
@@ -329,7 +330,7 @@ interface MessageContextQuery {
 - `segmentId + index` 标识同一回复内的句子或多媒体分段；`segment.completed` 不得让前端结束整条回复；
 - `model` 表示该条回复实际使用的模型，不能只展示设置页当前选择；
 - `emotion.intensity` 若存在必须规范化到 0～1；未知 `code` 以安全的“未知/原始标签”展示，不得被解释为 CSS 类、动作文件或资源路径；
-- `tokenUsage` 同时支持回复级与会话级累计，前端不得用字符数冒充服务端 Token；（**C2 补充，2026-09-15**：回复级已消费并展示；会话级**当前无消费方、界面上不展示**，见 §12 的 C2 口径更正）
+- `tokenUsage` 同时支持回复级与会话级累计，前端不得用字符数冒充服务端 Token；（**C2 补充，2026-09-15**：回复级已消费并展示；会话级**当前无消费方、界面上不展示**，见 §12 的 C2 口径更正）〔**2026-09-16 取代**：会话级亦已消费并展示，见 §9.3 落地注记与 doc 03 §8〕
 - `cachedInput` 是 `input` 的子集，不重复加到 `total`；正常情况下 `total = input + output`，后端字段不满足时 Adapter 记录协议告警而不是在 UI 静默修正；
 - 客户端只展示后端明确提供的 `inner_voice` 产品字段，不从内部推理、调试日志或其他隐藏字段推断内容；
 - `inner_voice` 使用独立、可折叠的低强调区域，`public_reply` 是主要回复；
@@ -561,6 +562,15 @@ interface ToolResult {
 - **后端审批** `tool_approval`（v1 后端工具）仅 v2 连接带 enrich 字段；Desktop 工具不走 `tool_approval`，由 Electron 本地授权（§10.2 语义不变）。
 
 > **阶段 6 决策注记（2026-08-19 定案；后端 2026-08-20 已实现，前端待接入）：** 后端已新增 Server→Client `tool.started{callId(LLM tool_call_id), toolName, runtime(backend|desktop|local_worker), inputSummary?, generationId?, conversationId?}` 与 `tool.completed{callId, toolName, runtime, success, outputSummary?, error?, errorType?, durationMs?, truncated?, generationId?, conversationId?}`；v2 已停发 `action{tool_executing/tool_done}`（v1 不变）。`tool.request` 已新增必填 `sourceCallId`（LLM tool_call_id，后端生产路径非空）。前端统一领域键 = `sourceCallId`，`tool.request.callId`（桥 `call_*`）只作执行协议关联；`generation.completed` 不加 `tool_calls`、`finishReason` 不承载工具语义。完整更新点与后端门禁见 `docs/review/2026-08-19-阶段6-工具双轨统筹决策记录.md` §7。
+
+> **⚠️ 工具等待期间的静默窗口（2026-09-16 审计 P1-2，对照权威后端取证）：**
+> **后端允许的合法静默比客户端原窗口长，二者是常量倒挂。** 逐条事实（X99 `elysia-agent`，HEAD `10acc315`）：
+> - 后端等人工审批的上界是 **60.0s**：`Module/tool/safety.py:399` 的 `self._hitl_timeout: float = 60.0`，等待点是 `:790` 的 `asyncio.wait_for(event.wait(), timeout=self._hitl_timeout)`（同文件注释亦称"需审批工具等到 60s 超时"）。
+> - **等待期间那一代始终是开着的**：`generation.completed` 只在回合末发出（`core/cognitive/finalize.py` 的 `_finalize_turn` → `_emit_turn_completed`），而工具执行在回合之内；且 `_emit_turn_completed` 的 `finish_reason` **硬编码为 `"stop"`**，`_mark_generation_completed` 亦然。
+> - 客户端原静默窗口是 **50s**（`renderer/src/utils/generation-watchdog.ts`）。**60 > 50** ⇒ 用户在审批窗上多停几秒，这一代就会被判「卡死」并清掉 accumulator，其后到达的正文与终态帧被永久丢弃。
+> - 契约推论：**`tool.request` 的 wire 形状不含 `generationId`**（本地 traces 实测键集：`type/callId/toolName/toolVersion/runtime/sourceCallId/arguments/reason/riskLevel/permissionRequired/approvalAuthority/paramHash/expiresAt/requestId`），`PublicToolEvent` 也没有该字段（只有 `ToolCallRecord` 有）⇒ **不得**试图从工具事件里取 `generationId` 来给看门狗续命，「转发 touch」的直觉修法不可实现。
+> - 前端处置：工具活动（`requested`/`awaiting_permission`/`running`）期间把窗口放宽到 **180s**（覆盖 60s 审批 + 最高 120s 的 `screen.capture` 执行上界），且**保持有限**——不用「暂停计时」，因为 `tool.store` 的记录没有客户端过期，一条丢失的终态事件会让「工具有活动」永久为真，纯暂停等于把这张网永久关掉。
+> - **取证纪律警示**：`frontend_contract` 夹具 `ws-v2-tool.jsonl` 里写着 `generation.completed{finishReason:"tool_calls"}`，但**当前后端不会产生该值**（上条已证 `"stop"` 硬编码）；该夹具的命名（`call_frame_1`/`frame_demo.txt`/`sha256_frame_demo`）也表明它是**手写契约样本而非录制**。把它当"真实 wire"会直接推出与上文相反的结论（本次审计中我本人先踩了一次）。凡涉及后端时序/取值的判断，须以权威后端源码或真实 traces 为准。
 
 ## 11. 附件
 

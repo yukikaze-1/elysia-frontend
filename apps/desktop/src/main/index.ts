@@ -11,7 +11,7 @@ import { applyTestAppDataOverride, installAppIdentity, expectedUserDataBase, res
 import { ensureUserDataDirs, UserDataDirError } from './persistence/user-data-dirs'
 import { registerHandlers } from './ipc/handlers'
 import { getMainWindow } from './ipc/registry'
-import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted } from './windows/main-window'
+import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted, setBeforeCloseFlush } from './windows/main-window'
 // Silent Test Window Mode（2026-09-12）：窗口呈现 / DevTools / 原生对话框三类「会打扰宿主桌面」
 // 的动作统一走边界模块（判据集中在 config/runtime-environment.ts，见其头注）。
 import { closeWindowDevTools, lastWindowPresentation, openWindowDevTools } from './windows/window-presentation'
@@ -558,6 +558,10 @@ async function main(): Promise<void> {
       },
       onTimeout: () => diagnostics?.logger.warn('persist-flush:timeout', { message: '退出前 Renderer 持久化 flush 未在预算内确认' })
     })
+    // 2026-09-16 审计 P1-1：把同一个 requester 也挂到窗口级 `close` 上。真实退出路径（关最后一个窗口）
+    // 的 close 严格早于 closed/before-quit，而 before-quit 时 getMainWindow() 已为 null ⇒ 只挂
+    // before-quit 的 flush 在生产恒空转（详见 main-window.ts 的 close 处理器注释）。
+    setBeforeCloseFlush(() => persistFlush.request())
     registerHandlers({ credentials: store, logger: diagnostics.logger, chat: chatSvc, connectionConfig: connConfig, sessionStore, characterDrafts, attachments: { svc: uploadSvc, media: mediaSvc, fileRefs }, models: { adapter, media: mediaSvc }, settings: { svc: settingsSvc }, voice: { adapter, media: mediaSvc }, live2d: { registry: live2dRegistry }, tools: toolSvc, grants: grantStore, auditDir: dirs.audit, diagnostics: diagnosticsSvc, characters: { service: characterService }, persistFlush, audit })
     app.on('before-quit', createShutdownHandler({
       steps: [

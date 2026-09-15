@@ -56,6 +56,12 @@ function setPendingFocus(): void { pendingFocus = true }
 function consumePendingFocus(): boolean { const p = pendingFocus; pendingFocus = false; return p }
 export function markAppStarted(): void { appStarted = true }
 
+// —— 2026-09-16 审计 P1-1（H-04 在真实退出路径上恒空转）：关窗前 flush 钩子 ——
+// 同样提升为模块级（理由同 crashSink/rendererConsoleSink：`focusOrDefer` 在 second-instance/activate
+// 上不带 opts，per-opts 会丢）。装配根在建好 requester 后注册一次。
+let beforeCloseFlush: (() => Promise<void>) | undefined
+export function setBeforeCloseFlush(fn: (() => Promise<void>) | undefined): void { beforeCloseFlush = fn }
+
 // D-P7：麦克风权限处理器只注册一次（setPermission*Handler 全局覆盖；热重载/多窗重复调用会重复覆盖）
 let micPermissionRegistered = false
 function registerMicrophonePermissionOnce(): void {
@@ -122,6 +128,37 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   const t = setTimeout(showOnce, 5000)
   win.on('ready-to-show', () => clearTimeout(t))
   win.on('closed', () => clearTimeout(t))
+
+  // —— 2026-09-16 审计 P1-1：真实退出路径上的持久化 flush ——
+  // 缺陷：Windows/Linux 上用户退出应用的**唯一**路径是关闭最后一个窗口，其事件顺序经同版本
+  // Electron 43.3.0 实测为 close → closed（此刻 windows=0、getMainWindow() 已置 null）
+  //   → window-all-closed（index.ts 里 app.quit()）→ before-quit。
+  // 而 flush 的唯一投递点 `createPersistFlushRequester.deliver()` 读的正是 getMainWindow()，
+  // 在 before-quit 时恒为 null ⇒ `deliver()` 返回 false ⇒ requester 立即 resolve（fail-open）
+  // ⇒ 草稿 800ms / 设置 500ms / 布局 200ms / 角色草稿防抖写全部静默丢失。
+  // Renderer 侧也没有 `beforeunload`/`pagehide`/`unload` 补偿通道（全仓 0 命中），故必须在
+  // 窗口级 close 上拦一次——它严格早于 closed。
+  //
+  // 为什么 `destroy()` 而不是再 `close()`：这里已经 flush 完，destroy 直接进 closed，避免二次 close
+  // 递归；Renderer 无 beforeunload 处理器（同上 0 命中），跳过它不丢任何行为。
+  // 有界：requester 自带 700ms 预算（超时也 resolve），故最多延迟关窗 700ms 且绝不阻断退出。
+  // app.quit() 路径不受影响：那条路上 before-quit 先 make preventDefault 跑完 flush，本钩子只会
+  // 再问一次（Renderer 已落盘，毫秒级 ack）。
+  let closeFlushDone = false
+  win.on('close', (event) => {
+    if (closeFlushDone || !beforeCloseFlush) return   // 未注册钩子 → 保持原有直通语义
+    closeFlushDone = true
+    event.preventDefault()
+    void (async () => {
+      try {
+        await beforeCloseFlush?.()
+      } catch {
+        // fail-open：flush 自身失败绝不能把窗口留在打不开也关不掉的状态
+      } finally {
+        if (!win.isDestroyed()) win.destroy()
+      }
+    })()
+  })
 
   win.webContents.setWindowOpenHandler((details) => {
     // P1-11（type-aware lint 抓到）：这里此前没有接 `.catch`，而**同一个文件的 will-navigate 分支有**。

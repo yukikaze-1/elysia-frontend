@@ -40,8 +40,19 @@ export interface GenerationWatchdog {
   touch(generationId: string): void
   /** 解除监视（终态/取消/断线/会话切换）。解除后到期的回调不会再触发 */
   disarm(): void
+  /**
+   * 工具活动开关（2026-09-16 审计 P1-2）：工具等待授权/执行期间这一代**合法地**不发
+   * `generation.*` 事件，故改用更长的 `holdTimeoutMs` 窗口。
+   *
+   * 该开关是**外部条件的镜像**，不随 `arm`/`disarm` 复位：`clearForGeneration` 有意让
+   * `awaiting_permission` 跨代保留，所以「工具有活动」可能跨越 `generation.started`——
+   * 若在 disarm 时清掉，下一代就会退回 50s 而被同样的误杀命中。
+   */
+  setHold(held: boolean): void
   /** 当前武装的 generationId（无则 undefined）——供单测与诊断断言 */
   armedGenerationId(): string | undefined
+  /** 当前是否为工具活动窗口（供单测与诊断断言） */
+  isHeld(): boolean
 }
 
 /**
@@ -54,6 +65,26 @@ export interface GenerationWatchdog {
 export const GENERATION_SILENCE_TIMEOUT_MS = 50_000
 
 /**
+ * 工具活动期间的静默窗口上界（2026-09-16 审计 P1-2）。
+ *
+ * 为什么需要它——**后端允许的合法静默比 50s 长**：
+ *   · 后端等待人工审批的上界是 `_hitl_timeout = 60.0`（X99 `elysia-agent` `Module/tool/safety.py:399,790`，
+ *     `asyncio.wait_for(event.wait(), timeout=...)`）。等待期间那一代**仍是开着的**：
+ *     `generation.completed` 只在 `core/cognitive/finalize.py` 的 `_finalize_turn`（回合末、工具执行之后）
+ *     发出，且 `_emit_turn_completed` 的 finish_reason 恒为 `"stop"`。
+ *   · 桌面工具的本地执行上界最高 120s（`tool-registry.ts` `screen.capture: defaultTimeoutMs`），
+ *     另有 `CAPTURE_SESSION_TTL_MS = 120_000` 的停留态。
+ * 60s > 50s ⇒ 用户只是**多看了几秒审批窗**，这一代就会被判「卡死」并清掉 accumulator，
+ * 其后到达的正文与终态帧被永久丢弃。故工具活动期间必须放宽窗口。
+ *
+ * 为什么是「放宽到有限上界」而不是报告建议的「暂停计时」：`tool.store` 的记录**没有客户端过期**
+ * （无 `expiresAt` 定时器，状态只随事件推进），一条丢失的终态事件会让「工具有活动」永久为真——
+ * 纯暂停等于把 H-10 这张网**永久关掉**，而 H-10 存在的理由正是「后端丢终态」。取 3 倍于最大合法
+ * 静默（60s 审批 + 120s 执行里取 180s）的有限值，既不再误杀，又保证后端真死时 3 分钟内仍会收敛。
+ */
+export const TOOL_HOLD_SILENCE_TIMEOUT_MS = 180_000
+
+/**
  * 创建看门狗。
  *
  * `onSilence` 在窗口到期时**至多被调用一次**，且入参是到期那一代的 id——
@@ -62,6 +93,8 @@ export const GENERATION_SILENCE_TIMEOUT_MS = 50_000
  */
 export function createGenerationWatchdog(opts: {
   timeoutMs: number
+  /** H-10 之外的第二种窗口：工具活动期间使用（见 TOOL_HOLD_SILENCE_TIMEOUT_MS）。缺省时等同 timeoutMs */
+  holdTimeoutMs?: number
   onSilence: (generationId: string) => void
   timers?: WatchdogTimers
 }): GenerationWatchdog {
@@ -71,6 +104,12 @@ export function createGenerationWatchdog(opts: {
   }
   let handle: unknown
   let armed: string | undefined
+  // 外部条件（工具有无活动）的镜像；跨 arm/disarm 存活，见接口注释。
+  let held = false
+
+  function currentTimeoutMs(): number {
+    return held ? (opts.holdTimeoutMs ?? opts.timeoutMs) : opts.timeoutMs
+  }
 
   function stopTimer(): void {
     if (handle === undefined) return
@@ -92,7 +131,7 @@ export function createGenerationWatchdog(opts: {
         // 定时器回调内抛出会变成未捕获异常（renderer 侧无人兜底）。回调的失败不该逃逸到这里：
         // 留痕与 UI 收敛是调用方的职责，本模块只负责「按时通知一次」。
       }
-    }, opts.timeoutMs)
+    }, currentTimeoutMs())
   }
 
   return {
@@ -105,6 +144,13 @@ export function createGenerationWatchdog(opts: {
       stopTimer()
       armed = undefined
     },
-    armedGenerationId: () => armed
+    setHold(next: boolean) {
+      if (held === next) return
+      held = next
+      // 只重启已在跑的窗口：未武装时无窗口可改，下一次 arm 会按 currentTimeoutMs() 取新长度。
+      if (armed !== undefined) startTimer(armed)
+    },
+    armedGenerationId: () => armed,
+    isHeld: () => held
   }
 }

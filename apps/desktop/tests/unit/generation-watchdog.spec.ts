@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createGenerationWatchdog,
   GENERATION_SILENCE_TIMEOUT_MS,
+  TOOL_HOLD_SILENCE_TIMEOUT_MS,
   type WatchdogTimers
 } from '../../src/renderer/src/utils/generation-watchdog'
 
@@ -163,5 +164,131 @@ describe('generation-watchdog（H-10）', () => {
   it('默认窗口在评审建议的 45–60s 区间内（容忍慢首 token，又能给用户明确等待上限）', () => {
     expect(GENERATION_SILENCE_TIMEOUT_MS).toBeGreaterThanOrEqual(45_000)
     expect(GENERATION_SILENCE_TIMEOUT_MS).toBeLessThanOrEqual(60_000)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-09-16 审计 P1-2：工具活动期间的窗口放宽
+//
+// 缺陷：看门狗的活跃判据只看 `generation.*` 事件。而**工具等待期间那一代合法地不发任何
+// generation.* 事件**——后端等人工审批的上界是 60s（X99 `Module/tool/safety.py:399,790`），
+// 桌面工具本地执行上界 120s（`tool-registry.ts`），`generation.completed` 又只在回合末
+// （`core/cognitive/finalize.py` `_finalize_turn`）发出。60s > 50s ⇒ 用户在审批窗上多停几秒，
+// 这一代就被判「卡死」并清掉 accumulator，其后正文与终态帧被永久丢弃。
+//
+// 修法取「放宽到有限上界」而非「暂停计时」：`tool.store` 的记录没有客户端过期，一条丢失的终态
+// 事件会让「工具有活动」永久为真，纯暂停等于把 H-10 这张网永久关掉（而 H-10 的存在理由正是丢终态）。
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('generation-watchdog（2026-09-16 审计 P1-2：工具活动窗口）', () => {
+  /** holdTimeoutMs 传 null 表示**键缺省**（不是值为 undefined——默认形参会把 undefined 吃掉，
+   *  那样就测不到「未配置第二窗口」这条路径了）。 */
+  function setupHold(timeoutMs = 1000, holdTimeoutMs: number | null = 4000) {
+    const onSilence = vi.fn()
+    const clock = fakeTimers()
+    const watchdog = createGenerationWatchdog({
+      timeoutMs,
+      ...(holdTimeoutMs === null ? {} : { holdTimeoutMs }),
+      onSilence,
+      timers: clock.timers
+    })
+    return { watchdog, onSilence, clock }
+  }
+
+  it('工具活动期间改用放宽窗口：待触发的窗口长度不再是原窗口', () => {
+    const { watchdog, clock } = setupHold()
+    watchdog.arm('gen-1')
+    expect(clock.delays()).toEqual([1000])
+
+    watchdog.setHold(true)
+
+    // 承重断言：窗口确实被换成长的那一个（否则审批等待仍会在 50s 处被误杀）
+    expect(clock.delays()).toEqual([4000])
+    expect(clock.pendingCount(), '放宽不等于取消：仍必须留下一个会到期的窗口').toBe(1)
+  })
+
+  it('放宽窗口仍是有限的：到 holdTimeoutMs 照样到期（不得退化成永久关闭）', () => {
+    const { watchdog, onSilence, clock } = setupHold()
+    watchdog.arm('gen-1')
+    watchdog.setHold(true)
+    expect(onSilence).not.toHaveBeenCalled()
+
+    clock.fireAll()
+
+    expect(onSilence).toHaveBeenCalledTimes(1)
+    expect(onSilence).toHaveBeenCalledWith('gen-1')
+    expect(watchdog.armedGenerationId()).toBeUndefined()
+  })
+
+  it('setHold(true) 早于 arm：arm 直接用放宽窗口（工具先到、代后开）', () => {
+    const { watchdog, clock } = setupHold()
+    expect(clock.pendingCount(), '未武装时 setHold 不得凭空建定时器').toBe(0)
+
+    watchdog.setHold(true)
+    watchdog.arm('gen-1')
+
+    expect(clock.delays()).toEqual([4000])
+  })
+
+  it('工具活动结束后回到原窗口', () => {
+    const { watchdog, clock } = setupHold()
+    watchdog.arm('gen-1')
+    watchdog.setHold(true)
+    watchdog.setHold(false)
+
+    expect(clock.delays()).toEqual([1000])
+    expect(watchdog.isHeld()).toBe(false)
+  })
+
+  it('setHold 是外部条件的镜像：跨 disarm/arm 存活（awaiting_permission 有意跨代保留）', () => {
+    // clearForGeneration 只清终态，awaiting_permission 跨代保留 ⇒「工具有活动」可能跨越
+    // generation.started。若 disarm 时把 hold 清掉，下一代就会退回 50s 而被同样的误杀命中。
+    const { watchdog, clock } = setupHold()
+    watchdog.setHold(true)
+    watchdog.arm('gen-1')
+    expect(clock.delays()).toEqual([4000])
+
+    watchdog.disarm()
+    watchdog.arm('gen-2')
+
+    expect(clock.delays()).toEqual([4000])
+    expect(watchdog.isHeld()).toBe(true)
+  })
+
+  it('isHeld 反映当前状态；同值 setHold 不重启窗口（避免无谓抖动）', () => {
+    const { watchdog, clock } = setupHold()
+    watchdog.arm('gen-1')
+    expect(watchdog.isHeld()).toBe(false)
+
+    watchdog.setHold(true)
+    const clearedAfterFirst = clock.clearedCount()
+    watchdog.setHold(true)
+
+    expect(watchdog.isHeld()).toBe(true)
+    expect(clock.clearedCount(), '同值重复 setHold 不得重建定时器').toBe(clearedAfterFirst)
+  })
+
+  it('未配置 holdTimeoutMs 时 setHold 等同原窗口（不引入隐含的第二长度）', () => {
+    const { watchdog, clock } = setupHold(1000, null)
+    watchdog.arm('gen-1')
+    watchdog.setHold(true)
+
+    expect(clock.delays()).toEqual([1000])
+  })
+
+  it('工具活动期间的 touch 仍按放宽窗口续命（工具事件与 delta 交错时不得回退到短窗口）', () => {
+    const { watchdog, clock } = setupHold()
+    watchdog.arm('gen-1')
+    watchdog.setHold(true)
+    watchdog.touch('gen-1')
+
+    expect(clock.delays()).toEqual([4000])
+  })
+
+  it('生产常量必须盖过后端审批等待上界 60s（否则审批等待仍会被误杀）', () => {
+    // 承重的数字关系：后端 `_hitl_timeout = 60.0`（`Module/tool/safety.py:399`）期间那一代仍开着。
+    // 谁把这个常量调到 60s 以下，P1-2 就会原样复发——本断言就是那条回归线。
+    expect(TOOL_HOLD_SILENCE_TIMEOUT_MS).toBeGreaterThan(60_000)
+    // 同时必须严格大于常规窗口，否则「放宽」没有意义。
+    expect(TOOL_HOLD_SILENCE_TIMEOUT_MS).toBeGreaterThan(GENERATION_SILENCE_TIMEOUT_MS)
   })
 })

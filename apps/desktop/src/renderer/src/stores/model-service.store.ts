@@ -151,7 +151,22 @@ export const useModelServiceStore = defineStore('modelService', () => {
   function updateDraft(key: string, patch: Partial<ProfileDraft>): void {
     drafts.value[key] = { ...drafts.value[key], ...patch }
   }
-  function cancelEdit(key: string): void { delete drafts.value[key]; delete validation.value[key] }
+  /**
+   * 关闭草稿槽。
+   *
+   * 2026-09-16 审计 P1-5：**连同该草稿的连通性/可用性测试结果一起清掉**。
+   * `testResult` 的键是 `${provider}/${model}|${level}`（见 testProfile 与 CyProfileCard 的 connKey/usableKey），
+   * 而它此前不随草稿生命周期清理 ⇒ 重新打开向导时仍显示上一次的「测试通过」，而表单内容甚至后端配置
+   * 可能已经变了——那是一盏**过期的绿灯**，正是本仓反复出现的「绿灯含义被高估」同型问题。
+   */
+  function cancelEdit(key: string): void {
+    const name = drafts.value[key]?.name?.trim()
+    if (name) {
+      delete testResult.value[`custom/${name}|connectivity`]
+      delete testResult.value[`custom/${name}|usable`]
+    }
+    delete drafts.value[key]; delete validation.value[key]
+  }
 
   // preview 双用句柄（Task 9 消费约定，brief 同源）：动作调用 preview({voiceId})，结果读取 preview.url / preview.error。
   // 以 ref 状态暴露：Pinia 对 ref 状态按值透出（不套 action 包装），getter 得以保留；状态单一来源 previewState ref 保持响应式。

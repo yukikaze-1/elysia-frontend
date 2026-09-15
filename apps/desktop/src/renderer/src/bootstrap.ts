@@ -4,12 +4,13 @@
 // G2(P1-1/P2-2):先 hydratePersistence 水合 draft/cache,再取连接 snapshot——disconnected 分支离线水合,
 // connected 分支缓存不进入 messageStore(只作内存储备,由 initializeConnected+activate 覆盖)。
 import type { BackendEvent, CharacterCatalogChangedEvent, CharacterStateChangedEvent, ConnectionState, Conversation, ConversationTokenUsage, Live2DDirectiveEvent, SessionPersistenceState } from '@shared/contracts'
+import { watch } from 'vue'   // 2026-09-16 审计 P1-2：工具活动 → 静默看门狗窗口的 sync 镜像
 import type { PublicError } from './utils/public-error'
 import type { DesktopApiLike } from './stores/desktop-api.types'
 
 export interface BootstrapStores {
   connection: { setState(s: ConnectionState): void; setError(e: PublicError): void }
-  message: { applyEvent(e: unknown): void; handleConnectionStateChange(s: ConnectionState): void; loadReplay(conversationId: string, messages: unknown[], usage?: ConversationTokenUsage): void }
+  message: { applyEvent(e: unknown): void; handleConnectionStateChange(s: ConnectionState): void; loadReplay(conversationId: string, messages: unknown[], usage?: ConversationTokenUsage): void; setToolWorkActive(active: boolean): void }
   conversation: {
     onConnected(connectionId?: string): Promise<void>
     onActiveConversationAppeared(activeId: string): Promise<void>
@@ -55,7 +56,7 @@ export interface BootstrapStores {
   live2d?: { handleDirective(e: Live2DDirectiveEvent): void }
   // 阶段 6 批次 B（Task 7）：toolStore——tool.* 事件旁路（判别键 event，代码 H5；stores 注入模式，
   // 与 live2d.directive 旁路同款——消息 store 不依赖工具框架）+ generation.started 清终态接线（M6）。
-  tools?: { init(): void; applyBackendEvent(e: BackendEvent): void; clearForGeneration(): void; setActiveConversationId(id: string | undefined): void }
+  tools?: { init(): void; applyBackendEvent(e: BackendEvent): void; clearForGeneration(): void; setActiveConversationId(id: string | undefined): void; toolWorkActive: boolean }
 }
 
 export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapStores): { register(): void } {
@@ -316,6 +317,16 @@ export function createRendererBootstrap(api: DesktopApiLike, stores: BootstrapSt
     stores.voice.init()
     // 阶段 6 批次 B（Task 7）：toolStore 常驻订阅 tool:event（与 voiceStore.init 同款位置；可选，未接线 no-op）
     stores.tools?.init()
+    // 2026-09-16 审计 P1-2：把「工具有活动」镜像进 messageStore 的静默看门狗（等待授权/执行中那一代
+    // 合法地不发 generation.* 事件，50s 窗口会误杀——后端审批上界 60s > 50s）。
+    // 用 sync watch 而非在工具事件分支里补一次调用：桌面工具的 awaiting_permission 走 tool:event →
+    // toolStore.upsertLocal，**不经过** chat:event 旁路，只在旁路里镜像会漏掉最该覆盖的那条路径；
+    // sync 保证与 mutation 同 tick 生效（单测无需 flush）。immediate 让水合出的非终态记录也生效。
+    watch(
+      () => stores.tools?.toolWorkActive ?? false,
+      (active) => stores.message.setToolWorkActive(active),
+      { immediate: true, flush: 'sync' }
+    )
     stores.characterRuntimeCoordinator?.start()
   }
   return { register }

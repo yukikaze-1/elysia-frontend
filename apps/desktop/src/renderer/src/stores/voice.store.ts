@@ -79,6 +79,27 @@ export const useVoiceStore = defineStore('voice', () => {
   let dictationClientRequestId: string | undefined
   let capture: PcmCaptureLike | null = null
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 2026-09-16 审计 P1-6：dictation 的共享单例态需要 owner 判据。
+  //
+  // 缺陷（对抗复核保留的那条路径）：`startDictation` 的**失败分支按「我这次失败」清理共享状态**。
+  // 用户「按住 → 松开 → 立刻再按」即可命中：第一次 start 的 id 是 `await` 之后才记入的，
+  // 松开时 `stopDictation` 因 id 还是空而早退；再按一次时 `guardStart()` 看 mode 仍是 idle
+  // → 第二次 start 进入并被 Main 的互斥门拒绝 → 它的 catch 清掉**共享的** dictationClientRequestId
+  // 与 capture ⇒ 第一次随后成功建立采集并置 mode='dictating'，但 id 已被清空、capture 已置 null
+  // ⇒ `stopDictation` 早退、`capture?.stop()` 无处可调：**麦克风持续采集且 UI 无停止入口**，
+  // 只能断线或重启。dictationClientRequestId 全仓没有任何事件回写它，故不可自愈。
+  //
+  // 修法两层（根因 + 防御）：
+  //   ① dictationStartInFlight：整个 start 序列（控制帧 + getUserMedia）期间的 in-flight 门，
+  //      第二次 start 直接拒绝且**不做任何清理**——从源头消除这条竞态；
+  //   ② dictationOwner 世代号：所有 await 之后对共享态的写入都必须仍持有本世代；
+  //      已被接管/取消的 start 走 abandonDictationStart 收尾（停采集 + 取消后端会话），
+  //      绝不留下「在采集但无人能停」的状态。
+  // ─────────────────────────────────────────────────────────────────────────────
+  let dictationOwner = 0
+  let dictationStartInFlight = false
+
   // —— 定时器句柄 ——
   let recordTimer: ReturnType<typeof setInterval> | undefined
   let recordWarnShown = false
@@ -500,41 +521,74 @@ export const useVoiceStore = defineStore('voice', () => {
   async function startDictation(): Promise<void> {
     if (!guardStart()) return
     if (!useSettingsStore().voice.enabled) return
+    // P1-6①：in-flight 门——整个 start 序列（控制帧 + 采集）期间不得有第二次进入。
+    // 放在 guardStart 之外单独判定：guardStart 被录音/realtime 两个入口共用，不能为 dictation 改变它的语义。
+    if (dictationStartInFlight) return
     // review-Important：新操作开始即清陈旧错误
     micError.value = undefined
     error.value = undefined
     notice.value = null
     if (!requireConsent(() => startDictation())) return
+    const owner = ++dictationOwner      // P1-6②：本次 start 的世代（后续所有共享态写入都要持有它）
     const clientRequestId = `req_${crypto.randomUUID()}`
     const sttProfileId = useSettingsStore().dictation.sttProfileId
-    // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 clientRequestId；拒绝 → error 置位 + 回 idle
+    dictationStartInFlight = true
     try {
-      await api.voiceStartDictation({ clientRequestId, ...(sttProfileId ? { sttProfileId } : {}) })
-    } catch (e) {
-      error.value = parsePublicError(messageOf(e))
-      dictationClientRequestId = undefined
-      mode.value = 'idle'
-      return
+      // D-P19：控制帧先于采集——await 成功才开麦克风 + 才记 clientRequestId；拒绝 → error 置位 + 回 idle
+      try {
+        await api.voiceStartDictation({ clientRequestId, ...(sttProfileId ? { sttProfileId } : {}) })
+      } catch (e) {
+        if (dictationOwner !== owner) return   // 已被取消/接管：不得按「我这次失败」清共享态
+        error.value = parsePublicError(messageOf(e))
+        dictationClientRequestId = undefined
+        mode.value = 'idle'
+        return
+      }
+      if (dictationOwner !== owner) return abandonDictationStart(clientRequestId)
+      dictationClientRequestId = clientRequestId
+      capture = captureFactory()
+      try {
+        await capture.start({ onChunk: (b) => api.voiceSendAudio(b) })
+      } catch (e) {
+        if (dictationOwner !== owner) return abandonDictationStart(clientRequestId)
+        micError.value = parsePublicError(messageOf(e))
+        capture = null
+        captureReady.value = false
+        dictationClientRequestId = undefined
+        mode.value = 'idle'
+        try { await api.voiceCancelDictation({ clientRequestId }) } catch { /* 后端取消失败不阻塞 */ }
+        return
+      }
+      // 起点成功但期间已被取消/接管：必须把**已经起来的采集**停掉，否则就是「在采集却无人能停」
+      if (dictationOwner !== owner) return abandonDictationStart(clientRequestId)
+      captureReady.value = true
+      dictation.value.caption = ''
+      mode.value = 'dictating'
+    } finally {
+      dictationStartInFlight = false
     }
-    dictationClientRequestId = clientRequestId
-    capture = captureFactory()
-    try {
-      await capture.start({ onChunk: (b) => api.voiceSendAudio(b) })
-    } catch (e) {
-      micError.value = parsePublicError(messageOf(e))
-      capture = null
-      captureReady.value = false
-      dictationClientRequestId = undefined
-      mode.value = 'idle'
-      try { await api.voiceCancelDictation({ clientRequestId }) } catch { /* 后端取消失败不阻塞 */ }
-      return
-    }
-    captureReady.value = true
-    dictation.value.caption = ''
-    mode.value = 'dictating'
+  }
+
+  /**
+   * P1-6：放弃一个已被取消/接管的 dictation start——停掉可能已经起来的采集、清掉只属于本世代的
+   * 会话标识、取消后端会话。任何一步失败都不得遗留「采集中」状态（fail-closed）。
+   *
+   * **本函数自己也是「await 之后写共享态」，故每一处写入都按*写入时刻*的值再判定一次**：
+   * 调用方在 `startDictation` 的 `finally` 里会立刻复位 `dictationStartInFlight`，于是
+   * `await ownedCapture.stop()` 期间完全可能已有新 start 接管 `capture`/`dictationClientRequestId`。
+   * 若无条件 `capture = null`，这次迟到收尾就会把接管者刚建立的句柄清掉——正是本缺陷的同型后果。
+   */
+  async function abandonDictationStart(requestId: string): Promise<void> {
+    const ownedCapture = capture   // 同步取：此刻它仍是这次 start 建立的句柄
+    try { await ownedCapture?.stop() } catch { /* 采集尚未起来时 stop 可能抛：忽略，状态照清 */ }
+    if (capture === ownedCapture) { capture = null; captureReady.value = false }
+    if (dictationClientRequestId === requestId) dictationClientRequestId = undefined
+    try { await api.voiceCancelDictation({ clientRequestId: requestId }) } catch { /* 后端取消失败不阻塞 */ }
   }
 
   async function stopDictation(): Promise<void> {
+    // P1-6②：停止即接管——使任何在途 start 失效（它会在自己的 owner 判定处收尾并停掉采集）
+    dictationOwner++
     const id = dictationClientRequestId
     if (!id) return
     await capture?.stop()
@@ -544,6 +598,7 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   async function cancelDictation(): Promise<void> {
+    dictationOwner++   // P1-6②：同上
     const id = dictationClientRequestId
     if (!id) return
     await capture?.stop()
