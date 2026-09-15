@@ -322,6 +322,21 @@ const linkSurfaces = [
   ARCHIVE_INDEX
 ]
 
+// 2026-09-15（评审 `S7-D1`）：`docs/` 根下**非编号**文档此前完全不参与任何检查——既无元数据校验、
+// 也无链接检查、也无行宽。于是 `docs/2026-08-29-UI精修整改清单.md:6` 的「当前状态源」两条链接
+// 长期 404（写成 `../16-…`，而该文件就在 `docs/` 根），并且它是 README 与 doc 00 §5.1 正式挂出的入口。
+// 这些文件是**产品意图与专项清单**的落点（PRD、多角色架构设计、UI 走查记录…），不是历史归档，
+// 所以按「活文档」对待：纳入链接检查。
+//
+// 仍然**刻意排除**的两类（都有理由，且不因此失去全部保护）：
+//   · `docs/archive/**`：归档文档的正文链接指向归档前的相对位置，属历史快照的一部分——改写它们
+//     等于改写历史记录的组织方式；其入口（archive/README.md 生成的索引）仍在检查面内。
+//   · `docs/review/**`：同理（含多份「治理前快照」，其链接按当时的目录结构书写）。索引 README 受检。
+// 这两类的断链现状已如实记录在 `docs/review/2026-09-15-五路并行全量评审发现汇总.md` §7。
+for (const name of readdirSync(DOCS)) {
+  if (name.endsWith('.md') && !name.startsWith('README')) linkSurfaces.push(join(DOCS, name))
+}
+
 for (const name of coreDocs) {
   const path = join(DOCS, name)
   const statusLine = read(path)
