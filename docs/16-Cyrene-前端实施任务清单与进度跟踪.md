@@ -833,6 +833,21 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **顺带修掉一处被抖动暴露的假绿**：`real-backend.spec.ts` 的重连退避用例用真实计时断言观测窗口，退避加抖动后间歇变红 ⇒ 钉住随机源（断言强度不变）。
 - **本批未做（如实记录）**：G（`session.token_stats` 消费、`clientMessageId` 上 wire）、I（L1 世代栅栏、L8 blink 时间轴重放）、J（L5 像素取证）、L9（character-runtime 缓存清理）、集成套件复跑。
 
+**Live2D 较大件（I 批，2026-09-15，`3b4bb74`）与集成套件首次整套绿**
+
+| 门禁 | 结果（`3b4bb74`，本机 Windows） |
+|---|---|
+| typecheck / lint | PASS |
+| `pnpm test` | PASS：**255 files / 3178 passed** + 6 expected-fail + 22 skipped |
+| `pnpm test:integration` | **PASS（首次整套绿）：40 files / 171 passed + 3 skipped，exit 0** |
+| `pnpm docs:check` | PASS |
+
+- **L1 已完成**：`init`/`dispose` 之间补**世代栅栏**（`lifecycleGeneration`）——加载中关开关/卸载面板时，在途 `createModel` 不再把模型装进已被丢弃的 controller（纹理永不释放 ≈33MB VRAM + status 僵尸态）；`ensureController` 覆写订阅前先退订旧订阅。
+- **L9 已完成**：`clearInstance` 首次有了调用方——切实例时释放旧实例的 revision 键控缓存（此前只增不减，长会话里持续增长且每次事件遍历全部 revision 键）。
+- **变异验证**：去掉 L1 的 `stale()` 自查 ⇒ 红；禁用 L9 的释放调用 ⇒ 红；还原即绿。
+- **⚠️ 集成套件「整套绿」首次取得，但只此一轮**：`40 files / 171 passed + 3 skipped, exit 0`。此前的多轮（含 A~E 批之后那轮 38/40、4 failed）都只做到「逐项单跑绿、整套有负载型偶发」，§1 与本节的历次记录**保留不改**（它们记录的是当时的读数）。**本轮不据此宣布 flake 清零**——同一套件历史上出现过两种互不相同的红项，单轮通过不足以定性；后续批次仍按「跑一轮 + 红项单跑复核」的口径记。
+- **仍未做**：L8（`blinkOpenLevel` 每帧从 t=0 重放整条时间轴）、G（`session.token_stats` 消费、`clientMessageId` 上 wire）、J（L5 GPU 重建后「非透明像素 > 0」的真机取证）。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
