@@ -22,7 +22,7 @@ function mkService(opts: {
 } = {}): MediaService {
   return new MediaService({
     backend: {
-      signAttachmentUrl: opts.sign ?? (async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() })),
+      signAttachmentUrl: opts.sign ?? (async (id) => ({ url: `http://127.0.0.1:9/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() })),
       ...(opts.readToolAttachment ? { readToolAttachment: opts.readToolAttachment } : {})
     },
     baseUrl: opts.baseUrl ?? (() => 'http://127.0.0.1:9'),
@@ -84,8 +84,28 @@ describe('resolveSignUrl（P0-01：相对签名 URL 基于 endpoint 解析，spe
     expect(resolveSignUrl('/api/attachments/att_1?sig=s', 'http://127.0.0.1:18765/'))
       .toBe('http://127.0.0.1:18765/api/attachments/att_1?sig=s')
   })
-  it('绝对 http(s) URL → 原样放行（D1：兼容对象存储 CDN）', () => {
-    expect(resolveSignUrl('https://cdn.x/att_1?sig=s', 'http://127.0.0.1:18765')).toBe('https://cdn.x/att_1?sig=s')
+  it('绝对 URL 与后端**同源**（scheme+host+port 全等）→ 放行（自建后端签名 URL 的正常形态）', () => {
+    expect(resolveSignUrl('http://127.0.0.1:18765/att_1?sig=s', 'http://127.0.0.1:18765')).toBe('http://127.0.0.1:18765/att_1?sig=s')
+    expect(resolveSignUrl('https://files.example.com/a?sig=s', 'https://files.example.com/base')).toBe('https://files.example.com/a?sig=s')
+  })
+  // S1（2026-09-15 安全评审）：绝对签名 URL 的**目标地址策略**。修复前只要 scheme 是 http(s) 就放行，
+  // 于是后端可让 Main 去 fetch 本机/内网地址，并把响应作为**同源** `cyrene://` 资源交给页面 ⇒ 读原语。
+  it('绝对 URL 指向回环/私网/链路本地/云元数据 → 拒绝（S1：媒体代理不得成为本机读原语）', () => {
+    const base = 'http://127.0.0.1:18765'
+    for (const bad of [
+      'http://127.0.0.1:11434/api/tags',        // 本机服务（同主机**异端口**也算：那正是本机端口枚举）
+      'http://localhost:8080/x',                // 回环（域名形态）
+      'http://[::1]:8080/x',                    // IPv6 回环
+      'http://169.254.169.254/latest/meta-data', // 云元数据（链路本地）
+      'http://10.0.0.5/x', 'http://192.168.1.1/x', 'http://172.16.0.9/x',   // RFC1918
+      'http://100.64.1.1/x'                     // CGNAT
+    ]) expect(() => resolveSignUrl(bad, base), bad).toThrow(SignedUrlResolveError)
+  })
+  it('绝对 URL 为**公网域名**（非后端源）→ 拒绝：域名可解析到回环，字面检查挡不住（收窄 D1，见 resolveSignUrl 注释）', () => {
+    expect(() => resolveSignUrl('https://cdn.x/att_1?sig=s', 'http://127.0.0.1:18765')).toThrow(SignedUrlResolveError)
+  })
+  it('绝对 URL 为**公网字面 IP** → 放行（不经 DNS，无解析型绕过）', () => {
+    expect(resolveSignUrl('https://93.184.216.34/att_1?sig=s', 'http://127.0.0.1:18765')).toBe('https://93.184.216.34/att_1?sig=s')
   })
   it('异 scheme（javascript:/file:/data:）与协议相对 // → SignedUrlResolveError', () => {
     expect(() => resolveSignUrl('javascript:alert(1)', 'http://127.0.0.1:18765')).toThrow(SignedUrlResolveError)
@@ -102,7 +122,7 @@ describe('resolveSignUrl（P0-01：相对签名 URL 基于 endpoint 解析，spe
 
 describe('MediaService.resolveSignedUrl（缓存/重签）', () => {
   it('首次签发入缓存；5min 内命中不重签', async () => {
-    const sign = vi.fn(async (id: string) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }))
+    const sign = vi.fn(async (id: string) => ({ url: `http://127.0.0.1:9/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }))
     const svc = mkService({ sign })
     const a = await svc.resolveSignedUrl('att_1')
     const b = await svc.resolveSignedUrl('att_1')
@@ -111,14 +131,14 @@ describe('MediaService.resolveSignedUrl（缓存/重签）', () => {
   })
   it('到期前 5min 内视为过期 → 重签（force 或自然过期）', async () => {
     let count = 0
-    const sign = vi.fn(async (id: string) => ({ url: `https://cdn.x/${id}?sig=${++count}`, expiresAt: new Date(now() + 4 * 60 * 1000).toISOString() }))  // 距过期 <5min
+    const sign = vi.fn(async (id: string) => ({ url: `http://127.0.0.1:9/${id}?sig=${++count}`, expiresAt: new Date(now() + 4 * 60 * 1000).toISOString() }))  // 距过期 <5min
     const svc = mkService({ sign })
     await svc.resolveSignedUrl('att_1')
     await svc.resolveSignedUrl('att_1')
     expect(sign).toHaveBeenCalledTimes(2)
   })
   it('P2-6：非法 expiresAt（Date.parse NaN）→ 降级短窗口缓存，不放大重签请求', async () => {
-    const sign = vi.fn(async (id: string) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: 'not-a-date' }))
+    const sign = vi.fn(async (id: string) => ({ url: `http://127.0.0.1:9/${id}?sig=s`, expiresAt: 'not-a-date' }))
     const svc = mkService({ sign })
     const a = await svc.resolveSignedUrl('att_1')
     const b = await svc.resolveSignedUrl('att_1')
@@ -127,7 +147,7 @@ describe('MediaService.resolveSignedUrl（缓存/重签）', () => {
   })
   it('P2-6：非法 expiresAt 降级窗口用尽后仍可重签（非死缓存）', async () => {
     let clock = now()
-    const sign = vi.fn(async (id: string) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: 'not-a-date' }))
+    const sign = vi.fn(async (id: string) => ({ url: `http://127.0.0.1:9/${id}?sig=s`, expiresAt: 'not-a-date' }))
     const svc = new MediaService({
       backend: { signAttachmentUrl: sign },
       baseUrl: () => 'http://127.0.0.1:9',
@@ -144,7 +164,7 @@ describe('MediaService.stream attachment 分支', () => {
   it('Range 请求 → 透传 Range/Accept，后端 206 直通', async () => {
     const fetchImpl = vi.fn(async (u: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(u)
-      expect(url).toBe('https://cdn.x/att_1?sig=s')
+      expect(url).toBe('http://127.0.0.1:9/att_1?sig=s')
       expect(init?.headers).toMatchObject({ range: 'bytes=0-1023' })
       return new Response(new Uint8Array(64), { status: 206, headers: { 'content-type': 'video/mp4', 'content-range': 'bytes 0-63/1024', 'accept-ranges': 'bytes' } })
     })
@@ -350,7 +370,7 @@ describe('MediaService.putTtsAudio / stream tts-live 分支（阶段 4 批次 B�
   it('ttlMs 过期后经惰性清理（put）移除 → 404；未过期新 put 不清理（同 putTtsPreview 语义）', async () => {
     let clock = now()
     const svc = new MediaService({
-      backend: { signAttachmentUrl: async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }) },
+      backend: { signAttachmentUrl: async (id) => ({ url: `http://127.0.0.1:9/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }) },
       baseUrl: () => 'http://127.0.0.1:9',
       now: () => clock
     })
@@ -370,7 +390,7 @@ describe('MediaService.putTtsAudio / stream tts-live 分支（阶段 4 批次 B�
   it('缺省 ttlMs = 5min：5min 内 200；超过 5min 由下一次 put 惰性清理 → 404', async () => {
     let clock = now()
     const svc = new MediaService({
-      backend: { signAttachmentUrl: async (id) => ({ url: `https://cdn.x/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }) },
+      backend: { signAttachmentUrl: async (id) => ({ url: `http://127.0.0.1:9/${id}?sig=s`, expiresAt: new Date(now() + 60 * 60 * 1000).toISOString() }) },
       baseUrl: () => 'http://127.0.0.1:9',
       now: () => clock
     })

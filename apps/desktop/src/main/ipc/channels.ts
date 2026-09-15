@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { isKeyAllowed, type ActivateModelProfileCommand, type CredentialStatus, type ModelProfileTestCommand, type SetTtsVoiceCommand, type TtsPreviewCommand, type UpsertModelProfileCommand } from '@shared/contracts'
+import { isKeyAllowed, MAX_IPC_MESSAGE_BYTES, type ActivateModelProfileCommand, type CredentialStatus, type ModelProfileTestCommand, type SetTtsVoiceCommand, type TtsPreviewCommand, type UpsertModelProfileCommand } from '@shared/contracts'
 import { CacheMessagesInputSchema, OpenExternalInputSchema, PersistSessionInputSchema, SettingsPatchSchema, CreateConversationInputSchema } from '@shared/schemas'
 
 export const appInfoSchema = z.object({
@@ -38,9 +38,11 @@ export const chatSendSchema = z.object({
 })
 export const chatGetMessagesSchema = z.object({
   conversationId: z.string().min(1),
-  before: z.string().optional(),
-  after: z.string().optional(),
-  limit: z.number().int().positive().optional()
+  before: z.string().max(256).optional(),
+  after: z.string().max(256).optional(),
+  // S9（2026-09-15）：`limit` 此前无上界 ⇒ 对端可要一个超大页，让 Main 整份拉取 + JSON.parse + schema 校验。
+  // 与同文件族既有口径对齐（chatQueryHistorySchema.limit ≤100 / ToolHistoryQuerySchema.limit ≤200）。
+  limit: z.number().int().positive().max(200).optional()
 })
 export const chatRenameSchema = z.object({
   conversationId: z.string().min(1),
@@ -50,8 +52,8 @@ export const chatActivateSchema = z.object({
   conversationId: z.string().min(1)
 })
 export const chatListConversationsSchema = z.object({
-  cursor: z.string().optional(),
-  limit: z.number().int().positive().optional()
+  cursor: z.string().max(256).optional(),   // S9：游标同样给上界（后端游标是短串）
+  limit: z.number().int().positive().max(200).optional()   // S9：同上
 })
 export const chatCreateSchema = CreateConversationInputSchema
 export const chatCancelSchema = z.object({
@@ -79,7 +81,11 @@ export const UploadFileDescriptorSchema = z.object({
   // S5-B2（2026-09-15）：**path 已从 IPC 面移除**，改为 Main 签发的不可猜 fileRef（见 file-ref.ts）。
   // 对端再也无法在本通道上命名主机路径——它能做的只有「引用 Main 登记过的文件」。
   fileRef: z.string().min(1).max(128).optional(),
-  bytes: z.instanceof(Uint8Array).optional()
+  // S4（2026-09-15）：`bytes` 此前无任何长度上界，而所有限额都用**对端自报**的 `size` 判定 ⇒ 等于没有上限。
+  // 上界取**全局 IPC 不变量**（`MAX_IPC_MESSAGE_BYTES` = 4 MiB，doc 07 §6.3）：通道预算不得比它更宽
+  // （`ipc-budget-declaration.spec.ts` 会红）。这条只约束 `bytes` 分支（粘贴型，载荷真的过 IPC）；
+  // `fileRef` 分支**载荷为空**（Main 自己按 token 读盘），其单文件上限仍按 kind（10/20/50 MiB）在 handler 复核。
+  bytes: z.instanceof(Uint8Array).refine((b) => b.byteLength <= MAX_IPC_MESSAGE_BYTES, { message: '粘贴的文件超过 IPC 载荷上限' }).optional()
 }).refine((d) => (d.fileRef !== undefined) !== (d.bytes !== undefined), { message: 'fileRef/bytes 二选一' })
 
 export const attachmentsValidateSchema = z.object({ files: z.array(UploadFileDescriptorSchema).min(1).max(10) })

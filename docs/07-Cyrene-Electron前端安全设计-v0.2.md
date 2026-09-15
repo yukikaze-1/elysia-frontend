@@ -216,7 +216,19 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 >   对端再也无法在本通道上命名主机路径（`tests/unit/attachments-contracts.spec.ts` 有类型级 + schema 级守护）。
 > - **唯一铸造点**：preload 的 `webUtils.getPathForFile` 拿到路径后**立刻**经 `attachments:register-file-ref`
 >   换 token（`main/attachments/file-ref.ts`）；路径只留在 Main 的表里，token 由 32 字节 CSPRNG 生成，
->   与路径之间没有可计算关系（不是哈希，无法反推）。TTL 10 分钟、表容量 256（超限逐最旧）、重连即清空。
+>   与路径之间没有可计算关系（不是哈希，无法反推）。TTL 10 分钟、表容量 256（超限逐最旧）；
+>   **显式断开连接或切换后端地址时清空**（`chat-service` 的 `onConnectionTeardown` → `fileRefs.clear()`）；
+>   **瞬态 WS 掉线重连不清**——那是同一次用户会话，清掉会让正在编辑的待发送附件凭空失效，且没有安全收益。
+>   > **2026-09-15 复核修正（S6/S7-C1）**：本行此前写「**重连即清空**」，但当时 `clear()` **全仓零调用点**
+>   > （`index.ts` 的注释还指向一个不存在的「chatSvc 的 reconnect 装配点」）——即文档在断言一个不存在的属性。
+>   > 现已在连接终结路径接线，并把口径收紧为上面这句。
+>
+> - **残余信息面（如实记录，S7）**：`register-file-ref` + `attachments:validate` 的组合对**被攻陷的
+>   Renderer** 是一个**文件存在性/敏感性 oracle**——对端可以登记任意字符串再校验，并从失败文案反推
+>   「该路径存在且命中敏感目录」（黑名单命中意味着 `realpath` 成功）。**2026-09-15 已消除该 oracle**：
+>   路径类失败（未知/过期 token、userData 内、命中黑名单、非普通文件、不可读）**公开面完全一致**
+>   （同一 `reason` 与同一句话），具体原因只经 `logger.warn('attachments:refused')` 落 Main 日志。
+>   就**读取**而言本通道仍无收益（对端拿不到内容）。
 > - **为什么不是 HMAC 签名**：`isTrustedSenderFor` 只校验 webContents + mainFrame + URL ⇒ Main **无法区分**
 >   preload 世界与页面主世界的 invoke（同一帧），任何「只存在于 preload 的秘密」都在对端可达面上。
 >   能当信任锚的只有 **Main 自己的内存**。
@@ -227,8 +239,15 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 >   来自真实 OS 拖入/选中。**该门禁的意义在于：这条性质是上游行为，一旦 Electron 改变它，preload 就会把
 >   对端指定的路径登记进表、防线静默失效——故该 spec 对此是硬断言。**
 > - **另一方面如实记录**：`bytes` 分支（粘贴型/无文件句柄）仍可被直调，对端能把任意字节 POST 到**当前已连接
->   后端**并取得后端附件引用；受每类型大小上限/聚合上限/文件数上限约束，且对端本就能 fetch/WS 出网 ⇒
->   单独看**无额外权限提升**，唯一新增能力是「往会话里塞一个后端附件」。本项**不主张**已消除该面。
+>   后端**并取得后端附件引用；对端本就能 fetch/WS 出网 ⇒ 单独看**无额外权限提升**，唯一新增能力是
+>   「往会话里塞一个后端附件」。本项**不主张**已消除该面。
+>   > **2026-09-15 复核修正（S4）**：本项此前称该分支「受每类型大小上限／聚合上限／文件数上限约束」——
+>   > 该说法**只对诚实客户端成立**：文件数上限（每批 10）确由 schema 执行，但**每 kind 与聚合上限当时
+>   > 全按对端自报的 `size` 判定**，`Uint8Array.byteLength` 从不校验，故伪造 `{size: 1, bytes: <数百 MB>}`
+>   > 可同时穿过 schema、预检与上传前复核。现已按**真实字节数**复核：schema 层 `byteLength ≤` 全局 IPC
+>   > 不变量（4 MiB，仅 `bytes` 分支；`fileRef` 分支载荷为空、由 Main 自读盘，仍按 kind 10/20/50 MiB 判），
+>   > `upload-service` 的 `validateFiles` / `uploadBatch` 双分支均改用真值（`fileRef` 分支用 `stat` 结果）。
+>   > 客户端侧同步：粘贴型超 4 MiB 在 Renderer 就被拦下并提示改用拖入/选择文件（走 `fileRef`，不受 IPC 限制）。
 
 
 ### 9.3 截图

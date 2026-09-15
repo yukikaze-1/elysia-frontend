@@ -148,6 +148,8 @@ export interface RealBackendOptions {
   getTtsMedia?: () => TtsMediaSink | undefined
   ackTimeoutMs?: number   // 默认 15000;测试注入小值
   reconnectBaseDelayMs?: number  // 默认 1000;测试注入缩短值避免慢测试
+  /** S7/C9：重连退避的随机源（默认 `Math.random`）。测试注入固定值即可复现确定延迟 */
+  random?: () => number
   handshakeTimeoutMs?: number  // 默认 10000;握手(connect → server_info)超时,测试注入小值
   restTimeoutMs?: number  // 默认 10000;REST 请求超时,测试注入小值
   uploadTimeoutMs?: number  // 默认 60000;附件上传长超时(非 10s,spec §4.4),测试注入小值
@@ -1040,13 +1042,19 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       return
     }
     this.setState({ status: 'reconnecting', serverUrl: this.serverUrl, connectionScopeId: this.connectionScopeId })
-    // 退避延迟 = base * 2^(attempts-1) 封顶 MAX;now() 注入时钟做差值判定(自上次掉线已流逝时间计入延迟,
-    // 测试可注入时钟/缩短 reconnectBaseDelayMs 避免慢测试)
+    // 退避延迟 = base * 2^(attempts-1) 封顶 MAX，再加**随机抖动**；now() 注入时钟做差值判定(自上次掉线已流逝
+    // 时间计入延迟, 测试可注入时钟/缩短 reconnectBaseDelayMs 避免慢测试)
+    //
+    // S7/C9（2026-09-15 评审）：doc 02 要求「指数退避**并加入随机抖动**」，而实现此前是纯确定性退避
+    // （全 `src/main` 无 `Math.random`）。多客户端/多窗口同时掉线会同步重连，把恢复流量压成尖峰。
+    // 抖动用**全抖动**口径（`random(0, backoff]`），随机源可注入（`options.random`）以便测试确定性。
     const now = this.options.now?.() ?? Date.now()
     const base = this.options.reconnectBaseDelayMs ?? RECONNECT_BASE_DELAY_MS
     const backoffMs = Math.min(base * 2 ** (this.reconnectAttempts - 1), RECONNECT_MAX_DELAY_MS)
+    const rand = this.options.random ?? Math.random
+    const jitteredMs = Math.max(1, Math.min(backoffMs, Math.round(backoffMs * rand())))
     const elapsed = this.lastSocketClosedAt !== undefined ? Math.max(0, now - this.lastSocketClosedAt) : 0
-    const delay = Math.max(0, backoffMs - elapsed)
+    const delay = Math.max(0, jitteredMs - elapsed)
     const scheduledIncarnation = this.transportIncarnation
     const scheduledConnect = connectAttempt
     const timer = setTimeout(() => {
@@ -1196,6 +1204,12 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       const res = await (this.options.fetchImpl ?? fetch)(url, {
         ...init,
         signal: controller.signal,
+        // S2（2026-09-15 安全评审）：**禁止跟随重定向**。fetch 默认 `follow`（≤20 跳、允许跨源），
+        // 而 `assertBackendOrigin` 只比对**初始** URL ⇒ 后端可控的 307/308 会让 Main 以用户机器身份
+        // 把请求（含请求体：307/308 规范要求保留）重发到 `Location` 指向的回环/内网目标——这些目标
+        // 通常从后端主机不可达、从用户桌面可达，属**新增能力**（盲 SSRF）。目标仍由后端选择 ⇒ fail-closed。
+        // doc 07 的「认证请求重定向到不同 Origin 时不转发凭据」此前无实现无测试，本条是它的落地口径。
+        redirect: 'error',
         headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${this.token}`, 'content-type': 'application/json' }
       })
       // 换源（另一个后端/配置）→ 丢弃。这是栅栏的唯一职责。
@@ -1425,6 +1439,10 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
 
   async uploadAttachments(files: UploadContent[], opts?: { signal?: AbortSignal }): Promise<AttachmentInfo[]> {
     if (!this.serverUrl) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
+    // S8（2026-09-15 安全评审）：本方法是**唯一** Renderer 可达的直写 fetch，此前只判 `!serverUrl`
+    // （而 `disconnect()` 并不清 `serverUrl`）⇒ 用户点断开 / 切换地址之后，仍可让 Main 带着 Bearer
+    // 把用户文件 POST 到**旧后端**。工具域的两个直写方法各自补了门禁，只有这条漏了——此处补齐。
+    if (this.state.status !== 'connected' || this.disconnected) throw new CyreneError(CyreneErrorCode.NOT_CONNECTED, 'REST 方法需先 connect')
     this.assertBackendOrigin(this.serverUrl)
     const sourceGeneration = this.sourceGeneration
     const uploadTimeoutMs = this.options.uploadTimeoutMs ?? UPLOAD_TIMEOUT_DEFAULT_MS
@@ -1447,6 +1465,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       const res = await (this.options.fetchImpl ?? fetch)(url, {
         method: 'POST',
         signal: effectiveSignal,
+        redirect: 'error',   // S2：不跟随重定向（理由见 restFetch；307/308 会保留 multipart 请求体）
         headers: { authorization: `Bearer ${this.token}` },   // multipart 不设 content-type（fetch 自动带 boundary）
         body: form
       })
@@ -1849,6 +1868,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
       const res = await (this.options.fetchImpl ?? fetch)(url, {
         method: 'POST',
         signal: controller.signal,
+        redirect: 'error',   // S2：不跟随重定向（理由见 restFetch）
         headers: { authorization: `Bearer ${this.token}`, 'X-Client-Connection': this.state.connectionId },   // multipart 不设 content-type（fetch 自动带 boundary）
         body: form
       })
@@ -1889,6 +1909,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     try {
       const res = await (this.options.fetchImpl ?? fetch)(url, {
         signal: controller.signal,
+        redirect: 'error',   // S2：不跟随重定向（理由见 restFetch）
         headers: { authorization: `Bearer ${this.token}`, accept: 'image/png' }
       })
       if (sourceGeneration !== this.sourceGeneration) throw this.sourceBoundaryError()

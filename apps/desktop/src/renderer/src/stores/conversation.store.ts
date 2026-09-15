@@ -7,6 +7,7 @@ import type { ConnectionState, Conversation } from '@shared/contracts'
 import { ConversationSchema, PageSchema } from '@shared/schemas'
 import { api } from './desktop-api'
 import { useMessageStore } from './message.store'
+import { useAttachmentStore } from './attachment.store'
 import { useConnectionStore } from './connection.store'
 import { useCacheStore } from './cache.store'
 import { useDraftStore } from './draft.store'
@@ -743,6 +744,9 @@ export const useConversationStore = defineStore('conversation', () => {
       }
       useDraftStore().purge(id)   // 删除联动:清内存草稿/锚点 + 取消待写（G2，spec §4.4.1）
       useCacheStore().purge(id)   // 删除联动:清消息快照（G2，spec §4.5.1）
+      // R2（2026-09-15 评审）：附件队列已按会话分桶，删除会话要连带清掉那一桶并释放其 File/bytes 强引用
+      // （`clearFor` 此前没有调用方——队列按会话归属落地后它才第一次有了真实意义）。
+      useAttachmentStore().clearFor(id)
       error.value = undefined   // F1:成功清旧错误
     } catch (e) {
       if (!conversationStateIsCurrent(capturedSignature, capturedGeneration)) return

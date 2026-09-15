@@ -855,7 +855,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 | `S5-A15e` | `tool-executors.ts` 懒下载 dialog 的实测前提 | **前提已失效**（已改为经 `defaultDialogService`）⇒ **需重新实测，未测** | 下方 ④ |
 | `S5-A16` | H-06／H-07 侦察（两处与评审措辞不符 + mock 确定性缺陷） | **缺陷已修**（`07c71dd`） | `§3.1` |
 | `S5-B1` | H-01 取舍：完整默认黑名单（`/tmp`、`%TEMP%` 下的附件被拒） | **已定案**，代价明确、改一处即可放开 | 下方 `S5-B1` 原文 |
-| `S5-B2` | H-01 **结构性修法**（Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造） | **已完成（2026-09-15）**：`UploadFileDescriptor.path` **已从 IPC 面移除**，改由 Main 的 `fileRef` 表解析（`file-ref.ts`：32 字节 CSPRNG、TTL 10min、容量 256、重连清空）；唯一铸造点是 preload 经 `attachments:register-file-ref` 换 token。**不是 HMAC**——`isTrustedSenderFor` 无法区分 preload 与页面主世界的 invoke，信任锚只能是 Main 自己的内存。命中后 realpath／userData／黑名单／大小／魔数复核**逐条照旧**。 | doc 07 §9.2 + [决策记录](review/2026-09-15-S5-B2附件fileRef与设计风格归属-决策记录.md) |
+| `S5-B2` | H-01 **结构性修法**（Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造） | **已完成（2026-09-15）**：`path` 已移出 IPC 面，改由 Main 的 `fileRef` 表解析（32B CSPRNG、TTL 10min、容量 256）；唯一铸造点是 preload 经 `attachments:register-file-ref` 换 token。**不是 HMAC**——`isTrustedSenderFor` 分不出 preload 与页面主世界，信任锚只能是 Main 内存。**同日复核修正三处过度声称**（「重连清空」的 `clear()` 零调用点／`bytes` 判限用对端自报 size／失败文案构成存在性 oracle），三处均已落地。 | doc 07 §9.2 + [汇总](review/2026-09-15-五路并行全量评审发现汇总.md) §2.1 |
 | `S5-B3` | H-11b renderer 半边（持久化故障对用户可见） | **已完成**（2026-09-13，含 `CyPersistenceBanner` 全局挂载与错误码拆分，变异 4 次） | 下方 `S5-B3` 原文 + `§3.1` |
 | `S5-B4` | M-19 设置保存失败不可见 | **已修**（2026-09-13；并修掉「设置文件隔离失败会让应用起不来」） | 下方原文 + `§3.1` |
 | `S5-B5` | M-20 其余 6 处 `--cy-accent` 文本误用 | **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`；`color: var(--cy-accent)` 现 0 命中）**⇒ 不再需要用户决定** | 下方 `S5-B5` 原文 |

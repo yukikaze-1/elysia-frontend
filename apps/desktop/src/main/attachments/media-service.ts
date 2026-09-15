@@ -1,6 +1,7 @@
 // src/main/attachments/media-service.ts
 // 阶段 3 G3（spec D1/D6，§4.4/§4.5）：通用媒体代理——签名 URL 持有/缓存/过期重签（attachment 流式代理）、
 // sticker 静态白名单代理（G4 复用）、checkStatus 分类。签名 URL 不落 Renderer；日志脱敏（只记 mediaType+id+status）。
+import { isIP } from 'node:net'
 import type { AttachmentCheckResult, AttachmentSignResult } from '@shared/contracts'
 import type { BackendAdapter } from '../transport/backend-adapter'
 import { STICKER_ID_PATTERN } from '../transport/protocol-v2/content-part'
@@ -19,11 +20,76 @@ const INVALID_EXPIRY_FALLBACK_MS = RE_SIGN_LEEWAY_MS * 2
 /** P0-01：签名 URL 解析失败（baseUrl 缺失/畸形/URL 非法）——与签发 fetch 失败区分（spec §4.1 错误分类） */
 export class SignedUrlResolveError extends Error {}
 
+/** IPv4：回环 / 私网 / 链路本地（含云元数据 169.254.169.254）/ CGNAT / 组播与保留段 */
+function isForbiddenIPv4(ip: string): boolean {
+  const parts = ip.split('.').map((s) => Number(s))
+  const a = parts[0]
+  const b = parts[1]
+  if (a === undefined || b === undefined || parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true
+  if (a === 0 || a === 10 || a === 127) return true
+  if (a === 169 && b === 254) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 100 && b >= 64 && b <= 127) return true
+  if (a >= 224) return true
+  return false
+}
+
+/** IPv6：未指定 / 回环 / 链路本地 fe80::/10 / ULA fc00::/7 / IPv4 映射形态递归判定 */
+function isForbiddenIPv6(ip: string): boolean {
+  const v = ip.toLowerCase()
+  if (v === '::' || v === '::1') return true
+  if (/^fe[89ab]/.test(v)) return true
+  if (v.startsWith('fc') || v.startsWith('fd')) return true
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(v)
+  if (mapped) return isForbiddenIPv4(mapped[1])
+  return false
+}
+
+/**
+ * S1（2026-09-15 安全评审）：绝对签名 URL 的**目标地址策略**。
+ *
+ * 修复前：绝对 URL 只要 scheme 是 http(s) 就原样放行，Main 用**自己的身份** fetch 后把响应体作为
+ * **同源** `cyrene://renderer/__cyrene-media/...` 资源交给页面 ⇒ 恶意/被篡改后端（doc 07 §2.2 明列
+ * 威胁主体）可让它返回 `http://127.0.0.1:11434/...`、`169.254.169.254`、内网管理面，页面再
+ * `fetch()` 同一路径即可**读到正文**（`corsEnabled:false` 只挡跨源，而这恰恰是同源）。
+ *
+ * 现策略（fail-closed）：
+ *   1. 与后端**同源**（scheme + 主机名 + 端口一致）⇒ 放行——自建后端的签名 URL 正常指回自己；
+ *      刻意**不**放宽到「同主机名任意端口」：那会让本地后端指向 `127.0.0.1:<其它端口>`（本机服务枚举）；
+ *   2. 否则主机名必须是**公网字面 IP**（`net.isIP` ≠ 0 且不在上述保留段）；
+ *   3. 否则拒绝——**包括公网域名**：域名可以解析到 127.0.0.1（攻击者自控域名即可绕过字面检查），
+ *      而 Main 不做 DNS 预解析（预解析自身有 TOCTOU，还会给「已检查过」的错觉）。
+ *
+ * 代价（如实记录）：域名形式的对象存储/CDN 签名 URL，以及「后端与其媒体服务不同源」的部署形态，
+ * 都会被拒。这是对阶段 3「D1 不强同源」的**收窄**——D1 的动机是兼容 CDN，但它没有覆盖
+ * 「目标为回环/私网 + 正文可被同源读取」这一后果。将来若确实需要域名型 CDN 或跨源媒体服务，
+ * 正确做法是显式配置允许的 origin 白名单，而不是放开本条。
+ */
+export function assertSignTargetAllowed(signUrl: string, baseUrl: string): string {
+  let target: URL
+  let base: URL
+  try {
+    target = new URL(signUrl)
+    base = new URL(baseUrl)
+  } catch {
+    throw new SignedUrlResolveError('invalid signed URL (base or signUrl malformed)')
+  }
+  // 同源（scheme + host + port 全等）⇒ 后端自己的资源
+  if (target.origin === base.origin) return target.toString()
+  const host = target.hostname.replace(/^\[|\]$/g, '')
+  const family = isIP(host)
+  if (family === 4 && !isForbiddenIPv4(host)) return target.toString()
+  if (family === 6 && !isForbiddenIPv6(host)) return target.toString()
+  // 日志脱敏契约：错误消息不得含签名 URL（签名永不离开 Main）
+  throw new SignedUrlResolveError('signed URL host is not an allowed target')
+}
+
 /** P0-01：解析签名 URL。相对路径基于 backend baseUrl 解析为绝对（保留反代 path 前缀）；
- *  绝对 URL 仅 http(s) 原样放行（D1：兼容对象存储 CDN，不强同源）；其余 scheme/畸形/baseUrl 缺失 → 抛 SignedUrlResolveError。 */
+ *  绝对 URL 经 `assertSignTargetAllowed` 的**地址策略**（S1）后放行；其余 scheme/畸形/baseUrl 缺失 → 抛 SignedUrlResolveError。 */
 export function resolveSignUrl(signUrl: string, baseUrl: string | undefined): string {
   if (!baseUrl) throw new SignedUrlResolveError('backend base URL is not configured')
-  if (/^https?:\/\//i.test(signUrl)) return signUrl
+  if (/^https?:\/\//i.test(signUrl)) return assertSignTargetAllowed(signUrl, baseUrl)
   if (/^\/(?!\/)/.test(signUrl)) {
     try {
       return new URL(baseUrl.replace(/\/+$/, '') + signUrl).toString()   // 拼接再验证：保留 path 前缀，`new URL(signUrl, baseUrl)` 会丢反代 path
@@ -147,7 +213,9 @@ export class MediaService {
 
   private async proxyFetch(signedUrl: string, request: Request, headers: Record<string, string>): Promise<Response> {
     try {
-      const res = await this.fetchImpl(signedUrl, { headers, signal: request.signal })
+      // S2（2026-09-15）：媒体代理同样**不跟随重定向**——签名 URL 的目标由后端选择，
+      // 跟随 `Location` 会把「后端指定的一个 URL」变成「后端指定的任意一串 URL」（理由同 real-backend restFetch）。
+      const res = await this.fetchImpl(signedUrl, { headers, signal: request.signal, redirect: 'error' })
       const out = new Headers()
       const ct = res.headers.get('content-type')
       if (ct) out.set('Content-Type', ct)
@@ -221,7 +289,7 @@ export class MediaService {
     if (!base) return new Response('Not Found', { status: 404 })
     const url = `${base.replace(/\/$/, '')}/static/stickers/${encodeURIComponent(stickerId)}.png`
     try {
-      const res = await this.fetchImpl(url)
+      const res = await this.fetchImpl(url, { redirect: 'error' })   // S2：不跟随重定向
       // P3-4：MIME 剥参匹配（容忍 ; charset= 等参数，严格相等会误拒）
       const mime = (res.headers.get('content-type') ?? '').split(';')[0].trim()
       if (res.status !== 200 || mime !== STICKER_MIME) return new Response('Unsupported Media Type', { status: 415 })
@@ -244,7 +312,7 @@ export class MediaService {
       return { status: 'error', reason: e instanceof SignedUrlResolveError ? 'resolve_failed' : 'sign_failed' }
     }
     try {
-      const res = await this.fetchImpl(signed.url, { headers: { range: 'bytes=0-0' } })
+      const res = await this.fetchImpl(signed.url, { headers: { range: 'bytes=0-0' }, redirect: 'error' })   // S2：不跟随重定向
       if (res.status === 200 || res.status === 206) return { status: 'ok' }
       if (res.status === 404) return { status: 'not_found' }
       if (res.status === 401 || res.status === 403) return { status: 'expired' }

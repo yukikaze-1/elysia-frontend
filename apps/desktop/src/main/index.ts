@@ -47,7 +47,7 @@ import { MockCharacterBackend } from './characters/mock-character-backend'
 import { createChatService, type ChatService } from './chat/chat-service'
 import { buildBackendErrorHandlers } from './chat/backend-error-handlers'
 import { UploadService } from './attachments/upload-service'
-import { createFileRefRegistry } from './attachments/file-ref'
+import { createFileRefRegistry, type FileRefRegistry } from './attachments/file-ref'
 import { MediaService } from './attachments/media-service'
 import { defaultSafeOpenPlatform } from './persistence/safe-open'
 import { Live2DModelRegistry } from './live2d/model-registry'
@@ -507,6 +507,10 @@ async function main(): Promise<void> {
     })
     await characterDrafts.load() // 损坏/超限草稿隔离后以空仓库启动，不阻塞连接
     // 阶段 4 批次 B SettingsService：已上移至 createToolService 之前（批次 C V-4 装配顺序——GrantStore 构造依赖，见上）
+    // S5-B2 补接线（2026-09-15 复核发现 `clear()` 从未被调用）：`fileRef` 表要在**连接会话终结**时清空，
+    // 而 chatSvc 的装配在本行之前、registry 的装配在之后 ⇒ 用一个 late-bound 持有者跨过装配顺序，
+    // 而不是把 chatSvc 的创建挪到后面（那会牵动 adapter/connConfig 的既有次序）。
+    const fileRefsHolder: { registry?: FileRefRegistry } = {}
     const chatSvc = createChatService({
       adapter,
       send: (channel, payload) => { const w = getMainWindow(); w?.webContents.send(channel, payload) },   // P3:webContents 守卫(窗口未建不崩)
@@ -516,7 +520,8 @@ async function main(): Promise<void> {
       packaged: app.isPackaged,
       ...(useMock && mockMouthLevel !== undefined ? { mockMouthLevel } : {}),   // C1：mock 模式合成包络源选择
       sessionStore,   // G2：listConversations 派生列表缓存 / activate 记 lastActive / deleteConversation purge
-      audit   // C2:连接生命周期审计（connect/disconnect;fail-open）
+      audit,   // C2:连接生命周期审计（connect/disconnect;fail-open）
+      onConnectionTeardown: () => fileRefsHolder.registry?.clear()   // 显式断开 / 切换后端地址（瞬态重连不清）
     })
     chatBridge.svc = chatSvc
     // 阶段 3 G3 附件服务装配（spec §4.4/§4.5）：mediaSvc 需 connConfig.getEndpoint()（签发表 target 为后端 baseUrl），
@@ -524,13 +529,15 @@ async function main(): Promise<void> {
     //
     // S5-B2（2026-09-15，H-01 结构性修法）：`fileRefs` 是**不可猜文件引用表**，也是本链路的信任锚——
     // 附件链从此不接受任何裸路径（IPC schema 已移除 `path`），只接受 Main 自己签发的 token。
-    // 断线重连时清空（见 chatSvc 的 reconnect 装配点）：token 是会话内凭证，不跨连接复用。
+    // 显式断开连接 / 切换后端地址时清空（`onConnectionTeardown`，见上方 chatSvc 装配）：token 是会话内凭证。
     const fileRefs = createFileRefRegistry()
+    fileRefsHolder.registry = fileRefs
     const uploadSvc = new UploadService({
       backend: adapter,
       userDataBase: expectedUserDataBase,
       platform: defaultSafeOpenPlatform(),
-      fileRefs
+      fileRefs,
+      logger: diagnostics.logger   // S7：被拒的具体原因只进 Main 日志，公开面统一（去存在性 oracle）
     })
     const mediaSvc = new MediaService({
       backend: adapter,

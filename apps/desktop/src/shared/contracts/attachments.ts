@@ -88,6 +88,16 @@ export const ATTACHMENT_MAX_BYTES_BY_KIND: Record<AttachmentKind, number> = {
   file: 20 * 1024 * 1024,
   link: 0
 }
+/**
+ * 单文件**全局**上限（= 各 kind 上限的最大值，当前为 video 的 50 MiB）。
+ *
+ * 安全评审 S4（2026-09-15）：`attachments:upload` 的 `bytes` 分支此前只按**对端自报**的 `size` 判限，
+ * `byteLength` 从不校验 ⇒ 限额对不可信对端等于不存在。现在两处按**真实**字节数复核：
+ *   · `fileRef` 分支（真实拖入/选择）——Main 自己 `stat` 得真值，按本表的 kind 上限判；
+ *   · `bytes` 分支（粘贴型）——按 `byteLength` 判，且**先**受 IPC 全局不变量 `MAX_IPC_MESSAGE_BYTES`（4 MiB）约束。
+ * 即：本常量只对**不经 IPC 传载荷**的 `fileRef` 分支构成实际上限。
+ */
+export const ATTACHMENT_MAX_SINGLE_BYTES = Math.max(...Object.values(ATTACHMENT_MAX_BYTES_BY_KIND))
 
 /** kind → 接受 MIME 白名单（D-03 播放矩阵参考表；列表外一律 file 图标卡） */
 export const ATTACHMENT_KIND_MIME: Record<AttachmentKind, readonly string[]> = {

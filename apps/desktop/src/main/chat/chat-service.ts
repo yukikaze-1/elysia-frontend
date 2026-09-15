@@ -20,6 +20,17 @@ export interface ChatServiceDeps {
   mockMouthLevel?: 'step' | 'sine'     // 批次 C（C1）：mock 模式合成包络源选择（CYRENE_MOCK_MOUTH_LEVEL env；仅 mock 填充）
   sessionStore?: SessionStore          // G2：列表缓存派生 / lastActive / 删除联动 purge（fail-open）
   audit?: (event: Omit<AuditEvent, 'ts'>) => void   // 连接生命周期审计（C2;fail-open,safeAudit 调用）
+  /**
+   * S5-B2 补接线（2026-09-15 复核）：连接会话**终结**时的清理钩子（显式断开 + 切换后端地址）。
+   *
+   * 为什么需要它：`fileRef` 表是「会话内凭证、不跨连接复用」——但 `clear()` 此前**从未被调用**
+   * （安全评审 S6/S7-C1：doc 07 §9.2、doc 16 §5、file-ref.ts 头注与 index.ts 注释都声称它存在，
+   * 而 index.ts 指的「chatSvc 的 reconnect 装配点」根本不存在）。钩子把这句话变成代码。
+   *
+   * 语义边界（刻意如此）：只覆盖**显式**终结。瞬态 WS 掉线重连**不清**——那是同一次用户会话，
+   * 清掉会让正在编辑的待发送附件凭空失效（引用在拖入时签发、在发送时使用），且没有安全收益。
+   */
+  onConnectionTeardown?: () => void
 }
 
 export type ChatService = ReturnType<typeof createChatService>
@@ -66,6 +77,7 @@ export function createChatService(deps: ChatServiceDeps) {
       const e = await deps.connectionConfig.setEndpoint(rawUrl)
       if (before && (e.origin !== before.origin || e.baseUrl !== before.baseUrl)) {
         await deps.adapter.disconnect()   // D14:旧 WS/REST 取消,面板新地址与真实连接一致
+        deps.onConnectionTeardown?.()     // S5-B2 补接线：换后端 ⇒ 旧连接的 fileRef 全部作废
       }
       return { endpoint: e.baseUrl }
     },
@@ -83,6 +95,7 @@ export function createChatService(deps: ChatServiceDeps) {
     },
     async disconnect(): Promise<void> {
       await adapter.disconnect()
+      deps.onConnectionTeardown?.()   // S5-B2 补接线：显式断开 ⇒ fileRef 表清空（不跨连接复用）
       pushState(adapter.getConnectionState())
       // C2:disconnect 内无 requireToken 收窄,表达式可保留（与 connect 分支内写死不同）
       safeAudit(deps.audit, { type: 'connection:disconnect', summary: `mode=${deps.requireToken !== false ? 'real' : 'mock'}` })

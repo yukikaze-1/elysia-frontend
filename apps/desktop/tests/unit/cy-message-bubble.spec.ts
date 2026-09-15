@@ -75,6 +75,22 @@ describe('CyMessageBubble 时间戳（UII-QQ 时间戳批次）', () => {
     att.unmount()
   })
 
+  // S7-C2（2026-09-15 评审）：`completing` = 「有缺口的不完整回复」。StreamAccumulator 明写
+  // 「有缺口时进入 completing，不伪装完整」，但渲染层此前对它返回空串 ⇒ 截断的回复按完整回复渲染。
+  // 判别力：去掉 terminalNote 里的 completing 分支 ⇒ 本条红。
+  it('completing（有缺口的回复）显示"可能不完整"提示，不再伪装成完整回复', () => {
+    const w = mountBubble(baseMsg({ status: 'completing', role: 'assistant', content: '被截断的正文' }))
+    expect(w.find('.cy-status-note').exists()).toBe(true)
+    expect(w.find('.cy-status-note').text()).toContain('不完整')
+    w.unmount()
+  })
+
+  it('completed 不显示状态提示（正常回复不加噪音，与上面成对照）', () => {
+    const w = mountBubble(baseMsg({ status: 'completed', role: 'assistant', content: '完整正文' }))
+    expect(w.find('.cy-status-note').exists()).toBe(false)
+    w.unmount()
+  })
+
   it('user 发送失败：错误角标之外仍显示一次时间（顶部头部行）', () => {
     const w = mountBubble(baseMsg({ status: 'failed' }))
     expect(w.find('.cy-user-error-badge').exists()).toBe(true)

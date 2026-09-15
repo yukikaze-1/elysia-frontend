@@ -19,7 +19,6 @@
 // 维护规则：**新增通道必须在此登记**（`tests/unit/ipc-budget-declaration.spec.ts` 会枚举实际注册的
 // 通道并逐个核对）。没有第三条路——这正是让缺口可见的机制本身。
 import { MAX_IPC_MESSAGE_BYTES } from '@shared/contracts'
-import { MAX_WRITE_CONTENT_BYTES } from '../tools/tool-service'
 import { MAX_AUDIO_CHUNK_BYTES } from '../voice/voice-handlers'
 
 export type ChannelBudget =
@@ -54,7 +53,14 @@ export const IPC_CHANNEL_BUDGETS: Readonly<Record<string, ChannelBudget>> = {
   'voice:audio-chunk': bytesBinary(MAX_AUDIO_CHUNK_BYTES, 'voice-handlers 运行期上限（单向二进制通道：路由点不度量，见 measure 说明）'),
   'tool:decide': schemaBounded('desktop.file.write 内容上限由 tool-service.MAX_WRITE_CONTENT_BYTES 守'),
   'tool:pick-source': schemaBounded('desktop.file.read 目标文件上限由 FILE_READ_MAX_BYTES 守'),
-  'attachments:upload': bytes(MAX_WRITE_CONTENT_BYTES, '附件单文件上限（与写路径同一量级）'),
+  // S4（2026-09-15）：此通道**含二进制**（`bytes: Uint8Array`）⇒ 按本文件 §measure 的口径必须走 handler 度量，
+  // 路由点不得 JSON.stringify（实测 1 MiB 二进制 stringify 需 114 ms、膨胀 10.9×）。执行点是 O(1) 的 `byteLength`：
+  // schema 层 refine + upload-service 的 kind 级复核。上界只能取**全局不变量** 4 MiB——通道预算比全局更宽
+  // 会被 `ipc-budget-declaration.spec.ts` 判红，而那正是「不得声明做不到的事」这条纪律。区别在于：
+  //   · `bytes` 分支（粘贴型）：载荷真的过 IPC ⇒ 受 4 MiB 约束（拖入/选择型走 fileRef，不受此限）；
+  //   · `fileRef` 分支：载荷为空（Main 按 token 自读盘），单文件上限仍按 kind（10/20/50 MiB）在 handler 复核。
+  // 修复前此行声明 2 MiB（`MAX_WRITE_CONTENT_BYTES`）却完全不执行，实现又只信对端自报的 `size`。
+  'attachments:upload': bytesBinary(MAX_IPC_MESSAGE_BYTES, '仅 bytes 分支（粘贴）受 4 MiB 全局不变量约束；fileRef 分支载荷为空，按 kind 在 handler 复核真实字节数'),
 
   // —— 字段级 schema 上界（D7A-13 值表） ——
   'chat:send': schemaBounded('正文 ≤64KiB、附件 ≤10 条、贴图 1 个（channels.ts D7A-13）'),

@@ -77,7 +77,7 @@ describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
     fs.realpath = async () => '/etc/shadow'
     const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs, fileRefs: refsFor('/tmp/looks-benign') })
     await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_stub' }]))
-      .rejects.toThrow(/敏感目录/)
+      .rejects.toThrow(/文件不可用/)
     expect(uploadAttachments, '黑名单命中必须在上传前拦下').not.toHaveBeenCalled()
   })
 
@@ -87,7 +87,7 @@ describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
     fs.realpath = async () => '/root/.ssh/id_rsa'
     const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs, fileRefs: refsFor('/home/me/Desktop/innocent.txt') })
     await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_stub' }]))
-      .rejects.toThrow(/敏感目录/)
+      .rejects.toThrow(/文件不可用/)
     expect(uploadAttachments).not.toHaveBeenCalled()
   })
 
@@ -109,7 +109,7 @@ describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
     const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
     const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs: fakeFs(), fileRefs: refsFor('/home/me/ok.txt') })
     await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_forged' }]))
-      .rejects.toThrow(/引用无效或已过期/)
+      .rejects.toThrow(/文件不可用/)
     expect(uploadAttachments).not.toHaveBeenCalled()
   })
 
@@ -117,7 +117,7 @@ describe('UploadService 敏感路径黑名单（H-01 止血）', () => {
     const uploadAttachments = vi.fn(async (): Promise<AttachmentInfo[]> => [])
     const svc = new UploadService({ backend: { uploadAttachments }, userDataBase: () => '/ud', platform: posixPlatform, fs: fakeFs() })
     await expect(svc.uploadBatch('u1', [{ localId: 'l1', name: 'x', size: 4, mediaType: 'text/plain', source: 'picker', fileRef: 'fileref_any' }]))
-      .rejects.toThrow(/引用无效或已过期/)
+      .rejects.toThrow(/文件不可用/)
     expect(uploadAttachments).not.toHaveBeenCalled()
   })
 })

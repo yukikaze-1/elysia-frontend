@@ -222,7 +222,13 @@ describe('RealBackend WS 连接', () => {
       wsFactory,
       now: () => 0,
       reconnectBaseDelayMs: 10,
-      handshakeTimeoutMs: 5
+      handshakeTimeoutMs: 5,
+      // S7/C9（2026-09-15）：退避现在带随机抖动（doc 02 的既有要求），而本用例的 `advanceTimersByTimeAsync`
+      // 是**边界精确**的（10 / 5 / 20 恰好等于 backoff 10 / 握手 5 / backoff 20）——任何 jitter 都会
+      // 让它越过边界（实测：attempt 2 的握手在用例发 server_info 之前就超时，迟到帧被栅栏丢弃 ⇒ 永远 pending）。
+      // 故此处把随机源钉成 1（抖动 = 全量 backoff，与修复前的确定性行为逐位一致），本用例只验证
+      // 退避**序列**与 socket/incarnation 栅栏；抖动本身由下方独立用例覆盖。
+      random: () => 1
     })
     const connectPromise = backend.connect({ serverUrl: 'http://retry.example', token: 'token' })
     let settled: 'pending' | 'resolved' | 'rejected' = 'pending'
@@ -257,6 +263,44 @@ describe('RealBackend WS 连接', () => {
       expect(backend.getConnectionState().status).toBe('connected')
     } finally {
       await backend.disconnect()
+      vi.useRealTimers()
+    }
+  })
+
+  // S7/C9（2026-09-15 评审）：doc 02 要求「指数退避**并加入随机抖动**」，而实现此前是纯确定性退避
+  // （全 `src/main` 无 `Math.random`）。本条用**注入的随机源**证明延迟真的随它变化：
+  // 同一个 backoff（10ms），random→0.01 时 1ms 内就该建第二个 socket，random→1 时要 10ms 才动。
+  // 判别力：去掉抖动（回到 `delay = backoffMs`）⇒ 第一条断言红。
+  it('重连退避带随机抖动：延迟随注入的随机源变化（random→0.01 早建，random→1 满 backoff）', async () => {
+    vi.useFakeTimers()
+    type SocketEvent = 'open' | 'message' | 'close' | 'error' | 'unexpected-response'
+    type SocketHandler = (arg?: unknown, arg2?: unknown) => void
+    const sockets: Partial<Record<SocketEvent, SocketHandler>>[] = []
+    const wsFactory = (): WebSocketLike => {
+      const current: Partial<Record<SocketEvent, SocketHandler>> = {}
+      sockets.push(current)
+      return { on: (event, callback) => { current[event] = callback }, send: vi.fn(), close: vi.fn(), readyState: 1 }
+    }
+    const mk = (random: () => number) => new RealBackend({ wsFactory, now: () => 0, reconnectBaseDelayMs: 10, handshakeTimeoutMs: 5000, random })
+    try {
+      const early = mk(() => 0.01)
+      void early.connect({ serverUrl: 'http://jitter.example', token: 't' }).catch(() => {})
+      expect(sockets).toHaveLength(1)
+      sockets[0]?.['unexpected-response']?.(undefined, { statusCode: 429 })   // 瞬态 → 走退避重连
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sockets).toHaveLength(2)   // 抖动小 ⇒ 1ms 内就重连
+      await early.disconnect()
+
+      const late = mk(() => 1)
+      void late.connect({ serverUrl: 'http://jitter.example', token: 't' }).catch(() => {})
+      expect(sockets).toHaveLength(3)   // 前一个 backend 留下了 2 个 socket（首个 + 抖动重连）
+      sockets[2]?.['unexpected-response']?.(undefined, { statusCode: 429 })
+      await vi.advanceTimersByTimeAsync(1)
+      expect(sockets).toHaveLength(3)   // 抖动满 ⇒ 1ms 还没到
+      await vi.advanceTimersByTimeAsync(9)
+      expect(sockets).toHaveLength(4)   // 满 backoff（10ms）才重连
+      await late.disconnect()
+    } finally {
       vi.useRealTimers()
     }
   })
@@ -495,7 +539,10 @@ describe('RealBackend WS 连接', () => {
         }
       },
       reconnectBaseDelayMs: 30, // 缩短退避:让旧 reconnectTimer 先排好,若未被清则会二次建 socket
-      handshakeTimeoutMs: 100
+      handshakeTimeoutMs: 100,
+      // S7/C9：退避现带随机抖动，而本用例用**真实计时**比较「旧 timer 的截止点」（15ms 时排好、60ms 时越过）。
+      // 钉住随机源使其回到确定性满 backoff（30ms），否则抖动可能让旧 timer 更早触发而改变观测窗口。
+      random: () => 1
     }))
     await b.connect({ serverUrl: 'http://127.0.0.1:1', token: 't' }) // #1 握手成功
     expect(wsCreateCount).toBe(1)

@@ -111,11 +111,15 @@ const publicSegments = computed(() =>
  *  心情是人格化旁白,技术元数据是运维信息,两者分行) */
 const hasTechMeta = computed(() => !!(props.message.model || props.message.usage))
 
-/** 非完成态可见提示(failed/interrupted);正常 completed 不展示(UII-QQ:状态噪音清零) */
+/** 非完成态可见提示(failed/interrupted/completing);正常 completed 不展示(UII-QQ:状态噪音清零) */
 const terminalNote = computed(() => {
   const s = props.message.status
   if (s === 'failed') return '回复失败'
   if (s === 'interrupted') return '已中断'
+  // S7-C2（2026-09-15 评审）：`completing` = 「有缺口的不完整回复」。`StreamAccumulator` 的注释写着
+  // 「有缺口时进入 completing，**不伪装完整**」，但渲染层此前对它返回空串 —— 用户读到被静默截断的
+  // 回答并当作完整回答。这里补上该状态在 UI 上的**第一个也是唯一**的出口。
+  if (s === 'completing') return '回复可能不完整（部分内容缺失）'
   return ''
 })
 

@@ -24,6 +24,12 @@
 //   偏离是有代价的（真正的严重拒绝也会被放过），但「任何浮空 promise 都杀掉应用」明显更糟。
 //
 // 抽成纯函数 + deps 注入的理由与 `handleChildProcessGone`（index.ts）一致：可单测。
+//
+// S12（2026-09-15 安全评审）：本模块的 `summarize` 同时喂给**审计**与**原生错误框 / stderr** 两条出口，
+// 而此前两条都只 `sanitize`（掩路径）。现在 fail-safe 那一路额外补 `redactSensitiveValues`（审计不动，
+// 见 `handleUncaughtException` 内注释）。
+import { redactSensitiveValues } from '../diagnostics/redact'
+
 export interface ProcessErrorDeps {
   logger: { error(code: string, fields?: Record<string, string | number | boolean>): void }
   /**
@@ -91,7 +97,12 @@ export async function handleUncaughtException(error: unknown, deps: ProcessError
   deps.logger.error('main:uncaught-exception', { message: deps.sanitize(describeThrown(error)) })
   try { await deps.audit({ type: 'main:uncaught-exception', summary }) } catch { /* 留痕失败也要继续走 fail-safe */ }
   try {
-    deps.onFatal?.(summary)
+    // S12（2026-09-15 安全评审）：同一条异常文本有两条出口——审计（`audit.ts` 只 `sanitize`，掩路径）
+    // 与**原生错误框 / harness stderr**（此前同样只 `sanitize`）。弹窗是「截图进 issue」的高频面，
+    // 未被 `redact.ts` 四条规则覆盖的凭据形态会明文出现在那里，故 fail-safe 这一路补 `redactSensitiveValues`。
+    // **刻意不动 `summary` 本身**：审计是本地留痕、需要可诊断性，不该因为展示面的口径而被抹成 `[REDACTED]`
+    // （`'x'.repeat(5000)` 这类长串会整段命中 base64 规则，实测会把审计摘要压成一个词）。
+    deps.onFatal?.(redactSensitiveValues(summary))
   } catch { /* fail-safe 自身失败不得再次抛出（否则在异常处理器里形成二次异常） */ }
 }
 

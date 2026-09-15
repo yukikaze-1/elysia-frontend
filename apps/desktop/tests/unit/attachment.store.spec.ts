@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAttachmentStore } from '../../src/renderer/src/stores/attachment.store'
 import { setDesktopApi } from '../../src/renderer/src/stores/desktop-api'
+import { setCurrentConversationId } from '../../src/renderer/src/stores/session'
 import { createDesktopApiMock } from './helpers/desktop-api'
 import type { AttachmentsUploadResponse, FileValidationResult, MessageAttachment } from '@shared/contracts'
 import type { DesktopAttachmentInputFile } from '../../src/renderer/src/stores/desktop-api.types'
@@ -167,5 +168,72 @@ describe('attachmentStore', () => {
     await vi.waitFor(() => { expect(store.hasFailed).toBe(true) })
     expect(store.canSend.canSend).toBe(false)
     expect(store.canSend.blockReason).toContain('失败')
+  })
+
+  // —— R1/R2/R3（2026-09-15 评审）：队列按会话归属 + 发送结果三态 ——
+  describe('会话归属与发送结果（R1/R2/R3）', () => {
+    it('R2：队列按会话分桶——A 的待发送附件不会出现在 B，切回 A 仍在', async () => {
+      mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: DesktopAttachmentInputFile[] }): Promise<FileValidationResult[]> =>
+        files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' })))
+      const store = useAttachmentStore()
+      setCurrentConversationId('conv-A')
+      store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'drag_drop', bytes: new ArrayBuffer(2) }])
+      await vi.waitFor(() => { expect(store.order).toHaveLength(1) })
+      const inA = store.order[0]
+
+      setCurrentConversationId('conv-B')
+      expect(store.order, 'B 的队列必须是空的（修复前 A 的条目会跟过来并作为 B 的附件发出）').toHaveLength(0)
+      expect(store.items).toHaveLength(0)
+
+      setCurrentConversationId('conv-A')
+      expect(store.order).toEqual([inA])   // A 的条目原样还在
+    })
+
+    it('R1：上传在途切会话 → 不跨会话投递，附件回原会话 ready，并给出可见提示', async () => {
+      mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: DesktopAttachmentInputFile[] }): Promise<FileValidationResult[]> =>
+        files.map((f) => ({ localId: f.localId, ok: true, kind: 'image' })))
+      const uploadResponse: AttachmentsUploadResponse = { uploadId: 'u1', attachments: [{ attachmentId: 'att_1', kind: 'image', mediaType: 'image/png' }] }
+      let releaseUpload: (v: AttachmentsUploadResponse) => void = () => {}
+      mockApi.attachmentsUpload.mockImplementation(() => new Promise<AttachmentsUploadResponse>((res) => { releaseUpload = res }))
+      const messageStore = { send: vi.fn(async () => true) }
+      const store = useAttachmentStore()
+      setCurrentConversationId('conv-A')
+      store.addFiles([{ name: 'a.png', size: 10, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
+      await vi.waitFor(() => { expect(store.order).toHaveLength(1) })
+
+      const pending = store.send('hi', messageStore)
+      await vi.waitFor(() => { expect(store.uploading).toBe(true) })
+      setCurrentConversationId('conv-B')   // 上传期间用户切走
+      releaseUpload(uploadResponse)
+      expect(await pending).toBe('blocked')
+      expect(messageStore.send, '消息绝不能落到 B').not.toHaveBeenCalled()
+      expect(store.notice).toContain('会话已切换')
+
+      setCurrentConversationId('conv-A')   // 回 A：附件回到 ready 可重试
+      expect(store.order).toHaveLength(1)
+      expect((store.pendingById[store.order[0]] as { status: string }).status).toBe('ready')
+      expect(store.hasReady).toBe(true)
+    })
+
+    it('R3：队列被拦时 send 返回 blocked（而非静默 void）——调用方据此保留草稿', async () => {
+      mockApi.attachmentsValidate.mockImplementation(async ({ files }: { files: DesktopAttachmentInputFile[] }): Promise<FileValidationResult[]> =>
+        files.map((f) => ({ localId: f.localId, ok: false, reason: 'too_large', message: '超限' })))
+      const messageStore = { send: vi.fn(async () => true) }
+      const store = useAttachmentStore()
+      setCurrentConversationId('conv-A')
+      store.addFiles([{ name: 'big.png', size: 999, mediaType: 'image/png', source: 'picker', bytes: new ArrayBuffer(2) }])
+      await vi.waitFor(() => { expect(store.hasFailed).toBe(true) })
+      expect(await store.send('已输入的正文', messageStore)).toBe('blocked')
+      expect(messageStore.send).not.toHaveBeenCalled()
+      expect(store.notice).toBeTruthy()   // 不再"点了发送没反应"
+    })
+
+    it('R3：无附件时 send 直通 → 返回 sent（回归：三态不改变原路径语义）', async () => {
+      const messageStore = { send: vi.fn(async () => true) }
+      const store = useAttachmentStore()
+      setCurrentConversationId('conv-A')
+      expect(await store.send('hi', messageStore)).toBe('sent')
+      expect(messageStore.send).toHaveBeenCalledWith('hi')
+    })
   })
 })

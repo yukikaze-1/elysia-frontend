@@ -241,13 +241,18 @@ async function send(): Promise<void> {
   if (hasActiveGeneration.value) return
   if (!canSend.value && pendingStickers.value.length === 0) return
   let ok = false
+  // R3（2026-09-15 评审）：文本是否**真的发出**。附件被拦（'blocked'）或上传失败（'failed'）时
+  // 附件编排会提前返回而文本根本没发——此前调用方拿到的是 void，无法区分，于是照样 `draftStore.clear()`，
+  // 用户已输入的正文被静默丢弃（界面甚至同时显示「请移除失败附件后再发送」，而贴图那条已经发出去了）。
+  let textSent = true
   const text = draft.value.trim()
   // P1-5：纯贴图发送——空草稿 + 仅待发送贴图时不发空文本消息（attachmentStore.send('') 会经 messageStore.send('') 发一条空消息）；
   // 仅当有文本或就绪附件时走附件编排路径
   if (text.length > 0 || attachmentStore.hasReady) {
     // G3：附件存在时 attachmentStore 编排上传→发送；保留 messageStore.send 的失败保留草稿语义（G2）。
     // P2-3：wrapper 返回 messageStore.send 布尔——attachmentStore 据此决定清队列（成功）还是回 ready 保留（失败）
-    await attachmentStore.send(text, { send: async (t, o) => { ok = await messageStore.send(t, o); return ok } })
+    const result = await attachmentStore.send(text, { send: async (t, o) => { ok = await messageStore.send(t, o); return ok } })
+    textSent = result === 'sent'
   }
   // G4：待发送贴图逐条发送（sticker 非附件，不经上传编排；wire stickerId，D8）
   for (const s of pendingStickers.value) {
@@ -255,7 +260,8 @@ async function send(): Promise<void> {
     if (stickerOk) ok = true
   }
   pendingStickers.value = []
-  if (ok && currentId.value) draftStore.clear(currentId.value) // 失败保留草稿（spec §4.4.1）
+  // G2：失败保留草稿（spec §4.4.1）；R3：被拦下的文本同样保留（它压根没发出去）
+  if (ok && textSent && currentId.value) draftStore.clear(currentId.value)
 }
 
 /** Emoji 光标插入:读取 selectionStart/End,draft 拼接,光标移到插入后;不自动发送(D7) */
@@ -302,10 +308,19 @@ function onFilePick(e: Event): void {
 async function onPaste(e: ClipboardEvent): Promise<void> {
   const files = Array.from(e.clipboardData?.files ?? [])
   if (files.length) {
-    // 粘贴文件 pathless（webUtils.getPathForFile 返回空串）→ 预读 bytes 一并交 store（D5 粘贴 bytes 型）
-    const inputs = await Promise.all(files.map(async (f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'paste' as const, file: f, bytes: await f.arrayBuffer() })))
-    attachmentStore.addFiles(inputs)
+    // D1/R7（2026-09-15 评审）：**必须在任何 await 之前同步 preventDefault**。
+    // 事件监听器一旦返回 Promise，事件派发即结束、默认动作随即执行——此后再调 preventDefault 是空操作，
+    // 于是「粘贴文件」会同时把剪贴板里的 text/plain（常含文件名/路径）插进草稿，与本函数的意图相反。
     e.preventDefault()   // 有粘贴附件时不进文本草稿
+    // 粘贴文件 pathless（webUtils.getPathForFile 返回空串）→ 预读 bytes 一并交 store（D5 粘贴 bytes 型）
+    try {
+      const inputs = await Promise.all(files.map(async (f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'paste' as const, file: f, bytes: await f.arrayBuffer() })))
+      attachmentStore.addFiles(inputs)
+    } catch {
+      // 读取失败此前会落进 app.config.errorHandler 只打一行 console，用户侧完全静默（无附件、无提示）
+      attachmentStore.addFiles(files.map((f) => ({ name: f.name, size: f.size, mediaType: f.type || 'application/octet-stream', source: 'paste' as const })))
+      attachmentStore.setNotice('粘贴的文件读取失败，请改用拖入或选择文件')
+    }
   }
 }
 </script>
@@ -325,6 +340,14 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
     <div v-if="messageStore.lastError" class="cy-banner cy-error-banner" role="alert">
       <span class="cy-banner-dot" />
       <span>{{ sendErrorText }}</span>
+    </div>
+
+    <!-- R1/R3（2026-09-15 评审）：附件被拦 / 上传期间切换会话 / 粘贴读取失败——一次性可见提示。
+         此前这几种情形**什么都不显示**（文本没发、附件回队列），用户只看到"点了发送没反应"。 -->
+    <div v-if="attachmentStore.notice" class="cy-banner cy-error-banner" role="alert">
+      <span class="cy-banner-dot" />
+      <span>{{ attachmentStore.notice }}</span>
+      <button class="cy-clear-draft" @click="attachmentStore.clearNotice()">知道了</button>
     </div>
 
     <!-- 草稿超限横幅(G2 §4.4.1 D4):100KB 字节上限,超出部分拒绝写入;提供清空按钮 -->
