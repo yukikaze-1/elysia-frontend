@@ -86,10 +86,16 @@ export const EXCLUDED_DIR_PREFIXES = [
 // 自排除（review HIGH-1：扫描器扫自身源文件/单测——黑名单字面量（ALLOWLIST 锚定/理由）与单测触发器
 // 必然命中且非秘密；排除后每次改 ALLOWLIST/reason/触发器不破坏全绿。此三文件为扫描逻辑本体非被检内容，
 // 与 third_party 相同语义——被检面是本仓的源码/文档/配置，不含扫描器自身）。
+//
+// 2026-09-16 追加第四个：`tests/unit/redact-gate-parity.spec.ts` 是"门禁规则 ↔ 产品脱敏"的**交叉校验**，
+// 它的样本**必须**逐条命中黑名单规则，否则那条断言恒真（样本要按各规则自身的字符类与长度门槛构造）。
+// 样本全是合成串（含 AWS 官方文档里的 `AKIAIOSFODNN7EXAMPLE` 这类公开示例），非真实凭据。
+// 该文件被判红的经过本身是门禁有效的证据：它是被 `verify:sensitive` 抓出来的，而不是我预先想起来的。
 export const SELF_EXCLUDED_FILES = [
   'apps/desktop/scripts/verify-sensitive.mjs',
   'apps/desktop/scripts/verify-sensitive-core.mjs',
-  'apps/desktop/tests/unit/verify-sensitive.spec.ts'
+  'apps/desktop/tests/unit/verify-sensitive.spec.ts',
+  'apps/desktop/tests/unit/redact-gate-parity.spec.ts'
 ]
 
 export function isExcludedPath(p) {

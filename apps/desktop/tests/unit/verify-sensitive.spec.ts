@@ -149,11 +149,15 @@ describe('verify:sensitive 核心（排除目录与自排除，spec §5.1 D7A-14
     expect(isExcludedPath('apps/desktop/src/main/index.ts')).toBe(false)
   })
 
-  it('扫描器自身三文件自排除（HIGH-1：黑名单字面量/触发器必然命中自身且非秘密）', () => {
-    expect(SELF_EXCLUDED_FILES.length).toBe(3)
+  it('扫描器自身文件自排除（HIGH-1：黑名单字面量/触发器必然命中自身且非秘密）', () => {
+    // 2026-09-16：3 → 4。新增的 `redact-gate-parity.spec.ts` 是"门禁规则 ↔ 产品脱敏"的交叉校验，
+    // 它的样本必须逐条命中规则（否则断言恒真），且全是合成串（含 AWS 公开示例）。这个数字被钉住
+    // 是有意的：扩大自排除面必须显式改这一行，评审里看得见。
+    expect(SELF_EXCLUDED_FILES.length).toBe(4)
     expect(isSelfExcludedFile('apps/desktop/scripts/verify-sensitive.mjs')).toBe(true)
     expect(isSelfExcludedFile('apps/desktop/scripts/verify-sensitive-core.mjs')).toBe(true)
     expect(isSelfExcludedFile('apps/desktop/tests/unit/verify-sensitive.spec.ts')).toBe(true)
+    expect(isSelfExcludedFile('apps/desktop/tests/unit/redact-gate-parity.spec.ts')).toBe(true)
     expect(isSelfExcludedFile('apps/desktop/src/main/index.ts')).toBe(false)
   })
 })
