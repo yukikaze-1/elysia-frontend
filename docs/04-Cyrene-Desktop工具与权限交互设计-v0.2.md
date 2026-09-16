@@ -558,3 +558,11 @@ Backend Runtime 记录只保存客户端实际收到的公开事件；Desktop/Lo
 - [ ] 断线后结果可以安全重发；
 - [ ] Backend Runtime 与 Desktop Runtime 在 UI 中可区分；
 - [ ] 审计日志不包含完整敏感内容。
+
+## 2026-09-16 落地注记（审计剩余项 A 批：工具/权限链 5 条）
+
+- 执行超时/取消现在会**中止在途执行**：终态一落即 abort，`tool:decide` 等 IPC invoke 必定回包；执行器在每个副作用前收手（边界：已进入原子写的那一次不可撤回）。
+- 授权撤销改为 **fail-closed**：写盘失败回滚内存并抛 `GRANT_REVOKE_NOT_PERSISTED`；`grant:revoked` 审计改为落盘成功后**才**发，失败发补偿事件 `grant:revoke-failed`。授予/剪枝仍 fail-open（方向相反：写盘失败只让授权消失 = 更严格）。
+- 授权↔执行新增**文件身份复核**（授权时记 `(dev,ino)`，执行前 `lstat` 比对）：换符号链接/换文件/消失一律拒；原先只比对 size。
+- `tool:list` 现按字节预算带 `diff`/`captureSources`/`capturePreview`——Renderer 崩溃 reload 后它是唯一水合源，原先不带会让用户在看不到 diff 时被要求批准覆盖。
+- 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。

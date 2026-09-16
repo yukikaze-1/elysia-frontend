@@ -441,3 +441,10 @@ LLM、STT、TTS Profile 在 Renderer 中只显示 Provider、模型、模型执�
 > **阶段 7 批次 B（2026-08-25）崩溃/损坏安全面注记（Mock 驱动，标「已开发、未联调」）：** ⑦⑥ 项（崩溃或断线不会破坏已确认消息和用户文件 / 本地数据损坏可恢复）由本批补齐——**崩溃零正文**：`RendererCrashEvent{reason, exitCode}` 仅元数据，`.corrupt-*` 隔离副本（message-cache-v1.json 留存聊天正文）经 `pruneCorrupt` 有界保留、**不纳入任何导出与传输**（`collectLogFiles`/`collectAuditLines` 只扫 logs/audit 目录，export 不涉及 appCache/config 持久化目录）；**凭据 fail-closed 不拉平**：credentials 不纳入统一层（隔离+重建默认 = fail-open 与凭据 fail-closed 冲突，见决策记录 §4）；**崩溃审计 type 解耦**：`renderer:crash`（Renderer 崩溃）/ `gpu:crash`（GPU 崩溃）分开记录，不共用字符串。`.corrupt-*` 备份正文不入日志/审计/诊断导出纪律维持（doc 01/06 同步）。
 
 > **阶段 7 批次 D（2026-08-28）收口确认注记（真机联调通过，标「已真实联调」）：** 本批收口**安全发布清单**——7A 核对表 20 项：第 11 项（自定义 Endpoint SSRF 面）**后端职责**（前端无实现面，登记非前端缺陷）；第 18 项（发布包来源/完整性）**阶段 8 签名联动**（来源可追溯已有 commit SHA + 可重跑构建，密码学完整性缺——H-04 签名证书外部依赖）；**其余 18 项通过**。`Blocker/Critical 为 0` 确认（阶段 7 全程（7A/7B/7C 真机验收通过）+ 7D 无新 Blocker/Critical，历史遗留 `message_id=""`/`Failed to fetch`/`.corrupt-*` 登记但不算）。详见 `docs/review/2026-08-22-阶段7批次A-安全发布清单核对.md` 与 `docs/review/2026-08-27-阶段7批次D-决策记录.md`。
+
+## 2026-09-16 落地注记（审计剩余项 A/B 批的安全面）
+
+- harness 标记在**打包态**需要第二个显式开关 `CYRENE_PACKAGED_HARNESS=1`：单靠 `CYRENE_TEST_HARNESS=1`（可能只是残留变量）不再放行 CDP 随机端口、不再让正式应用默认静默、不再把原生对话框改成静默自动取消。未获承认时 `main()` 首句即抹掉该标记。
+- 授权撤销 fail-closed 与文件身份复核（TOCTOU）同属安全面加固，见 doc 04 注记。
+- 脱敏规则一致性：新增 `tests/unit/redact-gate-parity.spec.ts`——门禁（verify:sensitive）认得的秘密形状，产品脱敏后必须再跑门禁零命中。此前四份规则互不 import 且形态已分叉，"产品脱敏回归"不会让门禁变红。
+- 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。

@@ -351,3 +351,10 @@ Demo 阶段如不做自动更新，应使用清晰的手动升级说明。
 - [ ] Live2D AI/Chatbot/Expandable Application 的发布分类与必要审批结论已留档；
 - [ ] 校验和与发布说明已生成；
 - [ ] 已知问题和回滚方式明确。
+
+## 2026-09-16 落地注记（A/B/C 批的打包面）
+
+- `verify-artifact.cjs` 新增 **dist 与 out 同源**校验：逐字节比对 `out/{main,preload,renderer}` 与打包产物 `resources/app/out/**`（asar:false 下打包即复制），不一致即红并提示重新 package。
+- 打包态承认 harness 需 `CYRENE_PACKAGED_HARNESS=1`（`--smoke` 已设）；冒烟另加端到端断言：只设单变量时调试门仍须拒绝。
+- CI 的 `Clean + package` 步骤原先清的是仓库根（no-op），已修到 `apps/desktop/{out,dist}`。
+- 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。

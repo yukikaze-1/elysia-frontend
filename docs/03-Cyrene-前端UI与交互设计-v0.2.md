@@ -584,3 +584,9 @@ P0 操作：
 > - **§15「沙盒、黑名单、审批历史和已授权范围可查看及撤销」：本阶段不可满足（2026-09-15 补记，与 §12.5 落地注记同一事实）。** 实测：**已授权范围**可查看且可撤销（`CySecurityPane` 直读 `tool:grants` + `tool:grant-revoke`）、**审批历史**已落地（`tool:history` 只读，`HISTORY_MAX=200`）；而**沙盒目录**与**域名黑名单**既无持久化面也无管理 UI——`src` 全域 grep `sandboxDirectories|domainBlacklist|SecurityPolicy` **0 命中**，`isDomainAllowed` 只有定义与单测、生产零调用（`main/tools/tool-policy.ts:113`）；路径黑名单是内置常量 `PATH_BLACKLIST_DEFAULTS`（`:11-26`），按 D6B-14 **不进 settings.json、无管理 UI**。⇒ 该项按**部分满足**读，不得当作"沙盒/黑名单可管理"。
 > - **§12.6「客户端版本」：未落地（2026-09-15 补记）。** `src/renderer` 全域 grep `客户端版本|appVersion|clientVersion` **0 命中**；诊断页当前只显示**协议版本 + 后端版本**（`CyDiagnosticsPane.vue:267`）。
 > 逐条处置建议（做／砍／改写规格）见 doc 16 的规格漂移台账；**在做与砍确定之前，以上条目不得当作已交付能力**。
+
+## 2026-09-16 落地注记（渲染层行为两处）
+
+- **离开聊天区即收敛语音采集**：录音/实时语音的停止入口都在聊天区内，而 chat 是 `v-if`。现由 App.vue 在 `currentView` 离开 chat 时调用 `voice.convergeForViewChange()`（取消语义）；dictation 与 TTS 播放不受影响。
+- **加载失败 / 界面无响应有提示**：主 frame 加载失败 → 一次有界重试后弹原生错误框；渲染进程无响应 → 窗口标题标注「界面无响应」（刻意不用阻塞式对话框——那会把"界面卡住"升级成"应用卡住"）。
+- 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。

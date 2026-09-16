@@ -525,3 +525,11 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 - [ ] 安装包来自可复现的发布构建；
 - [ ] 已知问题、环境和版本已记录；
 - [ ] Demo 演示脚本可重复执行。
+
+## 2026-09-16 落地注记（门禁机制与新增用例）
+
+- **零断言即红**：vitest 全局 `expect.requireAssertions`（unit + integration）。跳过必须用 `ctx.skip()`（计 skipped），裸 `return` 会红。开关一开即照出 4 处既有零断言用例并逐条处置。
+- 新增：`tool-execution-abort.spec.ts`(15)、`redact-gate-parity.spec.ts`(5)、集成 `window-load-failure.spec.ts`(1)。
+- `docs-check` 补 review/archive 断链**计数守护**（基线 43/26，超过即红并要求显式抬高）。
+- 已知 flake：`renderer-crash-banner.spec.ts`（CDP 在崩溃窗口内附着失败）——失败形态已从 60s 挂死改为可读超时，poll 预算 30s；**残余偶发仍在**。
+- 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。
