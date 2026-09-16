@@ -17,6 +17,7 @@ import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted, setBefore
 import { closeWindowDevTools, lastWindowPresentation, openWindowDevTools } from './windows/window-presentation'
 import { createDialogService, dialogInvocations } from './native-ui/dialog-service'
 import { runtimeEnvironment } from './config/runtime-environment'
+import { resolveGpuDecision } from './config/gpu-mode'
 import { findForbiddenDebugLaunch } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
 import { assertDevServerOrigin, resolveDevDefaultBackendOrigin } from './config/dev-ports'
@@ -129,6 +130,14 @@ async function main(): Promise<void> {
   // 阶段 7 批次 C（Task 5 性能测量）：精确内存信息——Chromium 默认 performance.memory 为近似值，
   // enable-precise-memory-info 让 usedJSHeapSize 接近真实（性能测量断言用）。必须在 app ready 前设置。
   app.commandLine.appendSwitch('enable-precise-memory-info')
+
+  // 2026-09-16 审计 P2 / 立项：**Linux 无 GPU 时的硬件加速回退**——必须在 app ready 前生效。
+  // 无 DRI 的 Mesa 软件光栅器会在 GPU 进程里确定性段错误，Chromium 重试耗尽后直接杀掉整个应用；
+  // 而 `--disable-gpu` 此前只在测试脚手架与 `verify-artifact` 里，产品侧零命中。
+  // 判定点单列在 config/gpu-mode.ts（**不并进 runtime-environment.ts**：那会把 node:fs 拖进
+  // window-presentation 的依赖图，2026-09-16 实测会让 renderer-crash 集成用例稳定失败）。
+  const gpuDecision = resolveGpuDecision({ env: process.env })
+  if (gpuDecision.disableHardwareAcceleration) app.commandLine.appendSwitch('disable-gpu')
 
   let ident
   try {
@@ -596,6 +605,13 @@ async function main(): Promise<void> {
       mode: windowEnv.windowMode,
       source: windowEnv.windowModeSource,
       harness: windowEnv.isTestHarness,
+    })
+    // GPU 回退决策留痕（与窗口模式同址）：现场要能一眼看出"这次为什么用了软件渲染"。
+    diagnostics.logger.info('gpu:runtime-mode', {
+      disabled: gpuDecision.disableHardwareAcceleration,
+      mode: gpuDecision.gpuMode,
+      source: gpuDecision.gpuModeSource,
+      platform: process.platform,
     })
     markAppStarted()
     ensureMainWindow(

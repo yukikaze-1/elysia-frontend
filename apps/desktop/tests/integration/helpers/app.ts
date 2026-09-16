@@ -123,8 +123,9 @@ export type SeedFile = { relPath: string; content: string } | { relPath: string;
 
 /** 用 --mode test 构建产物(out/)启动 app：临时 userData + harness 标记 + 清残留 dev env。
  *  seedFiles：启动时预置文件（relPath 相对 userData 根，如 'app-cache/message-cache-v1.json'）——损坏恢复测试在 load() 前注入非法 JSON。
- *  opts.env：附加环境变量（先合并；测试隔离/Mock 三项不变量随后覆盖，调用方不可改写安全门；
- *  Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
+ *  opts.env：附加环境变量（先合并；**测试隔离/窗口三项不变量**随后覆盖，调用方不可改写安全门；
+ *    `CYRENE_BACKEND` 自 2026-09-16（审计 P1-4 / AUD-02）起**可由调用方覆盖**，缺省仍是 mock——
+ *    见下方 env 构造处的说明。实现在 Task 17 阶段 3 G3 新增，向后兼容——既有调用方传 seedFiles 或省略均可用）。
  *  目录 0700、文件 0600：否则 ensureUserDataDirs（0700 无 group/other）与 openSafeFile 读（0400 无 group/other）会因权限误判损坏/拒绝启动 */
 export async function launchApp(seedFiles?: SeedFile[], opts: LaunchOptions = {}): Promise<LaunchedApp> {
   const electronPath = ELECTRON_EXEC
@@ -142,12 +143,15 @@ export async function launchApp(seedFiles?: SeedFile[], opts: LaunchOptions = {}
   }
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
+    // 2026-09-16 审计 P1-4 / 立项 AUD-02（方案 A）：**装配模式可由调用方覆盖**，故它排在 opts.env **之前**。
+    // 原本它写在 opts.env 之后就等于锁死 mock ⇒ 打包形态（恒 real，用户唯一会运行的形态）在 Electron 层
+    // 零端到端覆盖。放开它的同时，下面三项**隔离/安全不变量**仍排在 opts.env 之后、调用方不可改写。
+    CYRENE_BACKEND: 'mock',        // 缺省仍是 Mock（既有 42 个 spec 行为不变）；real 冒烟显式传 opts.env 覆盖
     ...(opts.env ?? {}),
     // 权威隔离门：Main 在 test+harness+未打包三重门下 setPath('appData', userData)，并在
     // installAppIdentity 前读回校验。不能再依赖 Windows APPDATA env（Electron 43 实测无效）。
     CYRENE_TEST_APP_DATA: userData,
     CYRENE_TEST_HARNESS: '1',
-    CYRENE_BACKEND: 'mock',        // 固定 Mock 装配：新装配策略未打包默认 Real（打包恒 Real），集成套件须显式 mock 否则 boot 模式翻转（Task 9）
     // 窗口呈现模式：**在测试侧也显式写死**（不依赖 Main 的 harness 默认值）——三层防线，任一层被
     // 重构坏掉时，桌面都不会被测试弹窗打扰；需要人工观察窗口时用 `pnpm test:integration:visible`。
     CYRENE_WINDOW_MODE: opts.windowMode ?? suiteWindowMode(),

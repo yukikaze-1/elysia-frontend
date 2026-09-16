@@ -122,6 +122,7 @@ import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/att
 import type { ToolAttachment } from '@shared/contracts/tool'
 import type { DesktopToolRequest } from '../tools/tool-service'
 import { isDomainAllowed } from '../tools/tool-policy'   // D4-15：域名黑名单（凭据只发往已连接后端端点）
+import { createConnectionLiveness, type LivenessDeathReason } from './connection-liveness'   // AUD-01：客户端存活监视
 
 export interface WebSocketLike {
   on(ev: 'open' | 'message' | 'close' | 'error' | 'unexpected-response', cb: (arg?: unknown, arg2?: unknown) => void): void
@@ -320,6 +321,21 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
   private lastSocketClosedAt?: number
   private disconnected = false
   private serverUrl = ''
+
+  /**
+   * AUD-01（2026-09-16 审计 P1-3，方案 B）：客户端存活监视。
+   *
+   * 为什么必须有它：连接状态的唯一来源原本是 socket 的 `close`/`error`，而 half-open 两者都不触发
+   * ⇒ 界面停在**假 connected**、发送被静默吞掉、等满 ACK 超时才报成 `TIMEOUT`、且永不自动重连。
+   * 判据与取舍见 `connection-liveness.ts` 头注（要点：**不向 WS 发任何东西**——协议两侧都没有 ping/pong 帧；
+   * 空闲且宿主可达时**不做任何动作**，避免连接抖动）。
+   */
+  private readonly liveness = createConnectionLiveness({
+    now: () => this.options.now?.() ?? Date.now(),
+    outstanding: () => this.pendingAcks.size,
+    probe: () => this.probeHostReachable(),
+    onDead: (reason) => this.handleLivenessDeath(reason)
+  })
 
   /**
    * D4-15（2026-09-15 裁决「补代码」）：域名黑名单——**凭据只发往已连接后端端点**。
@@ -967,6 +983,9 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     ws.on('message', (arg?: unknown, arg2?: unknown) => {
       if (!this.isCurrentTransport(ws, incarnation)) return
       if (arg === undefined) return
+      // AUD-01（2026-09-16 审计 P1-3）：任何入站字节都证明这条 socket 还活着——**先记再分流**，
+      // 故二进制帧（下一行 warn 忽略的那类）与"非文本帧"同样计为存活证据。
+      this.liveness.noteFrame()
       // P4-B Task 4：意外二进制接收（TTS audio_* 等二进制下行由 Task 5 分流；当前无消费方 → 告警忽略不崩）。
       // 判据用 ws 库第二参（isBinary 布尔）而非 Buffer.isBuffer——真实 ws 在 Node 22 下文本帧也以 Buffer 投递
       //（typeof=object），第二参才是二进制/文本的权威判别；文本帧(无论 string/Buffer)仍走 handleFrame。
@@ -985,6 +1004,51 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     ws.on('close', () => { this.onSocketClosed(ws, incarnation, connectAttempt) })
     ws.on('error', () => { this.onSocketClosed(ws, incarnation, connectAttempt) })
     ws.on('unexpected-response', (_req, res) => { this.onUnexpectedResponse(ws, incarnation, res, connectAttempt) })
+    // AUD-01：本 socket 开始存活监视（重复调用即重置，重连自然复用）。
+    // 放在装配末尾：此时 close/error 已接线，判死后的收敛路径必然可达。
+    this.liveness.start()
+  }
+
+  /**
+   * AUD-01：宿主可达性探测——一条**新**的只读 REST 请求。
+   *
+   * 为什么用新请求而不是"等这条 socket 回话"：half-open 的定义就是这条 socket 不再通，
+   * 而宿主可能完全健康（后端进程活着、只是那条 TCP 连接死了）。新请求能通 + 旧连接长期无帧
+   * ⇒ 结论只能是"这条 socket 死了"，于是收敛重建，而不是继续等。
+   *
+   * 任何**响应**（含 401/403/404）都算宿主可达——能应答就说明进程与网络路径在；
+   * 只有网络层失败/超时才判不可达。fail-closed：探测自身异常一律视为不可达。
+   */
+  private async probeHostReachable(): Promise<{ hostReachable: boolean }> {
+    if (!this.serverUrl || this.disconnected) return { hostReachable: false }
+    try {
+      const res = await this.restFetch('/api/me')
+      // 不读 body、不看状态码：收到响应即"宿主可达"。body 必须消费掉以免连接悬挂。
+      try { await res.arrayBuffer() } catch { /* 读 body 失败不影响"可达"结论 */ }
+      return { hostReachable: true }
+    } catch {
+      return { hostReachable: false }
+    }
+  }
+
+  /**
+   * AUD-01：判定连接已死 ⇒ 走**既有**收敛路径（不新造状态机）。
+   *
+   * 与 `establishWs` 的握手超时分支同款做法：先 `onSocketClosed` 完成退役+退避重连，
+   * 再 best-effort `close()` 释放本地 socket 对象。`onSocketClosed` 内部以
+   * `(ws, incarnation)` 围栏且 `retireTransport` 已执行，故随后真实到达的 close 事件是惰性的，
+   * 不会二次重连（close+error 双触发也只排一次）。
+   */
+  private handleLivenessDeath(reason: LivenessDeathReason): void {
+    const ws = this.ws
+    if (!ws) return
+    this.options.logger?.warn('liveness:dead', {
+      message: reason === 'request-unanswered'
+        ? '连接长期无任何帧且有在途请求未回执，宿主可达 ⇒ 判定该 socket 已失效，转入重连'
+        : '连接长期无任何帧且宿主不可达 ⇒ 判定连接已失效，转入重连'
+    })
+    this.onSocketClosed(ws, this.transportIncarnation)
+    try { ws.close() } catch { /* 本地释放尽力而为 */ }
   }
 
   /** 非 101 升级响应:仅 400/401/403 fail-fast(协议/认证硬错);429 RATE_LIMITED/503 超限等瞬态状态码 → 走重连退避,
@@ -1021,6 +1085,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
     if (!this.isCurrentTransport(ws, incarnation)) return
     this.clearHandshakeTimer() // socket 关闭即当前握手结束,避免超时回调在退避期间误触发
     this.retireTransport(ws, incarnation)
+    this.liveness.stop() // AUD-01：旧传输退役即停表（围栏之上，旧 socket 的回调不得停掉新连接的监视）
     if (this.disconnected) return
     if (this.state.status === 'error') return // unexpected-response/版本不符 fail-fast 后,后续 close/error 不再翻回 reconnecting
     // Keep the explicit connect request pending across transient failures so
@@ -1085,6 +1150,7 @@ export class RealBackend implements BackendAdapter, CharacterServiceBackendPort 
 
   async disconnect(): Promise<void> {
     this.disconnected = true
+    this.liveness.stop() // AUD-01：显式断开即停表（否则监视会对着已退役的 socket 判死并触发重连）
     this.clearHandshakeTimer() // 握手未完成时取消:清超时 timer,避免其后误触发
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = undefined }
     for (const [, pending] of this.pendingAcks) {

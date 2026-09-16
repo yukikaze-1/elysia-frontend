@@ -182,6 +182,22 @@ Demo 选择一种主安装格式，并可附加一种便携格式。需要验证
 
 不要假设一个 Linux 产物在全部发行版均可工作。
 
+> **支持边界（2026-09-16 审计 P2 / 立项「A + B」的 B 半边，据实写清）：**
+> **Linux 侧当前只支持"有硬件 GL 的桌面"，无 GPU 的环境靠自动回退降级为软件渲染；两者都不是"已验证支持"。**
+> 逐条事实与口径：
+> - 崩溃机制（X99 取证）：无 DRI 时 Mesa 软件光栅器在 GPU 进程里**确定性段错误**，Chromium 重试耗尽后
+>   `FATAL: GPU process isn't usable. Goodbye.` **杀掉整个应用**；`--no-sandbox` / `GALLIUM_DRIVER=llvmpipe|softpipe` /
+>   `LIBGL_ALWAYS_SOFTWARE=1` 均无效，`--disable-gpu` 与 SwiftShader 有效。
+> - **产品侧现在有回退了**：`src/main` 在 `app.whenReady()` **之前**判定——Linux 且探测不到可用 GPU 设备节点
+>   （`/dev/dri` 下无 `card*`/`renderD*`）⇒ 自动加 `--disable-gpu`，并写一条 `gpu:runtime-mode` 诊断日志
+>   （含 `disabled`/`mode`/`source`/`platform`）。可用 `CYRENE_GPU_MODE=disable` 强制、`=auto` 走自动判定。
+>   有设备节点的桌面**行为逐字不变**（不干预）。
+> - **但这不等于"无 GPU 的 Linux 已被验证支持"**：回退是启发式（少数有 DRI 但驱动仍崩的环境仍会崩），
+>   且**本机是 Windows，无法验证 Linux 分支的真实表现**——判定矩阵由注入式单测覆盖，应用层只验到
+>   "开关确实落到了命令行"（集成用例）。真实无 GPU 环境的端到端表现**仍是 NOT VERIFIED**。
+> - 上表「GPU/软件渲染差异」一项因此按**部分覆盖**读：拿到的是回退路径的存在性与可诊断性，不是全矩阵验证。
+
+
 ## 9. 应用数据目录
 
 目录根由 Main 在运行时使用 Electron 的用户数据目录能力解析，不写死 `%APPDATA%`、`~/.config`、当前工作目录或安装目录。设置页只通过具名接口获取可展示路径并请求系统文件管理器打开，Renderer 不自行拼接操作系统路径。

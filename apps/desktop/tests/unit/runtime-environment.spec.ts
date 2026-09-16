@@ -15,6 +15,7 @@ import {
   resolveRuntimeEnvironment,
   runtimeEnvironment,
 } from '../../src/main/config/runtime-environment'
+import { GPU_MODE_ENV, hasGpuDeviceNode, resolveGpuDecision } from '../../src/main/config/gpu-mode'
 
 const resolve = (env: Record<string, string | undefined>, mode = 'test') => resolveRuntimeEnvironment({ env, mode })
 
@@ -113,5 +114,73 @@ describe('进程级单例', () => {
     resetRuntimeEnvironmentForTest()
     expect(runtimeEnvironment().windowMode).toBe('visible')
     expect(runtimeEnvironment().windowModeSource).toBe('env')
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-09-16 审计 P2 / 立项：Linux 无 GPU 时的硬件加速回退
+//
+// 缺口：无 DRI 的 Mesa 软件光栅器在 GPU 进程里确定性段错误，Chromium 重试耗尽后
+// `FATAL: GPU process isn't usable. Goodbye.` **杀掉整个应用**；而 `--disable-gpu` 此前只在
+// 测试脚手架与 `verify-artifact.cjs`，`src/main/**` 零命中 ⇒ 产品侧无回退（本机 Windows 测不到，
+// 证据全部来自 X99 的 xvfb 最小复现）。
+//
+// 判据取"平台 + 设备节点存在性"，因为 `app.getGPUFeatureStatus()` **只在 ready 之后可用**，
+// 而崩溃发生在 GPU 进程初始化期——等拿到读数就晚了。故这里用注入的假 fs 钉住判定矩阵。
+//
+// 判定点独立成 `config/gpu-mode.ts`（**不并进 runtime-environment.ts**）：后者被
+// window-presentation/dialog-service 依赖，并进去会把 node:fs 拖进它们的依赖图，
+// 2026-09-16 实测会让 renderer-crash 集成用例稳定失败。
+// ═══════════════════════════════════════════════════════════════════════════════
+describe('GPU 回退判定（2026-09-16 审计 P2）', () => {
+  const resolveGpu = (
+    env: Record<string, string | undefined>,
+    platform: string,
+    hasNode: boolean
+  ) => resolveGpuDecision({ env, platform, hasGpuDeviceNode: () => hasNode })
+
+  it('Linux + 无 GPU 设备节点 ⇒ 回退（xvfb / 容器 / 无 3D 的 VM 正是这一档）', () => {
+    const r = resolveGpu({}, 'linux', false)
+    expect(r.disableHardwareAcceleration).toBe(true)
+    expect(r.gpuModeSource).toBe('no-device-node')
+  })
+
+  it('Linux + 有 GPU 设备节点 ⇒ **不干预**（有硬件 GL 的桌面行为逐字不变）', () => {
+    const r = resolveGpu({}, 'linux', true)
+    expect(r.disableHardwareAcceleration).toBe(false)
+    expect(r.gpuModeSource).toBe('default')
+  })
+
+  it('非 Linux 一律不干预（本缺口只在 Mesa/xvfb 那条路径上有证据）', () => {
+    for (const platform of ['win32', 'darwin']) {
+      const r = resolveGpu({}, platform, false)
+      expect(r.disableHardwareAcceleration, `${platform} 不得被误回退`).toBe(false)
+      expect(r.gpuModeSource).toBe('default')
+    }
+  })
+
+  it('CYRENE_GPU_MODE=disable ⇒ 任何平台都强制回退（现场自救口）', () => {
+    for (const platform of ['linux', 'win32', 'darwin']) {
+      const r = resolveGpu({ [GPU_MODE_ENV]: 'disable' }, platform, true)
+      expect(r.disableHardwareAcceleration, `${platform} 显式要求必须照办`).toBe(true)
+      expect(r.gpuModeSource).toBe('env')
+    }
+  })
+
+  it('CYRENE_GPU_MODE=auto 是显式"按自动判定"，不改变结论', () => {
+    const r = resolveGpu({ [GPU_MODE_ENV]: 'auto' }, 'linux', false)
+    expect(r.disableHardwareAcceleration).toBe(true)
+    expect(r.gpuMode).toBe('auto')
+  })
+
+  it('取值拼错一律视为未指定（拼错不该改变渲染路径）', () => {
+    const r = resolveGpu({ [GPU_MODE_ENV]: 'off' }, 'win32', false)
+    expect(r.disableHardwareAcceleration).toBe(false)
+    expect(r.gpuMode).toBe('auto')
+  })
+
+  it('hasGpuDeviceNode 只认 card*/renderD* 条目：目录不存在/无权限同样算"没有可用 GPU"', () => {
+    // 直接测真实实现：给一个不存在的路径必须 fail-safe 成 false，而不是抛。
+    expect(hasGpuDeviceNode('/definitely/not/here')).toBe(false)
   })
 })
