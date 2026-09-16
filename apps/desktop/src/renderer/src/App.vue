@@ -16,6 +16,7 @@ import CyHistoryViewer from './components/CyHistoryViewer.vue'
 import CySettingsView from './components/CySettingsView.vue'
 import { useLayoutStore } from './stores/layout.store'
 import { useAppStore } from './stores/app.store'
+import { useVoiceStore } from './stores/voice.store'
 import { gridTemplateFor } from './layout/effective-layout'
 
 const layout = useLayoutStore()
@@ -59,6 +60,16 @@ let noticeTimer: ReturnType<typeof setTimeout> | undefined
 watch(() => layout.notice, (n) => {
   if (noticeTimer) clearTimeout(noticeTimer)
   if (n) noticeTimer = setTimeout(() => layout.clearNotice(), 3000)
+})
+
+// 2026-09-16 审计 P2：离开聊天区时收敛在途语音采集。
+// chat 是 v-if（切视图会真卸载输入区），而录音/实时语音的停止按钮都在那一区里——不收敛就等于
+// "麦克风继续开着、界面上没有任何停止入口"。收敛点放在**视图**上（而非组件存活性上），
+// 理由与取舍见 voice.store 的 convergeForViewChange 注记。
+const voice = useVoiceStore()
+watch(() => app.currentView, (view) => {
+  if (view === 'chat') return
+  void voice.convergeForViewChange()
 })
 </script>
 

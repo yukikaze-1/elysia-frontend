@@ -182,6 +182,20 @@ describe('CyDiagnosticsPane 四分区（日志管理/开发者模式/连接诊�
     expect(devUnsub!).toHaveBeenCalledTimes(1)
   })
 
+  it('在途卸载（diagnosticsState 未 resolve 时就卸载）→ **不建立**订阅（修复前订阅照建、无人拆除 ⇒ 永久驻留）', async () => {
+    // 2026-09-16 审计 P2：订阅建在 `await api.diagnosticsState()` 之后，而 onBeforeUnmount 早已跑过
+    // （那时 unsubDev 还是 null）⇒ 每"挂载后在途卸载"一次泄漏一个订阅。判据：卸载标记在订阅前被复查。
+    let release: (s: typeof stateObj) => void = () => {}
+    api.diagnosticsState.mockReturnValue(new Promise((r) => { release = r }))
+    const w = mount(CyDiagnosticsPane, { global: { plugins: [pinia] } })
+    await nextTick()
+    w.unmount()                       // state 仍在途即卸载
+    release(stateObj)
+    await flushPromises()
+    expect(api.onDiagnosticsDevEvent).not.toHaveBeenCalled()   // 修复前这里是 1（订阅被建出来且永不拆除）
+    expect(devUnsub).toBeUndefined()
+  })
+
   it('dev 展示项仅 devMode 时渲染（关闭时无 banner/事件/工具/store 摘要/性能/日志链接）', async () => {
     const w = await mountPane()
     expect(w.find('[data-testid="diag-dev-banner"]').exists()).toBe(false)

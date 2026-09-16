@@ -25,17 +25,20 @@ const COPIED_RESET_MS = 1500
 
 const copied = ref(false)
 let resetTimer: ReturnType<typeof setTimeout> | undefined
+// 2026-09-16 审计 P2：定时器建在 `await copyText(...)` **之后**，而 onBeforeUnmount 看不到它——
+// 若组件在这段 await 期间被卸载（虚拟列表频繁换行就会），定时器仍会被建出来且永远没人清。
+let unmounted = false
 
 function onCopy(): void {
   void copyText(props.code).then((ok) => {
-    if (!ok) return
+    if (!ok || unmounted) return   // 卸载后才落定的复制：不置位、不建定时器
     copied.value = true
     if (resetTimer) clearTimeout(resetTimer)
     resetTimer = setTimeout(() => { copied.value = false }, COPIED_RESET_MS)
   })
 }
 
-onBeforeUnmount(() => { if (resetTimer) clearTimeout(resetTimer) })
+onBeforeUnmount(() => { unmounted = true; if (resetTimer) clearTimeout(resetTimer) })
 </script>
 
 <template>

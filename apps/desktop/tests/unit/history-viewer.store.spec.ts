@@ -98,6 +98,68 @@ describe('historyViewerStore', () => {
     expect(s.open).toBe(false)
     expect(target).toEqual({ conversationId: 'c1', messageId: 'm5', segmentId: 'seg1' })
   })
+  // —— 2026-09-16 审计 P2：await 前后的世代栅栏（读 currentId → await → 写 state 缺栅栏） ——
+
+  it('世代栅栏：在途 submitQuery 期间关闭并重开查看器 → 旧结果被丢弃，游标/更多态不被旧查询改写', async () => {
+    type Page = { items: ReturnType<typeof item>[]; hasMore: boolean; nextCursor?: string }
+    let release: (p: Page) => void = () => {}
+    const gate = new Promise<Page>((r) => { release = r })
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => gate }))
+    const s = useHistoryViewerStore()
+    s.openViewer()
+    const inFlight = s.submitQuery()
+    s.closeViewer()
+    s.openViewer()                                        // 关掉再重开 = 新一代
+    s.$patch({ items: [item('mNew', 'tNew')] })           // 新上下文里已有的结果
+    release({ items: [item('mOld', 'tOld')], hasMore: true, nextCursor: 'cur-old' })
+    await inFlight
+    expect(s.items.map((i) => i.messageId)).toEqual(['mNew'])   // ← 修复前会变成 ['mOld']（旧上下文的结果污染新上下文）
+    expect(s.hasSearched).toBe(false)
+    expect(s.hasMore).toBe(false)                                // ← 修复前会被旧查询置 true
+    expect(s.nextCursor).toBeUndefined()                         // ← 修复前会带着旧游标去续接
+    expect(s.busy).toBe(false)      // 互斥量必须复位：若它也挂在世代守卫上，查看器会永久卡死
+    expect(s.loading).toBe(false)
+  })
+
+  it('世代栅栏：在途 loadMore 期间关闭重开 → 该页被丢弃，当前游标不被旧查询覆盖', async () => {
+    type Page = { items: ReturnType<typeof item>[]; hasMore: boolean; nextCursor?: string }
+    let release: (p: Page) => void = () => {}
+    const gate = new Promise<Page>((r) => { release = r })
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => gate }))
+    const s = useHistoryViewerStore()
+    s.openViewer()
+    s.$patch({ items: [item('m1', 't1')], hasMore: true, nextCursor: 'cur-1' })
+    const inFlight = s.loadMore()
+    s.closeViewer()
+    s.openViewer()
+    s.$patch({ hasMore: true, nextCursor: 'cur-2' })
+    release({ items: [item('m2', 't2')], hasMore: false, nextCursor: undefined })
+    await inFlight
+    // openViewer 本身会清空 items（既有语义），故这里断言的是"旧页没有被合并进来"：
+    // 修复前 `items` 会变成 ['m2']（旧上下文的续页落进重开后的空列表），且游标被覆盖成 undefined。
+    expect(s.items.map((i) => i.messageId)).not.toContain('m2')
+    expect(s.items).toHaveLength(0)
+    expect(s.nextCursor).toBe('cur-2')
+    expect(s.hasMore).toBe(true)
+    expect(s.busy).toBe(false)
+    expect(s.loadingMore).toBe(false)
+  })
+
+  it('世代栅栏：在途查询失败但世代已变 → 错误也不写到当前上下文上（只丢结果不够）', async () => {
+    let reject: (e: Error) => void = () => {}
+    const gate = new Promise<never>((_r, rj) => { reject = rj })
+    setDesktopApi(createDesktopApiMock({ queryChatHistory: async () => gate }))
+    const s = useHistoryViewerStore()
+    s.openViewer()
+    const inFlight = s.submitQuery()
+    s.closeViewer()
+    s.openViewer()
+    reject(new Error('[HTTP_500] 旧上下文的失败'))
+    await inFlight
+    expect(s.error).toBeUndefined()
+    expect(s.busy).toBe(false)
+  })
+
   it('打开查看器不阻塞聊天流：D10 store 事件继续应用（查看器 open 期间 messageStore 归并不受影响）', async () => {
     const s = useHistoryViewerStore()
     s.openViewer()

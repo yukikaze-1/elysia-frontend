@@ -415,6 +415,10 @@ export const useVoiceStore = defineStore('voice', () => {
     const src = ctx.createBufferSource()
     src.buffer = ab
     src.connect(ctx.destination)
+    // 2026-09-16 审计 P2：此前既不监听播放结束、也从不 `close()`——每次"试听"泄漏一个 AudioContext。
+    // Chromium 每进程的 AudioContext 数量有硬上限（约 6），而入口（设置页语音区）每次点击都新建一个
+    // ⇒ 试听几次之后新建会失败（试听静默失效）。播放自然结束即关闭；`close()` 失败无补救价值（忽略）。
+    src.onended = () => { void ctx.close().catch(() => { /* 已关闭/已失效：忽略 */ }) }
     void src.start()
   }
 
@@ -625,6 +629,30 @@ export const useVoiceStore = defineStore('voice', () => {
     clearTtsState()
   }
 
+  // —— 视图切换收敛（2026-09-16 审计 P2） ——
+
+  /**
+   * 离开聊天区时收敛在途语音采集。
+   *
+   * 缺口：录音与实时语音的**停止入口都在聊天区内**（`CyChatInput` 的按钮、`CyRealtimeBar`），而
+   * chat 视图是 `v-if`（切到设置/任务会真卸载）⇒ 用户离开聊天页后麦克风继续采集，而界面上已经
+   * 没有任何停止入口；录音只有 600s 硬上限兜底，实时语音连上限都没有。收敛点此前绑在**组件存活性**上
+   * （`CyChatInput` 的 onBeforeUnmount 对语音零动作），属审计 S-3「收敛点建在错误的主体上」。
+   *
+   * 现在由 `App.vue` 在 `currentView` 离开 chat 时调用：录音与实时语音**按取消语义收尾**
+   * （停采集 + 通知后端 + 清态）。
+   *   · 用「取消」而不是「停止」：停止会把录音留在"等待字幕/待确认"态，而确认 UI 在被卸载的聊天区里，
+   *     用户既看不到也点不到 ⇒ 那是一个没有出口的状态。离开页面 = 放弃这次采集。
+   *   · 不碰 dictation（它在松手/失焦时就已收敛）与 TTS 播放（播放器常驻在聊天区之外，
+   *     不该因为切视图被打断）。
+   *   · 刻意**不复用 `reset()`**：那是"断线/会话切换"的语义（连错误字段一起清），用它会把一次视图切换
+   *     变成静默的全局重置。本函数只做"停止在途采集"，且幂等（无在途采集时纯 no-op）。
+   */
+  async function convergeForViewChange(): Promise<void> {
+    if (mode.value === 'recording' || mode.value === 'record_pending') await discardRecord()
+    else if (mode.value === 'realtime') await cancelRealtime()
+  }
+
   // —— reset（断线/会话切换，Task 13 bootstrap handleConnectionStateChange 接线） ——
 
   async function reset(): Promise<void> {
@@ -655,6 +683,7 @@ export const useVoiceStore = defineStore('voice', () => {
     onTtsPlaybackEnded, onTtsPlaybackError, stopTtsPlayback,
     setTtsAudioEl, getTtsAudioEl,   // 多套 UI 基础：宿主元素非响应式，经存取器维护
     setNotice, clearNotice, clearTransientErrors,
+    convergeForViewChange,
     reset
   }
 })

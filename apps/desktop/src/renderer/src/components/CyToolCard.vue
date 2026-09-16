@@ -148,17 +148,20 @@ const captureAttachmentId = computed(() =>
 // —— 复制结果：现有安全剪贴板封装（navigator.clipboard 优先 + execCommand 兜底，Web API 不经 IPC）——
 const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
+// 2026-09-16 审计 P2：卸载标记——与 CyMessageBubble/CyCodeBlock 同形：定时器建在 await 之后，
+// 卸载发生在 await 期间时定时器无人清理。
+let unmounted = false
 async function copyResult(): Promise<void> {
   const text = props.record.outputSummary
   if (!text) return
   const ok = await copyText(text)
-  if (ok) {
+  if (ok && !unmounted) {
     copied.value = true
     if (copiedTimer) clearTimeout(copiedTimer)
     copiedTimer = setTimeout(() => { copied.value = false }, 1600)
   }
 }
-onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
+onBeforeUnmount(() => { unmounted = true; if (copiedTimer) clearTimeout(copiedTimer) })
 </script>
 
 <template>

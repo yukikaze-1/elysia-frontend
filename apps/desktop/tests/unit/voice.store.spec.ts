@@ -581,8 +581,8 @@ describe('voiceStore', () => {
   })
 
   it('record：replayRecord——audioBuffer 存在 → AudioContext BufferSource 播放（不走 blob URL）', () => {
-    const srcMock = { buffer: null, connect: vi.fn(), start: vi.fn() }
-    const ctxMock = { createBufferSource: vi.fn(() => srcMock), destination: {} }
+    const srcMock = { buffer: null, connect: vi.fn(), start: vi.fn(), onended: undefined as undefined | (() => void) }
+    const ctxMock = { createBufferSource: vi.fn(() => srcMock), destination: {}, close: vi.fn(async () => {}) }
     vi.stubGlobal('AudioContext', vi.fn(function () { return ctxMock }))
     const store = useVoiceStore()
     store.record.audioBuffer = {} as unknown as AudioBuffer
@@ -591,6 +591,11 @@ describe('voiceStore', () => {
     expect(srcMock.buffer).toBeDefined()
     expect(srcMock.connect).toHaveBeenCalled()
     expect(srcMock.start).toHaveBeenCalled()
+    // 2026-09-16 审计 P2：播放自然结束即关闭 AudioContext（修复前从不 close ⇒ 每次试听泄漏一个，
+    // Chromium 每进程上限约 6 个，试听几次后新建即失败）
+    expect(ctxMock.close).not.toHaveBeenCalled()
+    srcMock.onended?.()
+    expect(ctxMock.close).toHaveBeenCalledTimes(1)
   })
 
   it('record：replayRecord——无 audioBuffer → 不播放（no-op）', () => {
@@ -1022,6 +1027,39 @@ describe('voiceStore', () => {
     expect(store.pendingAction).toBeNull()
     expect(store.confirmDispatching).toBe(false) // reset 复位在途信号
     expect(store.notice).toBeNull()
+  })
+
+  // —— 视图切换收敛（2026-09-16 审计 P2：chat 是 v-if，停止入口只在聊天区内） ——
+
+  it('convergeForViewChange：录音中离开聊天区 → 按**取消**语义收尾（停采集 + voiceDiscard + 回 idle）', async () => {
+    const store = useVoiceStore()
+    await store.startRecord()
+    expect(store.mode).toBe('recording')
+    await store.convergeForViewChange()
+    expect(fake.stop).toHaveBeenCalled()                 // 麦克风真的关掉了（修复前：一直开着且无停止入口）
+    expect(mockApi.voiceDiscard).toHaveBeenCalledWith({ recordingId: stringMatching(/^rec_/) })
+    expect(store.mode).toBe('idle')
+  })
+
+  it('convergeForViewChange：实时语音中离开聊天区 → cancel 语义（voiceCancelRealtime + 回 idle）', async () => {
+    const store = useVoiceStore()
+    await store.startRealtime()
+    expect(store.mode).toBe('realtime')
+    await store.convergeForViewChange()
+    expect(fake.stop).toHaveBeenCalled()
+    expect(mockApi.voiceCancelRealtime).toHaveBeenCalledWith({ sessionId: stringMatching(/^vs_/) })
+    expect(mockApi.voiceStopRealtime).not.toHaveBeenCalled()   // 不是"正常结束"，是"放弃"
+  })
+
+  it('convergeForViewChange：无在途采集时是纯 no-op（幂等；不碰 dictation/TTS/错误字段）', async () => {
+    const store = useVoiceStore()
+    store.$patch({ tts: { playingStreamId: 3, url: 'u', playing: true } })
+    await store.convergeForViewChange()
+    expect(mockApi.voiceDiscard).not.toHaveBeenCalled()
+    expect(mockApi.voiceCancelRealtime).not.toHaveBeenCalled()
+    expect(mockApi.voiceCancelDictation).not.toHaveBeenCalled()
+    expect(store.tts.playing).toBe(true)                 // TTS 播放不因切视图被打断
+    expect(store.mode).toBe('idle')
   })
 
   it('init：订阅 onChatEvent 返回退订函数', () => {

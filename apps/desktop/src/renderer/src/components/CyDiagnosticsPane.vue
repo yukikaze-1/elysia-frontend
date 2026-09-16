@@ -39,6 +39,10 @@ const devEvents = ref<DiagnosticsDevEvent[]>([])
 const tools = ref<PublicToolEvent[]>([])
 const toolsError = ref(false)
 let unsubDev: (() => void) | null = null
+// 2026-09-16 审计 P2：组件在 `await api.diagnosticsState()` 期间被卸载时，订阅**仍会被建立**而
+// onBeforeUnmount 早已跑过（`unsubDev` 那时还是 null）⇒ 订阅永久驻留、每挂载一次泄漏一个（S-3
+// 「订阅建在 await 之后」的实例）。用一个卸载标记在订阅建立后立刻自检并拆除。
+let unmounted = false
 
 onMounted(async () => {
   try {
@@ -49,6 +53,7 @@ onMounted(async () => {
     loadError.value = true
   }
   // dev 事件订阅（onToolEvent 先例反方向——renderer 侧订阅；Main devTap 仅 devMode 会话态推送）
+  if (unmounted) return   // 在途卸载：**不建立**订阅（建立即无人拆除）
   unsubDev = api.onDiagnosticsDevEvent((ev) => {
     devEvents.value.push(ev)
     if (devEvents.value.length > DEV_EVENT_CAP) devEvents.value.shift()
@@ -56,6 +61,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  unmounted = true
   unsubDev?.()
   unsubDev = null
 })

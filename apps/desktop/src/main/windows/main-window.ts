@@ -11,6 +11,7 @@ import { createRendererConsoleSink } from './renderer-console'
 // Silent Test Window Mode（2026-09-12）：一切窗口呈现动作经统一边界——本文件不再直接
 // new BrowserWindow / show() / focus() / restore() / toggleDevTools（见 window-presentation.ts 头注）。
 import { createAppWindow, focusWindow, showWindow, toggleWindowDevTools } from './window-presentation'
+import { defaultDialogService } from '../native-ui/dialog-service'   // 加载失败/风暴停止重载的用户提示（唯一原生 UI 边界；silent 下只留痕不弹窗）
 import type { AuditEvent } from '../diagnostics/audit'
 import type { Logger } from '../diagnostics/logger'
 
@@ -41,13 +42,71 @@ export function handleRendererGone(details: { reason: string; exitCode: number }
   logger?: Logger
   audit?: (e: Omit<AuditEvent, 'ts'>) => void
   setMarker: (m: { reason: string; exitCode: number; ts: number }) => void
+  /** 崩溃 reload 风暴抑制（2026-09-16 审计 P2）。**必填**：给默认值就等于"忘了传也没有这道保护" */
+  stormGuard: CrashStormGuard
+  /** 因风暴而停止自动重载时的用户可见提示（经 native-ui 边界；silent 测试模式自动短路） */
+  notifyStorm?: (recent: number) => void
   reload: () => void
 }): void {
   if (details.reason === 'clean-exit') return
   deps.logger?.warn('render-process-gone', { reason: details.reason, exitCode: details.exitCode })
   deps.audit?.({ type: 'renderer:crash', summary: `渲染进程异常：${details.reason} (exit ${details.exitCode})` })
   deps.setMarker({ reason: details.reason, exitCode: details.exitCode, ts: Date.now() })  // D7B-05 修正：renderer 已死收不到 push——marker 供 reload 后 getLastCrash 读
+  const storm = deps.stormGuard.record()
+  if (!storm.allowReload) {
+    // 不再 reload：窗口数秒内反复崩溃是**确定性**故障的形态，继续重载只会把同一件事重复下去，
+    // 而用户始终停在白屏前、日志与审计被同一件事刷满。
+    deps.logger?.warn('renderer:crash-storm', { recent: storm.recent, windowMs: CRASH_RELOAD_WINDOW_MS })
+    deps.audit?.({ type: 'renderer:crash-storm', summary: `渲染进程在 ${Math.round(CRASH_RELOAD_WINDOW_MS / 1000)} 秒内崩溃 ${storm.recent} 次，已停止自动重载` })
+    deps.notifyStorm?.(storm.recent)
+    return
+  }
   deps.reload()  // D7B-06/07
+}
+
+/**
+ * 崩溃 reload 的风暴抑制（2026-09-16 审计 P2「崩溃自动 reload 无风暴抑制」）。
+ *
+ * 修复前：每次非 clean-exit 崩溃都无条件 reload——没有计数、没有退避、没有上限、没有时间窗，
+ * `crashMarker` 是单槽覆盖式（不是计数）。判据只有一个"窗口还活着"。
+ *
+ * 计数是**每窗口一份**（在 `createMainWindow` 闭包内创建），刻意不用模块级单例：
+ * 模块级状态会让单测互相污染（前一条用例制造的崩溃把后一条推进"风暴"），而这类污染正是本仓
+ * 反复记录过的假红/假绿来源。
+ */
+export const CRASH_RELOAD_MAX = 3
+export const CRASH_RELOAD_WINDOW_MS = 60_000
+export interface CrashStormGuard {
+  /** 记一次崩溃并回答"还能不能自动重载"（`recent` = 时间窗内的崩溃次数） */
+  record(): { allowReload: boolean; recent: number }
+}
+export function createCrashStormGuard(now: () => number = Date.now): CrashStormGuard {
+  const stamps: number[] = []
+  return {
+    record(): { allowReload: boolean; recent: number } {
+      const ts = now()
+      stamps.push(ts)
+      while (stamps.length > 0 && ts - (stamps[0] ?? ts) > CRASH_RELOAD_WINDOW_MS) stamps.shift()
+      return { allowReload: stamps.length <= CRASH_RELOAD_MAX, recent: stamps.length }
+    },
+  }
+}
+
+// —— 2026-09-16 审计 P2：主 frame 加载失败 / 渲染进程无响应 ——
+// 此前这两个事件**全仓零订阅点**：加载失败只有 `loadURL(...).catch` 留一行日志（无 UI、无重试），
+// 而 `render-process-gone` 既不覆盖"主 frame 加载失败"（那时 renderer 通常还活着），也不覆盖
+// "无响应"（卡死不是退出）。于是两种情况在用户侧都是**无提示白屏**，且没有任何恢复入口。
+/** Chromium 的 ERR_ABORTED：用户/代码主动取消导航，不是失败，不该提示用户也不该重试 */
+export const ERR_ABORTED = -3
+export const LOAD_RETRY_LIMIT = 1
+export const LOAD_RETRY_DELAY_MS = 1000
+export function shouldHandleLoadFailure(input: { errorCode: number; isMainFrame: boolean }): boolean {
+  if (!input.isMainFrame) return false
+  return input.errorCode !== ERR_ABORTED
+}
+/** 用户可读的失败描述。URL 只会是 `cyrene://…` 或受信 dev http，非用户本机路径 */
+export function describeLoadFailure(input: { errorCode: number; errorDescription: string; url: string }): string {
+  return `页面加载失败（${input.errorCode} ${input.errorDescription || '未知原因'}）：${input.url || '未知地址'}`
 }
 
 let pendingFocus = false
@@ -86,6 +145,13 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
   const usingDevServer = shouldUseViteDevServer(app.isPackaged, process.env)
   const devEval = evaluateDevRendererUrl(devUrl, process.env)
   const devOrigin = usingDevServer && devEval.status === 'trusted' ? devEval.url : undefined
+  // 主 frame 的加载目标：dev（受信 http）或打包/直启 cyrene://。**唯一来源**——下面的首次加载与
+  // did-fail-load 的重试都读它，避免"重试打到另一个地址"这种最难查的分叉。
+  const loadTarget = devOrigin ? devOrigin.toString() : `${PROTOCOL_SCHEME}://${RENDERER_HOST}/index.html`
+  // 崩溃风暴抑制：每窗口一份（理由见 createCrashStormGuard 注记）
+  const crashStormGuard = createCrashStormGuard()
+  // 主 frame 加载失败的有界重试计数（见下方 did-fail-load 处理器）
+  let loadRetries = 0
   const win = createAppWindow({
     width: 1200,
     height: 760,
@@ -213,16 +279,63 @@ export function createMainWindow(loadErrorSink?: (err: unknown) => void, opts?: 
       logger: crashSink.logger,
       audit: crashSink.audit,
       setMarker: (m) => { crashMarker = m },
+      stormGuard: crashStormGuard,
+      notifyStorm: (recent) => {
+        // 原生错误框是同步阻塞调用；但走到这里时 renderer **已经死透且停止重载**，
+        // 不阻塞什么，而"什么都不说"就是审计报告点名的无提示白屏。silent 测试模式下 dialog-service
+        // 只记录调用并转 stderr，不会弹窗打扰宿主桌面。
+        defaultDialogService().showErrorBox(
+          '界面已停止自动重载',
+          `页面在 ${Math.round(CRASH_RELOAD_WINDOW_MS / 1000)} 秒内崩溃了 ${recent} 次，已停止自动重载以免反复重启。\n\n请关闭并重新打开应用；若反复出现，请在设置页导出诊断包以便定位。`,
+        )
+      },
       reload: () => { if (!win.isDestroyed() && win.webContents) win.webContents.reload() },
     })
   })
 
-  if (usingDevServer && devOrigin) {
-    win.loadURL(devOrigin.toString()).catch((err) => { loadErrorSink?.(err) })
-  } else {
-    // 打包/直启 cyrene://：失败必须留诊断（handler 缺失→404 空白窗）
-    win.loadURL(`${PROTOCOL_SCHEME}://${RENDERER_HOST}/index.html`).catch((err) => { loadErrorSink?.(err) })
-  }
+  // 主 frame 加载失败：留痕 + 一次有界重试 + 仍失败则给出用户可见提示（而不是无提示白屏）。
+  // 重试只做一次且带延迟：瞬时故障（协议处理器尚未就绪、dev server 刚起来）值得一次机会，
+  // 而"无限重试"与崩溃风暴同形，会变成另一种打转。
+  win.webContents.on('did-fail-load', (_ev, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!shouldHandleLoadFailure({ errorCode, isMainFrame })) return
+    const url = String(validatedURL || loadTarget)
+    const description = String(errorDescription ?? '')
+    const detail = describeLoadFailure({ errorCode, errorDescription: description, url })
+    crashSink.logger?.error('window:did-fail-load', { errorCode, errorDescription: description, url })
+    crashSink.audit?.({ type: 'renderer:load-failed', summary: detail })
+    if (loadRetries < LOAD_RETRY_LIMIT) {
+      loadRetries++
+      crashSink.logger?.warn('window:load-retry', { attempt: loadRetries, delayMs: LOAD_RETRY_DELAY_MS })
+      const timer = setTimeout(() => {
+        if (win.isDestroyed()) return
+        // 再失败会再次进入本处理器（那时 loadRetries 已到上限 → 走提示分支）
+        win.loadURL(url).catch(() => { /* 失败由 did-fail-load 承接，这里不重复留痕 */ })
+      }, LOAD_RETRY_DELAY_MS)
+      win.on('closed', () => clearTimeout(timer))
+      return
+    }
+    defaultDialogService().showErrorBox(
+      '页面加载失败',
+      `${detail}\n\n已重试 ${loadRetries} 次仍未成功。请关闭并重新打开应用；若反复出现，请在设置页导出诊断包。`,
+    )
+  })
+
+  // 渲染进程无响应（界面冻结）：留痕 + **非阻塞**的标题提示。
+  // 这里刻意不用错误框：`showErrorBox` 是同步阻塞调用，界面已经卡住时再阻塞 Main 会让 IPC 一起停摆
+  // ——那会把"界面卡住"升级成"整个应用卡住"。标题是唯一既不阻塞又对用户可见的现成面。
+  win.webContents.on('unresponsive', () => {
+    crashSink.logger?.warn('renderer:unresponsive', {})
+    crashSink.audit?.({ type: 'renderer:unresponsive', summary: '渲染进程无响应（界面冻结）' })
+    if (!win.isDestroyed()) win.setTitle('Cyrene — 界面无响应')
+  })
+  win.webContents.on('responsive', () => {
+    crashSink.logger?.info('renderer:responsive', {})
+    if (!win.isDestroyed()) win.setTitle('Cyrene')
+  })
+
+  // dev → 受信 http（electron-vite dev，含 --mode test）；打包/直启 → cyrene://（残留 dev env 无法劫持）。
+  // 失败必须留诊断（handler 缺失 → 404 空白窗）；`loadTarget` 与 did-fail-load 的重试**同源**。
+  win.loadURL(loadTarget).catch((err) => { loadErrorSink?.(err) })
 }
 
 export function ensureMainWindow(loadErrorSink?: (err: unknown) => void, opts?: MainWindowOpts): void {

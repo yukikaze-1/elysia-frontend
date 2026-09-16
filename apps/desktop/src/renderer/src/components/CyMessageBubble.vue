@@ -147,16 +147,19 @@ function userAttachments(): Array<{ attachmentId: string; kind: 'image' | 'video
 const copyableText = computed(() => messageCopyableText(props.message))
 const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
+// 2026-09-16 审计 P2：卸载标记——定时器建在 `await copyText` 之后，而虚拟列表会频繁挂载/卸载行，
+// 卸载发生在 await 期间时定时器照旧被建出来且无人清理（写一个已卸载组件的 ref）。
+let unmounted = false
 async function onCopy(): Promise<void> {
   if (!copyableText.value) return
   const ok = await copyText(copyableText.value)
-  if (!ok) return
+  if (!ok || unmounted) return
   copied.value = true
   if (copiedTimer) clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copied.value = false }, 1500)
 }
 // 虚拟列表会频繁挂载/卸载行——定时器必须随组件销毁清理，否则卸载后仍写 ref
-onBeforeUnmount(() => { if (copiedTimer) clearTimeout(copiedTimer) })
+onBeforeUnmount(() => { unmounted = true; if (copiedTimer) clearTimeout(copiedTimer) })
 
 // —— doc 03 §7.5（2026-09-13）：重发 / 重新生成 的**可用性**判据 ——
 // 有正文、且没有附件/贴图（重发要重走上传与贴图校验，属独立范围）才给「重新发送」；

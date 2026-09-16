@@ -41,6 +41,22 @@ function mountInput(): ReturnType<typeof mount> {
   return mount(CyChatInput, MOUNT_OPTIONS)
 }
 
+// —— 2026-09-16 审计 P2（C 批）：卸载点收口 ——
+describe('卸载点：捕获性 keydown 监听必须随组件撤除', () => {
+  it('表情面板打开时卸载 → 监听被移除（修复前只在 watch 的 else 分支移除，卸载时无人撤 ⇒ 无界累积）', async () => {
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    const addSpy = vi.spyOn(window, 'addEventListener')
+    const w = mountInput()
+    await w.find('.cy-emoji-btn').trigger('click')   // 打开面板 → 注册捕获性 keydown
+    expect(addSpy.mock.calls.some(([type, , capture]) => type === 'keydown' && capture === true)).toBe(true)
+    removeSpy.mockClear()
+    w.unmount()                                       // 面板仍开着就卸载（切换视图的真实路径）
+    expect(removeSpy.mock.calls.some(([type, , capture]) => type === 'keydown' && capture === true)).toBe(true)
+    removeSpy.mockRestore()
+    addSpy.mockRestore()
+  })
+})
+
 /** M-22：键盘/焦点用例需要组件落在 document 内（脱离文档时 happy-dom 不把 focus 反映到
  *  document.activeElement，`blur` 也不会派发）——既有用例一律用 mountInput（不 attachTo），
  *  保持原挂载形状不动。 */

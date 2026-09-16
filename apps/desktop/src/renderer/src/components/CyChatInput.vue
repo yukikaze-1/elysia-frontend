@@ -178,6 +178,12 @@ watch(showPicker, (open) => {
 function onPickerEscapeCapture(e: KeyboardEvent): void {
   if (e.key === 'Escape') { showPicker.value = false; textareaRef.value?.focus() }
 }
+onBeforeUnmount(() => {
+  // 2026-09-16 审计 P2：捕获性 keydown 监听此前**只在 watch 的 else 分支**里移除——若组件在
+  // 表情面板打开时被卸载（切到设置/任务页），watch 不再有机会触发 ⇒ 监听器与其闭包永久驻留，
+  // 每"开面板→切视图"累积一个。行为无害（回调只写已卸载组件的 ref），但属无界累积。
+  window.removeEventListener('keydown', onPickerEscapeCapture, true)
+})
 const pendingStickers = ref<PendingSticker[]>([])
 const textareaRef = ref<HTMLTextAreaElement>()
 
