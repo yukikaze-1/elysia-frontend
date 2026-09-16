@@ -152,7 +152,7 @@ describe('IPC 安全', () => {
       expect(flow.s1).toBe('available'); expect(flow.s2).toBe('available'); expect(flow.s3).toBe('empty')
     }
   })
-  it('endpoint 变更后旧 token 不自动复用（绑定被清）', async () => {
+  it('endpoint 变更后旧 token 不自动复用（绑定被清）', async ({ skip }) => {
     const res = await page.evaluate(async () => {
       const initial = await window.desktopApi.getCredentialStatus()
       if (initial === 'unavailable') return { skipped: true }   // safeStorage 不可用环境跳过（与凭据往返用例同款分支）
@@ -161,13 +161,18 @@ describe('IPC 安全', () => {
       await window.desktopApi.setEndpoint('https://attacker.example') // origin 变 → 自动清 token 绑定
       return { skipped: false, status: await window.desktopApi.getCredentialStatus() }
     })
+    const status = res.skipped ? undefined : res.status
     if (res.skipped) {
       // M-32：跳过也要可见——否则 CI 日志里这条用例"通过"，读者无法知道它其实没验证任何东西
       // 跳过原因必须显式可见（M-32）
       console.log('[ipc-security] endpoint 绑定清理解除用例跳过：safeStorage 不可用（无 keyring 环境）')
-      return
+      // 2026-09-16：原先此处只 console.log + `return` ⇒ **零断言**。B 批开启 `expect.requireAssertions`
+      // 后，这条在 Linux CI（xvfb 下 safeStorage 走 basic_text ⇒ unavailable）当场变红——它是本机 Windows
+      // 永远走不到的第 5 处零断言实例（B 批当时只照出 4 处）。改为显式 skip：计入 skipped，不再以"通过"
+      // 出现，也不假称该属性在本环境已被验证。
+      skip('safeStorage 不可用（无 keyring 环境）⇒ 该属性在本环境无法验证；由 Windows 运行时 job 覆盖')
     }
-    expect(res.status).toBe('empty')   // 集成套件跑 Mock（launchApp 设 CYRENE_BACKEND=mock）；真正禁止外发 token 的 connect 守卫在 Real 路径，由 chat-service 单测覆盖
+    expect(status).toBe('empty')   // 集成套件跑 Mock（launchApp 设 CYRENE_BACKEND=mock）；真正禁止外发 token 的 connect 守卫在 Real 路径，由 chat-service 单测覆盖
   })
   it('getRuntimeInfo 返回装配模式', async () => {
     const info = await page.evaluate(() => window.desktopApi.getRuntimeInfo())

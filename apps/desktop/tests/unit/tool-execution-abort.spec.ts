@@ -210,18 +210,25 @@ describe('A4 授权↔执行的路径身份复核（TOCTOU）', () => {
     const p = `${FIXTURES}/linked.txt`
     writeFileSync(secret, 'TOP-SECRET-' + 'y'.repeat(70 * 1024))   // > 64KiB ⇒ 一旦读成功就会上传
     writeFileSync(p, 'harmless')
+    const h = mkHarness()
+    const svc = createToolService(h.deps)
+    await svc.handleRequest(mkReq({ arguments: { path: p } }))     // 身份取自这一刻：普通文件 'harmless'
+    // ——授权与执行之间换链——（2026-09-16 修正：本用例原先在 handleRequest **之前**就建好符号链接，
+    // 于是授权那一刻路径已是 symlink 态 ⇒ captureFileIdentity 返回 undefined ⇒ 复核"不适用"，
+    // 用例实际没测它名字里那件事，还因 realpath 生效把 70KiB 的 secret 读出去并上传。
+    // 该缺陷被 Windows 的 EPERM skip 掩盖，直到 Linux CI 连续四轮报红才暴露——见 doc 16 §3.4。）
     rmSync(p)
     let canSymlink = true
     try { symlinkSync(secret, p) } catch { canSymlink = false }
-    // Windows 无 symlink 权限（本机实测 EPERM）⇒ 显式 skip 并计入 skipped，不静默当通过。
-    // Linux CI 会真的跑这一条——这条分支**在本机是 NOT VERIFIED**（已记入 doc 16）。
-    skip(!canSymlink, '本机无 symlink 权限（Windows 非开发者模式实测 EPERM）——该分支由 Linux CI 覆盖')
-    const h = mkHarness()
-    const svc = createToolService(h.deps)
-    await svc.handleRequest(mkReq({ arguments: { path: p } }))
-    // 授权与执行之间把普通文件换成符号链接（此处是先授权再看，顺序等价：身份取自 step 5 那一刻）
+    // Windows 无 symlink 权限（本机复测：文件符号链接与 junction **均为 EPERM**）⇒ 显式 skip 并计入 skipped，
+    // 不静默当通过。Linux CI 会真的跑这一条——这条分支**在本机是 NOT VERIFIED**（已记入 doc 16）。
+    skip(!canSymlink, '本机无 symlink 权限（Windows 非开发者模式实测 EPERM，junction 同样 EPERM）——该分支由 Linux CI 覆盖')
     await svc.decide('call_1', 'allow_once')
     expect(h.uploadAttachment).not.toHaveBeenCalled()
+    const last = h.events.at(-1)!
+    expect(last.status).toBe('failed')
+    // 换链形态由身份判据点名为 symlink（不是 replaced/gone）——三种形态有各自的错误码契约
+    expect(last.error?.code).toBe('PATH_UNSAFE')
   })
   it('lstat 判据：符号链接本身可被识别（权限允许时）', ({ skip }) => {
     const secret = `${FIXTURES}/s2.txt`
