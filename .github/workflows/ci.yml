@@ -338,8 +338,12 @@ jobs:
       - name: Install Playwright (artifact smoke)
         run: pnpm --filter @cyrene/desktop exec playwright install chromium
 
+      # 2026-09-16 审计 P2 更正：原先写 `rm -rf out dist`，而本 step 的工作目录是**仓库根**（本 job 无
+      # working-directory），根下并没有这两个目录 ⇒ 那一直是一条 no-op；真正清掉旧产物的是 checkout 的
+      # `git clean -ffdx`。命令按它自己的 step 名修到真实位置——只有在 checkout 不清理时（本地复跑、
+      # 将来改 clean 策略）这一步才承重，所以不能继续留一条清错目录的 rm 充数。
       - name: Clean + package (fresh out/dist)
-        run: rm -rf out dist && pnpm --filter @cyrene/desktop package
+        run: rm -rf apps/desktop/out apps/desktop/dist && pnpm --filter @cyrene/desktop package
 
       - name: Record app SHA
         run: git rev-parse HEAD > app-sha.txt

@@ -89,5 +89,7 @@ describe('tool-handlers 九通道（A-5/B-4/D6C-12）', () => {
   it('toolList 响应 schema（ToolListResponseSchema）', () => {
     expect(ToolListResponseSchema.safeParse([]).success).toBe(true)
   })
-  it('isTrustedSender 拒由 registerHandler 层保证（registry 既有单测覆盖，本批引用不重复）', () => { /* 注记 */ })
+  // 注：`isTrustedSender` 拒绝由 `registerHandler` 层保证（registry 既有单测覆盖）。本 spec 的 registrar 是
+  // 收集器、看不到来源校验，故这里**不放**"只写注记、零断言"的占位用例——那种用例在 CI 日志里与"真的验证过"
+  // 无法区分（2026-09-16 审计 P2 的机制侧修法：vitest `expect.requireAssertions`）。
 })

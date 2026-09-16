@@ -125,6 +125,42 @@ async function checkFuses(exe) {
   }
 }
 
+/**
+ * dist 与 out **同源**校验（2026-09-16 审计 P2）。
+ *
+ * 缺口：本脚本此前分别校验 out/ 的内容（三件产物 + CSP + 秘密扫描）与 dist/ 的 exe 存在性 / fuse 位，
+ * 但**从未校验两者来自同一次构建**。于是「dist 是上一次（或更早）的陈旧打包产物 + out/ 是刚构建的」
+ * 这种状态在门禁上完全不可见——`electron-builder.yml` 的 `files: [out/**, package.json]` + `asar: false`
+ * 意味着打包就是把 out/ 复制进 resources/app/，所以"逐字节一致"正是同源的可判据形态。
+ *
+ * 只在存在未分发包目录时执行（本机不打包时本脚本照旧只查 out/，不新增失败面）。
+ */
+function findPackagedAppDir(root) {
+  if (process.platform === 'linux') return path.join(root, 'dist/linux-unpacked', 'resources', 'app')
+  if (process.platform === 'win32') return path.join(root, 'dist/win-unpacked', 'resources', 'app')
+  if (process.platform === 'darwin') return path.join(root, 'dist/mac', 'Cyrene.app', 'Contents', 'Resources', 'app')
+  return null
+}
+function checkPackagedMatchesOut(root) {
+  const appDir = findPackagedAppDir(root)
+  if (!appDir) return
+  if (!fs.existsSync(appDir)) {
+    // 打包目录在、应用代码目录不在 ⇒ 产物残缺或 asar 形态变化（asar:false 是当前定案，见 electron-builder.yml）
+    fail(`打包目录存在但缺少应用代码目录（${path.relative(root, appDir)}）——asar 形态变化或产物残缺`)
+    return
+  }
+  let mismatched = 0
+  for (const rel of ['main/index.js', 'preload/index.js', 'renderer/index.html']) {
+    const a = path.join(out, rel)
+    const b = path.join(appDir, 'out', rel)
+    if (!fs.existsSync(a)) { mismatched++; continue }   // out/ 缺失已在上方 ① 报过，这里不重复刷屏
+    if (!fs.existsSync(b)) { fail(`打包产物缺少 out/${rel}（${path.relative(root, b)}）`); mismatched++; continue }
+    if (fs.readFileSync(a).equals(fs.readFileSync(b))) ok(`dist 与 out 同源：out/${rel} 逐字节一致`)
+    else { fail(`dist 与 out 不同源：out/${rel} 与打包产物内的副本不一致（dist 是陈旧构建？先重新 package）`); mismatched++ }
+  }
+  if (mismatched === 0) ok('dist 与 out 同源（三件应用产物逐字节一致）')
+}
+
 async function smoke() {
   // 在 try 外解析（catch 分支要引用 packagedExe 打诊断提示；块级 const 在 catch 不可见会 ReferenceError）
   const { exe: packagedExe, foundPackagedDir } = findPackagedExecutable(root)
@@ -141,6 +177,10 @@ async function smoke() {
     delete env.ELECTRON_RENDERER_URL // 残留 dev env 会把 out/ 回退冒烟劫持到 http；冒烟必须测 cyrene:// 路径
     delete env.NODE_OPTIONS // 开发者 shell 残留的 --inspect* 会误触发打包调试门；冒烟测的是产物不是 shell 环境
     env.CYRENE_TEST_HARNESS = '1' // 显式标记测试 harness：让调试门放行 Playwright 注入的 --remote-debugging-port=0/--inspect=0（生产默认拒绝）
+    // 2026-09-16 审计 P2：打包态承认上面那个标记还需要这个**第二个**显式开关。单靠 CYRENE_TEST_HARNESS=1
+    // 在打包产物里可能是残留变量，而它能放行 CDP 端口 / 让正式应用默认静默隐身 / 把原生对话框改成静默
+    // 自动取消 / 让诊断导出直写固定文件——这些语义只该属于自动化运行。这里是全仓唯一该设它的地方。
+    env.CYRENE_PACKAGED_HARNESS = '1'
     // Silent Test Window Mode（2026-09-12）：冒烟是自动化运行，窗口不得出现在宿主桌面（打包产物默认
     // 同样走 silent，这里显式写死以免将来默认值变化时冒烟偷偷开始弹窗）。断言面不受影响：隐藏窗口
     // 的 renderer 照常加载、协议/CSP/Vue 挂载断言照常成立（实测见 tests/integration/silent-window-mode.spec.ts）。
@@ -330,6 +370,23 @@ async function smoke() {
         }
         if (negRejected) ok('调试门拒绝路径生效（打包 + --remote-debugging-port=9222 → failStart 退出）')
         else fail('调试门未生效：打包带 --remote-debugging-port=9222 仍启动出窗口')
+        // 第二负路径（2026-09-16 审计 P2 规则⑥「打包态二开」的端到端证据）：打包态**只**设
+        // CYRENE_TEST_HARNESS=1、不设 CYRENE_PACKAGED_HARNESS → 标记不被承认 → 调试门照旧拒绝。
+        // 判别性：把 index.ts 的 normalizeHarnessForPackagedRun() 删掉，这一条会红，而上面那条仍然绿。
+        const noSecondKey = { ...env }
+        delete noSecondKey.CYRENE_PACKAGED_HARNESS
+        let secondKeyRejected = false
+        try {
+          const app2 = await _electron.launch({ executablePath: flipExe, args: ['--remote-debugging-port=9222'], env: noSecondKey, timeout: 15000 })
+          try {
+            const win2 = await app2.firstWindow({ timeout: 5000 }).catch(() => null)
+            if (win2) { /* 拿到窗口 = 二开门没生效 */ } else { secondKeyRejected = true }
+          } finally { await app2.close().catch(() => {}) }
+        } catch {
+          secondKeyRejected = true
+        }
+        if (secondKeyRejected) ok('打包态二开门生效（只设 CYRENE_TEST_HARNESS=1 → 调试门仍拒绝）')
+        else fail('打包态二开门未生效：只设 CYRENE_TEST_HARNESS=1 就放行了调试端口')
       }
     } finally {
       await app.close()
@@ -360,6 +417,9 @@ async function smoke() {
   } else {
     console.log('（fuse 读回跳过：无未分发包产物——先 `pnpm -F @cyrene/desktop package` 再验证）')
   }
+  // 2.6 dist 与 out 同源（静态断言）：有未分发包产物时必须逐字节一致，否则 dist 很可能是陈旧构建。
+  if (fuseDirFound) checkPackagedMatchesOut(root)
+  else console.log('（同源校验跳过：无未分发包产物）')
   const wantSmoke = process.argv.includes('--smoke')
   if (wantSmoke) {
     // Linux 需 DISPLAY 或 WAYLAND_DISPLAY（X/Wayland 均可）；win32/darwin 有原生显示

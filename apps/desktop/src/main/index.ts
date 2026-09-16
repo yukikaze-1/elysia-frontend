@@ -16,7 +16,7 @@ import { setCrashSink, ensureMainWindow, focusOrDefer, markAppStarted, setBefore
 // 的动作统一走边界模块（判据集中在 config/runtime-environment.ts，见其头注）。
 import { closeWindowDevTools, lastWindowPresentation, openWindowDevTools } from './windows/window-presentation'
 import { createDialogService, dialogInvocations } from './native-ui/dialog-service'
-import { runtimeEnvironment } from './config/runtime-environment'
+import { normalizeHarnessEnv, runtimeEnvironment } from './config/runtime-environment'
 import { resolveGpuDecision } from './config/gpu-mode'
 import { findForbiddenDebugLaunch } from './config/debug-switches'
 import { getAppConfig, shouldUseViteDevServer } from './config'
@@ -101,6 +101,30 @@ function applyProductionMenu(): void {
   }
 }
 
+/**
+ * 打包态 harness 标记的归一化（2026-09-16 审计 P2「CYRENE_TEST_HARNESS 在打包态同权放行」）。
+ *
+ * 修复前：`CYRENE_TEST_HARNESS=1` 在**打包产物**里与未打包态同权，而它一句话就能做到四件事——
+ * ① 放行 CDP 随机调试端口（`--remote-debugging-port=0`；`--inspect` 那半已被 fuse 关掉，CDP 这半没有）；
+ * ② 默认静默窗口（正式应用隐身）；③ 原生对话框静默自动取消；④ 诊断导出不经保存框直写固定文件。
+ * 这些语义只该属于**自动化运行**，而"进程是打包产物 + 环境里有这个变量"证明不了这一点：用户 shell、
+ * 启动器、上一次冒烟都会留下它。对照 `app/test-app-data.ts` 的同类门（那里要求未打包）即可看出不一致。
+ *
+ * 处置：打包态必须另有显式二开 `CYRENE_PACKAGED_HARNESS=1`（唯一该设它的是
+ * `scripts/verify-artifact.cjs`——它必须用 Playwright 驱动打包产物）。未获承认时**就地抹掉标记**
+ * （规则与纯函数在 `config/runtime-environment.ts`），于是全部五个读取点（下方的调试门、测试探针装配、
+ * `runtimeEnvironment()` 的窗口模式、`dialog-service`、`diagnostics-service`）一次性回到正式语义。
+ *
+ * **必须早于 `rejectForbiddenDebugSwitches()`**（后者在同一函数体里读这个变量）。
+ * 未打包（dev / `--mode test` / 集成套件 / Stage H runner）语义完全不变：那时它本来就是真的。
+ */
+function normalizeHarnessForPackagedRun(): void {
+  if (normalizeHarnessEnv(process.env, app.isPackaged)) {
+    // 留痕：现场要能看出"这次为什么没进静默/harness 语义"，而不是靠推断（与 window:runtime-mode 同址风格）
+    console.error('[startup] 打包态未获二开（CYRENE_PACKAGED_HARNESS=1）⇒ 忽略残留的 CYRENE_TEST_HARNESS')
+  }
+}
+
 // main() 最前：Chromium 的 CDP 端口在 whenReady 前已绑定，门必须同步生效。
 // 命中即 fatal + 返回 true，main() 检测后停止后续执行（不落到 scheme/身份副作用）。
 function rejectForbiddenDebugSwitches(): boolean {
@@ -125,6 +149,7 @@ function rejectForbiddenDebugSwitches(): boolean {
 }
 
 async function main(): Promise<void> {
+  normalizeHarnessForPackagedRun()   // 必须最先：下面的调试门与后续所有 harness 读取点都看归一化后的值
   if (rejectForbiddenDebugSwitches()) return
 
   // 阶段 7 批次 C（Task 5 性能测量）：精确内存信息——Chromium 默认 performance.memory 为近似值，

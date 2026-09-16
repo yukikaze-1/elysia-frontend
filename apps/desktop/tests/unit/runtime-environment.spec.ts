@@ -7,9 +7,11 @@
 //   ② 没有 harness 标记时**显式要求 silent 也必须被拒**（dev / 生产 / 安装版绝不因环境残留而隐身）。
 import { describe, expect, it, afterEach } from 'vitest'
 import {
+  PACKAGED_HARNESS_ENV,
   TEST_HARNESS_ENV,
   WINDOW_MODE_ENV,
   isTestHarnessEnv,
+  normalizeHarnessEnv,
   parseWindowMode,
   resetRuntimeEnvironmentForTest,
   resolveRuntimeEnvironment,
@@ -39,6 +41,47 @@ describe('WindowMode 解析', () => {
   it('harness 标记只认字符串 "1"', () => {
     expect(isTestHarnessEnv({ [TEST_HARNESS_ENV]: '1' })).toBe(true)
     for (const raw of ['true', 'yes', '0', '', undefined]) expect(isTestHarnessEnv({ [TEST_HARNESS_ENV]: raw })).toBe(false)
+  })
+
+  it('打包态二开（2026-09-16 审计 P2）：packaged 时只认单变量 → 不承认，必须再有 CYRENE_PACKAGED_HARNESS=1', () => {
+    // 未打包（缺省 packaged=false）：语义与修复前逐字一致——单变量即承认
+    expect(isTestHarnessEnv({ [TEST_HARNESS_ENV]: '1' })).toBe(true)
+    // 打包态：单变量**不**承认（它可能是用户 shell / 启动器 / 上次冒烟的残留）
+    expect(isTestHarnessEnv({ [TEST_HARNESS_ENV]: '1' }, true)).toBe(false)
+    // 打包态 + 二开：承认
+    expect(isTestHarnessEnv({ [TEST_HARNESS_ENV]: '1', [PACKAGED_HARNESS_ENV]: '1' }, true)).toBe(true)
+    // 二开本身不是 harness 标记：只设它不算
+    expect(isTestHarnessEnv({ [PACKAGED_HARNESS_ENV]: '1' }, true)).toBe(false)
+    // 二开同样只认字符串 '1'（与主标记同源口径，不接受 true/yes）
+    for (const raw of ['true', 'yes', '0', '', undefined]) {
+      expect(isTestHarnessEnv({ [TEST_HARNESS_ENV]: '1', [PACKAGED_HARNESS_ENV]: raw }, true)).toBe(false)
+    }
+  })
+
+  it('打包态归一化（normalizeHarnessEnv）：未获二开时**就地抹掉**标记，之后全部读取点都看到正式语义', () => {
+    // 打包 + 单变量 ⇒ 抹掉，返回 true；抹掉后连"未打包口径"的读取也看到无标记
+    const stray = { [TEST_HARNESS_ENV]: '1' }
+    expect(normalizeHarnessEnv(stray, true)).toBe(true)
+    expect(stray[TEST_HARNESS_ENV]).toBeUndefined()
+    expect(isTestHarnessEnv(stray)).toBe(false)
+    // 打包 + 二开 ⇒ 不抹（返回 false，标记保留）
+    const ok = { [TEST_HARNESS_ENV]: '1', [PACKAGED_HARNESS_ENV]: '1' }
+    expect(normalizeHarnessEnv(ok, true)).toBe(false)
+    expect(ok[TEST_HARNESS_ENV]).toBe('1')
+    // 未打包 ⇒ 不抹（dev/集成套件的语义一个字节都不变）
+    const dev = { [TEST_HARNESS_ENV]: '1' }
+    expect(normalizeHarnessEnv(dev, false)).toBe(false)
+    expect(dev[TEST_HARNESS_ENV]).toBe('1')
+    // 幂等 + 无标记时不动
+    expect(normalizeHarnessEnv({}, true)).toBe(false)
+    expect(normalizeHarnessEnv({}, false)).toBe(false)
+    // 端到端形态：抹掉之后，同一份 env 交给解析器得到的是 dev/生产默认（visible），而不是 harness 默认（silent）
+    const env = { [TEST_HARNESS_ENV]: '1' }
+    normalizeHarnessEnv(env, true)
+    const resolved = resolveRuntimeEnvironment({ env, mode: 'production' })
+    expect(resolved.isTestHarness).toBe(false)
+    expect(resolved.windowMode).toBe('visible')
+    expect(resolved.windowModeSource).toBe('default')
   })
 })
 

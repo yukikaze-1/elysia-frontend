@@ -20,15 +20,24 @@
 //   ③ 未显式指定 + 有 harness 标记（默认）      → **silent**（自动化测试默认不打扰桌面）
 //   ④ 未显式指定 + 无 harness（pnpm dev/生产）  → visible
 //   ⑤ 显式 silent 但**无** harness 标记         → visible（降级；绝不因误设环境变量让正式应用隐身）
+//   ⑥ **打包态**：harness 标记本身还需要第二个显式开关才被承认（见下）
 //
 // 规则 ③ 是本轮整改的核心：默认值本身就是「静默」，而不是靠每个测试脚本记得设变量。
-// 规则 ⑤ 是本模块的安全边界：silent 只能由明确的测试 harness 触发，dev / 打包产物 / 安装版
-// 无论环境里有什么残留变量都不会静默启动。
+// 规则 ⑤ 是本模块的安全边界：silent 只能由明确的测试 harness 触发。
+//
+// 2026-09-16 审计 P2 补上规则 ⑥：规则 ⑤ 只挡「设了 WINDOW_MODE 却忘了 harness」，挡不住
+// 「harness 变量本身是残留的」。而打包产物里 `CYRENE_TEST_HARNESS=1` 完全可能是残留（shell /
+// 启动器 / 上一次冒烟），它一句话就能放行 CDP 随机端口、让正式应用默认静默隐身、把原生对话框改成
+// 静默自动取消、让诊断导出不经保存框直写固定文件。故打包态要求另有 `CYRENE_PACKAGED_HARNESS=1`
+// ——唯一该设它的是 `scripts/verify-artifact.cjs`（它必须用 Playwright 驱动打包产物）。
+// 未打包（dev / `--mode test` / 集成套件）语义不变：那里的 harness 标记本来就是真实的。
 
 import type { AppMode } from './env'
 
 export const WINDOW_MODE_ENV = 'CYRENE_WINDOW_MODE'
 export const TEST_HARNESS_ENV = 'CYRENE_TEST_HARNESS'
+/** 打包态承认 harness 标记所需的第二个显式开关（2026-09-16 审计 P2，见头注规则 ⑥） */
+export const PACKAGED_HARNESS_ENV = 'CYRENE_PACKAGED_HARNESS'
 
 /** 窗口呈现模式：silent = 不显示/不抢焦点/不进任务栏；visible = 完全按调用方配置（现有行为） */
 export type WindowMode = 'silent' | 'visible'
@@ -64,9 +73,34 @@ export function parseWindowMode(raw: string | undefined): WindowMode | undefined
   return value === 'silent' || value === 'visible' ? value : undefined
 }
 
-/** 测试 harness 标记的唯一读取点（与 app/test-app-data.ts 同源语义：值必须为字符串 '1'） */
-export function isTestHarnessEnv(env: EnvLike): boolean {
-  return env[TEST_HARNESS_ENV] === '1'
+/**
+ * 测试 harness 标记的唯一读取点（与 app/test-app-data.ts 同源语义：值必须为字符串 '1'）。
+ *
+ * `packaged` 缺省 `false`：未打包的调用方（单测、脚本、dev、集成套件）语义与修复前完全一致。
+ * 打包态必须显式传 `true`，此时**还**要求 `CYRENE_PACKAGED_HARNESS === '1'`（见头注规则 ⑥）。
+ * 缺省取 `false` 而不是"猜"，是因为这个函数的调用方本来就知道自己在哪个进程里；
+ * 唯一在打包态读它的地方是 `index.ts` 的启动归一化（它在那里把未被承认的标记直接抹掉）。
+ */
+export function isTestHarnessEnv(env: EnvLike, packaged = false): boolean {
+  if (env[TEST_HARNESS_ENV] !== '1') return false
+  return !packaged || env[PACKAGED_HARNESS_ENV] === '1'
+}
+
+/**
+ * 打包态归一化（就地、幂等）：打包进程里未被承认的 harness 标记**直接抹掉**，返回是否真的抹掉了。
+ *
+ * 为什么是"抹掉"而不是"在每处读取点加门"：这个标记在仓里有五个读取点（调试开关放行、测试探针装配、
+ * 本模块的窗口模式解析、`native-ui/dialog-service.ts`、`diagnostics/diagnostics-service.ts`）。
+ * 逐处加门就是"同一个事实五个地方各自判一次"——本仓已多次记录这类结构的后果（审计 S-6）。
+ * 在启动最早期归一化一次，全部读取点自动回到正式语义。
+ *
+ * 调用方必须**早于任何读取点**（`main/index.ts` 的第一条语句，且早于读同一变量的调试门）。
+ */
+export function normalizeHarnessEnv(env: EnvLike, packaged: boolean): boolean {
+  if (env[TEST_HARNESS_ENV] === undefined) return false
+  if (isTestHarnessEnv(env, packaged)) return false
+  delete env[TEST_HARNESS_ENV]
+  return true
 }
 
 export function resolveRuntimeEnvironment(input: {

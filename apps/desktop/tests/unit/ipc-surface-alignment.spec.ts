@@ -157,10 +157,19 @@ describe('IPC 三面对齐（声明面 IpcChannels ↔ 装配面 Main handler �
     expect(preloadChannels.filter((c) => !declared.includes(c))).toEqual([])
   })
 
-  it('例外表自检：条目真实、理由非空', () => {
+  it('例外表自检：条目真实、理由非空（含检查器自身可红的正对照）', () => {
+    // 2026-09-16 审计 P2：本用例原先在三张表**都为空**时循环体一次都不执行 ⇒ 零断言"通过"。
+    // 空表不是"没问题"，而是"这条用例此刻什么都没验"——vitest 的 requireAssertions 门禁把它照出来了。
+    // 故补两条正对照：合成的坏条目必须让检查器抛错，证明这个检查器真的会红而不是恒真。
+    expect(() => assertExceptionTable({ 'no-such:channel': '理由' }, declared, 'synthetic')).toThrow()
+    expect(() => assertExceptionTable({ [declared[0]]: '   ' }, declared, 'synthetic')).toThrow()
+    // 真表的逐条校验（表非空时才产生断言；空表的"检查器有效"由上面两条正对照兜住）
     assertExceptionTable(DECLARED_BUT_UNREGISTERED, declared, 'DECLARED_BUT_UNREGISTERED')
     assertExceptionTable(UNREACHABLE_FROM_PRELOAD, mainChannels, 'UNREACHABLE_FROM_PRELOAD')
     assertExceptionTable(PRELOAD_WITHOUT_HANDLER, preloadChannels, 'PRELOAD_WITHOUT_HANDLER')
+    // 豁免总数为 0（当前三面对齐 88=88=88、零豁免）。把这个数字钉住：新增任何豁免都必须显式改这一行，
+    // 于是"悄悄给缺口开一张白名单"在 code review 里是可见的。
+    expect(Object.keys(DECLARED_BUT_UNREGISTERED).length + Object.keys(UNREACHABLE_FROM_PRELOAD).length + Object.keys(PRELOAD_WITHOUT_HANDLER).length).toBe(0)
   })
 
   it('PushChannels 与命令面互不相交，且推送通道不得被注册成 invoke handler', () => {

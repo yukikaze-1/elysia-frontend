@@ -41,6 +41,15 @@ export default defineConfig({
     // 属于"预算不够"而不是"产品坏了"。故按实测把预算提到 15s（真卡死仍会被抓住，只是晚 10 秒）；
     // 与集成套件对 flake 的处置口径一致（提预算，而不是加 retry 掩盖）。
     testTimeout: 15_000,
-    hookTimeout: 15_000
+    hookTimeout: 15_000,
+    // 2026-09-16 审计 P2「绿灯含义被高估」的机制侧修法：**零断言的测试一律红**。
+    //
+    // 修复前全仓 `expect.assertions()` / `expect.hasAssertions()` 命中数为 0（实测 308 个 spec），
+    // 而 `tests/integration/ipc-security.spec.ts` 那条凭据用例在 safeStorage 不可用的环境下
+    // 走 `console.log + return` 的跳过分支——它记 **passed**，读者无法把它与"真的验证过"区分开。
+    // 逐条补 `expect.hasAssertions()` 要改 3000+ 处且下次仍会漏；这里用 vitest 的全局开关把
+    // 「一个断言都没有」变成红灯，缺口的出现方式从"无证"变成"红"。
+    // 跳过请用 `ctx.skip()`（计入 skipped）而不是裸 return——机制见 tests/integration/ipc-security.spec.ts。
+    expect: { requireAssertions: true }
   }
 })

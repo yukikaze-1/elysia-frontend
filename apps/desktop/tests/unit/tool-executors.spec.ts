@@ -167,8 +167,10 @@ describe('desktop.file.write', () => {
     await ex.execute(rec('desktop.file.write', { path: p, content: 'a\nc' }), p)
     expect(readFileSync(p, 'utf8')).toBe('﻿a\r\nc\r\n')   // BOM 保留 + CRLF 重拼 + 末尾换行补齐
   })
-  it('覆盖写保留原文件权限（M2：atomicWriteFile mode 透传）', async () => {
-    if (process.platform === 'win32') return   // POSIX 专属
+  it('覆盖写保留原文件权限（M2：atomicWriteFile mode 透传）', async ({ skip }) => {
+    // 2026-09-16：原先写 `if (process.platform === 'win32') return`——那在 Windows 上记 **passed** 而
+    // 零断言（vitest 的 requireAssertions 门禁把它照出来）。POSIX 专属就该表现为 skipped。
+    skip(process.platform === 'win32', 'POSIX 专属：Windows 无 POSIX 权限位')
     const p = join(tmp, 'mode.txt'); writeFileSync(p, 'v1', { mode: 0o644 })
     const ex = createExecutors(mkDeps())
     await ex.execute(rec('desktop.file.write', { path: p, content: 'v2' }), p)

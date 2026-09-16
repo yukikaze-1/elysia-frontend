@@ -16,6 +16,10 @@ export default defineConfig({
     testTimeout: 60000,   // Electron 冷启动 8–20s
     hookTimeout: 60000,   // beforeAll launchApp 冷启动(默认 10000 会在启动前中止)
     fileParallelism: false,
+    // 2026-09-16 审计 P2：与单测同口径的机制——**零断言即红**。集成层此前有实例：
+    // `ipc-security.spec.ts` 的凭据绑定用例在 safeStorage 不可用（CI 的 Linux + xvfb）时
+    // `console.log + return` 就记 passed。跳过必须用 `ctx.skip()`（计入 skipped）而不是裸 return。
+    expect: { requireAssertions: true },
     // 窗口呈现模式（Silent Test Window Mode，2026-09-12）：**默认 silent**，即本套件启动的 Electron
     // 一律不显示窗口/不抢焦点/不进任务栏。可视化调试模式见 vitest.integration.config.visible.mts。
     // 此处刻意不写 `env`：silent 由 helpers/app.ts 与 Main 的 runtime-environment 双层默认，

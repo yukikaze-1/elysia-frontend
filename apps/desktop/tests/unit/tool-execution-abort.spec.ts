@@ -205,19 +205,17 @@ describe('A4 授权↔执行的路径身份复核（TOCTOU）', () => {
     expect(h.events.at(-1)?.status).toBe('failed')
     expect(h.events.at(-1)?.error?.code).toBe('FILE_CONFLICT')
   })
-  it('授权后被换成指向别处的符号链接 ⇒ 拒绝读，且**未授权文件的内容不会被上传**', async () => {
+  it('授权后被换成指向别处的符号链接 ⇒ 拒绝读，且**未授权文件的内容不会被上传**', async ({ skip }) => {
     const secret = `${FIXTURES}/secret.txt`
     const p = `${FIXTURES}/linked.txt`
     writeFileSync(secret, 'TOP-SECRET-' + 'y'.repeat(70 * 1024))   // > 64KiB ⇒ 一旦读成功就会上传
     writeFileSync(p, 'harmless')
-    try {
-      rmSync(p); symlinkSync(secret, p)
-    } catch (e) {
-      // Windows 无 symlink 权限（本机实测 EPERM）⇒ 显式跳过并计数，不静默当通过。
-      // Linux CI 会真的跑这一条——这条分支**在本机是 NOT VERIFIED**（已记入 doc 16）。
-      expect((e as NodeJS.ErrnoException).code).toMatch(/EPERM|UNKNOWN|EACCES/)
-      return
-    }
+    rmSync(p)
+    let canSymlink = true
+    try { symlinkSync(secret, p) } catch { canSymlink = false }
+    // Windows 无 symlink 权限（本机实测 EPERM）⇒ 显式 skip 并计入 skipped，不静默当通过。
+    // Linux CI 会真的跑这一条——这条分支**在本机是 NOT VERIFIED**（已记入 doc 16）。
+    skip(!canSymlink, '本机无 symlink 权限（Windows 非开发者模式实测 EPERM）——该分支由 Linux CI 覆盖')
     const h = mkHarness()
     const svc = createToolService(h.deps)
     await svc.handleRequest(mkReq({ arguments: { path: p } }))
@@ -225,11 +223,15 @@ describe('A4 授权↔执行的路径身份复核（TOCTOU）', () => {
     await svc.decide('call_1', 'allow_once')
     expect(h.uploadAttachment).not.toHaveBeenCalled()
   })
-  it('lstat 判据：符号链接本身可被识别（权限允许时）', () => {
+  it('lstat 判据：符号链接本身可被识别（权限允许时）', ({ skip }) => {
     const secret = `${FIXTURES}/s2.txt`
     const link = `${FIXTURES}/l2.txt`
     writeFileSync(secret, 'x')
-    try { symlinkSync(secret, link) } catch { return }   // 同上：无权限则跳过
+    // 2026-09-16：原先写 `try { symlinkSync } catch { return }`——那在无 symlink 权限的机器上记 **passed**
+    // 而零断言（requireAssertions 门禁照出来的正是这种"跳过伪装成通过"）。改为真正的 skip（计入 skipped）。
+    let canSymlink = true
+    try { symlinkSync(secret, link) } catch { canSymlink = false }
+    skip(!canSymlink, '本机无 symlink 权限（Windows 非开发者模式实测 EPERM）——该分支由 Linux CI 覆盖')
     expect(lstatSync(link).isSymbolicLink()).toBe(true)
   })
 })

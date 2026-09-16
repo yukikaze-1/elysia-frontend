@@ -30,6 +30,7 @@ import {
   ConversationSchema
 } from '@shared/schemas'
 import type { Message, ToolCallRecord, PublicToolEvent, Conversation } from '@shared/contracts'
+import type { BackendEvent } from '@shared/contracts/events'
 
 /**
  * 键集合相等（双向包含）。
@@ -49,6 +50,24 @@ export type _ToolCallRecordMirrorsContract = AssertTrue<SameKeys<z.infer<typeof 
 export type _PublicToolEventMirrorsContract = AssertTrue<SameKeys<z.infer<typeof PublicToolEventSchema>, PublicToolEvent>>
 export type _MessageMirrorsContract = AssertTrue<SameKeys<z.infer<typeof MessageSchema>, Message>>
 export type _ConversationMirrorsContract = AssertTrue<SameKeys<z.infer<typeof ConversationSchema>, Conversation>>
+
+// —— 2026-09-16 审计 P2：把镜像面从 4 个 DTO 扩到**事件联合的全部成员** ——
+//
+// 缺口：`schemas/events.ts` 的 36 个导出此前一个锚点都没有（`z.ZodType<` 0 命中），而
+// `BackendEventSchema` 的 28 个联合成员与 TS 侧 `BackendEvent` 之间**没有键集相等断言**——
+// 任一成员漏/多字段、或联合成员增删只改了单侧，类型层完全静默。
+//
+// 写法上刻意用映射类型逐成员配对（而不是 28 条手写别名）：判别式取值来自 schema 自身，
+// 于是"两侧成员数不等"也会通过 `keyof` 双向包含被抓到，人不必逐个维持清单。
+type SchemaEvent = z.infer<typeof BackendEventSchema>
+type EventMemberParity = {
+  [K in SchemaEvent['event']]: SameKeys<Extract<SchemaEvent, { event: K }>, Extract<BackendEvent, { event: K }>>
+}
+/** 全部 28 个联合成员逐个键集相等（任一个为 false ⇒ 联合不是全 true ⇒ 编译失败） */
+export type _BackendEventMembersMirrorContract = AssertTrue<EventMemberParity[keyof EventMemberParity] extends true ? true : false>
+/** 判别式取值集合相等（成员增删必须两侧同时发生） */
+type Discriminants<U> = { [K in U extends { event: infer E } ? (E extends string ? E : never) : never]: true }
+export type _BackendEventDiscriminantsMirrorContract = AssertTrue<SameKeys<Discriminants<SchemaEvent>, Discriminants<BackendEvent>>>
 
 describe('契约镜像：schema 与契约类型键集合必须完全一致（H-05）', () => {
   it('类型层断言（编译期生效，见文件头的 export type 断言；本用例只确认运行时面可用）', () => {

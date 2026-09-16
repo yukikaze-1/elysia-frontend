@@ -225,16 +225,21 @@ for (const name of coreDocs) {
 
 const rootReadme = read(join(ROOT, 'README.md'))
 const claude = read(join(ROOT, 'CLAUDE.md'))
-const doc16Name = coreDocs.find((name) => name.startsWith('16-'))
+// 2026-09-16 审计 P2：原先写 `coreDocs.find((name) => name.startsWith('16-'))`——只要 docs/ 下多出一份
+// 字典序更靠前的 `16-*.md`（`.sort()` 为字典序、`find` 取首个），"doc 16" 就会静默指向另一份文件。
+// 今天另有几道门（必须恰 20 份、每个前缀至少一份、README/CLAUDE.md 含该文件名）使它不可静默达成，
+// 但**引用本身应当是精确的**：这里改成对同一份字面量做精确匹配，与下面 README/CLAUDE.md 的检查同源。
+const DOC16_FILE = '16-Cyrene-前端实施任务清单与进度跟踪.md'
+const doc16Name = coreDocs.includes(DOC16_FILE) ? DOC16_FILE : undefined
 const doc16 = doc16Name ? read(join(DOCS, doc16Name)) : ''
 
 if ((rootReadme.match(/最新状态/g) ?? []).length > 0) {
   fail('README must not contain stacked “最新状态” blocks; link to doc 16 instead')
 }
-if (!rootReadme.includes('16-Cyrene-前端实施任务清单与进度跟踪.md')) {
+if (!rootReadme.includes(DOC16_FILE)) {
   fail('README does not link to doc 16')
 }
-if (!claude.includes('16-Cyrene-前端实施任务清单与进度跟踪.md')) {
+if (!claude.includes(DOC16_FILE)) {
   fail('CLAUDE.md does not link to doc 16')
 }
 
@@ -284,11 +289,16 @@ function stripCode(content) {
     .replace(/\`[^\`\n]*\`/g, '')
 }
 
-function checkLinks(path) {
-  const content = stripCode(read(path))
-  const pattern = /!?\[[^\]]*\]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g
+const LINK_PATTERN = /!?\[[^\]]*\]\((<[^>]+>|[^)\s]+)(?:\s+["'][^"']*["'])?\)/g
 
-  for (const match of content.matchAll(pattern)) {
+/**
+ * 逐条解析给定文件的 markdown 链接，返回**指向不存在的本地路径**的项。
+ * 不做 fail —— 供 `checkLinks`（受检面，逐条红）与下面的断链计数守护（刻意不受检的树）共用同一套判据，
+ * 避免"两处各写一遍链接解析"这种分叉（2026-09-16 审计 P2 顺手收口）。
+ */
+function brokenLinksOf(path) {
+  const broken = []
+  for (const match of stripCode(read(path)).matchAll(LINK_PATTERN)) {
     let target = match[1]
     if (target.startsWith('<') && target.endsWith('>')) {
       target = target.slice(1, -1)
@@ -298,19 +308,29 @@ function checkLinks(path) {
     target = target.split('#', 1)[0]
     if (!target) continue
 
+    let decoded
     try {
-      target = decodeURI(target)
+      decoded = decodeURI(target)
     } catch {
-      fail(`Invalid URI in ${toPosix(relative(ROOT, path))}: ${target}`)
+      broken.push({ target, resolved: null })
       continue
     }
 
-    const resolved = resolve(dirname(path), target)
-    if (!existsSync(resolved)) {
-      fail(
-        `Broken link in ${toPosix(relative(ROOT, path))}: ${target} -> ${toPosix(relative(ROOT, resolved))}`
-      )
+    const resolved = resolve(dirname(path), decoded)
+    if (!existsSync(resolved)) broken.push({ target, resolved })
+  }
+  return broken
+}
+
+function checkLinks(path) {
+  for (const { target, resolved } of brokenLinksOf(path)) {
+    if (resolved === null) {
+      fail(`Invalid URI in ${toPosix(relative(ROOT, path))}: ${target}`)
+      continue
     }
+    fail(
+      `Broken link in ${toPosix(relative(ROOT, path))}: ${target} -> ${toPosix(relative(ROOT, resolved))}`
+    )
   }
 }
 
@@ -347,6 +367,35 @@ for (const name of coreDocs) {
 
 for (const path of new Set(linkSurfaces)) {
   checkLinks(path)
+}
+
+/**
+ * review/ 与 archive/ 的**断链计数守护**（2026-09-16 审计 P2）。
+ *
+ * 这两棵树刻意不参与逐条链接检查（理由见上方 linkSurfaces 注记：历史记录按当时的目录结构书写，
+ * 逐条 fail 会把门禁变成"维护历史文档"的负担）。但"刻意不逐条检"不等于"完全不看"——此前它们
+ * 一条守护都没有：断链可以无声累积，现状也无处可查。这里记一个**基线计数**，超过即红，
+ * 逼新增断链时要么修、要么在同一次提交里显式抬高基线（抬高是一次有意识的动作，会出现在 diff 里）。
+ * 基线与 `checkLinks` 共用同一套解析判据（`brokenLinksOf`）与同一口径（先 `stripCode`）。
+ */
+const BROKEN_LINK_BASELINE = { 'docs/review': 43, 'docs/archive': 26 }
+function markdownTree(dir) {
+  const files = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name)
+    if (entry.isDirectory()) files.push(...markdownTree(p))
+    else if (entry.name.endsWith('.md')) files.push(p)
+  }
+  return files
+}
+for (const [label, dir] of [['docs/review', REVIEW], ['docs/archive', ARCHIVE]]) {
+  const count = markdownTree(dir).reduce((n, p) => n + brokenLinksOf(p).length, 0)
+  const limit = BROKEN_LINK_BASELINE[label]
+  if (count > limit) {
+    fail(`${label}/ 断链 ${count} 条 > 基线 ${limit}——请修掉新增断链，或在同一次提交里显式抬高基线并说明理由`)
+  } else {
+    console.log(`（${label}/ 断链 ${count} 条，基线 ${limit}——这两棵树刻意不逐条 fail，靠计数守护防无声累积）`)
+  }
 }
 
 if (errors.length > 0) {
