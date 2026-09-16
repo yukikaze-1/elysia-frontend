@@ -1,4 +1,8 @@
 // src/main/tools/tool-executors.ts（Task 3：file.select / file.read / file.write 执行器；Task 4：screen.capture 枚举面，上传由 tool-service 子状态机）
+//
+// 依赖方向（2026-09-17 架构整改 Prompt 1）：本文件只依赖 `tool-execution-contract`（类型/错误）与
+// `tool-limits`（执行上限常量）两个叶子模块，**不得** import `tool-service.ts`——服务反向 import 本文件的
+// `createExecutors`，双向 import 会重新形成 runtime cycle（抽出前正是如此，靠函数体使用避开 TDZ）。
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -7,14 +11,10 @@ import { atomicWriteFile } from '../credentials/atomic-write'      // A-13：原
 import { computeTextDiff, detectTextFormat, normalizeToFormat } from './text-diff'
 import { normalizeToolPath, isPathBlacklisted, isPathWithinRoot } from './tool-policy'
 import { identityChangedReason } from './file-identity'
-import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS, THUMBNAIL_DATA_URL_MAX } from './tool-service'
-import type { ToolRecord, ToolServiceDeps } from './tool-service'
-import type { ToolAttachment } from '@shared/contracts/tool'       // 新发现7：类型 import 补齐
+import { FILE_READ_MAX_BYTES, MAX_WRITE_CONTENT_BYTES, RESULT_INLINE_BYTES, TEXT_FILE_FILTERS, THUMBNAIL_DATA_URL_MAX } from './tool-limits'
+import { ToolExecError, type ExecResult, type ToolRecord, type ToolServiceDeps } from './tool-execution-contract'
 
-export interface ExecResult { output: Record<string, unknown>; summary: string; attachments?: ToolAttachment[]; attachmentCount?: number; captureSession?: boolean }   // captureSession：capture 枚举完成 → 子状态机接管（A-2）
-export class ToolExecError extends Error { constructor(public code: string, message: string) { super(message) } }
-
-/** Wayland 会话判定（与 tool-service 的 isWaylandSession 同语义、独立实现免循环依赖；deps.isWayland 注入优先，A-4/L1） */
+/** Wayland 会话判定（与 tool-service 的 isWaylandSession 同语义、独立实现；deps.isWayland 注入优先，A-4/L1） */
 function isWaylandEnv(): boolean {
   const t = process.env.XDG_SESSION_TYPE?.toLowerCase()
   return t === 'wayland' || (!!process.env.WAYLAND_DISPLAY && t !== 'x11')

@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto'
 import type { SettingsService } from '../settings/settings-service'
 import type { AuditEvent } from '../diagnostics/audit'
 import type { PermissionGrant } from '@shared/contracts/tool'
-import { ToolServiceError } from './tool-service'
+import { ToolServiceError } from './tool-execution-contract'
 
 export interface GrantStoreDeps {
   settings: SettingsService

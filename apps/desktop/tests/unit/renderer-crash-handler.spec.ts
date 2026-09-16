@@ -2,11 +2,12 @@
 // Task 2（阶段 7 批次 B，D7B-05/06/07/08）：主进程崩溃监听——
 // ① handleRendererGone 抽函数（main-window.ts 导出；单一可测入口——不依赖 BrowserWindow，
 //    注入 fake deps { logger?, audit?, setMarker, reload }）；
-// ② handleChildProcessGone 抽函数（index.ts 导出；child-process-gone 的 GPU 分支审计解耦 gpu:crash，契约 H-1）；
+// ② handleChildProcessGone 抽函数（2026-09-17 架构整改 Prompt 2 起在 app/process-error-guards.ts；
+//    更早版本在 index.ts。child-process-gone 的 GPU 分支审计解耦 gpu:crash，契约 H-1）；
 // ③ render-process-gone 3 参监听接线（经 setCrashSink/setMarker/createMainWindow 装配，读第 3 参 details）+ getCrashMarker 一次性读后清。
 // electron mock 先例：diagnostics-handlers.spec / 注册表 registry-trust.spec（捕获 ipcMain.handle / webContents.on 的 listener 后直调）。
-// 说明：index.ts 静态 import 会触发 `void main().catch(...)`——mock app.requestSingleInstanceLock 返回 false 使 main() 提前
-//   exit(0) 短路（不进入 whenReady/registerHandlers/工具装配），仅 `installAppIdentity` 在 tmpdir 下 mkdir 两目录（测试可容忍）。
+// 说明：本文件已不再 import index.ts（handleChildProcessGone 迁址），但 electron mock 仍是必需品——
+//   main-window.ts 与 process-error-guards.ts 的模块级代码都依赖它。
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // —— hoisted：vi.mock 工厂可引用的共享状态（render-process-gone listener 捕获 + reload + 版本化 window/webContents 工厂）——
@@ -93,10 +94,11 @@ vi.mock('electron', () => ({
 }))
 
 // handleRendererGone / getCrashMarker / setCrashSink / createMainWindow 来自 main-window.ts；
-// handleChildProcessGone 来自 index.ts。二者共用一个 electron mock（模块级）。
+// handleChildProcessGone 来自 app/process-error-guards.ts（2026-09-17 架构整改 Prompt 2 前在 index.ts）。
+// 二者共用一个 electron mock（模块级）。
 import { createMainWindow, getCrashMarker, handleRendererGone, setCrashSink } from '../../src/main/windows/main-window'
 import { CRASH_RELOAD_MAX, CRASH_RELOAD_WINDOW_MS, ERR_ABORTED, createCrashStormGuard, describeLoadFailure, shouldHandleLoadFailure } from '../../src/main/windows/main-window'
-import { handleChildProcessGone } from '../../src/main/index'
+import { handleChildProcessGone } from '../../src/main/app/process-error-guards'
 
 afterAll(() => { h.reload.mockClear() })
 
@@ -215,7 +217,7 @@ describe('崩溃 reload 风暴抑制 + 主 frame 加载失败判定（2026-09-16
   })
 })
 
-describe('handleChildProcessGone（index.ts 抽函数——child-process-gone GPU 分支），契约 H-1 解耦', () => {
+describe('handleChildProcessGone（app/process-error-guards.ts 抽函数——child-process-gone GPU 分支），契约 H-1 解耦', () => {
   it('GPU 进程异常 → logger.warn + audit(gpu:crash)（不 reload——GPU 非 renderer，无 reload 语义）', () => {
     const logger = { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }
     const audit = vi.fn()

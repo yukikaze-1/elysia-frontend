@@ -51,8 +51,8 @@ export const IPC_CHANNEL_BUDGETS: Readonly<Record<string, ChannelBudget>> = {
   'chat:hydrate-persistence': bytes(MAX_IPC_MESSAGE_BYTES, 'session-store.hydrate 出参装箱降级'),
   'chat:persist-session': bytes(MAX_IPC_MESSAGE_BYTES, 'session-store 草稿 100KB/条 + 条目数/字节裁剪'),
   'voice:audio-chunk': bytesBinary(MAX_AUDIO_CHUNK_BYTES, 'voice-handlers 运行期上限（单向二进制通道：路由点不度量，见 measure 说明）'),
-  'tool:decide': schemaBounded('desktop.file.write 内容上限由 tool-service.MAX_WRITE_CONTENT_BYTES 守'),
-  'tool:pick-source': schemaBounded('desktop.file.read 目标文件上限由 FILE_READ_MAX_BYTES 守'),
+  'tool:decide': schemaBounded('desktop.file.write 内容上限由 tool-limits.MAX_WRITE_CONTENT_BYTES 守'),
+  'tool:pick-source': schemaBounded('desktop.file.read 目标文件上限由 tool-limits.FILE_READ_MAX_BYTES 守'),
   // S4（2026-09-15）：此通道**含二进制**（`bytes: Uint8Array`）⇒ 按本文件 §measure 的口径必须走 handler 度量，
   // 路由点不得 JSON.stringify（实测 1 MiB 二进制 stringify 需 114 ms、膨胀 10.9×）。执行点是 O(1) 的 `byteLength`：
   // schema 层 refine + upload-service 的 kind 级复核。上界只能取**全局不变量** 4 MiB——通道预算比全局更宽
@@ -123,7 +123,7 @@ export const IPC_CHANNEL_BUDGETS: Readonly<Record<string, ChannelBudget>> = {
   'tts:set-voice': schemaBounded('voice ≤200'),
   'live2d:list-models': NONE,
   'tool:cancel': schemaBounded('callId'),
-  'tool:list': schemaBounded('空对象 strict；出参受 4 MiB 全局不变量约束——审批上下文（diff/capture）由 tool-service.HYDRATION_CONTEXT_BUDGET_BYTES 预算保证，记录数上限 20'),
+  'tool:list': schemaBounded('空对象 strict；出参受 4 MiB 全局不变量约束——审批上下文（diff/capture）由 tool-limits.HYDRATION_CONTEXT_BUDGET_BYTES 预算保证，记录数上限 20'),
   'tool:confirm-upload': schemaBounded('callId'),
   'tool:grant-directory': schemaBounded('callId + ttlMs 白名单'),
   'tool:grants': schemaBounded('空对象 strict'),

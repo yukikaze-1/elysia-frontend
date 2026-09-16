@@ -1,11 +1,12 @@
 // tests/unit/gpu-process.spec.ts（node）
 // Task 6（阶段 7 批次 B）：child-process-gone 的 GPU 分支兜底单测——
-// 消费 Task 2 抽出的 handleChildProcessGone（index.ts 导出）。
-// NOTE（本 Task 唯一偏离 brief 骨架）：index.ts 静态 import 会触发 `void main().catch(...)`（index.ts:455）。
-//   纯 node 不 mock electron 时 real `electron` 解析为路径字符串（app/dialog 皆 undefined），main() async 函数
-//   在 `app.isPackaged` 处抛错 → catch → fatal → dialog.showErrorBox(undefined) → TypeError。
-//   故与 Task 2 renderer-crash-handler.spec 同款：vi.mock('electron') 且 app.requestSingleInstanceLock 返回 false，
-//   使 main() 在 whenReady/装配前提前 exit(0) 短路（仅 installAppIdentity 在 tmpdir 下 mkdir 两目录，测试可容忍）。
+// 消费 Task 2 抽出的 handleChildProcessGone。
+// 2026-09-17（架构整改 Prompt 2）：该函数从 `main/index.ts` 移入 `app/process-error-guards.ts`
+//   （与另两个进程级守卫同址），import 随之改指；断言与语义逐字未变。
+// NOTE（历史）：此前本用例静态 import index.ts 会触发 `void main().catch(...)`，故需
+//   vi.mock('electron') + `app.requestSingleInstanceLock` 返回 false 让 main() 提前短路。
+//   改用 process-error-guards 后 index.ts 不再被加载，但那段 electron mock 仍是本文件所需
+//   （main-window.ts 等被间接 import）。
 // NOTE（无先失败）：handleChildProcessGone 已在 Task 2 落地并导出，本测试 Step 2 是「直接 PASS」——
 //   本 Task 是「补消费+补测试」，非「从零实现」。deps 无 reload——GPU 不 reload（reload 归 render-process-gone）。
 import { describe, expect, it, vi } from 'vitest'
@@ -39,7 +40,7 @@ vi.mock('electron', () => ({
   ipcMain: { handle: h.noop, on: h.noop },
 }))
 
-import { handleChildProcessGone } from '../../src/main/index'
+import { handleChildProcessGone } from '../../src/main/app/process-error-guards'
 
 function makeDeps() {
   return { logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() }, audit: vi.fn() }

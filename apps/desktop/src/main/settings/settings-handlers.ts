@@ -11,7 +11,7 @@ import type { Logger } from '../diagnostics/logger'
 import { createIpcHandler } from '../ipc/executor'
 import { registerHandler } from '../ipc/registry'
 import { settingsLoadSchema, settingsSaveSchema } from '../ipc/channels'
-import { ToolServiceError } from '../tools/tool-service'
+import { ToolServiceError } from '../tools/tool-execution-contract'
 import type { SettingsService } from './settings-service'
 
 export function registerSettingsHandlers(deps: { settings: SettingsService; sanitize: MessageSanitizer; logger: Logger }): void {

@@ -1,7 +1,7 @@
 # Cyrene 前端架构现状总览（as-built）
 
 **文档状态：** 维护中
-**最后核验：** 2026-09-16
+**最后核验：** 2026-09-17
 **适用阶段：** 全阶段
 **权威范围：** 代码的结构现状——进程与信任边界、模块地图、启动与退出次序、关键数据流、契约面与门禁归属；不含进度、阻塞项与验证结论
 
@@ -75,16 +75,23 @@
 
 ### 2.1 Main（`apps/desktop/src/main/`）
 
-根文件 3 个：`index.ts`（装配根，`main()` 在此）、`shutdown.ts`、`env.d.ts`。
+根文件 3 个：`index.ts`（**组合根**：只编排生命周期阶段，见下）、`shutdown.ts`（有序退出与 fatal 收尾）、`env.d.ts`。
+
+`index.ts` 只做阶段编排——`prepareElectronRuntime` → `createInfrastructure` → `createTransport` →
+`createApplicationServices` → `wireApplicationServices` → `registerApplicationIpc` →
+`installShutdownSequence` → `installTestProbe` → `startApplication`；**具体构造、handler 注册、
+跨服务接线都在 `bootstrap/` 各阶段模块里**（2026-09-17 架构整改 Prompt 2）。`main()` 不再直接
+import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只允许 `bootstrap/**`、`config`、`windows`。
 
 | 目录 | 文件 | 职责 | 代表文件 |
 |---|---:|---|---|
-| `app/` | 5 | 生命周期、单实例、应用身份、进程级错误兜底、测试 appData 门 | `lifecycle.ts`、`process-error-guards.ts`、`test-app-data.ts` |
+| （根）`bootstrap/` | 10 | **组合根各生命周期阶段**：pre-ready（ready 前 Electron 初始化）/ infrastructure（诊断、userData、凭据、连接配置）/ transport（Real/Mock 适配器 + mock 夹具 env 桥）/ services（业务服务构造）/ wire（跨服务接线）/ register-ipc（通道装配）/ shutdown-sequence（before-quit 编排）/ start-application（协议供给与建窗）/ runtime-guards（崩溃与进程兜底装配）/ test-probe（harness 探针） | `pre-ready.ts`、`infrastructure.ts`、`services.ts`、`wire.ts`、`start-application.ts` |
+| `app/` | 5 | 生命周期、单实例、应用身份、进程级错误兜底（含 `child-process-gone` 的 GPU 分支）、测试 appData 门 | `lifecycle.ts`、`process-error-guards.ts`、`test-app-data.ts` |
 | `windows/` | 7 | 窗口创建与呈现的**唯一入口**、导航门、麦克风权限、Renderer 控制台转发 | `window-presentation.ts`、`main-window.ts`、`navigation.ts`、`mic-permission.ts` |
 | `native-ui/` | 1 | 原生对话框唯一入口（silent 模式下返回确定性取消） | `dialog-service.ts` |
 | `ipc/` | 9 | 通道注册表、参数校验、载荷预算、各域 handler 装配 | `registry.ts`、`executor.ts`、`channels.ts`、`channel-budgets.ts`、`handlers.ts` |
 | `transport/` | 16 | `BackendAdapter` 端口与 real/mock 两实现、存活检测、protocol-v2 帧与 REST 映射 | `backend-adapter.ts`、`real-backend.ts`、`mock-backend.ts`、`connection-liveness.ts`、`protocol-v2/frame-mapper.ts` |
-| `tools/` | 14 | 工具注册表、风险重算、授权存储、参数哈希、审计、执行器、审批历史、文件身份 | `tool-policy.ts`、`tool-service.ts`、`tool-executors.ts`、`grant-store.ts`、`param-hash.ts`、`file-identity.ts` |
+| `tools/` | 16 | 工具注册表、风险重算、授权存储、参数哈希、审计、执行器、审批历史、文件身份；**共享执行契约与数值策略**（2026-09-17 起，解 `tool-service ↔ tool-executors` 值导入环） | `tool-policy.ts`、`tool-service.ts`、`tool-executors.ts`、`tool-execution-contract.ts`、`tool-limits.ts`、`grant-store.ts`、`param-hash.ts`、`file-identity.ts` |
 | `attachments/` | 5 | 附件校验/上传/媒体状态、`fileRef` 令牌表、媒体字节路由与签名 URL 策略 | `upload-service.ts`、`attachment-policy.ts`、`file-ref.ts`、`media-service.ts` |
 | `characters/` | 7 | 多角色域：服务、后端端口、草稿、装配、mock | `character-service.ts`、`character-backend-port.ts`、`character-service-assembly.ts` |
 | `chat/` | 3 | 会话与消息编排、后端错误上提 | `chat-service.ts`、`chat-handlers.ts`、`backend-error-handlers.ts` |
@@ -123,20 +130,31 @@
 
 ### 3.1 启动
 
-装配顺序里有若干**顺序即正确性**的点，改动前请先读对应注释（`src/main/index.ts` 的 `main()`）：
+装配顺序里有若干**顺序即正确性**的点，改动前请先读对应注释。2026-09-17（架构整改 Prompt 2）起，
+`main()` 只编排阶段，每一步的实现落在 `src/main/bootstrap/` 的对应模块（括号内为落点）：
 
-1. `normalizeHarnessForPackagedRun()`——必须最先，后续所有 harness 读取点都看归一化后的值（`:152`）。
-2. `rejectForbiddenDebugSwitches()`——固定 remote-debugging 端口等被安全策略拒绝（`:153`）。
-3. `app.commandLine.appendSwitch('enable-precise-memory-info')`（`:157`）。
-4. GPU 回退判定 `resolveGpuDecision()` → 必要时 `appendSwitch('disable-gpu')`（`:164-165`，判定在 `config/gpu-mode.ts`，**必须 app ready 前生效**）。
-5. 测试 appData 门 `applyTestAppDataOverride(mode)`（`:172`）——早于身份安装与任何 userData 落盘。
-6. `setAppDataFlavor()`（`:176`）与 `registerCyreneScheme()`（`:177`，app ready 前）。
-7. `installAppIdentity()`（`:178`）→ `requestSingleInstanceLock()`（`:185`）：单实例锁派生自 userData 路径，故身份与风味必须先定；顺序颠倒会让 dev 与正式版互相顶掉。
-8. `await app.whenReady()`（`:191`）→ `setAppUserModelId`（`:194`）→ userData 路径断言（`:200`）→ 生产菜单（`:205`）。
-9. `ensureUserDataDirs()`（`:206`，子目录守卫）→ `createDiagnostics()` + `audit` / `auditAsync`（`:209-226`）。
-10. 崩溃与进程级兜底：`child-process-gone` → `handleChildProcessGone`（GPU 分支只留痕 `gpu:crash`，**不 reload**）；`setCrashSink`（Renderer 崩溃 → 审计 + crash marker + reload）；`installProcessErrorGuards`（未捕获异常/拒绝，fatal 前等审计落盘）（`:227-237`）。
-11. 启动门禁：dev 形态的 `ELECTRON_RENDERER_URL` 必须指向受信地址（回环或 allowlist）（`:238+`）。
-12. 窗口创建（`window-presentation` 唯一入口）→ 通道装配 `registerHandlers(...)`（`:599`）→ 退出编排 `createShutdownHandler(...)`（`:600`）。
+1. `normalizeHarnessForPackagedRun()`——必须最先，后续所有 harness 读取点都看归一化后的值（`bootstrap/pre-ready.ts`）。
+2. **规范化之后**才建立对话框入口（`defaultDialogService()` 单例会解析 `runtimeEnvironment()`，见下）。
+3. `rejectForbiddenDebugSwitches()`——固定 remote-debugging 端口等被安全策略拒绝（`bootstrap/pre-ready.ts`）。
+4. `app.commandLine.appendSwitch('enable-precise-memory-info')`（同前）。
+5. GPU 回退判定 `resolveGpuDecision()` → 必要时 `appendSwitch('disable-gpu')`（判定在 `config/gpu-mode.ts`，**必须 app ready 前生效**）。
+6. 测试 appData 门 `applyTestAppDataOverride(mode)`——早于身份安装与任何 userData 落盘。
+7. `setAppDataFlavor()` 与 `registerCyreneScheme()`（app ready 前）。
+8. `installAppIdentity()` → `requestSingleInstanceLock()`：单实例锁派生自 userData 路径，故身份与风味必须先定；顺序颠倒会让 dev 与正式版互相顶掉。
+9. `await app.whenReady()`（阶段模块在**同一函数内**跨越 ready 边界：只有持锁主实例才等到 ready）→ `setAppUserModelId` → userData 路径断言 → 生产菜单（`bootstrap/infrastructure.ts`）。
+10. `ensureUserDataDirs()`（子目录守卫）→ `createDiagnostics()` + `audit` / `auditAsync`（同前）。
+11. 崩溃与进程级兜底：`child-process-gone` → `handleChildProcessGone`（GPU 分支只留痕 `gpu:crash`，**不 reload**）；`setCrashSink`（Renderer 崩溃 → 审计 + crash marker + reload）；`installProcessErrorGuards`（未捕获异常/拒绝，fatal 前等审计落盘）。装配点在任何可能崩溃的构造之前（`bootstrap/runtime-guards.ts`）。
+12. 启动门禁：dev 形态（`config.devToolsAllowed`，即未打包）的 `ELECTRON_RENDERER_URL` 必须指向受信地址且端口与本项目配置一致（`bootstrap/infrastructure.ts`）。
+13. 后端适配器构造：打包恒 Real；未打包默认 Real，仅 `CYRENE_BACKEND=mock` 显式 Mock。mock 夹具 `CYRENE_MOCK_*` 的 env 桥全部在此解析（`bootstrap/transport.ts`）。
+14. 业务服务构造：设置（eager load）→ 目录授权仓库 → 工具服务 → 文件引用表 → 会话存储（eager load）→ 角色草稿（eager load）→ chat → 上传/媒体 → Live2D 注册表 → 退出 flush requester（`bootstrap/services.ts`）。
+15. 跨服务接线：后端回调 → chat / media / tool；窗口 `close` 上的退出 flush。**构造与接线分离**是 Prompt 2 的核心结构（`bootstrap/wire.ts`）。
+16. 通道装配 `registerHandlers(...)`（`bootstrap/register-ipc.ts`）→ 退出编排 `app.on('before-quit', ...)`（`bootstrap/shutdown-sequence.ts`）。
+17. 窗口创建：协议供给 `registerCyreneProtocolHandler` → 启动痕 → `markAppStarted()` → `ensureMainWindow(...)`（`bootstrap/start-application.ts`）。窗口呈现走 `window-presentation` 唯一入口。
+
+> **对话框入口与环境解析的次序**（2026-09-17 修正）：`createDialogService()` 的默认参数会解析
+> `runtimeEnvironment()` 的进程级单例。此前它在 `index.ts` 的**模块作用域**被调用，即打包态残留
+> `CYRENE_TEST_HARNESS=1` 时，静默窗口模式会在归一化**之前**被记忆。现在统一在归一化之后经
+> `defaultDialogService()` 建立（全仓仍只有一个实例）。
 
 ### 3.2 退出
 
@@ -147,9 +165,10 @@
   → window-all-closed（非 macOS 调 app.quit()）→ before-quit →（shutdown steps）→ 退出
 ```
 
-- **退出前持久化 flush 挂在窗口 `close`**（`main-window.ts:214-228`），不是只挂 `before-quit`：`window-all-closed` 时 `getMainWindow()` 已为 `null`，只挂 `before-quit` 的 flush 在生产路径上恒空转。
+- **退出前持久化 flush 挂在窗口 `close`**（`main-window.ts:214-228`），接线在组合根的 wire 阶段（`bootstrap/wire.ts`），不是只挂 `before-quit`：`window-all-closed` 时 `getMainWindow()` 已为 `null`，只挂 `before-quit` 的 flush 在生产路径上恒空转。
 - flush 由 Main 发起：`before-quit` 发 `app:persist-flush-request` 下行请求，等 Renderer 经 `app:persist-flush-done` 回 ack；预算 700 ms（`persistence/persist-flush.ts:14`），无窗口 / 投递抛错 / 超时 / Renderer 失败一律**不阻断退出**（fail-open），超时留诊断。
-- 退出步骤由 `shutdown.ts` 的 `createShutdownHandler` 有序 await；`app.on('before-quit', () => toolSvc.shutdown())`（`:490`）另有工具侧收口。
+- 退出步骤由 `shutdown.ts` 的 `createShutdownHandler` 有序 await，装配在 `bootstrap/shutdown-sequence.ts`：`renderer-persist` → `credentials` → `adapter` → `diagnostics`（顺序与失败/超时语义不受组合根整改影响）。
+- 工具侧收口 `app.on('before-quit', () => tools.shutdown())` 与上面的有序 flush **同为 `before-quit` 监听**，注册顺序决定执行顺序（工具侧在前），故两者必须在同一处装配（`bootstrap/shutdown-sequence.ts`）。
 
 ---
 

@@ -120,7 +120,7 @@ import type { BackendAdapter, BackendEventHandler, UploadContent } from './backe
 import type { CharacterServiceBackendPort } from '../characters/character-backend-port'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
-import type { DesktopToolRequest } from '../tools/tool-service'
+import type { DesktopToolRequest } from '../tools/tool-execution-contract'
 import { isDomainAllowed } from '../tools/tool-policy'   // D4-15：域名黑名单（凭据只发往已连接后端端点）
 import { createConnectionLiveness, type LivenessDeathReason } from './connection-liveness'   // AUD-01：客户端存活监视
 

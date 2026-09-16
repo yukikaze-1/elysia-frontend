@@ -23,12 +23,34 @@
 //   的**有意偏离**：已观测的唯一实例是良性的（系统无浏览器处理器时 `shell.openExternal` 拒绝）。
 //   偏离是有代价的（真正的严重拒绝也会被放过），但「任何浮空 promise 都杀掉应用」明显更糟。
 //
-// 抽成纯函数 + deps 注入的理由与 `handleChildProcessGone`（index.ts）一致：可单测。
+// 抽成纯函数 + deps 注入的理由与 `handleChildProcessGone`（本文件，进程级失败信号的纯处理函数）一致：可单测。
 //
 // S12（2026-09-15 安全评审）：本模块的 `summarize` 同时喂给**审计**与**原生错误框 / stderr** 两条出口，
 // 而此前两条都只 `sanitize`（掩路径）。现在 fail-safe 那一路额外补 `redactSensitiveValues`（审计不动，
 // 见 `handleUncaughtException` 内注释）。
 import { redactSensitiveValues } from '../diagnostics/redact'
+import type { AuditEvent } from '../diagnostics/audit'
+import type { Logger } from '../diagnostics/logger'
+
+/**
+ * `child-process-gone` 的 GPU 分支（阶段 7 批次 B，D7B-08；契约 H-1 解耦）。
+ *
+ * 只关注 GPU 子进程异常：warn + `audit(gpu:crash)`（**独立 type，勿复用 renderer:crash**）。
+ * 非 GPU（Utility/Zygote/Sandbox helper 等）有意忽略——renderer 崩溃由 `render-process-gone` 覆盖，
+ * `child-process-gone` 无 Renderer 子进程。GPU **不 reload**（reload 归 render-process-gone）。
+ *
+ * 2026-09-17（架构整改 Prompt 2）：从 `main/index.ts` 移入本模块——它与本文件的另外两个守卫
+ * 是同一类东西（进程级失败信号的纯处理函数，deps 注入以便单测），index.ts 不再持有具体处理逻辑。
+ */
+export function handleChildProcessGone(
+  details: { type: string; reason: string; exitCode: number },
+  deps: { logger: Logger; audit: (e: Omit<AuditEvent, 'ts'>) => void }
+): void {
+  if (details.type === 'GPU') {
+    deps.logger.warn('gpu-process-gone', { reason: details.reason, exitCode: details.exitCode })
+    deps.audit({ type: 'gpu:crash', summary: `GPU 进程异常：${details.reason} (exit ${details.exitCode})` })
+  }
+}
 
 export interface ProcessErrorDeps {
   logger: { error(code: string, fields?: Record<string, string | number | boolean>): void }

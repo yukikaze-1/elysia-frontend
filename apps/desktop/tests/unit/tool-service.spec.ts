@@ -4,7 +4,9 @@ import { z } from 'zod'   // 平台测试用（新发现7）
 import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { createToolService, DesktopToolRequest, ToolServiceError } from '../../src/main/tools/tool-service'   // ToolServiceError import（H4）
+import { createToolService } from '../../src/main/tools/tool-service'
+// 工具域共享契约（Prompt 1 起定义在 tool-execution-contract；调用面不变）
+import { ToolServiceError, type DesktopToolRequest } from '../../src/main/tools/tool-execution-contract'   // ToolServiceError import（H4）
 import { createToolRegistry, DESKTOP_TOOL_VERSION } from '../../src/main/tools/tool-registry'
 import { GRANT_TTL_OPTIONS_MS } from '../../src/shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单
 import type { ToolStatusCommand } from '../../src/shared/contracts/backend'   // wire tool.status 六态命令契约（submitStatus 断言取值）

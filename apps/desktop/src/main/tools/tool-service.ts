@@ -1,74 +1,40 @@
+// src/main/tools/tool-service.ts
+// Desktop 工具**应用服务**：决策链（参数校验 → 幂等 → realpath/黑名单 → 风险重算 → 预读 diff → 授权判定）、
+// records 状态机、wire 状态回写、capture 子状态机、目录授权创建流、审批历史与审计。
+//
+// 依赖方向（2026-09-17 架构整改 Prompt 1）：本文件 import 执行器（`createExecutors`）与两个叶子模块
+// `tool-execution-contract.ts`（类型/结构化错误）· `tool-limits.ts`（执行上限常量）。执行器**不得**反向
+// import 本文件——抽出前两侧互相 import 形成 runtime cycle（旧注记只写了"值导入互引、靠函数体使用避开 TDZ"，
+// 那属执行时机掩盖；形式化记录见 `docs/review/2026-09-11-full-frontend-review.md` 的 M-14）。
+//
+// 本文件**只保留服务实现自身的东西**：`ToolService` 接口、records/队列/定时器/串行锁状态机与 `createToolService`。
+// 共享契约（`DesktopToolRequest` / `ToolRecord` / `ToolServiceDeps` / `ExecResult` / 结构化错误）与执行上限常量
+// 不在本文件定义，也**不在此 re-export**（保持唯一入口，避免"接口在 A、实现在 B"的所有权错觉）。
+//
+// 未收口（M-14 的另一半，本批**不改**）：`isWaylandSession`（本文件）与 `isWaylandEnv`（执行器）仍是两份同语义
+// 实现——那是"同语义、独立实现免循环依赖"时代的历史产物；现在无环约束已解除，但合并它属于工具系统重构，
+// 不属本批范围（记录在最终报告，留给后续批次）。
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import { computeParamHash, canonicalJsonStringify } from './param-hash'
 import type { RegisteredTool } from './tool-registry'
-import { computeLocalRisk, isPathBlacklisted, isPathWithinRoot, normalizeToolPath, normalizeReportedRisk, type RiskLevel } from './tool-policy'
+import { computeLocalRisk, isPathBlacklisted, isPathWithinRoot, normalizeToolPath, normalizeReportedRisk } from './tool-policy'
 import { redactToolArguments } from './input-summary'
-import { createExecutors, ToolExecError, type ExecResult } from './tool-executors'
-import { captureFileIdentity, type FileIdentity } from './file-identity'
+import { createExecutors } from './tool-executors'
+import {
+  ToolExecError, ToolServiceError,
+  type DesktopToolRequest, type ExecResult, type ToolRecord, type ToolServiceDeps,
+} from './tool-execution-contract'
+import { captureFileIdentity } from './file-identity'
 import { computeTextDiff, detectTextFormat } from './text-diff'
-import type { PublicToolEvent, ToolAttachment, ToolCallStatus } from '@shared/contracts/tool'
+import {
+  CAPTURE_SESSION_TTL_MS, FILE_READ_MAX_BYTES, HYDRATION_CONTEXT_BUDGET_BYTES, MAX_DIFF_INPUT_BYTES,
+  MAX_RECORDS, MAX_WRITE_CONTENT_BYTES, PATH_SUMMARY_MAX, PREVIEW_DATA_URL_MAX, SELECT_EXEMPT_TTL_MS,
+} from './tool-limits'
+import type { PublicToolEvent, ToolCallStatus } from '@shared/contracts/tool'
 import { GRANT_TTL_OPTIONS_MS } from '@shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单（grantDirectory F-3 双校验）
-import type { ToolStatusCommand, ToolWireStatus, DesktopCallStatus } from '@shared/contracts/backend'
-import type { AuditEvent } from '../diagnostics/audit'
+import type { ToolStatusCommand, ToolWireStatus } from '@shared/contracts/backend'
 
-export interface DesktopToolRequest {
-  callId: string; sourceCallId: string; toolName: string; toolVersion: string
-  runtime: 'desktop'; arguments: Record<string, unknown>
-  reason?: string; expiresAt: number; paramHash?: string
-  conversationId?: string   // 归属会话（real-backend 从 activeConversationId 注入；mock 从 activeConversationId 注入）
-  // —— D4-1（2026-09-15 裁决「补代码」）：wire 侧风险元数据入参（此前被丢弃）——
-  /** 后端 `tool.request.riskLevel` 上报值（原始 unknown；非枚举值在重算中按 high 处理） */
-  reportedRiskLevel?: unknown
-  /** 后端 `permissionRequired`（仅审计记录，不改变本地授权判定——判定权威在本地注册表） */
-  permissionRequired?: boolean
-  /** 后端 `approvalAuthority`（同上：仅审计记录） */
-  approvalAuthority?: string
-}
-export interface FilePickerOptions { title: string; filters: { name: string; extensions: string[] }[] }
-export interface CaptureSourceInfo { sourceId: string; sourceName: string; thumbnailDataUrl: string }
-export interface ToolServiceDeps {
-  registry: Map<string, RegisteredTool>
-  platform: 'posix' | 'windows'
-  audit: (ev: AuditEvent) => void
-  pickFile?: (opts: FilePickerOptions) => Promise<{ canceled: boolean; path?: string }>
-  enumerateSources?: () => Promise<CaptureSourceInfo[]>
-  renderPreview?: (sourceId: string) => Promise<{ previewDataUrl: string; bytes: Uint8Array; width?: number; height?: number }>   // capture picked 后（Task 4，A-2；width/height 可选——mock 注入面没有真实缩略图）
-  finalizeUpload?: (callId: string, bytes: Uint8Array) => Promise<void>                          // 上传前钩子（Task 4）
-  submitStatus: (cmd: ToolStatusCommand) => Promise<void>
-  uploadAttachment: (callId: string, bytes: Uint8Array, mime: string, label?: string) => Promise<ToolAttachment>
-  pushEvent: (ev: PublicToolEvent) => void
-  selectedExemptTtlMs?: number
-  allowRoots?: string[]
-  /** D4-15（2026-09-15 裁决「补代码」）：生效的沙盒（预授权）目录集——realpath 规范化目录。
-   *  F-06 拍板值仍为**空集**（零预授权），故缺省不改变任何授权结果；提供该注入面是为了让重算的
-   *  「沙盒内受控」分支有唯一入口，避免将来逐处 `startsWith` 复制包含性判定。 */
-  sandboxDirectories?: string[]
-  isWayland?: boolean               // 注入（测试用）；缺省 isWaylandSession() env 判定（A-4）
-  executorOverride?: (rec: ToolRecord, realPath?: string, signal?: AbortSignal) => Promise<ExecResult>   // 测试注入（B-1/M12）；signal 供"永不 settle 的执行"用例（A1）
-  selectedAdd?: (realPath: string) => void   // selected-set 写闭包（A-14：tool-service 注入；executor 可选调用）
-  // —— 批次 C（D6C-04/05）：目录授权 ——
-  grants?: import('./grant-store').GrantStore      // 批次 C（D6C-04）：grant 仓库（缺省 → 无 grant 面）
-  pickDirectory?: (opts: { title: string }) => Promise<{ canceled: boolean; path?: string }>   // D6C-05 创建流注入
-  backendIdentity?: () => string | undefined       // F-2：当前连接指纹（grant 创建时绑定；index.ts 懒绑定闭包）
-  queryStatus?: (callId: string) => Promise<DesktopCallStatus | null>   // 批次 C（D6C-11，本 task 首次加入）：GET tools/calls 查询（注入才查；mock 不注入 → 不查，F-20）
-}
-export interface ToolRecord {
-  id: string; desktopCallId?: string; conversationId?: string; toolName: string; title: string
-  status: ToolCallStatus; reason?: string; inputSummary?: string; pathSummary?: string
-  resultSummary?: string; error?: { code?: string; message?: string }; truncated?: boolean
-  durationMs?: number; startedAt?: string; finishedAt?: string; attachmentCount?: number
-  dataFlowNote?: string; diff?: PublicToolEvent['diff']; oldHash?: string           // oldHash=写前哈希依据（A-1/M7）
-  captureSources?: PublicToolEvent['captureSources']; capturePreview?: PublicToolEvent['capturePreview']
-  expiresAt: number; paramHash?: string; arguments_: Record<string, unknown>; toolVersion: string
-  statusSent: boolean; realPath?: string        // L1：决策链 step 5 normalize 缓存（executor/串行锁读取）
-  /** 2026-09-16 审计 P2（TOCTOU）：授权时刻该 realPath 的文件身份（dev+ino）；执行前复核，防批准后被换链。
-   *  仅在授权时该路径**确为一个普通文件**时才有值（见 file-identity.ts 的四态说明）。 */
-  fileIdentity?: FileIdentity
-  /** D4-1：本地风险重算产物（决策链 step 8 前写入；审计 riskLevel 的唯一来源，不再直接读注册表常量） */
-  riskLevel?: RiskLevel
-  attachments?: ToolAttachment[]                // M2：完成时缓存（重连重发复用 URL，D6B-11）
-}
 export interface ToolService {
   handleRequest(req: DesktopToolRequest): Promise<void>
   decide(callId: string, decision: 'allow_once' | 'deny'): Promise<void>
@@ -82,40 +48,6 @@ export interface ToolService {
   getRecord(callId: string): ToolRecord | undefined
 }
 
-export const FILE_READ_MAX_BYTES = 2 * 1024 * 1024
-export const RESULT_INLINE_BYTES = 64 * 1024
-export const MAX_WRITE_CONTENT_BYTES = 2 * 1024 * 1024
-/**
- * H-09（2026-09-11）：diff **预览**的输入上限（区别于写入上限）。
- *
- * 理由不是「防冻结」（实测 2 MiB 仅 ~26 ms，见 preReadForDiff 注释），而是**不做白工**：
- * diff 的唯一用途是一段最多 100 行的给人看的预览（MAX_DIFF_LINES），而 `computeTextDiff` 内部的
- * 同步 Myers 会在截断检查**之前**把全文按行分配——为 100 行预览去 diff 数百 KB 至 2 MiB 并不划算。
- * 超过本阈值只省略 lines/added/removed，安全字段（isNewFile / oldHash / formatNote）照常产出，写入行为不变。
- */
-export const MAX_DIFF_INPUT_BYTES = 256 * 1024
-export const SELECT_EXEMPT_TTL_MS = 10 * 60 * 1000
-export const TEXT_FILE_FILTERS = { name: '文本文件', extensions: ['txt','md','markdown','json','log','csv','tsv','js','ts','jsx','tsx','py','rb','go','rs','c','h','cpp','hpp','java','kt','swift','css','scss','html','htm','yaml','yml','toml','ini','cfg','conf','xml','svg','sh','bash','env'] }
-export const PATH_SUMMARY_MAX = 120
-export const THUMBNAIL_DATA_URL_MAX = 64 * 1024      // 缩略图 data URL 上限（A-18/L-5/B5；超出丢弃并提示 dropped）
-export const PREVIEW_DATA_URL_MAX = 256 * 1024       // 全尺寸预览 data URL 上限（A-18/L-5；超限降级为缩略图）
-export const CAPTURE_SESSION_TTL_MS = 120_000        // capture 子状态机停留态超时（M1：awaiting_pick/picked 无执行超时兜底——Renderer 不响应时记录不得永久停留 running）
-export const MAX_RECORDS = 200   // L-1（D6C-09a）：records 容量上限（超出逐最旧终态；awaiting/running 永不逐出）
-/**
- * `listRecent` 纳入**审批上下文**（diff / captureSources / capturePreview）的字节预算（2026-09-16 审计 P2）。
- *
- * 为什么需要预算：`tool:list` 的出参受全局不变量 ≤ `MAX_IPC_MESSAGE_BYTES`（4 MiB，doc 07 §6.3）约束，
- * 而单张全尺寸截图预览 ≤ `PREVIEW_DATA_URL_MAX`（256 KiB）、单个源缩略图 ≤ `THUMBNAIL_DATA_URL_MAX`（64 KiB）
- * ⇒ 20 条上限下最坏可达 20 × 约 320 KiB ≈ 6.4 MiB，会越界。逐条无脑附带等于把"出参不超 4 MiB"变成
- * 一句做不到的声明，故这里按字节先到先得：`listRecent` 已把非终态排在前（它们才是需要审批上下文的记录），
- * 预算耗尽者退回"无上下文"，与修复前行为一致（不静默截断字段，而是整块不带）。
- */
-export const HYDRATION_CONTEXT_BUDGET_BYTES = 2 * 1024 * 1024
-
-/** 工具服务结构化错误（IPC 层映射为结构化拒绝） */
-export class ToolServiceError extends Error {
-  constructor(public code: string, message: string) { super(message) }
-}
 /** 执行已被放弃（终态先到）。**只**用于让 `run()` 及时返回，绝不外泄成用户可见错误码 */
 class ToolExecutionAbandoned extends Error {
   constructor() { super('执行已被放弃') }
@@ -135,8 +67,6 @@ function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     )
   })
 }
-// M10 注记：tool-service ↔ tool-executors 存在值导入互引（createExecutors vs 常量/类型）——当前仅函数体内使用不触发 TDZ；
-// 若实现期遇循环 import 告警，把 FILE_READ_MAX_BYTES 等常量下沉到 main/tools/limits.ts（评估后记录取舍）
 
 export function createToolService(deps: ToolServiceDeps): ToolService {
   const records = new Map<string, ToolRecord>()

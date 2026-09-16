@@ -22,7 +22,7 @@
 // ## 边界（如实声明）
 //
 //  - 这是**会话内**表：进程重启即失效；**显式断开连接或切换后端地址**时经 `clear()` 清空
-//    （`chat-service` 的 `onConnectionTeardown` → `index.ts` 装配的 `fileRefsHolder`）。
+//    （`chat-service` 的 `onConnectionTeardown` → `main/bootstrap/services.ts` 装配时传入）。
 //    **瞬态 WS 掉线重连不清**——那是同一次用户会话，清掉会让正在编辑的待发送附件凭空失效，且没有安全收益。
 //    ⚠️ 2026-09-15 复核修正：本行此前写「断线重连（`clear()`）即失效」，但 `clear()` 当时**没有任何调用点**
 //    （安全评审 S6/S7-C1）——文档描述了不存在的属性。现已接线，口径同时收紧为上面这句。

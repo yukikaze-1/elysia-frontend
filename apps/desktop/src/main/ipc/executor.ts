@@ -4,7 +4,7 @@ import { type IpcResult } from '@shared/contracts'
 import { CyreneError } from '@shared/errors'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import type { Logger } from '../diagnostics/logger'
-import { ToolServiceError } from '../tools/tool-service'   // 批次 C（Task 6，F-17）：工具域结构化错误上提（tool-service ↔ ipc 单向，无环）
+import { ToolServiceError } from '../tools/tool-execution-contract'   // 批次 C（Task 6，F-17）：工具域结构化错误上提（工具域契约 ↔ ipc 单向，无环）
 
 function truncateCodepoints(s: string, max: number): string {
   let count = 0

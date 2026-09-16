@@ -9,7 +9,9 @@
 // 每条用例都写明"修复前会怎样"，因为本批防的正是"绿灯的含义被高估"。
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, existsSync, symlinkSync, lstatSync } from 'node:fs'
-import { createToolService, type DesktopToolRequest, type ToolServiceDeps } from '../../src/main/tools/tool-service'
+import { createToolService } from '../../src/main/tools/tool-service'
+// 工具域共享契约（Prompt 1 起定义在 tool-execution-contract）；本文件是唯一同时装配 service 与 executor 的用例
+import type { DesktopToolRequest, ToolServiceDeps } from '../../src/main/tools/tool-execution-contract'
 import { createExecutors } from '../../src/main/tools/tool-executors'
 import { createToolRegistry, DESKTOP_TOOL_VERSION, type RegisteredTool } from '../../src/main/tools/tool-registry'
 import type { PublicToolEvent } from '../../src/shared/contracts/tool'

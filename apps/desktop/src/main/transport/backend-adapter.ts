@@ -30,7 +30,7 @@ import type {
 } from '@shared/contracts/model'
 import type { AttachmentInfo, AttachmentSignResult } from '@shared/contracts/attachments'
 import type { ToolAttachment } from '@shared/contracts/tool'
-import type { DesktopToolRequest } from '../tools/tool-service'
+import type { DesktopToolRequest } from '../tools/tool-execution-contract'   // 传输层只依赖工具域**执行契约**，不依赖 tool-service 实现（2026-09-17 架构整改 Prompt 1）
 import type { AttachmentKind } from '@shared/contracts/message'
 import type { StickerManifest } from '@shared/contracts/sticker'
 import type {

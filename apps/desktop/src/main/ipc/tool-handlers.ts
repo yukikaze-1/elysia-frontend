@@ -13,7 +13,7 @@ import {
 } from '@shared/schemas/ipc-response'
 import type { MessageSanitizer } from '../diagnostics/sanitize'
 import type { ToolService } from '../tools/tool-service'
-import { ToolServiceError } from '../tools/tool-service'
+import { ToolServiceError } from '../tools/tool-execution-contract'
 import type { GrantStore } from '../tools/grant-store'
 import type { HistoryEntry } from '../tools/tool-history'
 

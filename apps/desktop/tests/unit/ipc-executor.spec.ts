@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { createIpcHandler } from '../../src/main/ipc/executor'
 import { CyreneError, CyreneErrorCode } from '../../src/shared/errors'
-import { ToolServiceError } from '../../src/main/tools/tool-service'   // 批次 C（Task 6 review LOW-3）：工具域结构化错误上提直测
+import { ToolServiceError } from '../../src/main/tools/tool-execution-contract'   // 批次 C（Task 6 review LOW-3）：工具域结构化错误上提直测（Prompt 1 起定义在契约模块）
 
 const sanitize = (m: string): string => m.replace(/\/home\/alice/g, '~')
 const noopSanitize = (m: string): string => m

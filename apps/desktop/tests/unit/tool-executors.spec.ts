@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readFileSync, readdirSync, statSync, rmSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createExecutors } from '../../src/main/tools/tool-executors'
-import type { ToolServiceDeps } from '../../src/main/tools/tool-service'
+import type { ToolServiceDeps } from '../../src/main/tools/tool-execution-contract'   // 共享注入面契约（Prompt 1 起定义在契约模块）
 
 vi.mock('electron', () => ({ dialog: {} }))   // executor 默认 picker 回退引用 electron.dialog；本测试全部注入 pickFile 不触达
 
