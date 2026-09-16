@@ -78,6 +78,8 @@
 
 - **架构现状文档立文（2026-09-16，文档治理；无代码改动）**：核查确认此前**没有**一份「维护中、覆盖全系统现状」的总架构文档——doc 01 是**设计口径**（状态「参考」，且 §6.2 有就地更正「照它实现会走错」），`review/2026-09-15-项目架构与进度总览.md` 是**一次性快照**（明写不是状态源，数字已漂），审计报告主体是问题目录。按用户裁决（方案 A）新增 [doc 20 架构现状总览](20-Cyrene-前端架构现状总览.md)（as-built：只写代码结构现状、不写状态；每条结论给落点文件），并同步 doc 00 三张表与编号规则、README 文档入口、CLAUDE.md 阅读清单、`scripts/docs-check.mjs` 核心文档数（20 → 21）。读数与两处变异验证见 §3.3，决策与代价见[决策记录](review/2026-09-16-架构现状文档立文与doc01分工-决策记录.md)。
 
+- **CI 连续四轮红的两处根因已修（2026-09-16，`5db4013`）**：两处都只在 Linux 执行、本机永远走不到——① A 批的符号链接用例把换链建在了授权**之前**（用例没测它名字里那件事，还会把 70 KiB 的 secret 读出去并上传）；② B 批 `requireAssertions` 照出的**第 5 处**零断言（`ipc-security` 的 `unavailable` 分支，只在 Linux 触发）。**这是流程失败**：§3.2 记「本地门禁全绿」，却从未核对推送后的 CI。修复后 run `35088844733` 11/11 全绿，unit 侧 3345 passed / **0 skipped**（那条分支首次取得 Linux 证据）。详见 §3.4。
+
 - **会话级 Token 展示已落地（2026-09-15，`4e4e448`）**：用户拍板「要展示，位置在聊天输入栏下方」后，`session.token_stats` 从「有类型、有校验、无消费方」变成有消费方，界面为 Composer 容器下方的 `CySessionUsage`（「本会话累计」+「最近一轮」），**无数据整条隐藏（unknown ≠ 0）**；口径与不做项见 doc 02 §9.3／doc 03 §8，门禁与变异验证见 §3.1。`check:contract` 本机首次跑满三段（挂载 X99 契约 + traces）。
 
 ## 2. 阶段状态
@@ -1016,6 +1018,23 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **文档面改动**：新增 `docs/20-Cyrene-前端架构现状总览.md`；doc 00 的「从哪里开始」「文档职责」「核心编号文档」三张表与「00～19 号」元数据规则；README 文档入口；CLAUDE.md 阅读清单；`scripts/docs-check.mjs` 的核心文档数 20 → 21（前缀范围改为按长度生成，避免下次漏改提示语）。
 - **doc 20 的自我约束（防止再出现一份会撒谎的文档）**：只写**代码现状**、不写状态（状态一律指 doc 16）；每条结论给落点文件；单列一节写明「**不转述 review／审计记录的结论句**」；计数附可复现的复核命令并声明**不逐次追平**。
 - **未做**：doc 01 正文一字未改（保留其设计口径与既有就地更正）；未把 doc 20 挂进 doc 12（非路线变更）；**没有**任何自动化核对 doc 20 的数字与结构（数字漂移无门禁，属已知边界）；`review/2026-09-15-项目架构与进度总览.md` 未删除、未改写。
+
+### 3.4 CI 连续四轮红的两处根因与修复（2026-09-16，`5db4013`）
+
+> **这一节记的是流程失败，不只是两处测试缺陷。** 自 A 批 `e4d4afa` 起 CI 就是红的（连续四轮：`cd8be79`／`7e1986a`／`6d8d388`／`b578269`），而我在 §3.2 记的是「本地门禁全绿」——**我没有核对推送后的 CI 结果**。两处红都落在「本机永远走不到、只有 Linux 才执行」的分支上。
+
+| 红项 | 根因（读码 + CI 日志确认） | 为什么本机看不见 |
+|---|---|---|
+| `unit tests` → `tests/unit/tool-execution-abort.spec.ts:224` | 用例名是「授权后被换成指向别处的符号链接」，但实现把 `symlinkSync` 建在 `handleRequest` **之前** ⇒ 授权那一刻路径已是 symlink 态 ⇒ `captureFileIdentity` 返回 `undefined` ⇒ 身份复核判为「不适用」⇒ 执行期按 realpath 读到 70 KiB 的 `secret.txt` 并上传（CI 日志里 `uploadAttachment` 收到 `'secret.txt'` 即此） | 本机文件符号链接与 junction **实测均为 EPERM**（非开发者模式）⇒ 该用例一直走显式 `skip`；Linux 上真跑，故自 A 批起红 |
+| `integration (shard 2/3)` → `tests/integration/ipc-security.spec.ts:155` | 无 keyring 环境走 `console.log + return`（**零断言**）；B 批开启 `expect.requireAssertions` 后当场判定失败 | 本机 `safeStorage` 可用（`empty` 分支）⇒ 走的是有断言那条路；该分支只在 Linux 的 `unavailable` 下触发 |
+
+- **修法**：① 把换链移到 `handleRequest` 与 `decide` 之间（与相邻的 replaced 用例同构），并补断言 `status=failed` / `error.code=PATH_UNSAFE`（symlink 形态的错误码契约，与 `replaced`／`gone` 区分）；② 零断言分支改为显式 `skip`（计入 skipped，不再以「通过」出现），保留 M-32 的分支可见性日志。
+- **CI 实测（`5db4013`，run `35088844733`，11/11 job 全绿）**：
+  - `unit tests`：**266 文件 / 3345 passed + 6 expected-fail（3351），0 skipped** ⇒ 那条符号链接用例在 Linux 上**真的执行并通过**（对照：红的那轮是 3344 passed + 1 failed）——即 A4 的 symlink 分支**首次取得跨平台证据**；
+  - `integration (shard 2/3)`：`ipc-security.spec.ts (18 tests | 1 skipped)`，日志含「endpoint 绑定清理解除用例跳过：safeStorage 不可用」⇒ 不再以「零断言通过」出现。
+- **本机验证范围（不谎称）**：typecheck／lint／`pnpm test`（266 文件 / 3320 passed + 6 expected-fail + 25 skipped）／`ipc-security` 单跑 18/18（Windows 走可用分支）。**那两条分支在本机仍然跑不到**，其证据只有 Linux CI。
+- **流程更正（已写进 doc 08 的 2026-09-16 落地注记）**：批次记录里的「门禁绿」必须区分**本地**与 **CI**；凡覆盖声明依赖平台条件 `skip` 的用例，其验证面就是那个平台，批次收尾必须附 CI run 结论。
+- **未做**：未改任何产品代码（两处都是测试侧问题）；未加 retry、未放宽任何断言；未处置 `windows build-level` 在 run `35083388931` 的一次后端连接失败（该 job 在该 run 红、最新 run 已绿，属环境态，**未定性**）。
 
 ## 4. 阶段 8 阻塞项
 

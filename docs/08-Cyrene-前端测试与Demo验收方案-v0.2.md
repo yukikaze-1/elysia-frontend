@@ -534,3 +534,13 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 - `docs-check` 补 review/archive 断链**计数守护**（基线 43/26，超过即红并要求显式抬高）。
 - 已知 flake：`renderer-crash-banner.spec.ts`（CDP 在崩溃窗口内附着失败）——失败形态已从 60s 挂死改为可读超时，poll 预算 30s；**残余偶发仍在**。
 - 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。
+
+## 2026-09-16 补记（本地绿 ≠ CI 绿：平台条件 skip 的覆盖口径）
+
+- **`expect.requireAssertions` 的实例数是 5 而不是 4**（更正上一条注记）：第 5 处 `tests/integration/ipc-security.spec.ts` 的 `unavailable` 分支只在 **Linux** 触发（本机 `safeStorage` 可用），本机开关打开时看不见；它在 Linux CI 上当场地判红。**平台条件分支的判别力，必须在那台平台上读。**
+- **同一批还暴露了另一类同型问题**：`tool-execution-abort.spec.ts` 的符号链接用例在本机因 symlink EPERM（junction 同样 EPERM）长期 `skip`，其代码前提写错（换链建在授权之前）却一直无人发现，自 A 批起让 CI 的 `unit tests` 连续四轮红。
+- **口径（新增，长期有效）**：
+  1. 批次记录里的「门禁绿」必须写明是**本地**还是 **CI**，两者不得混称；
+  2. 凡覆盖声明依赖平台条件 `skip` 的用例，其验证面就是那个平台——**本机 skip 不等于该属性已验证**；
+  3. 批次收尾必须附 **CI run 结论**（run id + 结论），不得只凭本地门禁收口。
+- 修复与证据：`5db4013`／run `35088844733`（11/11 全绿；`unit tests` 3345 passed、0 skipped）。详见 [doc 16 §3.4](16-Cyrene-前端实施任务清单与进度跟踪.md)。
