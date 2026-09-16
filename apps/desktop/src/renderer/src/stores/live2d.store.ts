@@ -17,6 +17,7 @@ import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } f
 import { statePriority, type CharacterState } from '../live2d/state-machine'
 import { createLive2dStateSource, type Live2dStateSource } from '../live2d/state-source'
 import { createSineMouthSource, createStepMouthSource, createTtsMouthSource, type MouthLevelSource } from '../live2d/tts-mouth-source'
+import { decideDirective } from '../live2d/directive-rules'
 import { api } from './desktop-api'
 import { useSettingsStore } from './settings.store'
 import { useConnectionStore } from './connection.store'
@@ -24,12 +25,7 @@ import { useMessageStore } from './message.store'
 import { useVoiceStore } from './voice.store'
 import { useToolStore } from './tool.store'
 import { DEFAULT_LIVE2D } from '@shared/schemas'
-import type { DirectiveState, Live2DDirectiveEvent, Live2dFrameStats, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
-
-/** C3：DirectiveState 七值（剔除 error——error=3 必须 client 驱动，D5C-07）；越界（如 'error'/'working'）丢弃 */
-const DIRECTIVE_STATES: ReadonlySet<string> = new Set<DirectiveState>([
-  'idle', 'listening', 'thinking', 'speaking', 'happy', 'sad', 'surprised'
-])
+import type { Live2DDirectiveEvent, Live2dFrameStats, Live2DModelSummary, Message, PerformanceMode } from '@shared/contracts'
 
 /** 控制器工厂注入点（默认为真实装配；单测注入 fake controller 以在 node 环境驱动状态机） */
 type ControllerFactory = () => Live2DController
@@ -571,36 +567,37 @@ export const useLive2dStore = defineStore('live2d', () => {
 
   // —— Task 4（C3）：后端 Live2D 表现指令建议消费（live2d.directive，经 messageStore.applyEvent 分发路径）——
 
-  /** 校验/脱敏/指令>emotion：
+  /**
+   * 校验/脱敏/指令>emotion：
    *   ① state ∈ 七值（越界丢弃整条 + 脱敏 warn）；priority clamp ≤1；durationMs ∈ [0,30000]（越界 clamp）；
+   *      —— 规则本体在 `live2d/directive-rules.ts`（纯函数，可独立单测）
    *   ② state → stateSource.pushDirective（建议强度仲裁在 state-source 入口守卫——指令永不覆盖 client 2/3 级现实态）；
    *   ③ 指令 expression 优先发射（后置于 state push，使指令表达式为最终生效表达式）；白名单未命中 → 脱敏 warn
    *      （不记 payload 原文）；expression 成功 → 置 directiveExpressionActive 抑制 emotion→表情自动映射
    *      （仅指令瞬态实际置入时——拒绝路径无瞬态可清，不抑制）；
    *   ④ 指令 motion → controller.playMotion(file, clampedPriority, durationMs)；
-   *   ⑤ 无有效载荷 → 忽略 + 脱敏 warn。 */
+   *   ⑤ 无有效载荷 → 忽略 + 脱敏 warn。
+   */
   function handleDirective(event: Live2DDirectiveEvent): void {
     const ctrl = controller
-    const state = event.state
-    // ① 校验：state ∈ 七值（越界丢弃整条）
-    if (state !== undefined && !DIRECTIVE_STATES.has(state)) {
-      console.warn('[live2d] directive state 无效', { modelId: ctrl?.modelId ?? null, code: 'directive_invalid' })
+    const decision = decideDirective(event)
+    if (!decision.accepted) {
+      // 两类拒绝分开留痕：越界 state 是**契约漂移**（后端与前端对「建议态」的定义不一致），
+      // 空载荷只是这一帧没有可用内容。合并成一条会让诊断时无法区分该改谁。
+      if (decision.reason === 'state-out-of-range') {
+        console.warn('[live2d] directive state 无效', { modelId: ctrl?.modelId ?? null, code: decision.code })
+      } else {
+        console.warn('[live2d] directive 无有效载荷', { modelId: ctrl?.modelId ?? null, code: decision.code })
+      }
       return
     }
-    // ⑤ 无有效载荷 → 忽略 + 脱敏 warn
-    if (state === undefined && event.expression === undefined && event.motion === undefined) {
-      console.warn('[live2d] directive 无有效载荷', { modelId: ctrl?.modelId ?? null, code: 'directive_invalid' })
-      return
-    }
-    const clampedPriority = Math.min(1, event.priority ?? 0) // priority clamp ≤1（不覆盖 client 2/3 级现实态）
-    const durationMs = event.durationMs === undefined ? undefined : Math.min(30000, Math.max(0, event.durationMs))
     // ② 指令态 → pushDirective（返回是否实际置入——决定 ③ 是否抑制 emotion 自动映射）
-    const accepted = state !== undefined
-      ? (stateSourceHandle?.pushDirective(state, clampedPriority, durationMs) ?? false)
+    const accepted = decision.state !== undefined
+      ? (stateSourceHandle?.pushDirective(decision.state, decision.priority, decision.durationMs) ?? false)
       : false
     // ③ 指令>emotion：指令 expression 优先发射（后置于 state push——last-writer-wins 使指令表达式为最终生效）
-    if (event.expression !== undefined) {
-      const ok = ctrl?.setExpression(event.expression) ?? false
+    if (decision.expression !== undefined) {
+      const ok = ctrl?.setExpression(decision.expression) ?? false
       if (ok) {
         directiveExpressionActive.value = accepted
       } else {
@@ -608,8 +605,8 @@ export const useLive2dStore = defineStore('live2d', () => {
       }
     }
     // ④ 指令 motion
-    if (event.motion !== undefined) {
-      ctrl?.playMotion(event.motion, clampedPriority, durationMs)
+    if (decision.motion !== undefined) {
+      ctrl?.playMotion(decision.motion, decision.priority, decision.durationMs)
     }
   }
 

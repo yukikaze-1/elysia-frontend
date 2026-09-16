@@ -1,10 +1,14 @@
 // src/renderer/src/stores/conversation.store.ts
 // 会话列表/当前会话/激活/历史。activate 里 resetConversation(id) + 拉第一页历史(loadPage 去重按 messageId,P1-3)。
 // 批次B T8:初始化编排(FE-P1-03 §4.1)+ epoch 守卫(FE-P1-04 §4.2.3/4)+ ready/busy/error + 补激活(§4.1.3)。
+//
+// 本 store 是**Renderer facade**：持有响应式状态与编排（初始化/激活/增删改），判据交给
+// `src/renderer/src/conversation/**` 下的纯逻辑模块（无 Vue / 无 Pinia）：
+//   · `conversation/protocol`          —— 会话线协议解析、绑定快照冲突校验
+//   · `conversation/backend-identity`  —— 端点事实域身份与「换端点 → 清保留数据」判定
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import type { ConnectionState, Conversation } from '@shared/contracts'
-import { ConversationSchema, PageSchema } from '@shared/schemas'
 import { api } from './desktop-api'
 import { useMessageStore } from './message.store'
 import { useAttachmentStore } from './attachment.store'
@@ -16,6 +20,18 @@ import { useIdentityStore } from './identity.store'
 import { parsePublicError, type PublicError } from '../utils/public-error'
 import { cloneValue } from '@shared/domain'
 import { setActiveCharacterBinding, setConversationsSnapshot, setCurrentConversationId } from './session'
+import {
+  createEndpointDrift,
+  backendIdentity,
+  conversationConnectionSignature
+} from '../conversation/backend-identity'
+import {
+  assertNoBindingConflict,
+  bindingConflict,
+  parseConversationPage,
+  parseCreatedConversation,
+  profilesEnabledFor
+} from '../conversation/protocol'
 
 /** F8:messageOf 仅在 message.store 内定义(非导出),conversation.store 自定模块内 helper */
 function messageOf(e: unknown): string {
@@ -38,120 +54,6 @@ function parseActivationError(e: unknown): PublicError {
     return { ...parsed, message: AGENT_BUSY_ACTIVATE_MESSAGE }
   }
   return parsed
-}
-
-type BackendIdentity = {
-  key: string
-  /** URL-derived identities are authoritative enough to isolate old data. */
-  authoritative: boolean
-}
-
-/**
- * A connection id identifies a transport incarnation, not a backend.  Binding
- * snapshots are immutable within one backend, so use a normalized server URL
- * as the primary identity and only use the connection id as a conservative
- * fallback when the endpoint is not available (for example during startup).
- */
-function backendIdentity(state: ConnectionState): BackendIdentity | undefined {
-  const rawUrl = state.serverUrl?.trim()
-  if (rawUrl) {
-    try {
-      const parsed = new URL(rawUrl)
-      const origin = parsed.origin === 'null'
-        ? `${parsed.protocol}//${parsed.host}`
-        : parsed.origin
-      // The configured base URL is the backend fact domain.  Preserve its
-      // pathname (while normalising a trailing slash) so two distinct
-      // gateways on the same host are not treated as one authority.  Query
-      // and fragment are intentionally excluded: they are transport options,
-      // not a different backend.
-      const pathname = parsed.pathname.replace(/\/+$/, '') || '/'
-      if (origin && origin !== 'null') return { key: `url:${origin.toLowerCase()}${pathname}`, authoritative: true }
-    } catch {
-      // Invalid endpoint: fall through to the non-authoritative connection
-      // identity rather than throwing from state hydration.
-    }
-  }
-  const connectionId = state.connectionId?.trim()
-  return connectionId ? { key: `connection:${connectionId}`, authoritative: false } : undefined
-}
-
-function connectionSignature(state: ConnectionState): string {
-  return JSON.stringify([
-    state.status,
-    state.connectionId ?? null,
-    backendIdentity(state)?.key ?? null,
-    state.features?.characterProfiles === true
-  ])
-}
-
-function protocolError(message: string): Error {
-  return new Error(`[CHARACTER_CONVERSATION_PROTOCOL] ${message}`)
-}
-
-function parseConversation(value: unknown, profilesEnabled: boolean, requestedCharacterId?: string): Conversation {
-  const parsed = ConversationSchema.safeParse(value)
-  if (!parsed.success) throw protocolError('新建会话响应格式无效')
-  const conversation = parsed.data
-  if (profilesEnabled) {
-    if (!conversation.character) throw protocolError('角色模式的会话响应缺少角色绑定')
-    if (requestedCharacterId && conversation.character.characterId !== requestedCharacterId) {
-      throw protocolError('会话响应的角色绑定与请求不一致')
-    }
-  }
-  return cloneValue(conversation)
-}
-
-function parseCreatedConversation(value: unknown, requestedCharacterId?: string, profilesEnabled = false): Conversation {
-  return parseConversation(value, profilesEnabled, requestedCharacterId)
-}
-
-const ConversationPageSchema = PageSchema(ConversationSchema)
-
-/**
- * 角色能力开启后，列表也是角色绑定协议的一部分，而不是只有 create
- * 才需要校验。先完整解析整页，再交给调用方合并，确保坏页不会半写入
- * items/cache。
- */
-function parseConversationPage(value: unknown, profilesEnabled: boolean): { items: Conversation[]; hasMore: boolean; nextCursor?: string } {
-  const parsed = ConversationPageSchema.safeParse(value)
-  if (!parsed.success) throw protocolError('会话列表响应格式无效')
-  return {
-    items: parsed.data.items.map((item) => parseConversation(item, profilesEnabled)),
-    hasMore: parsed.data.hasMore,
-    ...(parsed.data.nextCursor !== undefined ? { nextCursor: parsed.data.nextCursor } : {})
-  }
-}
-
-function bindingConflict(left: NonNullable<Conversation['character']>, right: NonNullable<Conversation['character']>): 'identity' | 'revision' | 'snapshot' | undefined {
-  // A session's character/instance is immutable, but follow_latest sessions
-  // may advance to a newer content revision between turns.  Same-revision
-  // display changes are not a valid way to rewrite an existing snapshot.
-  if (left.characterId !== right.characterId || left.characterInstanceId !== right.characterInstanceId) return 'identity'
-  if (right.characterRevision < left.characterRevision) return 'revision'
-  if (right.characterRevision === left.characterRevision && (
-    left.displayName !== right.displayName || JSON.stringify(left.presentation) !== JSON.stringify(right.presentation)
-  )) return 'snapshot'
-  return undefined
-}
-
-/** 会话 binding 是创建时不可变快照；列表刷新不得用冲突快照覆盖权威结果。 */
-function assertNoBindingConflict(existing: Conversation[], incoming: Conversation[], compareBindings: boolean): void {
-  const byId = new Map(existing.map((item) => [item.id, item]))
-  const seenIncoming = new Set<string>()
-  for (const next of incoming) {
-    // Duplicates in one response are a protocol error even when the binding
-    // happens to be identical.  Silently keeping one would leave title/order
-    // selection dependent on Vue's duplicate-key reconciliation.
-    if (seenIncoming.has(next.id)) throw protocolError('会话列表同页包含重复会话')
-    seenIncoming.add(next.id)
-    const previous = byId.get(next.id)
-    if (compareBindings && previous?.character && next.character) {
-      const conflict = bindingConflict(previous.character, next.character)
-      if (conflict) throw protocolError(`会话列表返回了冲突的角色绑定快照(${conflict})`)
-    }
-    byId.set(next.id, next)
-  }
 }
 
 export const useConversationStore = defineStore('conversation', () => {
@@ -190,19 +92,9 @@ export const useConversationStore = defineStore('conversation', () => {
   let createEpoch = 0
   let createInFlight: Promise<Conversation | undefined> | undefined
   let connectionGeneration = 0
-  let knownConnectionSignature = connectionSignature(useConnectionStore().state)
-  const initialBackendIdentity = backendIdentity(useConnectionStore().state)
-  /** Last authoritative endpoint.  Missing/invalid URL states are only
-   * transport intermediates and must never overwrite this fact. */
-  let knownBackendIdentity = initialBackendIdentity?.authoritative
-    ? initialBackendIdentity
-    : undefined
-  let lastNonAuthoritativeIdentity = initialBackendIdentity?.authoritative
-    ? undefined
-    : initialBackendIdentity
-  /** Provenance of the currently retained list/cache.  Undefined means an
-   * offline/startup snapshot whose backend has not been established. */
-  let dataBackendIdentity: BackendIdentity | undefined
+  let knownConnectionSignature = conversationConnectionSignature(useConnectionStore().state)
+  /** 端点事实域台账（判据在 conversation/backend-identity）：最后权威端点、非权威回退、保留数据出处。 */
+  const endpointDrift = createEndpointDrift(useConnectionStore().state)
   /** The generation that introduced each in-memory list item. */
   const conversationGenerations = new Map<string, number>()
 
@@ -255,7 +147,7 @@ export const useConversationStore = defineStore('conversation', () => {
     initializedFor.value = undefined
     error.value = undefined
     conversationGenerations.clear()
-    dataBackendIdentity = undefined
+    endpointDrift.rememberData(undefined)
     cache.syncConversations([])
     for (const id of oldIds) cache.purge(id)
     if (oldCurrentId) oldMessageConversationIds.add(oldCurrentId)
@@ -269,30 +161,8 @@ export const useConversationStore = defineStore('conversation', () => {
   }
 
   function advanceConnectionGeneration(next: string, state: ConnectionState = useConnectionStore().state): void {
-    const nextIdentity = backendIdentity(state)
-    if (nextIdentity?.authoritative) {
-      // A first authoritative connection must not inherit an unproven startup
-      // cache.  Once an authoritative endpoint is known, temporary states
-      // without serverUrl do not replace it; a genuinely different endpoint
-      // is the only transition that clears retained facts.
-      if (
-        (knownBackendIdentity && knownBackendIdentity.key !== nextIdentity.key)
-        || (!knownBackendIdentity && hasRetainedConversationData() && dataBackendIdentity?.authoritative !== true)
-      ) clearBackendData()
-      knownBackendIdentity = nextIdentity
-      lastNonAuthoritativeIdentity = undefined
-    } else if (nextIdentity) {
-      // With no authoritative provenance, two different connection-only
-      // identities cannot be assumed to share a backend.  If an authoritative
-      // identity already exists this is merely a transient transport state.
-      if (!knownBackendIdentity) {
-        const identityChanged = lastNonAuthoritativeIdentity && lastNonAuthoritativeIdentity.key !== nextIdentity.key
-        const unprovenRetainedData = hasRetainedConversationData()
-          && (!dataBackendIdentity || dataBackendIdentity.key !== nextIdentity.key)
-        if (identityChanged || unprovenRetainedData) clearBackendData()
-      }
-      if (!knownBackendIdentity) lastNonAuthoritativeIdentity = nextIdentity
-    }
+    // 端点漂移判定（换后端 ⇒ 清掉保留的列表/缓存/消息；瞬态中间态 ⇒ 只读保留数据）。
+    endpointDrift.observe(state, hasRetainedConversationData, clearBackendData)
     if (next === knownConnectionSignature) return
     knownConnectionSignature = next
     connectionGeneration++
@@ -315,50 +185,18 @@ export const useConversationStore = defineStore('conversation', () => {
       || messageStore.order.length > 0
   }
 
-  /** A transport-only/intermediate state is not proof of a new backend.  Do
-   * not let it replace the last known URL authority's provenance; otherwise a
-   * transient reconnect could make an unrelated list look continuous. */
-  function rememberDataBackendIdentity(identity: BackendIdentity | undefined): void {
-    if (!identity) return
-    if (!identity.authoritative && knownBackendIdentity) return
-    dataBackendIdentity = identity
-  }
-
-  /**
-   * A connection-id fallback is useful while no endpoint has ever been
-   * established, but it is not evidence that a connected, URL-less state is
-   * the same backend as the last authoritative URL.  Keep that intermediate
-   * state read-only with respect to retained authoritative data: otherwise a
-   * reconnect snapshot with a fresh connection id could overwrite the old
-   * list and its immutable binding before the real endpoint is known.
-   */
-  function canCommitFromBackend(identity: BackendIdentity | undefined): boolean {
-    return !(knownBackendIdentity && (!identity || !identity.authoritative))
-  }
-
-  /** Binding conflicts are meaningful only inside the same provable fact
-   * domain.  Unknown identities may compare within the same transport
-   * incarnation; once an authoritative URL exists, a URL-less fallback must
-   * never be compared with or overwrite that domain. */
-  function canCompareBindings(left: BackendIdentity | undefined, right: BackendIdentity | undefined): boolean {
-    if (!left || !right || left.key !== right.key) return false
-    if (left.authoritative && right.authoritative) return true
-    return !knownBackendIdentity
-  }
-
   function observeConnectionState(): void {
     const state = useConnectionStore().state
-    advanceConnectionGeneration(connectionSignature(state), state)
+    advanceConnectionGeneration(conversationConnectionSignature(state), state)
   }
 
   function currentProfilesEnabled(): boolean {
-    const state = useConnectionStore().state
-    return state.status === 'connected' && state.features?.characterProfiles === true
+    return profilesEnabledFor(useConnectionStore().state)
   }
 
   function conversationStateIsCurrent(signature: string, generation: number, requireConnected = false): boolean {
     const state = useConnectionStore().state
-    return connectionSignature(state) === signature && connectionGeneration === generation && (!requireConnected || state.status === 'connected')
+    return conversationConnectionSignature(state) === signature && connectionGeneration === generation && (!requireConnected || state.status === 'connected')
   }
 
   function upsertConversation(conversation: Conversation): void {
@@ -367,7 +205,7 @@ export const useConversationStore = defineStore('conversation', () => {
     if (existingIndex < 0) items.value = [...items.value, next]
     else items.value = items.value.map((item, index) => index === existingIndex ? next : item)
     conversationGenerations.set(next.id, connectionGeneration)
-    rememberDataBackendIdentity(backendIdentity(useConnectionStore().state))
+    endpointDrift.rememberData(backendIdentity(useConnectionStore().state))
     useCacheStore().syncConversations(items.value)
   }
 
@@ -381,41 +219,41 @@ export const useConversationStore = defineStore('conversation', () => {
 
   /** Bootstrap 将每个连接状态交给会话域；跨世代时让新建操作的迟到响应失效。 */
   function setConnectionState(state: ConnectionState): void {
-    advanceConnectionGeneration(connectionSignature(state), state)
+    advanceConnectionGeneration(conversationConnectionSignature(state), state)
   }
 
   /** §4.2.4:list 包 try/catch 写 error 不抛 + busy */
   async function list(): Promise<boolean> {
     observeConnectionState()
     const capturedState = useConnectionStore().state
-    const capturedSignature = connectionSignature(capturedState)
+    const capturedSignature = conversationConnectionSignature(capturedState)
     const capturedGeneration = connectionGeneration
     const capturedBackend = backendIdentity(capturedState)
-    const capturedProfilesEnabled = capturedState.status === 'connected' && capturedState.features?.characterProfiles === true
+    const capturedProfilesEnabled = profilesEnabledFor(capturedState)
     const previousItems = cloneValue(items.value)
     const owner = acquireOperation()
     try {
       const p = await api.listConversations({})
-      if (connectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return false
-      if (!canCommitFromBackend(capturedBackend)) return false
+      if (conversationConnectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return false
+      if (!endpointDrift.canCommit(capturedBackend)) return false
       const page = parseConversationPage(p, capturedProfilesEnabled)
       const currentBackend = backendIdentity(useConnectionStore().state)
       assertNoBindingConflict(
         previousItems,
         page.items,
-        capturedProfilesEnabled && canCompareBindings(capturedBackend, currentBackend)
+        capturedProfilesEnabled && endpointDrift.canCompareBindings(capturedBackend, currentBackend)
       )
       items.value = cloneValue(page.items)
       conversationGenerations.clear()
       for (const item of items.value) conversationGenerations.set(item.id, connectionGeneration)
       hasMore.value = page.hasMore
       nextCursor.value = page.nextCursor
-      rememberDataBackendIdentity(capturedBackend)
+      endpointDrift.rememberData(capturedBackend)
       useCacheStore().syncConversations(items.value) // 在线列表 → 内存缓存（供离线切换判定；持久化列表由 Main 派生）
       error.value = undefined   // F1:成功清旧错误(短横幅语义,防残留)
       return true
     } catch (e) {
-      if (connectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return false
+      if (conversationConnectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return false
       error.value = parsePublicError(messageOf(e))
       return false
     } finally {
@@ -509,7 +347,7 @@ export const useConversationStore = defineStore('conversation', () => {
     }
     offlineView.value = false
     observeConnectionState()
-    const capturedSignature = connectionSignature(useConnectionStore().state)
+    const capturedSignature = conversationConnectionSignature(useConnectionStore().state)
     const capturedGeneration = connectionGeneration
     const myEpoch = ++epoch
     const owner = acquireOperation()
@@ -563,7 +401,7 @@ export const useConversationStore = defineStore('conversation', () => {
   async function getMore(): Promise<void> {
     if (!nextCursor.value) return
     observeConnectionState()
-    const capturedSignature = connectionSignature(useConnectionStore().state)
+    const capturedSignature = conversationConnectionSignature(useConnectionStore().state)
     const capturedGeneration = connectionGeneration
     const capturedProfilesEnabled = currentProfilesEnabled()
     const previousItems = cloneValue(items.value)
@@ -571,14 +409,14 @@ export const useConversationStore = defineStore('conversation', () => {
     const owner = acquireOperation()
     try {
       const p = await api.listConversations({ cursor: nextCursor.value })
-      if (connectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return
-      if (!canCommitFromBackend(capturedBackend)) return
+      if (conversationConnectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return
+      if (!endpointDrift.canCommit(capturedBackend)) return
       const page = parseConversationPage(p, capturedProfilesEnabled)
       const currentBackend = backendIdentity(useConnectionStore().state)
       assertNoBindingConflict(
         previousItems,
         page.items,
-        capturedProfilesEnabled && canCompareBindings(capturedBackend, currentBackend)
+        capturedProfilesEnabled && endpointDrift.canCompareBindings(capturedBackend, currentBackend)
       )
       const mergedById = new Map(items.value.map((item) => [item.id, item]))
       // A repeated id in a later page is unusual but can carry a newer
@@ -594,11 +432,11 @@ export const useConversationStore = defineStore('conversation', () => {
       for (const item of page.items) conversationGenerations.set(item.id, connectionGeneration)
       hasMore.value = page.hasMore
       nextCursor.value = page.nextCursor
-      rememberDataBackendIdentity(capturedBackend)
+      endpointDrift.rememberData(capturedBackend)
       useCacheStore().syncConversations(items.value)
       error.value = undefined   // F1:成功清旧错误
     } catch (e) {
-      if (connectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return
+      if (conversationConnectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return
       error.value = parsePublicError(messageOf(e))
     } finally {
       releaseOperation(owner)
@@ -634,7 +472,7 @@ export const useConversationStore = defineStore('conversation', () => {
 
     const myEpoch = ++createEpoch
     const capturedState = useConnectionStore().state
-    const capturedSignature = connectionSignature(capturedState)
+    const capturedSignature = conversationConnectionSignature(capturedState)
     const capturedGeneration = connectionGeneration
     const owner = acquireOperation()
     const input = requestedCharacterId ? { characterId: requestedCharacterId } : {}
@@ -692,7 +530,7 @@ export const useConversationStore = defineStore('conversation', () => {
       })
       .catch((cause: unknown) => {
         // 连接/能力已经跨代时，迟到响应只被丢弃，不覆盖新状态错误。
-        if (myEpoch !== createEpoch || connectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return undefined
+        if (myEpoch !== createEpoch || conversationConnectionSignature(useConnectionStore().state) !== capturedSignature || connectionGeneration !== capturedGeneration) return undefined
         error.value = parsePublicError(messageOf(cause))
         return undefined
       })
@@ -711,7 +549,7 @@ export const useConversationStore = defineStore('conversation', () => {
   /** §4.2.4 rename(单对象载荷 {conversationId,title},registry arity 约束,P2-4):try/catch + busy */
   async function rename(input: { conversationId: string; title: string }): Promise<void> {
     observeConnectionState()
-    const capturedSignature = connectionSignature(useConnectionStore().state)
+    const capturedSignature = conversationConnectionSignature(useConnectionStore().state)
     const capturedGeneration = connectionGeneration
     const owner = acquireOperation()
     try {
@@ -731,7 +569,7 @@ export const useConversationStore = defineStore('conversation', () => {
   /** §4.2.4 remove:try/catch + busy;删除当前激活会话 → currentId 清空 + messageStore 清空(空态,L1) */
   async function remove(id: string): Promise<void> {
     observeConnectionState()
-    const capturedSignature = connectionSignature(useConnectionStore().state)
+    const capturedSignature = conversationConnectionSignature(useConnectionStore().state)
     const capturedGeneration = connectionGeneration
     const wasActive = currentId.value === id
     const owner = acquireOperation()
@@ -766,9 +604,10 @@ export const useConversationStore = defineStore('conversation', () => {
     conversationGenerations.clear()
     for (const item of items.value) conversationGenerations.set(item.id, connectionGeneration)
     const stateIdentity = backendIdentity(useConnectionStore().state)
-    dataBackendIdentity = stateIdentity?.authoritative
-      ? stateIdentity
-      : knownBackendIdentity ?? stateIdentity
+    // 出处取「权威状态身份」优先，否则退回已知权威端点，最后才是当前（非权威）状态身份。
+    endpointDrift.rememberData(
+      stateIdentity?.authoritative ? stateIdentity : endpointDrift.known() ?? stateIdentity
+    )
     offlineView.value = true
     error.value = undefined
   }

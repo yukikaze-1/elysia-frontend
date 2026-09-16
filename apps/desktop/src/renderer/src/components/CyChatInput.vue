@@ -21,6 +21,7 @@ import CyRealtimeBar from './CyRealtimeBar.vue'
 import CyDictationHint from './CyDictationHint.vue'
 import CyVoiceConsentDialog from './CyVoiceConsentDialog.vue'
 import { errorMessage } from '../utils/error-message'
+import { createDictationHoldMachine, type DictationHoldAction } from '../composer/dictation-hold'
 
 const messageStore = useMessageStore()
 const conversationStore = useConversationStore()
@@ -63,83 +64,65 @@ function onToggleRealtime(): void {
 }
 
 // —— ⌨️ 转写：按住 pointerdown 开始 / pointerup 提交 / pointercancel 取消；上滑 60px 置 cancel 标记 → pointerup 走 cancel ——
+// 手势判据全在 `composer/dictation-hold.ts`（纯状态机，可按时间线单测；含 M-22 的键盘等价路径、
+// auto-repeat 门、`click` 迟到门与失焦兜底）。本组件只负责把 DOM 事件折算成它的输入、
+// 并把返回的动作接到 store 上。
+const dictationHold = createDictationHoldMachine()
+/**
+ * 上滑取消的**可视**标记。
+ *
+ * 状态机是纯 TS（不是响应式源），而 `.cancel` 类需要在 `pointermove` 时真的重新渲染——否则上滑到
+ * 取消区后按钮外观不变，用户拿不到「松手会取消」的反馈。故每帧把判定结果同步到一个 ref：
+ * 判据仍在模块里（单一实现），组件只镜像它用于渲染。
+ */
+const dictationCancelArmed = ref(false)
+
+function runDictationAction(action: DictationHoldAction): void {
+  if (action.kind === 'start') void voiceStore.startDictation()
+  else if (action.kind === 'stop') void voiceStore.stopDictation()
+  else if (action.kind === 'cancel') void voiceStore.cancelDictation()
+}
+
 /** UII02：主键 pointerdown 门——录音中不触发转录 hold（主键在 recording 态是「停止录音」toggle，不 startDictation） */
 function onVoicePointerDown(e: PointerEvent): void {
-  if (voiceStore.mode === 'recording') return
-  onDictationPointerDown(e)
+  const action = dictationHold.pointerDown({
+    pointerAllowed: !(voiceActive.value && voiceStore.mode !== 'dictating'),
+    startAllowed: !dictationDisabled.value,
+    y: e.clientY
+  })
+  if (action.kind === 'start') (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+  dictationCancelArmed.value = false
+  runDictationAction(action)
 }
-const dictationHold = ref<{ startY: number; cancel: boolean } | null>(null)
-/** M-22：键盘"按住"门——与 dictationHold 分离存放。原因：dictationHold 承载 pointer 专属数据
- *  （startY 上滑基准 + cancel 标记）并驱动 `.cancel` 视觉；键盘没有坐标，复用会让 pointermove
- *  的上滑语义对键盘态产生无意义耦合判断。两者都以"按住中"为真值，故共用同一套 start/stop 出口。 */
-const keyboardHolding = ref(false)
-/** 记录本次按住是如何开始的：`blur` 兜底必须能分辨"键盘按住中被拿走焦点"（keyup 永远收不到 → 可能
- *  留下无 UI 解释的持续采集）与"上滑取消后失焦"（已进 cancel 态，不该再补一次 stop） */
-let holdStartedByKeyboard = false
-/** 订阅式 start（M-22 要求「click 晚到不得二次进入」）：**同步**置 hold 标记，因此同一次按键
- *  auto-repeat 产生的后续 keydown、以及 keydown 之后浏览器补发的 `click`，都到不了 store。
- *  `startDictation` 自身也有 mode 门（voice.store guardStart），但它的 id 是 `await` 之后才记入的，
- *  「按下→立刻松开→再按」在 await 窗口内 mode 仍是 idle——单靠 store 门挡不住第二次 start。 */
-function beginDictationHold(): void {
-  dictationHold.value = { startY: Number.POSITIVE_INFINITY, cancel: false }
-  void voiceStore.startDictation()
+function onDictationPointerMove(e: PointerEvent): void {
+  dictationHold.pointerMove(e.clientY)
+  dictationCancelArmed.value = dictationHold.hold?.cancel === true
 }
-function onDictationPointerDown(e: PointerEvent): void {
-  if (voiceActive.value && voiceStore.mode !== 'dictating') return
-  if (dictationHold.value) return   // M-22：键盘已按住时忽略 pointer（两条路径不得同时起一次采集）
-  holdStartedByKeyboard = false
-  dictationHold.value = { startY: e.clientY, cancel: false }
-  ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
-  void voiceStore.startDictation()
+function onDictationPointerUp(): void {
+  dictationCancelArmed.value = false
+  runDictationAction(dictationHold.pointerUp())
 }
+function onDictationPointerCancel(): void {
+  dictationCancelArmed.value = false
+  runDictationAction(dictationHold.pointerCancel())
+}
+
 /** M-22：键盘路径（Enter / Space）——「按住说话」的等价键盘语义：keydown 起采集、keyup 提交。
- *  - `e.repeat` 门 + `keyboardHolding` 门：系统按键自动重复的多次 keydown 不重入；
  *  - `@keydown.enter.prevent` / `@keydown.space.prevent`（模板）阻止 Enter/Space 的默认行为，
- *    从而**不产生合成 click**——所以本按钮不需要 `@click`，也就不存在"keyup 已 stop、click 又 start"；
- *  - 与 pointer 路径同一禁用门（dictationDisabled）：语音关闭 / 其它语音模式进行中不放行。 */
+ *    从而**不产生合成 click**——所以本按钮不需要 `@click`，也就不存在"keyup 已 stop、click 又 start"。 */
 function onDictationKeydown(e: KeyboardEvent): void {
   if (e.key !== 'Enter' && e.key !== ' ') return
   e.preventDefault()
-  if (e.repeat || keyboardHolding.value) return
-  if (dictationDisabled.value) return
-  holdStartedByKeyboard = true
-  keyboardHolding.value = true
-  beginDictationHold()
+  runDictationAction(dictationHold.keyDown({ key: e.key, repeat: e.repeat, startAllowed: !dictationDisabled.value }))
 }
 function onDictationKeyup(e: KeyboardEvent): void {
-  if (e.key !== 'Enter' && e.key !== ' ') return
-  if (!keyboardHolding.value) return
-  keyboardHolding.value = false
-  holdStartedByKeyboard = false
-  onDictationPointerUp()
+  runDictationAction(dictationHold.keyUp(e.key))
 }
 /** 兜底：按住期间按钮失焦（Tab 走开 / 宿主重渲染）→ keyup 不会再到达本元素，采集会一直留在
- *  'dictating' 且没有任何 UI 能解释。仅键盘按住路径补一次提交；上滑取消态不重复收尾。
- *  采集未能启动（start 被 guard 拒绝）时 mode 不为 'dictating'，同样不误调 stop。 */
+ *  'dictating' 且没有任何 UI 能解释。仅键盘按住路径补一次提交；上滑取消态不重复收尾；
+ *  采集未能启动（start 被 guard 拒绝）时也不误调 stop（判据用 store 的实际模式）。 */
 function onDictationBlur(): void {
-  if (!keyboardHolding.value) return
-  keyboardHolding.value = false
-  holdStartedByKeyboard = false
-  if (voiceStore.mode !== 'dictating') { dictationHold.value = null; return }
-  onDictationPointerUp()
-}
-function onDictationPointerMove(e: PointerEvent): void {
-  if (!dictationHold.value) return
-  if (e.clientY < dictationHold.value.startY - 60) dictationHold.value.cancel = true
-}
-function onDictationPointerUp(): void {
-  const hold = dictationHold.value
-  dictationHold.value = null
-  // M-22：键盘路径也经此收尾（keyup/blur）——收尾即按住结束，键盘门一并复位，避免指针路径
-  // 结束后 keyboardHolding 残留导致下一次 keyup 被误判为"有按住"而多发一次 stop。
-  if (holdStartedByKeyboard) { holdStartedByKeyboard = false; keyboardHolding.value = false }
-  if (!hold) return
-  if (hold.cancel) void voiceStore.cancelDictation()
-  else void voiceStore.stopDictation()
-}
-function onDictationPointerCancel(): void {
-  dictationHold.value = null
-  void voiceStore.cancelDictation()
+  runDictationAction(dictationHold.blur({ dictating: voiceStore.mode === 'dictating' }))
 }
 
 // —— UII02/rev 录音：独立按钮（去掉 ▾ 下拉菜单，作为单独按钮放工具栏）。toggle 录音，复用 onToggleRecord ——
@@ -476,10 +459,12 @@ async function onPaste(e: ClipboardEvent): Promise<void> {
           <!-- 🎙️ 转录主键(hold)：按住说→进草稿。上滑取消语义不变。
                M-22：键盘等价路径——Enter/Space keydown 起采集、keyup 提交（`aria-pressed` 随之暴露"按住中"）。
                `.prevent` 是必要性而非风格：它抑制 Enter/Space 的默认激活 → 不产生合成 click，
-               故 keyup 之后不存在"click 又把采集开回来"的一次重复进入。 -->
+               故 keyup 之后不存在"click 又把采集开回来"的一次重复进入。
+               注：`.cancel` 读的是 `dictationCancelArmed`（pointermove 时同步的渲染镜像）——
+               手势状态机本身是纯 TS，直接读它不会触发重渲染。取消语义仍由状态机决定。 -->
           <button
             class="cy-voice-btn"
-            :class="{ active: voiceStore.mode === 'dictating', cancel: dictationHold?.cancel }"
+            :class="{ active: voiceStore.mode === 'dictating', cancel: dictationCancelArmed }"
             :disabled="dictationDisabled"
             :aria-pressed="voiceStore.mode === 'dictating'"
             :title="'转写（按住说话）'"

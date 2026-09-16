@@ -132,6 +132,32 @@ describe('messageStore 流式应用', () => {
     expect(store.byId['msg-1']?.usage).toBeUndefined()
   })
 
+  /**
+   * 2026-09-17（Prompt 4）：`attribution` 的判定**分类**决定了 `droppedEvents` 的读数。
+   *
+   * 这两条之前是静默 `break`，现在被计数——`droppedEvents` 是公开诊断量且多处按精确值断言，
+   * 故把「哪些丢弃计入」钉住，避免将来改动分类时无人察觉。
+   */
+  it('cancel 后同代迟到 delta 计入 droppedEvents（stale-generation 分类）', async () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    await store.cancel()
+    expect(store.droppedEvents).toBe(0)
+    store.applyEvent(delta('seg-late', 0, '迟到的正文'))
+    expect(store.droppedEvents, '已中断消息的迟到 delta 必须被计数（否则这代丢弃不可观测）').toBe(1)
+    expect(store.byId['msg-1']?.assistantSegments).toHaveLength(0)
+  })
+
+  it('accumulator 已换成别的代 → 计入 droppedEvents（unknown-generation 分类）', () => {
+    const store = useMessageStore()
+    store.applyEvent(started())
+    store.applyEvent({ ...started(), generationId: 'gen-2', messageId: 'msg-2', responseId: 'gen-2' })
+    const before = store.droppedEvents
+    // gen-1 的中间事件：会话与世代都对，但 accumulator 现在属于 gen-2
+    store.applyEvent({ ...delta('seg-a', 0, 'x'), generationId: 'gen-1' })
+    expect(store.droppedEvents).toBe(before + 1)
+  })
+
   it('旧 cancel IPC 迟到不应中断新 generation', async () => {
     let resolveCancel!: () => void
     mockApi.cancel.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveCancel = resolve }))

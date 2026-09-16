@@ -71,6 +71,11 @@ function lastRecordingId(): string {
   return mockApi.voiceStartRecord.mock.calls.at(-1)![0].recordingId
 }
 
+/** store 生成的当前转写请求 id（从 voiceStartDictation 调用参数取）——dictation 事件的会话栅栏依据 */
+function lastDictationRequestId(): string {
+  return mockApi.voiceStartDictation.mock.calls.at(-1)![0].clientRequestId
+}
+
 describe('voiceStore', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -620,6 +625,9 @@ describe('voiceStore', () => {
     const handler = subscribe(store)
     handler(ev({ event: 'voice_session.started', sessionId: 'vs_1', conversationId: 'conv-1' }))
     expect(store.mode).toBe('realtime')
+    // 2026-09-17（Prompt 4 批次）：`realtime.sessionId` 现在记的是**后端确认的**会话标识
+    // （started 带回），而不是本 store 上行时生成的 `vs_<uuid>`——后者与后端标识不相等。
+    // 它是 voice_session.* 事件的会话栅栏依据（异 id 的迟到事件一律丢弃）。
     expect(store.realtime.sessionId).toBe('vs_1')
     handler(ev({ event: 'voice_session.partial', sessionId: 'vs_1', turnId: 1, segmentIndex: 0, text: '你好' }))
     expect(store.realtime.caption).toBe('你好')
@@ -732,7 +740,9 @@ describe('voiceStore', () => {
     handler(ev({ event: 'dictation.partial', text: '部分' }))
     expect(store.dictation.caption).toBe('部分')
     expect(store.dictation.finalText).toBeUndefined()
-    handler(ev({ event: 'dictation.final', clientRequestId: 'req_1', text: '完整文本' }))
+    // 2026-09-17（Prompt 4 批次）：final 现在必须属于**当前打开的**转写会话（clientRequestId 相符），
+    // 否则会被当作已取消/已放弃会话的迟到终态丢弃（那条路径会把文本插进当前会话草稿）。
+    handler(ev({ event: 'dictation.final', clientRequestId: lastDictationRequestId(), text: '完整文本' }))
     expect(store.dictation.finalText).toBe('完整文本')
     expect(store.dictation.caption).toBe('完整文本')
     expect(store.mode).toBe('dictating') // 组件消费后 clearDictationFinal 才回 idle
@@ -745,11 +755,12 @@ describe('voiceStore', () => {
   it('dictation：cancelDictation → voiceCancelDictation；cancelled 事件清态回 idle', async () => {
     const store = useVoiceStore()
     await store.startDictation()
+    const requestId = lastDictationRequestId()
     await store.cancelDictation()
     expect(fake.stop).toHaveBeenCalled()
-    expect(mockApi.voiceCancelDictation).toHaveBeenCalledWith({ clientRequestId: stringMatching(/^req_/) })
+    expect(mockApi.voiceCancelDictation).toHaveBeenCalledWith({ clientRequestId: requestId })
     const handler = subscribe(store)
-    handler(ev({ event: 'dictation.cancelled', clientRequestId: 'req_1' }))
+    handler(ev({ event: 'dictation.cancelled', clientRequestId: requestId }))
     expect(store.dictation.caption).toBe('')
     expect(store.mode).toBe('idle')
   })
@@ -833,7 +844,7 @@ describe('voiceStore', () => {
       await store.startDictation()
       expect(store.mode).toBe('dictating')
       const handler = subscribe(store)
-      handler(ev({ event: 'dictation.final', clientRequestId: 'req_1', text: '文本' }))
+      handler(ev({ event: 'dictation.final', clientRequestId: lastDictationRequestId(), text: '文本' }))
       store.clearDictationFinal()   // 组件消费后回 idle
       await store.startDictation()
       expect(mockApi.voiceStartDictation).toHaveBeenCalledTimes(2)
@@ -1018,6 +1029,8 @@ describe('voiceStore', () => {
     await store.reset()
     expect(fake.stop).toHaveBeenCalled()
     expect(store.mode).toBe('idle')
+    // 2026-09-17（Prompt 4 批次）：reset 是「无条件收敛」，清态与模式回到空闲一并完成，
+    // 故这里必须清掉 realtime 会话标识（无论它记的是上行生成的 id 还是后端确认的 id）。
     expect(store.realtime.sessionId).toBeUndefined()
     expect(store.tts.playing).toBe(false)
     expect(store.tts.playingStreamId).toBeUndefined()

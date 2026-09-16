@@ -2,6 +2,11 @@
 //
 // 当前 store 只保存 Renderer 内存中的编辑会话和未提交草稿；完整草稿经
 // Main 的具名 IPC 恢复，不使用 localStorage/sessionStorage。
+//
+// 纯逻辑下沉到 `src/renderer/src/character-editor/**`（无 Vue / 无 Pinia）：
+//   · `draft-patch`     —— JSON Pointer / dot-path 写入（含原型污染与越界守卫）
+//   · `draft-templates` —— 空草稿骨架、详情→草稿映射、错误构造、冲突码判定
+// 本文件保留：响应式状态、会话/快照世代栅栏、IPC 编排与持久化序列化。
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type {
@@ -19,8 +24,19 @@ import type {
 } from '@shared/contracts'
 import { CharacterDraftKeySchema, CharacterDraftSummarySchema, PersistedCharacterDraftSchema } from '@shared/schemas'
 import { api } from './desktop-api'
-import { parsePublicError, type PublicError } from '../utils/public-error'
+import type { PublicError } from '../utils/public-error'
 import { cloneValue } from '@shared/domain'
+import { applyDraftPatch } from '../character-editor/draft-patch'
+import {
+  draftFromDetail,
+  emptyDraft,
+  errorFromValidation,
+  isRevisionConflict,
+  isValidStatePolicy,
+  missingApiError,
+  offlineError,
+  publicError
+} from '../character-editor/draft-templates'
 
 export const CHARACTER_EDITOR_DRAFT_DEBOUNCE_MS = 800
 
@@ -59,57 +75,6 @@ interface SaveFlight {
   editorGeneration: number
   connectionEpoch: number
   promise: Promise<SavedCharacter | undefined>
-}
-
-function publicError(cause: unknown): PublicError {
-  return parsePublicError(cause instanceof Error ? cause.message : String(cause))
-}
-
-function offlineError(): Error {
-  return new Error('[NOT_CONNECTED] [backendCode=CHARACTER_OFFLINE] 当前未连接，角色远端操作不会排队')
-}
-
-function missingApiError(name: string): Error {
-  return new Error(`[CHARACTER_PROFILES_UNAVAILABLE] [backendCode=CHARACTER_PROFILES_UNAVAILABLE] 角色${name} API 尚未装配`)
-}
-
-function emptyDraft(displayName = '新角色'): CharacterDraft {
-  return {
-    displayName,
-    description: '',
-    aliases: [],
-    promptProfile: {
-      corePersonality: '', relationshipStyle: '', emotionStyle: '', speakingStyle: '',
-      conversationInitiative: '', examples: []
-    },
-    runtimeDefaults: {
-      voice: {}, emotion: { idleExpressions: [] }, wakeWords: [],
-      proactive: { enabled: false, intervalSeconds: 3600, triggers: [] }
-    },
-    presentation: {}
-  }
-}
-
-function draftFromDetail(detail: CharacterDetail): CharacterDraft {
-  const current = detail.current
-  return cloneValue({
-    displayName: current.displayName,
-    description: current.description,
-    aliases: current.aliases,
-    promptProfile: current.promptProfile,
-    runtimeDefaults: current.runtimeDefaults,
-    presentation: current.presentation,
-    ...(current.openingMessage !== undefined ? { openingMessage: current.openingMessage } : {})
-  })
-}
-
-function errorFromValidation(result: CharacterValidationResult): PublicError {
-  return { code: 'BACKEND_REJECTED', backendCode: 'CHARACTER_VALIDATION', message: 'LOCAL:CHARACTER_VALIDATION', issues: cloneValue(result.issues) }
-}
-
-function isRevisionConflict(error: PublicError): boolean {
-  return error.backendCode === 'CHARACTER_REVISION_CONFLICT' || error.backendCode === 'CHARACTER_STATE_CONFLICT'
-    || error.backendCode === 'CHARACTER_STATE_VERSION_CONFLICT'   // D-2：mock 后端实发码，此前落到非冲突分支
 }
 
 export const useCharacterEditorStore = defineStore('character-editor', () => {
@@ -354,42 +319,19 @@ export const useCharacterEditorStore = defineStore('character-editor', () => {
 
   /** JSON Pointer/dot path field update, restricted to own data properties. */
   function updateField(path: string, value: unknown): void {
-    const current = draft.value ? cloneValue(draft.value) : emptyDraft()
-    const segments = path.startsWith('/')
-      ? path.slice(1).split('/').map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
-      : path.split('.')
-    if (!segments.length || segments.some((part) => !part || part === '__proto__' || part === 'prototype' || part === 'constructor')) return
-    let target: Record<string, unknown> | unknown[] = current as unknown as Record<string, unknown>
-    for (let index = 0; index < segments.length - 1; index++) {
-      const segment = segments[index]
-      if (Array.isArray(target)) {
-        const arrayIndex = Number(segment)
-        if (!Number.isSafeInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= target.length) return
-        const child = target[arrayIndex]
-        if (!child || typeof child !== 'object') return
-        target = child as Record<string, unknown> | unknown[]
-      } else {
-        const child = target[segment]
-        if (!child || typeof child !== 'object') return
-        target = child as Record<string, unknown> | unknown[]
-      }
-    }
-    const leaf = segments[segments.length - 1]
-    if (Array.isArray(target)) {
-      const arrayIndex = Number(leaf)
-      if (!Number.isSafeInteger(arrayIndex) || arrayIndex < 0 || arrayIndex >= target.length) return
-      target[arrayIndex] = cloneValue(value)
-    } else {
-      if (!Object.prototype.hasOwnProperty.call(target, leaf)) return
-      target[leaf] = cloneValue(value)
-    }
-    updateDraft(current)
+    // 路径解析、原型污染/越界守卫、深拷贝写入全部在 character-editor/draft-patch（纯函数，可独立单测）。
+    // `applyDraftPatch` 返回**新的**草稿对象（且不改入参），故此处不再预先 cloneValue——
+    // 那会让每次表单写入深拷贝两遍（重构前只拷一遍）。
+    const current = draft.value ?? emptyDraft()
+    const next = applyDraftPatch(current, path, value)
+    if (!next) return   // 路径非法/越界/叶子非自有属性 ⇒ 完全不改动草稿（不是半写入）
+    updateDraft(next)
   }
 
   const setField = updateField
 
   function setStatePolicy(policy: CharacterStatePolicy): void {
-    if (policy !== 'preserve' && policy !== 'reset_evolution') return
+    if (!isValidStatePolicy(policy)) return
     if (statePolicy.value === policy) return
     statePolicy.value = policy
     draftGeneration++
