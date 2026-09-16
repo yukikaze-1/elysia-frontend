@@ -15,7 +15,7 @@ import { SettingsStateSchema, DEFAULT_SETTINGS } from '../../src/shared/schemas'
 import { decideMicrophoneAllow, registerMicrophonePermission } from '../../src/main/windows/mic-permission'
 import type { MessageSanitizer } from '../../src/main/diagnostics/sanitize'
 import type { Logger } from '../../src/main/diagnostics/logger'
-import type { BackendAdapter } from '../../src/main/transport/backend-adapter'
+import type { VoiceBackendPort } from '../../src/main/transport/backend-ports'
 import { MAX_AUDIO_CHUNK_BYTES } from '../../src/main/voice/voice-handlers'
 
 const sanitize: MessageSanitizer = (m) => m
@@ -74,14 +74,14 @@ interface SettingsLike { load: () => Promise<unknown>; save: (patch: unknown) =>
 type SettingsStub = SettingsLike & { loadForRenderer?: () => Promise<unknown> }
 
 /** 每次 resetModules + 动态 import 拿全新 registry/voice-handlers/settings-handlers（registry 的 registered Set 模块级，避免重复注册抛错） */
-async function registerOnce(adapter: unknown, settings: SettingsStub): Promise<{ invoke: (channel: string, ...args: unknown[]) => Promise<IpcResult<unknown>>; emitOneWay: (channel: string, event: unknown, payload: unknown) => void; logger: Logger }> {
+async function registerOnce(backend: VoiceBackendPort, settings: SettingsStub): Promise<{ invoke: (channel: string, ...args: unknown[]) => Promise<IpcResult<unknown>>; emitOneWay: (channel: string, event: unknown, payload: unknown) => void; logger: Logger }> {
   vi.resetModules()
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() } as unknown as Logger
   const { setMainWindow } = await import('../../src/main/ipc/registry')
   const { registerVoiceHandlers } = await import('../../src/main/voice/voice-handlers')
   const { registerSettingsHandlers } = await import('../../src/main/settings/settings-handlers')
   setMainWindow(fakeWindow as never)
-  registerVoiceHandlers({ adapter: adapter as BackendAdapter, media: {} as never, sanitize, logger })
+  registerVoiceHandlers({ backend, media: {} as never, sanitize, logger })
   registerSettingsHandlers({ settings: { loadForRenderer: settings.load, ...settings } as never, sanitize, logger })
   return {
     invoke: (channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> => {

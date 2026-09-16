@@ -16,14 +16,15 @@ import type { ApplicationServices } from './services'
 
 export function installShutdownSequence(infrastructure: Infrastructure, services: ApplicationServices): void {
   const { diagnostics, credentials } = infrastructure
-  const { adapter } = services
+  // 连接视图（BackendConnectionPort）：退出步骤只需要 disconnect 一项能力
+  const { connection } = services.backend
 
   const shutdown = createShutdownHandler({
     steps: [
       // H-04：最先 flush Renderer 侧防抖态——它是最容易丢且最贴近用户输入的一批写入
       { name: 'renderer-persist', run: () => services.persistFlush.request() },
       { name: 'credentials', run: () => credentials.close() },
-      { name: 'adapter', run: () => adapter.disconnect() },
+      { name: 'adapter', run: () => connection.disconnect() },
       { name: 'diagnostics', run: () => diagnostics.closeAll() }
     ],
     quit: () => app.quit(),

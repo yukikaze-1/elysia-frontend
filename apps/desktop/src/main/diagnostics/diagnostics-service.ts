@@ -2,7 +2,7 @@
 // 阶段 7 批次 A（spec §6.3/§6.4）：诊断服务骨架——getState/setDevMode/dispose + devTap
 // （协议事件 → {ts,type,preview} ring 200 FIFO + 100ms 节流 push + devMode 门控 + 回调体异常隔离）。
 // Task 3 交付边界：openLogDir/clearLogs/exportPackage 由 Task 4 补齐（本 task 不在接口中——避免桩，F-05）。
-// 装配注入（F-08 定案）：adapter 经 deps 传入、service 构造期即 subscribe（无 attachAdapter 方法）；
+// 装配注入（F-08 定案）：后端事件源经 deps 传入、service 构造期即 subscribe（无 attachAdapter 方法）；
 // devTap 回调体 try/catch 异常隔离（R2-3/安全 LOW①——real emit 无兜底，devTap 抛错即断聊天事件流）。
 import { readdirSync, statSync } from 'fs'
 import { readdir, readFile, realpath, stat } from 'fs/promises'
@@ -20,7 +20,7 @@ import type { Logger } from './logger'
 import type { MessageSanitizer } from './sanitize'
 import { redactSensitiveValues } from './redact'
 import { CyreneError, CyreneErrorCode } from '@shared/errors'
-import type { BackendAdapter } from '../transport/backend-adapter'
+import type { BackendEventSourcePort } from '../transport/backend-ports'
 import type { BackendEvent } from '@shared/contracts/events'
 import type { DiagnosticsExportResult } from '@shared/contracts/diagnostics'
 import { DIAGNOSTICS_PREVIEW_MAX, type DiagnosticsDevEvent, type DiagnosticsState } from '@shared/contracts/diagnostics'
@@ -165,7 +165,7 @@ export function createDiagnosticsService(deps: {
   auditor: Auditor
   logWriter: FileWriter
   sanitize: MessageSanitizer
-  adapter: BackendAdapter            // 事件源（spec §6.3 deps 注入式——装配时序：index.ts 先 adapter 后 service；无 attachAdapter 方法——符合性 F-08 定案）
+  events: BackendEventSourcePort         // 事件源（spec §6.3 deps 注入式——装配时序：组合根先建适配器后建 service；无 attachAdapter 方法——符合性 F-08 定案）；本服务只用 subscribe 一项能力
   openPath?: (dir: string) => Promise<string>   // 默认 shell.openPath；测试注入（openLogDir 消费）
   dialogs?: DialogPort                           // 原生保存对话框（诊断包导出）；缺省取统一入口单例
   getMainWindow?: () => BrowserWindow | undefined  // 导出保存对话框父窗（Task 5 接线；缺省/undefined → 无父对话框）
@@ -222,7 +222,7 @@ export function createDiagnosticsService(deps: {
     }
   }
 
-  const unsubscribe = deps.adapter.subscribe(devTap) // 构造期订阅（F-08：事件源经 deps 注入；dispose 退订）
+  const unsubscribe = deps.events.subscribe(devTap) // 构造期订阅（F-08：事件源经 deps 注入；dispose 退订）
 
   /** 审计 fail-open（C1 同口：审计失败不改变操作结果——fire-and-forget + 失败仅日志） */
   const auditFailOpen = (event: Parameters<Auditor['audit']>[0]): void => {

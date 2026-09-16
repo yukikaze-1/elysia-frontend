@@ -5,7 +5,7 @@ import { CyreneError, CyreneErrorCode } from '@shared/errors'
 import type { FileValidationResult, MessageAttachment, UploadFileDescriptor } from '@shared/contracts'
 import type { AttachmentInfo, AttachmentKind } from '@shared/contracts'
 import { ATTACHMENT_AGGREGATE_BYTES } from '@shared/contracts/attachments'
-import type { BackendAdapter, UploadContent } from '../transport/backend-adapter'
+import type { AttachmentBackendPort, UploadContent } from '../transport/backend-ports'
 import type { SafeOpenPlatform } from '../persistence/safe-open'
 import { precheckFiles, sniffKind, sizeLimitFor, wireKindHint } from './attachment-policy'
 import { isPathBlacklisted } from '../tools/tool-policy'
@@ -19,7 +19,8 @@ export interface UploadFs {
 }
 
 export interface UploadServiceDeps {
-  backend: Pick<BackendAdapter, 'uploadAttachments'>
+  /** 只需"上传字节"这一项能力（`AttachmentBackendPort` 的窄视图；签名 URL 与归档读取属于 MediaService） */
+  backend: Pick<AttachmentBackendPort, 'uploadAttachments'>
   userDataBase: () => string
   platform: SafeOpenPlatform
   /**

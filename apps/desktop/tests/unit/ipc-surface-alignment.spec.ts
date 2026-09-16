@@ -119,8 +119,8 @@ const preloadChannels = sorted(scanPreloadChannels())
 const deps = {
   credentials: {}, logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   chat: {}, connectionConfig: {}, sessionStore: {},
-  attachments: { svc: {}, media: {} }, models: { adapter: {}, media: {} },
-  settings: { svc: {} }, voice: { adapter: {}, media: {} }, live2d: { registry: {} },
+  attachments: { svc: {}, media: {} }, models: { backend: {}, media: {} },
+  settings: { svc: {} }, voice: { backend: {}, media: {} }, live2d: { registry: {} },
   tools: {}, grants: {}, auditDir: 'C:/cyrene-surface-alignment/audit',
   diagnostics: {}, characters: { service: {} }, characterDrafts: {},
   persistFlush: { request: vi.fn(), acknowledge: vi.fn() }

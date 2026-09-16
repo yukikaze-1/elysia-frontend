@@ -44,6 +44,11 @@ export interface MockFixtureEnv {
 }
 
 export interface Transport {
+  /**
+   * 后端适配器的**具体聚合面**——只有组合根持有它（构造与接线槽赋值）。
+   * 应用服务不消费本字段：各自只被注入需要的领域端口视图（`transport/backend-ports.ts`），
+   * 由 `createApplicationServices` 在这里按需取出后传入。
+   */
   adapter: BackendAdapter
   useMock: boolean
   /** 角色域后端装配（real 与 mock 都在 `createTransport` 内解析完成） */
@@ -123,8 +128,8 @@ export function createTransport(options: TransportOptions): Transport {
     adapter,
     useMock: true,
     characterBackend: resolveCharacterServiceBackend({
+      // mock 分支不传 adapter：角色能力来自 MockCharacterBackend 的显式端口（连接状态不参与角色能力判定）
       useMock: true,
-      adapter,
       mockBackend: mockCharacterBackend,
       getMockFeatures: () => mockCharacterBackend.features
     }),

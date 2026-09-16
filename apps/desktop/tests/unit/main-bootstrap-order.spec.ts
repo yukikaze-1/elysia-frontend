@@ -569,7 +569,8 @@ describe('Composition Root wiring 缺口（报告 §12 的四个未覆盖点）'
     infrastructure.credentials.close = async () => { h.calls.push('step:credentials') }
     infrastructure.diagnostics.closeAll = async () => { h.calls.push('step:diagnostics') }
     const services = fakeServices() as unknown as Record<string, unknown>
-    services.adapter = { disconnect: async () => { h.calls.push('step:adapter') } }
+    // 退出步骤读的是 services.backend.connection（连接端口视图）；替换它才能证明"退到真实收尾"
+    services.backend = { connection: { disconnect: async () => { h.calls.push('step:adapter') } } }
     services.tools = { shutdown: () => { h.calls.push('tools.shutdown') } }
     services.diagnostics = { closeAll: async () => { h.calls.push('step:diagnostics(services)') } }
     services.persistFlush = { request: async () => { h.calls.push('step:renderer-persist') }, acknowledge: () => {} }

@@ -6,7 +6,7 @@
 //
 // 纪律（与整改前逐条一致）：探针只读、不改变任何服务行为、不在打包正式运行中出现
 // （`CYRENE_TEST_HARNESS` 在打包态已被 `pre-ready.ts` 归一化抹掉，除非显式二开）。
-import type { MockBackend } from '../transport/mock-backend'
+import { MockBackend } from '../transport/mock-backend'
 import { lastWindowPresentation } from '../windows/window-presentation'
 import { dialogInvocations, type DialogInvocation } from '../native-ui/dialog-service'
 import type { ApplicationServices } from './services'
@@ -21,10 +21,13 @@ export interface MainProbe {
 /** harness 门控装配（非 harness 环境为 no-op）。必须在 toolSvc 构造之后调用。 */
 export function installTestProbe(services: ApplicationServices): void {
   if (process.env.CYRENE_TEST_HARNESS !== '1') return
-  const { adapter } = services
+  const { connection } = services.backend
+  // `lastToolStatus` 是 mock 专有的只读快照字段：用 `instanceof` 显式判定而不是向 MockBackend 下行断言——
+  // real 形态（harness + CYRENE_BACKEND=real）下探针返回 null，与整改前逐字一致，且不再依赖"视图即实例"的隐含假设。
+  const mock = connection instanceof MockBackend ? connection : undefined
   const probe = globalThis as unknown as { __cyreneMainProbe: MainProbe }
   probe.__cyreneMainProbe = {
-    getLastToolStatus: () => (adapter as MockBackend).lastToolStatus ?? null,
+    getLastToolStatus: () => mock?.lastToolStatus ?? null,
     getToolRecords: () => [...services.tools.listRecent(50)],
     // 2026-09-12 追加窗口呈现证据：skipTaskbar 在 Electron 无 getter，故由统一建窗层留痕供集成断言
     getWindowPresentation: () => lastWindowPresentation(),

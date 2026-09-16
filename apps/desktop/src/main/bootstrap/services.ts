@@ -47,7 +47,7 @@ import type { ToolService } from '../tools/tool-service'
 import type { GrantStore } from '../tools/grant-store'
 import type { PersistFlushRequester } from '../persistence/persist-flush'
 import type { DiagnosticsService } from '../diagnostics/diagnostics-service'
-import type { BackendAdapter } from '../transport/backend-adapter'
+import type { BackendConnectionPort, ModelBackendPort, ToolBackendPort, VoiceBackendPort } from '../transport/backend-ports'
 import type { Infrastructure } from './infrastructure'
 import type { Transport } from './transport'
 import { sendToMainWindow } from './transport'
@@ -76,8 +76,19 @@ export interface ApplicationServices {
   characterDrafts: CharacterDraftStoreType
   diagnostics: DiagnosticsService
   persistFlush: PersistFlushRequester
-  /** 与 `transport.adapter` 同一实例；应用层再暴露一次以免各处从 transport 重取 */
-  adapter: BackendAdapter
+  /**
+   * 后端能力视图（架构整改 Prompt 3）：**同一个** RealBackend/MockBackend 实例的三张领域窄视图，
+   * 只放"构造期之后仍需要"的那三张——连接（退出编排 / 后端错误处理器 / harness 探针）、
+   * voice 与 model（IPC handler 注册阶段）。
+   * chat / attachment / events / tool 的视图在构造期就直接注入各自的服务
+   * （`createChatService` / `UploadService` / `MediaService` / `createDiagnosticsService` /
+   * `createToolStatusSender`），不经容器二次转发，也不在此暴露聚合面。
+   */
+  backend: {
+    connection: BackendConnectionPort
+    voice: VoiceBackendPort
+    model: ModelBackendPort
+  }
   /** 角色连接世代号递增钩子（由 wire.ts 接在 adapter.onConnectionStateChange 上） */
   bumpCharacterEpoch(): void
 }
@@ -92,6 +103,12 @@ export interface CreateServicesArgs {
 export async function createApplicationServices(args: CreateServicesArgs): Promise<ApplicationServices> {
   const { infrastructure: infra, transport, probe } = args
   const { adapter, useMock } = transport
+  // —— 后端能力视图（Prompt 3）：同一实例的领域窄视图。组合根在此按需取出，
+  //    各服务只接收自己声明的端口（注入的是同一个实例，不复制任何连接/鉴权/重连状态）。
+  //    容器只保留"构造期之后仍需要"的三张（见 ApplicationServices.backend 注释）。
+  const backend: ApplicationServices['backend'] = { connection: adapter, voice: adapter, model: adapter }
+  // 工具服务的重连分支（queryStatus）只经这张窄视图取用后端能力——组合根本身不直接调聚合面
+  const toolBackend: ToolBackendPort = adapter
   const { logger, auditor, logWriter, sanitize } = infra.diagnostics
   // 统一包一层箭头再往下传：`audit` 是端口对象上的方法，摘下来直接传会丢 `this`
   // （`unbound-method`，2026-09-13 type-aware 全集；与 backend-error-handlers 的 bind 先例同因）。
@@ -102,12 +119,12 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
   let characterConnectionEpoch = 0
   const characterService = createCharacterService({
     backend: transport.characterBackend.backend,
-    isConnected: () => adapter.getConnectionState().status === 'connected',
+    isConnected: () => backend.connection.getConnectionState().status === 'connected',
     getFeatures: transport.characterBackend.getFeatures,
     getConnectionEpoch: () => characterConnectionEpoch
   })
 
-  // —— 阶段 7 批次 A（Task 5，spec §6.3）：诊断服务装配（F-08 定案——adapter deps 注入、构造期 subscribe，
+  // —— 阶段 7 批次 A（Task 5，spec §6.3）：诊断服务装配（F-08 定案——事件源 deps 注入、构造期 subscribe，
   //    无 attachAdapter 方法；构造在 adapter 之后：事件源引用须先就位——与 chat/tool svc 同款时序治理）——
   const diagnosticsSvc: DiagnosticsService = createDiagnosticsService({
     dirs: { logs: dirs.logs, audit: dirs.audit, temp: dirs.temp },
@@ -115,11 +132,11 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
     auditor,
     logWriter,
     sanitize,
-    adapter,
+    events: adapter, // 只需事件流这一项能力（BackendEventSourcePort）
     dialogs,
     getMainWindow: () => getMainWindow() ?? undefined, // registry 返回 null→undefined（service 侧判空回退无父对话框）
     getConnectionSummary: () => {
-      const s = adapter.getConnectionState()
+      const s = backend.connection.getConnectionState()
       let origin: string | undefined
       try { origin = s.serverUrl !== undefined ? new URL(s.serverUrl).origin : undefined } catch { origin = undefined } // 非法 URL/mock 场景不出 origin
       return { origin, status: s.status, protocolVersion: s.protocolVersion }
@@ -177,7 +194,7 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
     platform, // V-20：matches 平台门控（win32 toLowerCase / posix 直比）
     logger
   })
-  const statusSender = createToolStatusSender({ adapter, audit })
+  const statusSender = createToolStatusSender({ backend: adapter, audit })   // 注入聚合实例，服务侧只声明工具端口的两个方法
   const captureSources = transport.fixtureEnv.captureSources
   const grantDirectoryPath = transport.fixtureEnv.grantDirectoryPath
   const toolSvc = createToolService({
@@ -206,7 +223,7 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
           return { canceled: r.canceled, path: r.filePaths[0] }
         },
     // D6C-11（LOW-2 承接）：real 才注入——reconnect 三分支闭环；mock 不注入 → 不查（F-20）
-    queryStatus: useMock ? undefined : (callId) => adapter.getToolCallStatus(callId)
+    queryStatus: useMock ? undefined : (callId) => toolBackend.getToolCallStatus(callId)
   })
 
   // S5-B2（2026-09-15，H-01 结构性修法）：`fileRefs` 是**不可猜文件引用表**，也是附件链路的信任锚——
@@ -238,7 +255,7 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
   // 装配 chat-service：onConnectionStateChange → chat.pushState、onSessionReplay → chat.pushReplay
   // 由 wire.ts 接线（P1-1 生产侧桥）；MockBackend 无 onSessionReplay，回放桥仅 RealBackend 分支生效。
   const chatSvc = createChatService({
-    adapter,
+    backend: adapter, // 注入聚合实例；ChatService 只声明连接 + 事件源 + 会话/消息三张视图
     send: (channel, payload) => sendToMainWindow(channel, payload), // P3:webContents 守卫(窗口未建不崩)
     getToken: () => credentials.getCredential(BACKEND_TOKEN_KEY).then((t) => t ?? undefined), // R1:CredentialStore 是 async getCredential
     requireToken: !useMock,
@@ -251,7 +268,7 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
   })
 
   // 阶段 3 G3 附件服务装配（spec §4.4/§4.5）：mediaSvc 需 connConfig.getEndpoint()（签发表 target 为后端 baseUrl）；
-  // UploadService 经 adapter 直读盘（D5 路径只在 Main）。
+  // UploadService 经 Main 自持的 fileRef 表读盘（D5 路径只在 Main）；两者各只声明自己用到的后端方法视图。
   const uploadSvc = new UploadService({
     backend: adapter,
     userDataBase: () => infra.userDataBase,
@@ -292,7 +309,7 @@ export async function createApplicationServices(args: CreateServicesArgs): Promi
     characterDrafts,
     diagnostics: diagnosticsSvc,
     persistFlush,
-    adapter,
+    backend,
     bumpCharacterEpoch: () => { characterConnectionEpoch++ }
   }
 }

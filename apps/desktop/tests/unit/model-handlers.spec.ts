@@ -17,7 +17,8 @@ import {
 import { ModelProfileSchema, TtsPreviewOutcomeSchema } from '../../src/shared/schemas'
 import type { MessageSanitizer } from '../../src/main/diagnostics/sanitize'
 import type { Logger } from '../../src/main/diagnostics/logger'
-import type { BackendAdapter } from '../../src/main/transport/backend-adapter'
+import type { ModelBackendPort } from '../../src/main/transport/backend-ports'
+import type { ActiveModelSelection, ModelProfile, ModelProfileTestResult, TtsVoiceListResult } from '@shared/contracts/model'
 
 const sanitize: MessageSanitizer = (m) => m
 
@@ -44,35 +45,45 @@ beforeEach(() => {
   mockIpcMain.handle.mockClear()
 })
 
+/**
+ * 模型服务端口的结构化替身（`satisfies` 保留各方法的 Mock 类型，同时由编译器证明它满足 ModelBackendPort——
+ * 故调用方不再需要任何类型断言）。
+ */
 function makeAdapter() {
-  const profile = {
+  const profile: ModelProfile = {
     id: 'custom/my-llm', type: 'llm', displayName: 'my-llm', source: 'custom', provider: 'custom', model: 'my-llm',
     models: ['m1'], executionLocation: 'backend', credentialStatus: 'configured', enabled: true, capabilities: ['chat'], builtIn: false
   }
   const adapter = {
-    listModelProfiles: vi.fn(async () => [profile]),
-    saveModelProfile: vi.fn(async () => profile),
-    deleteModelProfile: vi.fn(async () => undefined),
-    testModelProfile: vi.fn(async () => ({ profileId: 'custom/my-llm', service: 'llm', level: 'connectivity', ok: true, latencyMs: 42 })),
-    activateModelProfile: vi.fn(async () => undefined),
-    getActiveModelSelection: vi.fn(() => ({ llmProfileId: 'custom/my-llm' })),
-    listTtsVoices: vi.fn(async () => ({ voices: [{ id: 'v1', languages: [], capabilities: [] }], current: 'v1', source: 'static' })),
-    previewTts: vi.fn(async () => ({ ok: true, mime: 'audio/wav', bytes: new Uint8Array([1, 2, 3]), durationMs: 500 })),
-    setTtsVoice: vi.fn(async () => undefined)
-  }
+    listModelProfiles: vi.fn(async (): Promise<ModelProfile[]> => [profile]),
+    saveModelProfile: vi.fn(async (): Promise<ModelProfile> => profile),
+    deleteModelProfile: vi.fn(async (): Promise<void> => undefined),
+    testModelProfile: vi.fn(async (): Promise<ModelProfileTestResult> => ({ profileId: 'custom/my-llm', service: 'llm', level: 'connectivity', ok: true, latencyMs: 42 })),
+    activateModelProfile: vi.fn(async (): Promise<void> => undefined),
+    getActiveModelSelection: vi.fn((): ActiveModelSelection => ({ llmProfileId: 'custom/my-llm' })),
+    listTtsVoices: vi.fn(async (): Promise<TtsVoiceListResult> => ({ voices: [{ id: 'v1', languages: [], capabilities: [] }], current: 'v1', source: 'static' })),
+    previewTts: vi.fn(async (): Promise<TtsPreview> => ({ ok: true, mime: 'audio/wav', bytes: new Uint8Array([1, 2, 3]), durationMs: 500 })),
+    setTtsVoice: vi.fn(async (): Promise<void> => undefined)
+  } satisfies ModelBackendPort
   return { adapter, profile }
 }
 
+/** `ModelBackendPort.previewTts` 的返回形状（试听 raw） */
+type TtsPreview = Awaited<ReturnType<ModelBackendPort['previewTts']>>
+
 interface MediaLike { putTtsPreview: (id: string, bytes: Uint8Array, mime: string) => void }
 
-/** 每次 resetModules + 动态 import 拿全新 registry/model-handlers（registry 的 registered Set 模块级，避免重复注册抛错） */
-async function registerOnce(adapter: unknown, media: MediaLike): Promise<{ invoke: (channel: string, ...args: unknown[]) => Promise<IpcResult<unknown>> }> {
+/**
+ * 每次 resetModules + 动态 import 拿全新 registry/model-handlers（registry 的 registered Set 模块级，避免重复注册抛错）。
+ * `adapter` 是 ModelBackendPort 的结构化替身（9 个方法齐全），故不再需要类型断言。
+ */
+async function registerOnce(adapter: ModelBackendPort, media: MediaLike): Promise<{ invoke: (channel: string, ...args: unknown[]) => Promise<IpcResult<unknown>> }> {
   vi.resetModules()
   const logger = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn(), flush: vi.fn(), close: vi.fn() } as unknown as Logger
   const { setMainWindow } = await import('../../src/main/ipc/registry')
   const { registerModelHandlers } = await import('../../src/main/models/model-handlers')
   setMainWindow(fakeWindow as never)
-  registerModelHandlers({ adapter: adapter as BackendAdapter, media, sanitize, logger })
+  registerModelHandlers({ backend: adapter, media, sanitize, logger })
   return {
     invoke: (channel: string, ...args: unknown[]): Promise<IpcResult<unknown>> => {
       const listener = getListeners().get(channel)
@@ -188,7 +199,7 @@ describe('registerModelHandlers 真实接线（electron mock 捕获 ipcMain.hand
   })
   it('tts:preview 接线——adapter 返回 ok:false → 数据层透传 + 不写 media', async () => {
     const { adapter } = makeAdapter()
-    adapter.previewTts.mockResolvedValueOnce({ ok: false, error: '试听生成失败' } as never)
+    adapter.previewTts.mockResolvedValueOnce({ ok: false, error: '试听生成失败' })
     const putTtsPreview = vi.fn()
     const { invoke } = await registerOnce(adapter, { putTtsPreview })
     const res = await invoke(IpcChannels.ttsPreview, {})
@@ -198,7 +209,7 @@ describe('registerModelHandlers 真实接线（electron mock 捕获 ipcMain.hand
   })
   it('tts:preview 接线——200 空 body（bytes 缺省/0 字节）→ {ok:false,error:试听无音频数据} 不写 media（P4-A final review guard）', async () => {
     const { adapter } = makeAdapter()
-    adapter.previewTts.mockResolvedValueOnce({ ok: true } as never)
+    adapter.previewTts.mockResolvedValueOnce({ ok: true })
     const putTtsPreview = vi.fn()
     const { invoke } = await registerOnce(adapter, { putTtsPreview })
     const res = await invoke(IpcChannels.ttsPreview, {})

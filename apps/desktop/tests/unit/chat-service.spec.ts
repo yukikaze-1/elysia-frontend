@@ -4,18 +4,18 @@ import { MockBackend } from '../../src/main/transport/mock-backend'
 import type { Message } from '@shared/contracts/message'
 import { CyreneErrorCode } from '@shared/errors'
 import type { ConnectionConfig, NormalizedEndpoint } from '../../src/main/connection/connection-config'
-import type { StickerManifest } from '../../src/shared/contracts/sticker'
 
 function makeDeps(overrides: Partial<Parameters<typeof createChatService>[0]> = {}) {
-  const adapter = new MockBackend()
+  const backend = new MockBackend()
   const sent: { channel: string; payload: unknown }[] = []
   const connectionConfig = {
     getEndpoint: vi.fn<() => NormalizedEndpoint | undefined>(() => undefined),
     getTokenBinding: vi.fn<() => Promise<{ origin: string } | undefined>>(async () => undefined),
     setEndpoint: vi.fn(async (u: string) => ({ origin: u, baseUrl: u.replace(/\/$/, ''), wsUrl: u.replace(/^http/, 'ws') + '/ws' }))
   }
-  const deps = {
-    adapter,
+  // backend 是完整 MockBackend 实例——它同时满足 ChatServiceBackendPort 的三个端口视图（连接 / 事件源 / 会话消息）
+  const deps: Parameters<typeof createChatService>[0] = {
+    backend,
     send: vi.fn((channel: string, payload: unknown) => sent.push({ channel, payload })),
     getToken: () => 'sk-test',
     requireToken: false,   // mock 免 token 演示
@@ -23,19 +23,19 @@ function makeDeps(overrides: Partial<Parameters<typeof createChatService>[0]> = 
     connectionConfig: connectionConfig as unknown as ConnectionConfig,
     ...overrides
   }
-  vi.spyOn(deps.adapter, 'connect')
-  return { deps, sent, connectionConfig }
+  vi.spyOn(backend, 'connect')
+  return { deps, sent, connectionConfig, backend }
 }
 
 describe('chat-service', () => {
-  it('connect 无参转发 Adapter 并广播连接状态（Mock 占位 mock://local）', async () => {
-    const { deps, sent } = makeDeps()
+  it('connect 无参转发后端并广播连接状态（Mock 占位 mock://local）', async () => {
+    const { deps, sent, backend } = makeDeps()
     const svc = createChatService(deps)
     const session = await svc.connect()
-    expect(deps.adapter.connect).toHaveBeenCalledWith({ serverUrl: 'mock://local' })
+    expect(backend.connect).toHaveBeenCalledWith({ serverUrl: 'mock://local' })
     expect(session.serverUrl).toBe('mock://local')
     // MockBackend connect 触发 onConnectionStateChange? —— 需 chat-service 在 connect 后主动推一次状态
-    // 简化:chat-service 的 connect 调用后调 send('chat:state', adapter.getConnectionState())
+    // 简化:chat-service 的 connect 调用后调 send('chat:state', backend.getConnectionState())
     expect(sent.some((s) => s.channel === 'chat:state' && (s.payload as { status: string }).status === 'connected')).toBe(true)
     svc.dispose()
   })
@@ -74,10 +74,10 @@ describe('chat-service', () => {
   })
 
   it('connect Mock（requireToken=false）用 mock://local 占位且跳过校验', async () => {
-    const { deps } = makeDeps()   // requireToken: false, connectionConfig.getEndpoint: () => undefined
+    const { deps, backend } = makeDeps()   // requireToken: false, connectionConfig.getEndpoint: () => undefined
     const svc = createChatService(deps)
     const session = await svc.connect()
-    expect(deps.adapter.connect).toHaveBeenCalledWith({ serverUrl: 'mock://local' })
+    expect(backend.connect).toHaveBeenCalledWith({ serverUrl: 'mock://local' })
     expect(session.serverUrl).toBe('mock://local')
   })
 
@@ -88,24 +88,26 @@ describe('chat-service', () => {
     expect(r).toEqual({ endpoint: 'https://a.example' })
   })
 
-  it('setEndpoint endpoint 变化 → adapter.disconnect 被调', async () => {
-    const adapter = { subscribe: () => () => {}, disconnect: vi.fn(async () => {}) }
+  it('setEndpoint endpoint 变化 → backend.disconnect 被调', async () => {
+    const backend = new MockBackend()
+    const disconnectSpy = vi.spyOn(backend, 'disconnect')
     const connConfig = {
       getEndpoint: () => ({ origin: 'http://a', baseUrl: 'http://a' }),
       setEndpoint: vi.fn(async () => ({ origin: 'http://b', baseUrl: 'http://b' }))
     }
-    const svc = createChatService({ adapter: adapter as never, send: () => {}, getToken: () => undefined, connectionConfig: connConfig as never })
+    const svc = createChatService({ backend, send: () => {}, getToken: () => undefined, connectionConfig: connConfig as never })
     await svc.setEndpoint('http://b')
     expect(connConfig.setEndpoint).toHaveBeenCalledWith('http://b')
-    expect(adapter.disconnect).toHaveBeenCalled()
+    expect(disconnectSpy).toHaveBeenCalled()
   })
 
   it('setEndpoint 同 endpoint → 不 disconnect(幂等)', async () => {
-    const adapter = { subscribe: () => () => {}, disconnect: vi.fn(async () => {}) }
+    const backend = new MockBackend()
+    const disconnectSpy = vi.spyOn(backend, 'disconnect')
     const connConfig = { getEndpoint: () => ({ origin: 'http://a', baseUrl: 'http://a' }), setEndpoint: async () => ({ origin: 'http://a', baseUrl: 'http://a' }) }
-    const svc = createChatService({ adapter: adapter as never, send: () => {}, getToken: () => undefined, connectionConfig: connConfig as never })
+    const svc = createChatService({ backend, send: () => {}, getToken: () => undefined, connectionConfig: connConfig as never })
     await svc.setEndpoint('http://a')
-    expect(adapter.disconnect).not.toHaveBeenCalled()
+    expect(disconnectSpy).not.toHaveBeenCalled()
   })
 
   it('getEndpoint → 当前已设 endpoint 的 baseUrl（未设则 endpoint 缺省）', async () => {
@@ -187,19 +189,17 @@ describe('chat-service', () => {
 })
 
 describe('ChatService 历史/上下文/表情透传（G4）', () => {
-  it('queryChatHistory/getMessageContext/listStickers 透传到 adapter', async () => {
-    const adapter = {
-      queryChatHistory: vi.fn(async () => ({ items: [], hasMore: false })),
-      getMessageContext: vi.fn(async () => ({ items: [], hasMore: false })),
-      listStickers: vi.fn(async (): Promise<StickerManifest> => ({ stickers: [{ stickerId: 'st_1', src: '/static/stickers/st_1.png' }] })),   // P0-2
-      subscribe: vi.fn(() => () => {})
-    }
-    const svc = createChatService({ adapter, send: vi.fn(), getToken: async () => 'tok', connectionConfig: undefined as never, requireToken: false } as never)
+  it('queryChatHistory/getMessageContext/listStickers 透传到后端', async () => {
+    const backend = new MockBackend()
+    const historySpy = vi.spyOn(backend, 'queryChatHistory').mockResolvedValue({ items: [], hasMore: false })
+    const contextSpy = vi.spyOn(backend, 'getMessageContext').mockResolvedValue({ items: [], hasMore: false })
+    const stickersSpy = vi.spyOn(backend, 'listStickers')
+    const svc = createChatService({ backend, send: vi.fn(), getToken: async () => 'tok', connectionConfig: undefined as never, requireToken: false })
     await svc.queryChatHistory({ scope: { type: 'all_conversations' }, timeZone: 'UTC', category: 'all', limit: 50 })
     await svc.getMessageContext({ conversationId: 'c1', messageId: 'm1' })
     await svc.listStickers()
-    expect(adapter.queryChatHistory).toHaveBeenCalledTimes(1)
-    expect(adapter.getMessageContext).toHaveBeenCalledTimes(1)
-    expect(adapter.listStickers).toHaveBeenCalledTimes(1)
+    expect(historySpy).toHaveBeenCalledTimes(1)
+    expect(contextSpy).toHaveBeenCalledTimes(1)
+    expect(stickersSpy).toHaveBeenCalledTimes(1)
   })
 })

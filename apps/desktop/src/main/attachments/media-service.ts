@@ -3,7 +3,7 @@
 // sticker 静态白名单代理（G4 复用）、checkStatus 分类。签名 URL 不落 Renderer；日志脱敏（只记 mediaType+id+status）。
 import { isIP } from 'node:net'
 import type { AttachmentCheckResult, AttachmentSignResult } from '@shared/contracts'
-import type { BackendAdapter } from '../transport/backend-adapter'
+import type { AttachmentBackendPort } from '../transport/backend-ports'
 import { STICKER_ID_PATTERN } from '../transport/protocol-v2/content-part'
 
 export type MediaRouteType = 'attachment' | 'sticker' | 'tool-capture' | 'tts-preview' | 'tts-live'
@@ -119,9 +119,16 @@ export function isDocumentRequest(request: Request): boolean {
 
 export interface ResolvedSignedUrl { url: string; expiresAt: number }
 
+/**
+ * MediaService 声明的后端能力面（架构整改 Prompt 3）：签名 URL 签发与归档桌面截图字节读取，
+ * 都是"附件/媒体字节只在 Main 内流转"这一能力（`AttachmentBackendPort` 的三个方法中的两个）。
+ * `readToolAttachment` 保持可选：缺省时 `tool-capture` 路由回 404（保留本批之前的既有语义，不新增请求面）。
+ */
+type MediaServiceBackendPort = Pick<AttachmentBackendPort, 'signAttachmentUrl'> & Partial<Pick<AttachmentBackendPort, 'readToolAttachment'>>
+
 export class MediaService {
   private readonly cache = new Map<string, ResolvedSignedUrl>()
-  private readonly backend: Pick<BackendAdapter, 'signAttachmentUrl'> & Partial<Pick<BackendAdapter, 'readToolAttachment'>>
+  private readonly backend: MediaServiceBackendPort
   private readonly baseUrl: () => string | undefined
   private readonly now: () => number
   private readonly fetchImpl: typeof fetch
@@ -131,7 +138,7 @@ export class MediaService {
   private readonly ttsLiveCache = new Map<string, { bytes: Uint8Array; mime: string; createdAt: number }>()
   private readonly TTS_LIVE_TTL_MS = 300_000
 
-  constructor(deps: { backend: Pick<BackendAdapter, 'signAttachmentUrl'> & Partial<Pick<BackendAdapter, 'readToolAttachment'>>; baseUrl: () => string | undefined; now?: () => number; fetchImpl?: typeof fetch }) {
+  constructor(deps: { backend: MediaServiceBackendPort; baseUrl: () => string | undefined; now?: () => number; fetchImpl?: typeof fetch }) {
     this.backend = deps.backend
     this.baseUrl = deps.baseUrl
     this.now = deps.now ?? Date.now
@@ -163,7 +170,7 @@ export class MediaService {
     return this.streamAttachment(id, request)
   }
 
-  /** 桌面截图归档代理：调用 ID 白名单；字节只由 BackendAdapter 的鉴权读取方法提供。 */
+  /** 桌面截图归档代理：调用 ID 白名单；字节只由附件/媒体端口的鉴权读取方法提供。 */
   private async streamToolCapture(callId: string): Promise<Response> {
     if (!DESKTOP_CALL_ID_PATTERN.test(callId)) return new Response('Forbidden', { status: 403 })
     if (!this.backend.readToolAttachment) return new Response('Not Found', { status: 404 })

@@ -20,19 +20,20 @@ export function wireApplicationServices(
   services: ApplicationServices
 ): void {
   const { diagnostics } = infrastructure
-  const { adapter } = transport
+  // 只取连接视图（错误处理器要读 serverVersion/protocolVersion 现场）——本阶段不需要聚合面
+  const { connection } = services.backend
 
   // 协议告警/后端错误可见化：onProtocolWarning → 脱敏 warn 日志（不记正文/Token/原始帧）；
   // onError → error 日志 + 推 chat:error 给 Renderer（连接面板展示）+ 审计。
-  // getBuild 读连接现场——adapter 已构造完成，无需整改前的自引用晚绑定。
+  // getBuild 读连接现场——适配器已构造完成，无需整改前的自引用晚绑定。
   const errorHandlers = buildBackendErrorHandlers({
     logger: diagnostics.logger,
     sanitize: diagnostics.sanitize,
     send: (channel, payload) => sendToMainWindow(channel, payload),
     mode: transport.useMock ? 'mock' : 'real',
     getBuild: () => ({
-      serverVersion: adapter.getConnectionState().serverVersion,
-      protocolVersion: adapter.getConnectionState().protocolVersion
+      serverVersion: connection.getConnectionState().serverVersion,
+      protocolVersion: connection.getConnectionState().protocolVersion
     }),
     audit: (event) => diagnostics.audit(event) // C2:连接错误审计（fail-open；包箭头避免丢 this）
   })

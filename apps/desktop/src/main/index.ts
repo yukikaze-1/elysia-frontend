@@ -21,6 +21,7 @@
 // **本文件不得**：构造具体服务、注册具体 handler、出现可变桥容器/持有者、放宽任何启动门禁。
 import { app } from 'electron'
 import { resolveBackendMode } from './config/backend-mode'
+import type { BackendConnectionPort } from './transport/backend-ports'
 import { createRuntimeShell, prepareElectronRuntime, type RuntimeShell } from './bootstrap/pre-ready'
 import { createInfrastructure } from './bootstrap/infrastructure'
 import { createTransport } from './bootstrap/transport'
@@ -64,11 +65,13 @@ async function main(): Promise<void> {
 
   try {
     const transport = createTransport({ useMock })
+    // 只取连接视图做"当前激活会话"探针——组合根不直接把聚合面交给任何服务（见 backend-capability-ports.spec.ts）
+    const connection: BackendConnectionPort = transport.adapter
     const services = await createApplicationServices({
       infrastructure,
       transport,
       // SessionStore 的「当前激活会话」读探针：chat 服务就位后的惰性只读入口（见 services.ts）
-      probe: { activeConversationId: () => transport.adapter.getConnectionState().activeConversationId }
+      probe: { activeConversationId: () => connection.getConnectionState().activeConversationId }
     })
 
     wireApplicationServices(infrastructure, transport, services)

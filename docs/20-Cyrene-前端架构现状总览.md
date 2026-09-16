@@ -64,6 +64,7 @@
 | 导航 / IPC 来源 / CSP / 自定义协议 / 路径包含 / Fuses 一律 fail-closed | `windows/navigation.ts`、`ipc/registry.ts` 的 sender 三重校验、`protocol/csp.ts`、`protocol/path.ts`、`scripts/verify-artifact.cjs` |
 | 窗口、原生对话框、通知只有唯一入口 | `windows/window-presentation.ts`、`native-ui/dialog-service.ts`；`window-presentation-guard.spec.ts` 对新增调用点直接红 |
 | 后端工具只做展示；Desktop/本地工具只在 Main 执行；风险本地重算 | `tools/tool-policy.ts`、`tools/tool-service.ts` |
+| Application Service 只拿得到自己声明的后端能力（不持有聚合 `BackendAdapter`） | `transport/backend-ports.ts` 的 7 个领域端口；`backend-capability-ports.spec.ts` 对"消费方 → 端口"与聚合面持有者直接红 |
 | Live2D 是纯表现，加载失败不阻塞聊天 | `renderer/src/live2d/`、`main/live2d/serve-gate.ts` |
 | 本地绝对路径不进入 Renderer store 或后端载荷 | `preload/desktop-api.ts` 的 `toIpcDescriptor`（`File` → 不可猜 `fileRef`）、`attachments/file-ref.ts` |
 
@@ -90,7 +91,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | `windows/` | 7 | 窗口创建与呈现的**唯一入口**、导航门、麦克风权限、Renderer 控制台转发 | `window-presentation.ts`、`main-window.ts`、`navigation.ts`、`mic-permission.ts` |
 | `native-ui/` | 1 | 原生对话框唯一入口（silent 模式下返回确定性取消） | `dialog-service.ts` |
 | `ipc/` | 9 | 通道注册表、参数校验、载荷预算、各域 handler 装配 | `registry.ts`、`executor.ts`、`channels.ts`、`channel-budgets.ts`、`handlers.ts` |
-| `transport/` | 16 | `BackendAdapter` 端口与 real/mock 两实现、存活检测、protocol-v2 帧与 REST 映射 | `backend-adapter.ts`、`real-backend.ts`、`mock-backend.ts`、`connection-liveness.ts`、`protocol-v2/frame-mapper.ts` |
+| `transport/` | 17 | **后端能力端口**（7 个领域端口，2026-09-17 Prompt 3）+ `BackendAdapter` 聚合面（= 端口交集 + 接线槽）、real/mock 两实现、存活检测、protocol-v2 帧与 REST 映射 | `backend-ports.ts`、`backend-adapter.ts`、`real-backend.ts`、`mock-backend.ts`、`connection-liveness.ts`、`protocol-v2/frame-mapper.ts` |
 | `tools/` | 16 | 工具注册表、风险重算、授权存储、参数哈希、审计、执行器、审批历史、文件身份；**共享执行契约与数值策略**（2026-09-17 起，解 `tool-service ↔ tool-executors` 值导入环） | `tool-policy.ts`、`tool-service.ts`、`tool-executors.ts`、`tool-execution-contract.ts`、`tool-limits.ts`、`grant-store.ts`、`param-hash.ts`、`file-identity.ts` |
 | `attachments/` | 5 | 附件校验/上传/媒体状态、`fileRef` 令牌表、媒体字节路由与签名 URL 策略 | `upload-service.ts`、`attachment-policy.ts`、`file-ref.ts`、`media-service.ts` |
 | `characters/` | 7 | 多角色域：服务、后端端口、草稿、装配、mock | `character-service.ts`、`character-backend-port.ts`、`character-service-assembly.ts` |
@@ -118,7 +119,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 ### 2.3 测试与脚本
 
-- `tests/unit/` 269 文件（**266 spec** + `global-setup.ts` + `helpers/desktop-api.ts` + `setup/live2dcubismcore.ts`）。含判别力门禁类 spec：`ipc-surface-alignment`、`ipc-budget-declaration`、`window-presentation-guard`、`dependency-classification`。
+- `tests/unit/` 272 文件（**269 spec** + `global-setup.ts` + `helpers/desktop-api.ts` + `setup/live2dcubismcore.ts`）。含判别力门禁类 spec：`ipc-surface-alignment`、`ipc-budget-declaration`、`window-presentation-guard`、`dependency-classification`、`main-dependency-graph`、`main-bootstrap-order`、`backend-capability-ports`。
 - `tests/integration/` 52 文件（**45 spec** + `global-setup.ts` + `README.md` + `helpers/` 5 个：`app.ts` 装配、`live2d-fixture.ts` 模型夹具、`orphan-apps.ts` 孤儿进程回收、`renderer-dev-server.ts`、`links.ts`）。真机 Electron + Playwright。
 - `tests/helpers/temp-dirs.ts`：跨层共用的临时目录。
 - `apps/desktop/scripts/` 14 个：`check-backend-contract.mjs`（跨仓契约）· `verify-sensitive.mjs` + `verify-sensitive-core.mjs`（敏感信息扫描）· `verify-artifact.cjs`（产物 + Fuses + 打包产物与 `out/` 字节一致）· `package-app.mjs` · `refresh-wire-manifests.mjs` · `live2d-install.mjs` · `check-node-version.mjs` · `gpu-fallback-forensics.sh`（Linux GPU 取证脚本）。
@@ -176,14 +177,14 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 | 流 | 路径 | 要点 |
 |---|---|---|
-| **聊天生成** | `chat:send` → `chat/chat-service.ts` → `BackendAdapter` → WS v2 帧 → `protocol-v2/frame-mapper.ts` → 域事件 → `chat:event` 推送 → `stores/message.store.ts` → 组件 | 一次 generation = 一条 assistant 消息 + 有序 segments；`generation.completed` 是父终止事件，分段完成只结束该段；`assistantSegments` 是可见内容唯一真源；token/model/心情保留后端语义与来源标签，**不按字符估算** |
+| **聊天生成** | `chat:send` → `chat/chat-service.ts` → `ChatServiceBackendPort`（连接 + 事件源 + 会话/消息三个端口视图）→ WS v2 帧 → `protocol-v2/frame-mapper.ts` → 域事件 → `chat:event` 推送 → `stores/message.store.ts` → 组件 | 一次 generation = 一条 assistant 消息 + 有序 segments；`generation.completed` 是父终止事件，分段完成只结束该段；`assistantSegments` 是可见内容唯一真源；token/model/心情保留后端语义与来源标签，**不按字符估算** |
 | **附件** | 拖入/选择/粘贴 → Renderer 只持有 `File` → preload `toIpcDescriptor` 换 `fileRef` → Main `resolveFileRef` → realpath / 黑名单 / 大小 / 魔数逐条复核 → 上传 | `fileRef` 为 32 字节 CSPRNG，TTL 10 min、容量 256（`attachments/file-ref.ts:35,37`）；拖入只产生待发送附件，**不自动发送**；`bytes` 分支走 IPC（受 4 MiB 全局不变量约束），`fileRef` 分支载荷为空、由 Main 自己读盘并按 kind 复核真实字节数 |
 | **媒体字节与签名 URL** | 页面请求 `cyrene://renderer/__cyrene-media/{type}/{id}` → `attachments/media-service.ts` → 解析签名 URL → Main 取回正文（体积截断）→ 作为同源资源返回 | 目标地址策略在 `media-service.ts:69-86`：与后端**同源**放行；否则主机名必须是**公网字面 IP**；公网域名与回环/私网/链路本地/组播一律拒绝。同源资源意味着「Main 取什么，页面就能读什么」，所以这条策略是安全边界而非优化 |
 | **工具与权限** | 后端 `tool.request` → Main 风险重算 `tools/tool-policy.ts` → 授权窗（Renderer 展示目标与数据范围）→ `tool:decide` → `tools/tool-service.ts` 执行 → 审计 + 公开事件 | 风险取「本地基线 ∨ 后端上报」的较大者，黑名单恒 high；按 `callId` 幂等、终止态不重入；**唯一执行点**在 `tools/tool-service.ts:515`（测试经 `deps.executorOverride` 注入，不另开生产路径）；撤销授权写盘失败 fail-closed（`grant-store.ts` 抛 `GRANT_REVOKE_NOT_PERSISTED`） |
 | **语音** | ① 普通录音 ② 实时语音会话 ③ 输入法转写，三条独立链路 | 只有**转写 final 文本**进草稿；实时字幕不进草稿（`stores/voice.store.ts` + `components/CyChatInput.vue`）。音频上行是唯一的单向 IPC（`voice:audio-chunk`，1 MiB/块，`voice/voice-handlers.ts:22`）；敏感转写内容不进日志与诊断包 |
 | **Live2D** | `live2d:list-models` 清单 → Renderer 加载 → 渲染环（rAF；窗口隐藏时 `beginFrameSubscription`） | dev 形态经 `live2d:read-model-file` 供字节（`corsEnabled:false` 下 `cyrene://` 跨源 `fetch` 会被拒），打包形态走 `cyrene://`（`protocol/live2d-path.ts`）；任何失败进可诊断失败态，不阻塞聊天 |
 | **持久化** | Renderer 防抖 → `chat:persist-session` → Main 原子写 userData 子目录；启动 `chat:hydrate-persistence` 一次性水合 | 守卫在 `persistence/user-data-dirs.ts`：POSIX 用 `O_NOFOLLOW\|O_DIRECTORY` + fd 锚点，Windows 用 `lstat` + `realpath`；写失败语义 `write-failure.ts`，损坏隔离 `corrupt-isolation.ts`；退出 flush 见 §3.2 |
-| **连接与断线** | `transport/real-backend.ts` + `transport/connection-liveness.ts` | `BackendAdapter` 是端口，real / mock 两实现；存活检测用于发现半开连接（其真机取证状态见 doc 16）；断线时 Renderer 保留已显示内容与草稿 |
+| **连接与断线** | `transport/real-backend.ts` + `transport/connection-liveness.ts` | 后端能力面按领域端口划分（`transport/backend-ports.ts`：连接 / 事件源 / 会话消息 / 附件媒体 / 模型服务 / 语音 / 桌面工具），每个 Main 服务只被注入自己声明的那几个视图；real / mock 是**同一个实例**的两套实现，连接状态、鉴权、重连与存活检测都只有传输层一份。断线时 Renderer 保留已显示内容与草稿 |
 
 ---
 
@@ -200,6 +201,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | 后端 WS v2 帧 | `transport/protocol-v2/raw-schemas.ts` + `frame-mapper.ts` | `pnpm -F @cyrene/desktop check:contract`（对真实后端） |
 | 后端 REST | `protocol-v2/rest-schemas.ts` + `rest-mapper.ts`、`character-rest-*.ts` | 同上 |
 | 前端域事件 | `shared/contracts/events.ts` + `shared/schemas/events.ts` | 单测 + 集成 |
+| Main 后端能力端口（7 领域端口） | `transport/backend-ports.ts`（聚合面 `transport/backend-adapter.ts` = 端口交集 + 接线槽） | `backend-capability-ports.spec.ts`：端口清单与逐端口方法名**冻结表**、端口间不重叠/不互相 extends、无未登记端口（interface 与 type 别名两种形态）、除事件源外无单方法端口、消费方 → 端口与 Pick 视图逐字对账、聚合面（含 barrel/命名空间等绕法）只允许 `transport/**` 与 `bootstrap/**`、Real/Mock 对每个端口的编译期与源码级一致性 |
 | 线协议夹具 | `main/fixtures/wire-v2/*.jsonl` + `.manifest.json` | `refresh-wire-manifests.mjs` 刷新，契约门禁对拍 |
 
 **纪律：** 未知或畸形外部输入必须**显式失败**，不得用 `any`、宽松 schema 或静默丢字段掩盖漂移。新增 IPC 通道必须同时改三处（Main 注册 + preload 引用 + 预算表），否则门禁红。
@@ -245,7 +247,8 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | 新增 / 删除 IPC 通道 | `shared/contracts/ipc.ts`、Main 注册（`ipc/handlers.ts` 或各域 handler）、`preload/desktop-api.ts`、`ipc/channel-budgets.ts` 预算 | `ipc-surface-alignment`、`ipc-budget-declaration` |
 | 新增窗口 / 对话框 / 通知 / `openDevTools` 调用 | 必须走 `windows/window-presentation.ts`、`native-ui/dialog-service.ts` | `window-presentation-guard` |
 | 改后端 wire 字段或新增帧 | `protocol-v2/raw-schemas.ts` + `frame-mapper.ts`（REST 同理），并刷新 `main/fixtures/wire-v2/` 与其 manifest | `check:contract`、契约相关单测 |
-| 改 renderer 对后端字段的消费方式 | 先看是否该落在 `BackendAdapter`（域事件）而不是组件 | 类型检查 + 契约测试；越层会被 review 打回 |
+| 改 renderer 对后端字段的消费方式 | 先看是否该落在**域事件**（`shared/contracts/events.ts`）而不是组件；需要新的后端能力时先改 `transport/backend-ports.ts` 的领域端口 | 类型检查 + 契约测试；越层会被 review 打回 |
+| 改某个 Main 服务能用哪些后端能力 | 先在 `transport/backend-ports.ts` 找到/新增领域端口（**不得**再把聚合面注入服务），再改 `backend-capability-ports.spec.ts` 的消费方 → 端口冻结表 | `backend-capability-ports`、`main-dependency-graph` |
 | 新增持久化文件 / 目录 | `persistence/user-data-dirs.ts` 的子目录清单 + 原子写与写失败语义 | 相关单测 + 集成 |
 | 新增 Renderer 侧订阅 / rAF / 定时器 / AudioContext | 对应卸载点（`onBeforeUnmount` / `unmounted` 标志） | 集成用例与 review |
 | 改凭据或密钥处理 | `credentials/` + `diagnostics/redact.ts` 形态规则 | `verify:sensitive`（注意 `SELF_EXCLUDED_FILES`） |

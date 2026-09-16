@@ -6,7 +6,7 @@ import { RealBackend, type RealBackendOptions, type WebSocketLike } from '../../
 import type { BackendEvent } from '@shared/contracts'
 import type { ProtocolWarning } from '@shared/contracts/protocol'
 import { CyreneErrorCode } from '@shared/errors'
-import type { UploadContent } from '../../src/main/transport/backend-adapter'
+import type { UploadContent } from '../../src/main/transport/backend-ports'
 
 /** ws 文本帧 → utf8 文本：RawData 是 Buffer | ArrayBuffer | Buffer[]，只有 Buffer（及 Buffer[]）能按 utf8 解码。 */
 function rawDataToText(data: RawData): string {

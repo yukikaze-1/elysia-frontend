@@ -15,7 +15,7 @@ import { registerAttachmentsHandlers } from '../attachments/attachments-handlers
 import type { UploadService } from '../attachments/upload-service'
 import type { MediaService } from '../attachments/media-service'
 import type { FileRefRegistry } from '../attachments/file-ref'
-import type { BackendAdapter } from '../transport/backend-adapter'
+import type { ModelBackendPort, VoiceBackendPort } from '../transport/backend-ports'
 import { registerModelHandlers } from '../models/model-handlers'
 import { registerSettingsHandlers } from '../settings/settings-handlers'
 import type { SettingsService } from '../settings/settings-service'
@@ -41,9 +41,9 @@ import type { PersistFlushRequester } from '../persistence/persist-flush'
 export function registerHandlers(deps: {
   credentials: CredentialStore; logger: Logger; chat: ChatService; connectionConfig: ConnectionConfig; sessionStore: SessionStore;
   attachments: { svc: UploadService; media: MediaService; fileRefs: FileRefRegistry }
-  models: { adapter: BackendAdapter; media: MediaService }
+  models: { backend: ModelBackendPort; media: MediaService }
   settings: { svc: SettingsService }
-  voice: { adapter: BackendAdapter; media: MediaService }
+  voice: { backend: VoiceBackendPort; media: MediaService }
   live2d: { registry: Live2DModelRegistry }
   tools: ToolService
   grants: GrantStore                 // 批次 C（D6C-12）：目录授权仓库（tool 四新通道数据源）
@@ -63,9 +63,9 @@ export function registerHandlers(deps: {
   registerChatHandlers({ svc: deps.chat, sanitize, logger: deps.logger })
   registerPersistenceHandlers({ sessionStore: deps.sessionStore, sanitize, logger: deps.logger })
   registerAttachmentsHandlers({ svc: deps.attachments.svc, media: deps.attachments.media, fileRefs: deps.attachments.fileRefs, sanitize, logger: deps.logger })
-  registerModelHandlers({ adapter: deps.models.adapter, media: deps.models.media, sanitize, logger: deps.logger })
+  registerModelHandlers({ backend: deps.models.backend, media: deps.models.media, sanitize, logger: deps.logger })
   registerSettingsHandlers({ settings: deps.settings.svc, sanitize, logger: deps.logger })
-  registerVoiceHandlers({ adapter: deps.voice.adapter, media: deps.voice.media, sanitize, logger: deps.logger })
+  registerVoiceHandlers({ backend: deps.voice.backend, media: deps.voice.media, sanitize, logger: deps.logger })
   registerLive2dHandlers({ registry: deps.live2d.registry, sanitize, logger: deps.logger })
   registerToolHandlers({ tools: deps.tools, sanitize, grants: deps.grants, history: readAuditEvents, auditDir: deps.auditDir })
   registerDiagnosticsHandlers({ service: deps.diagnostics, sanitize, logger: deps.logger })

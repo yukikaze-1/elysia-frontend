@@ -7,7 +7,7 @@ import type { AddressInfo } from 'net'
 import { describe, expect, it, vi } from 'vitest'
 import { RealBackend } from '../../src/main/transport/real-backend'
 import { CyreneErrorCode } from '../../src/shared/errors'
-import type { UploadContent } from '../../src/main/transport/backend-adapter'
+import type { UploadContent } from '../../src/main/transport/backend-ports'
 import type { AttachmentKind } from '../../src/shared/contracts/message'
 
 /** 连接用 WS 握手 stub（返回 200 即可，uploadAttachments 不消费 WS 帧） */

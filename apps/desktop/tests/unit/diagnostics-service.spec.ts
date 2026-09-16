@@ -1,7 +1,7 @@
 // tests/unit/diagnostics-service.spec.ts（node）
 // 阶段 7 批次 A（Task 3）：诊断服务骨架——getState/setDevMode/dispose + devTap
 // （{ts,type,preview} ring + 100ms 节流 push + devMode 门控 + 回调体异常隔离）。
-// deps 注入式（F-08）：adapter 构造期订阅、dispose 退订——测试经捕获 tap 回调驱动事件流。
+// deps 注入式（F-08）：后端事件源构造期订阅、dispose 退订——测试经捕获 tap 回调驱动事件流。
 import { describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -13,7 +13,7 @@ vi.mock('electron', () => ({
 }))
 import { createDiagnosticsService } from '../../src/main/diagnostics/diagnostics-service'
 import type { DiagnosticsService } from '../../src/main/diagnostics/diagnostics-service'
-import type { BackendAdapter, BackendEventHandler } from '../../src/main/transport/backend-adapter'
+import type { BackendEventSourcePort, BackendEventHandler } from '../../src/main/transport/backend-ports'
 import type { Auditor } from '../../src/main/diagnostics/audit'
 import type { FileWriter } from '../../src/main/diagnostics/file-writer'
 import type { Logger } from '../../src/main/diagnostics/logger'
@@ -22,15 +22,14 @@ import type { DiagnosticsDevEvent } from '@shared/contracts'
 import { DIAGNOSTICS_PREVIEW_MAX } from '@shared/contracts'
 
 /** 事件源 mock：捕获 tap 供测试驱动；subscribe 返回带 spy 的退订函数（dispose 断言） */
-function makeAdapter(): { adapter: BackendAdapter; tap: (ev: unknown) => void; unsub: ReturnType<typeof vi.fn>; subscribeSpy: ReturnType<typeof vi.fn> } {
+function makeAdapter(): { events: BackendEventSourcePort; tap: (ev: unknown) => void; unsub: ReturnType<typeof vi.fn>; subscribeSpy: ReturnType<typeof vi.fn> } {
   let handler: BackendEventHandler | undefined
   const unsub = vi.fn()
   const subscribeSpy = vi.fn((h: BackendEventHandler) => {
     handler = h
     return () => { unsub(); if (handler === h) handler = undefined } // 退订后不再交付（真实语义）
   })
-  const adapter = { subscribe: subscribeSpy } as unknown as BackendAdapter
-  return { adapter, tap: (ev) => handler?.(ev as BackendEvent), unsub, subscribeSpy }
+  return { events: { subscribe: subscribeSpy }, tap: (ev) => handler?.(ev as BackendEvent), unsub, subscribeSpy }
 }
 
 interface Ctx {
@@ -68,7 +67,7 @@ function makeCtx(opts: {
     auditor,
     logWriter,
     sanitize: opts.sanitize ?? ((s) => (s === '/home/u/.config/Cyrene/logs' ? '~/.../logs' : '<path>')),
-    adapter: adapter.adapter,
+    events: adapter.events,
     getConnectionSummary: () => ({}),
     openPath: opts.openPath,
     onDevEvent,

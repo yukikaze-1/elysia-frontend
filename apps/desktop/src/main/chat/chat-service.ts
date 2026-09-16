@@ -1,5 +1,5 @@
 import type { BackendSession, ChatHistoryQuery, ConversationMessagesQuery, ConnectionState, MessageContextQuery, RuntimeInfo } from '@shared/contracts/backend'
-import type { BackendAdapter } from '../transport/backend-adapter'
+import type { BackendConnectionPort, BackendEventSourcePort, ChatBackendPort } from '../transport/backend-ports'
 import type { CreateConversationInput, PageQuery } from '@shared/contracts/conversation'
 import type { BackendEvent } from '@shared/contracts/events'
 import type { ConversationTokenUsage, Message, SendMessageInput } from '@shared/contracts/message'
@@ -10,8 +10,21 @@ import { safeAudit } from '../diagnostics/safe-audit'
 import type { AuditEvent } from '../diagnostics/audit'
 import type { SessionStore } from '../persistence/session-store'
 
+/**
+ * ChatService 的后端能力面——三个领域端口的最小组合（架构整改 Prompt 3）：
+ *   · `BackendConnectionPort`：本服务是 Main 侧连接的唯一持有者（`chat:connect` / `chat:disconnect`）；
+ *   · `BackendEventSourcePort`：把后端领域事件转发为 `chat:event`；
+ *   · `ChatBackendPort`：会话 CRUD、消息收发、历史检索与表情清单。
+ *
+ * 它**不含**附件/媒体、模型服务、语音、桌面工具与桌面工具附件——那些能力属于别的服务
+ * （`UploadService`/`MediaService`/模型 handler/voice handler/`ToolStatusSender`）。
+ * 于是 ChatService 的 backend 依赖面从聚合面的 43 个方法收窄到 16 个。
+ */
+export type ChatServiceBackendPort = ChatBackendPort & BackendConnectionPort & BackendEventSourcePort
+
 export interface ChatServiceDeps {
-  adapter: BackendAdapter
+  /** 后端能力面（窄视图，见 `ChatServiceBackendPort`）——实现方仍是同一个 RealBackend/MockBackend 实例 */
+  backend: ChatServiceBackendPort
   send: (channel: string, payload: unknown) => void   // webContents.send 包装(PushChannels)
   getToken: () => string | undefined | Promise<string | undefined>   // 凭据读取(async;装配用 store.getCredential(key).then(t=>t??undefined),R1)
   requireToken?: boolean
@@ -36,13 +49,13 @@ export interface ChatServiceDeps {
 export type ChatService = ReturnType<typeof createChatService>
 
 /**
- * Chat 服务:持有 BackendAdapter + webContents.send 桥,是 Main 侧 chat 领域能力的唯一入口。
+ * Chat 服务:持有后端能力面（连接 + 领域事件 + 会话/消息）+ webContents.send 桥,是 Main 侧 chat 领域能力的唯一入口。
  * - 领域事件 → chat:event;连接状态变化 → chat:state;
- * - onConnectionStateChange 的接线在装配方(adapter 构造时桥到 pushState);connect/disconnect 后此处也主动推一次(快照兜底)。
+ * - onConnectionStateChange 的接线在装配方(适配器构造时桥到 pushState);connect/disconnect 后此处也主动推一次(快照兜底)。
  */
 export function createChatService(deps: ChatServiceDeps) {
-  const { adapter } = deps
-  const unsub = adapter.subscribe((event: BackendEvent) => deps.send(PushChannels.event, event))
+  const { backend } = deps
+  const unsub = backend.subscribe((event: BackendEvent) => deps.send(PushChannels.event, event))
 
   const pushState = (s: ConnectionState) => deps.send(PushChannels.state, s)
 
@@ -56,13 +69,13 @@ export function createChatService(deps: ChatServiceDeps) {
           if (binding?.origin !== endpoint.origin) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置或与当前地址不匹配')
           const token = await deps.getToken()
           if (!token) throw new CyreneError(CyreneErrorCode.CREDENTIAL_UNAVAILABLE, '后端 Token 未设置')
-          const session = await adapter.connect({ serverUrl: endpoint.baseUrl, token })
-          pushState(adapter.getConnectionState())
+          const session = await backend.connect({ serverUrl: endpoint.baseUrl, token })
+          pushState(backend.getConnectionState())
           safeAudit(deps.audit, { type: 'connection:connect', status: 'connected', summary: 'mode=real' })   // C2:real 分支写死（requireToken 在分支内已收窄，表达式触发 TS2367）
           return session
         }
-        const session = await adapter.connect({ serverUrl: 'mock://local' })
-        pushState(adapter.getConnectionState())
+        const session = await backend.connect({ serverUrl: 'mock://local' })
+        pushState(backend.getConnectionState())
         safeAudit(deps.audit, { type: 'connection:connect', status: 'connected', summary: 'mode=mock' })   // C2:mock 分支写死（同上）
         return session
       } catch (e) {
@@ -76,7 +89,7 @@ export function createChatService(deps: ChatServiceDeps) {
       const before = deps.connectionConfig.getEndpoint()
       const e = await deps.connectionConfig.setEndpoint(rawUrl)
       if (before && (e.origin !== before.origin || e.baseUrl !== before.baseUrl)) {
-        await deps.adapter.disconnect()   // D14:旧 WS/REST 取消,面板新地址与真实连接一致
+        await backend.disconnect()   // D14:旧 WS/REST 取消,面板新地址与真实连接一致
         deps.onConnectionTeardown?.()     // S5-B2 补接线：换后端 ⇒ 旧连接的 fileRef 全部作废
       }
       return { endpoint: e.baseUrl }
@@ -94,40 +107,40 @@ export function createChatService(deps: ChatServiceDeps) {
       }
     },
     async disconnect(): Promise<void> {
-      await adapter.disconnect()
+      await backend.disconnect()
       deps.onConnectionTeardown?.()   // S5-B2 补接线：显式断开 ⇒ fileRef 表清空（不跨连接复用）
-      pushState(adapter.getConnectionState())
+      pushState(backend.getConnectionState())
       // C2:disconnect 内无 requireToken 收窄,表达式可保留（与 connect 分支内写死不同）
       safeAudit(deps.audit, { type: 'connection:disconnect', summary: `mode=${deps.requireToken !== false ? 'real' : 'mock'}` })
     },
     listConversations: async (input: PageQuery) => {
-      const p = await adapter.listConversations(input)
+      const p = await backend.listConversations(input)
       deps.sessionStore?.syncConversationList(p.items).catch(() => {}) // 持久化失败不影响操作结果（C1 fail-open）
       return p
     },
-    getMessages: (input: ConversationMessagesQuery) => adapter.getConversationMessages(input),
-    send: (input: SendMessageInput) => adapter.sendMessage(input),
-    cancel: (input: { generationId: string }) => adapter.cancelGeneration(input),
+    getMessages: (input: ConversationMessagesQuery) => backend.getConversationMessages(input),
+    send: (input: SendMessageInput) => backend.sendMessage(input),
+    cancel: (input: { generationId: string }) => backend.cancelGeneration(input),
     // —— 阶段 3 G4 历史查看器/表情（透传）——
-    queryChatHistory: (input: ChatHistoryQuery) => adapter.queryChatHistory(input),
-    getMessageContext: (input: MessageContextQuery) => adapter.getMessageContext(input),
-    listStickers: () => adapter.listStickers(),
+    queryChatHistory: (input: ChatHistoryQuery) => backend.queryChatHistory(input),
+    getMessageContext: (input: MessageContextQuery) => backend.getMessageContext(input),
+    listStickers: () => backend.listStickers(),
     // P1-11：参数显式标注（此前隐式 any——同一对象里其它方法都有类型，只有这两处漏了）
     activate: async (id: string) => {
-      const r = await adapter.activateConversation(id)
+      const r = await backend.activateConversation(id)
       deps.sessionStore?.setActiveConversation(id).catch(() => {}) // 记录 lastActiveConversationId
       return r
     },
-    createConversation: (input: CreateConversationInput) => adapter.createConversation(input),
-    renameConversation: (input: { conversationId: string; title: string }) => adapter.renameConversation(input.conversationId, input.title),
+    createConversation: (input: CreateConversationInput) => backend.createConversation(input),
+    renameConversation: (input: { conversationId: string; title: string }) => backend.renameConversation(input.conversationId, input.title),
     deleteConversation: async (id: string) => {
-      await adapter.deleteConversation(id)
+      await backend.deleteConversation(id)
       deps.sessionStore?.purgeConversation(id).catch(() => {}) // 联动删草稿+锚点+快照
     },
-    getConnectionState: () => adapter.getConnectionState(),
-    /** 连接状态变化主动推送(adapter.onConnectionStateChange 由装配方桥到此处) */
+    getConnectionState: () => backend.getConnectionState(),
+    /** 连接状态变化主动推送(适配器 onConnectionStateChange 由装配方桥到此处) */
     pushState,
-    /** 会话历史回放推送(chat:replay);由装配方在 adapter 支持 onSessionReplay(RealBackend)时桥到此处,P1-1
+    /** 会话历史回放推送(chat:replay);由装配方在适配器支持 onSessionReplay(RealBackend)时桥到此处,P1-1
      *  2026-09-15：第三个参数是本会话的**服务端累计 token 用量**（`session.token_stats`）——
      *  与回放消息同行送达，因为它是"这一批回放所属会话"的属性；undefined = 后端无该会话记录（≠ 0）。 */
     pushReplay(conversationId: string, messages: Message[], usage?: ConversationTokenUsage): void {

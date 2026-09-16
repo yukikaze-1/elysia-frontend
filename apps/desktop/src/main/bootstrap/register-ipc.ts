@@ -17,7 +17,7 @@ import type { ApplicationServices } from './services'
 
 export function registerApplicationIpc(infrastructure: Infrastructure, services: ApplicationServices): void {
   const { credentials, connectionConfig, diagnostics } = infrastructure
-  const { chat, sessionStore, characterDrafts, attachments, adapter, settings, live2d, tools, grants, characters, persistFlush } = services
+  const { chat, sessionStore, characterDrafts, attachments, backend, settings, live2d, tools, grants, characters, persistFlush } = services
   registerHandlers({
     credentials,
     logger: diagnostics.logger,
@@ -26,9 +26,10 @@ export function registerApplicationIpc(infrastructure: Infrastructure, services:
     sessionStore,
     characterDrafts,
     attachments,
-    models: { adapter, media: attachments.media },
+    // 各 handler 只拿到自己领域的端口视图（voice 12 方法 / model 9 方法），不再拿到聚合面
+    models: { backend: backend.model, media: attachments.media },
     settings: { svc: settings },
-    voice: { adapter, media: attachments.media },
+    voice: { backend: backend.voice, media: attachments.media },
     live2d: { registry: live2d },
     tools,
     grants,
