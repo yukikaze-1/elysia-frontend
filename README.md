@@ -102,6 +102,7 @@ pnpm start
 - [doc 16：当前实施状态](docs/16-Cyrene-前端实施任务清单与进度跟踪.md)——当前阶段、阻塞项、最近验证和下一步。
 - [doc 17：环境基线](docs/17-Cyrene-前端开发环境与依赖安装记录.md)——Windows/Linux 安装、启动与联调环境。
 - [doc 19：开发环境隔离与资源登记](docs/19-Cyrene-前端开发环境隔离与资源登记.md)——开发端口段、应用身份、userData 与本地数据隔离，多项目并行开发规则。
+- [doc 20：前端架构现状总览](docs/20-Cyrene-前端架构现状总览.md)——代码现状（as-built）：进程与信任边界、模块地图、启动与退出次序、关键数据流、契约面与门禁归属。
 - [Review 与验收索引](docs/review/README.md)——按日期检索决策、整改、联调和验收证据。
 - [Spec、Plan 与 Final Report 索引](docs/superpowers/README.md)——历史设计和实施计划。
 - [UI 精修整改清单](docs/2026-08-29-UI精修整改清单.md)——阶段 8 前 UI/布局/风格改动的规则与限制。

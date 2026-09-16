@@ -1,0 +1,288 @@
+# Cyrene 前端架构现状总览（as-built）
+
+**文档状态：** 维护中
+**最后核验：** 2026-09-16
+**适用阶段：** 全阶段
+**权威范围：** 代码的结构现状——进程与信任边界、模块地图、启动与退出次序、关键数据流、契约面与门禁归属；不含进度、阻塞项与验证结论
+
+> **与 [doc 01](01-Cyrene-Electron-前端总体架构设计-v0.2.md) 的分工（两份不可互相替代）：**
+> - doc 01 = **设计口径**（状态「参考」，阶段 1～7 架构基线）：写「应当是什么样」，其中若干段落已被代码取代并就地标注（例：§6.2 的 `DesktopApi` 方法集，注记原文即「照它实现会走错」）。
+> - 本文 = **现状口径（as-built）**：只写「代码现在是什么样」。每条结论在落笔时对码核对，并给出落点文件，便于读者自行复核。
+> - **本文不转述 review / 审计记录里的结论句**：那些句子可能在写下之后就被修掉。实例：2026-09-16 审计报告把签名 URL 策略记为「只做 scheme 白名单」，而该报告的基线 commit `8918fdd` 上 `attachments/media-service.ts:69-86` 已有完整的地址类别策略。本文只认代码。
+> - **冲突处理**：运行行为以代码、运行时 Schema 与测试为准（[doc 00](00-Cyrene-前端文档索引与阅读顺序.md) §7）。本文与代码不符时以代码为准，并就地修正本文。
+> - **本文不是状态源**：阶段、阻塞项、最近验证、下一步一律读 [doc 16](16-Cyrene-前端实施任务清单与进度跟踪.md)。已知缺口与未修项也不在本文复制，只指向 doc 16 §5 与 `docs/review/` 的最新记录。
+
+---
+
+## 0. 一页速览
+
+| 项 | 事实（计数口径与复核命令见 §7） |
+|---|---|
+| 是什么 | Electron 桌面 AI 助手客户端：聊天 + Live2D 角色 + 桌面工具与权限 + 语音 + 附件，接外部 Python 后端 |
+| 进程边界 | 3 个：Main（特权）/ Preload（窄桥）/ Renderer（不可信）。另有文档中的可选 Local Worker，`src/main` 无对应模块（未实现） |
+| 运行时生产依赖 | 只有 3 个：`diff`、`ws`、`zod`（`vue` / `pinia` / `marked` / `dompurify` 刻意放 devDependencies，由 Vite 打进 renderer chunk） |
+| 工具链 | Node 22.23.0（[.nvmrc](../.nvmrc)）· pnpm 11.20.0 · Electron 43.3.0 · electron-vite 5 · Vitest 4 · Playwright `_electron`（不是 `@playwright/test`） |
+| IPC 面 | 命令通道 **89** · Main→Renderer 推送通道 **8** · 单向通道 **1**（`voice:audio-chunk`，1 MiB/块）；单条 IPC 上限 **4 MiB** |
+| 后端面 | WS v2 帧 + REST 双面适配；raw schema 与 mapper 全在 `src/main/transport/protocol-v2/` |
+| 存储面 | `safeStorage` 凭据（不可读回）+ userData 子目录（fd 锚点 / `lstat`+`realpath` 守卫）+ 原子写 |
+| 代码规模 | `src/main` 150 文件 · `src/preload` 3 · `src/renderer` 215（`.vue` 60）· `src/shared` 33 · `tests` 322 |
+| 门禁 | 见 §5.2；CI 作业见 §5.3 |
+
+---
+
+## 1. 系统边界与进程模型
+
+```text
+┌─ Renderer（不可信）────────────────────────────────────────────┐
+│  Vue 3 + Pinia：表现与 UI 状态                                   │
+│  components(61) · stores(22) · live2d(75) · utils(23) · voice    │
+└──────────────▲────────────────────────────────┬────────────────┘
+               │ window.cyrene：具名窄 API        │ 推送：chat:event / tool:event / …
+┌──────────────┴────────────────────────────────▼────────────────┐
+│  Preload：contextBridge，无 ipcRenderer 直通、无 Node 模块        │
+│  唯一 API 面 desktop-api.ts；每方法运行时 schema 校验              │
+└──────────────▲────────────────────────────────┬────────────────┘
+               │ invoke(具名通道)                 │ 单向 send：voice:audio-chunk
+┌──────────────┴────────────────────────────────▼────────────────┐
+│  Main：凭据、后端连接、文件系统、工具执行、审计、日志、raw 协议解析  │
+│  ipc · transport · tools · attachments · characters · chat       │
+│  persistence · credentials · diagnostics · protocol · live2d     │
+└──────────────┬────────────────────────────────▲────────────────┘
+               │ WS v2（帧）+ REST（HTTP）        │
+        ┌──────▼────────────────────────────────┴──────┐
+        │  外部后端（Python，独立系统，不随前端改名）      │
+        └──────────────────────────────────────────────┘
+```
+
+**不变式与「谁在守它」**（不变式本身是长期约束，落点是当前实现）：
+
+| 不变式 | 落点 |
+|---|---|
+| Main 独占秘密与特权操作 | `credentials/credential-store.ts`（safeStorage + origin 双绑）、`tools/tool-executors.ts` |
+| Renderer 拿不到明文凭据、绝对路径、`ipcRenderer`、Node 模块、通用文件/Shell 方法 | `preload/desktop-api.ts`（唯一 API 面）、`shared/contracts/ipc.ts`、`verify-sensitive` 扫描 |
+| 禁止通用 IPC（`invoke(channel)` / `readFile(path)` / `exec(command)`） | `ipc/registry.ts`（具名通道 + 双端 zod）、`ipc/executor.ts` |
+| 导航 / IPC 来源 / CSP / 自定义协议 / 路径包含 / Fuses 一律 fail-closed | `windows/navigation.ts`、`ipc/registry.ts` 的 sender 三重校验、`protocol/csp.ts`、`protocol/path.ts`、`scripts/verify-artifact.cjs` |
+| 窗口、原生对话框、通知只有唯一入口 | `windows/window-presentation.ts`、`native-ui/dialog-service.ts`；`window-presentation-guard.spec.ts` 对新增调用点直接红 |
+| 后端工具只做展示；Desktop/本地工具只在 Main 执行；风险本地重算 | `tools/tool-policy.ts`、`tools/tool-service.ts` |
+| Live2D 是纯表现，加载失败不阻塞聊天 | `renderer/src/live2d/`、`main/live2d/serve-gate.ts` |
+| 本地绝对路径不进入 Renderer store 或后端载荷 | `preload/desktop-api.ts` 的 `toIpcDescriptor`（`File` → 不可猜 `fileRef`）、`attachments/file-ref.ts` |
+
+**与后端的权力划分：** 后端是外部系统。原始 wire schema 与 REST mapper 全部留在 Main；Renderer 只消费稳定域事件。**本机不存在权威后端仓库副本**，契约事实只能由真实后端或 `check:contract` 门禁产出。
+
+---
+
+## 2. 模块地图
+
+### 2.1 Main（`apps/desktop/src/main/`）
+
+根文件 3 个：`index.ts`（装配根，`main()` 在此）、`shutdown.ts`、`env.d.ts`。
+
+| 目录 | 文件 | 职责 | 代表文件 |
+|---|---:|---|---|
+| `app/` | 5 | 生命周期、单实例、应用身份、进程级错误兜底、测试 appData 门 | `lifecycle.ts`、`process-error-guards.ts`、`test-app-data.ts` |
+| `windows/` | 7 | 窗口创建与呈现的**唯一入口**、导航门、麦克风权限、Renderer 控制台转发 | `window-presentation.ts`、`main-window.ts`、`navigation.ts`、`mic-permission.ts` |
+| `native-ui/` | 1 | 原生对话框唯一入口（silent 模式下返回确定性取消） | `dialog-service.ts` |
+| `ipc/` | 9 | 通道注册表、参数校验、载荷预算、各域 handler 装配 | `registry.ts`、`executor.ts`、`channels.ts`、`channel-budgets.ts`、`handlers.ts` |
+| `transport/` | 16 | `BackendAdapter` 端口与 real/mock 两实现、存活检测、protocol-v2 帧与 REST 映射 | `backend-adapter.ts`、`real-backend.ts`、`mock-backend.ts`、`connection-liveness.ts`、`protocol-v2/frame-mapper.ts` |
+| `tools/` | 14 | 工具注册表、风险重算、授权存储、参数哈希、审计、执行器、审批历史、文件身份 | `tool-policy.ts`、`tool-service.ts`、`tool-executors.ts`、`grant-store.ts`、`param-hash.ts`、`file-identity.ts` |
+| `attachments/` | 5 | 附件校验/上传/媒体状态、`fileRef` 令牌表、媒体字节路由与签名 URL 策略 | `upload-service.ts`、`attachment-policy.ts`、`file-ref.ts`、`media-service.ts` |
+| `characters/` | 7 | 多角色域：服务、后端端口、草稿、装配、mock | `character-service.ts`、`character-backend-port.ts`、`character-service-assembly.ts` |
+| `chat/` | 3 | 会话与消息编排、后端错误上提 | `chat-service.ts`、`chat-handlers.ts`、`backend-error-handlers.ts` |
+| `persistence/` | 9 | userData 子目录守卫、会话/角色草稿存储、写失败语义、损坏隔离、退出 flush | `user-data-dirs.ts`、`session-store.ts`、`persist-flush.ts`、`safe-open.ts`、`write-failure.ts` |
+| `credentials/` | 5 | `safeStorage` 加密凭据、原子写 | `credential-store.ts`、`safe-storage.ts`、`atomic-write.ts` |
+| `diagnostics/` | 10 | 日志、审计、脱敏、诊断包导出与诊断状态（崩溃 marker 本身在 `windows/main-window.ts`，`diagnostics:last-crash` 通道在 `ipc/`） | `logger.ts`、`audit.ts`、`redact.ts`、`sanitize.ts`、`export-payload.ts` |
+| `protocol/` | 9 | `cyrene://` 受限协议、CSP、MIME、路径与 scheme 守卫、Live2D 路径 | `scheme.ts`、`handler.ts`、`csp.ts`、`path.ts`、`mime.ts` |
+| `live2d/` | 3 | 模型清单、注册表、dev 字节供给门 | `manifest.ts`、`model-registry.ts`、`serve-gate.ts` |
+| `config/` | 9 | 运行时环境与 harness、GPU 回退判定、后端模式、开发端口、受信 origin、调试开关 | `runtime-environment.ts`、`gpu-mode.ts`、`backend-mode.ts`、`dev-ports.ts` |
+| `voice/` | 1 | 录音 / 实时 / 转写三类会话的 Main 侧编排与音频上行守卫 | `voice-handlers.ts` |
+| `models/` | 1 | 模型服务 Profile 通道 | `model-handlers.ts` |
+| `settings/` | 2 | 设置读取、校验与持久化 | `settings-service.ts`、`settings-handlers.ts` |
+| `connection/` | 1 | 连接配置（endpoint 等） | `connection-config.ts` |
+| `fixtures/` | 29 | 线协议夹具 `wire-v2/*.jsonl` + `.manifest.json`（契约门禁对拍用） | — |
+| `permissions/` | 1 | **仅一个占位 `README.md`**。授权判定实际落在 `tools/`（`tool-policy.ts` / `grant-store.ts`） | — |
+
+> doc 01 §5 的推荐目录与现状有差异，读该节时应知道：现状**没有** `renderer/features/`、`tests/e2e/`、Local Worker 模块；`main/permissions/` 是空壳。
+
+### 2.2 Preload / Renderer / Shared
+
+- **Preload（3 文件）**：`desktop-api.ts` 是唯一 API 面（按域分组的具名方法，`export type DesktopApi = typeof desktopApi`）；`index.ts` 用 `contextBridge` 装配；`window.d.ts` 只声明类型。每个 `on*` 返回精确移除自身的 disposer。
+- **Renderer（215 文件，`.vue` 60）**：`src/` 200 + `public/` 14 + `index.html`。`src/` 下 `components/` 61（59 `.vue`）· `live2d/` 75（含内置 Cubism framework 子集）· `utils/` 23 · `stores/` 22（Pinia）· `assets/` 5 · `layout/` 3 · `voice/` 3 · `attachments/` 2 + 根文件 6（`App.vue`、`bootstrap.ts`、`main.ts`、`env.d.ts`、`tokens.css`、`reduced-motion.css`）。`utils/` 里的关键内核：`markdown.ts`（渲染缓存与会话边界订阅）、`virtual-window.ts`（虚拟列表数学内核）、`generation-watchdog.ts`（静默看门狗）、`media-url.ts`、`persistence-failure.ts`。
+- **Shared（33 文件）**：`contracts/` 19（跨进程契约类型）· `domain/` 7（纯领域逻辑）· `schemas/` 6（zod 运行时校验）· `errors/` 1。零 Electron / Vue / Node 依赖。
+
+### 2.3 测试与脚本
+
+- `tests/unit/` 269 文件（**266 spec** + `global-setup.ts` + `helpers/desktop-api.ts` + `setup/live2dcubismcore.ts`）。含判别力门禁类 spec：`ipc-surface-alignment`、`ipc-budget-declaration`、`window-presentation-guard`、`dependency-classification`。
+- `tests/integration/` 52 文件（**45 spec** + `global-setup.ts` + `README.md` + `helpers/` 5 个：`app.ts` 装配、`live2d-fixture.ts` 模型夹具、`orphan-apps.ts` 孤儿进程回收、`renderer-dev-server.ts`、`links.ts`）。真机 Electron + Playwright。
+- `tests/helpers/temp-dirs.ts`：跨层共用的临时目录。
+- `apps/desktop/scripts/` 14 个：`check-backend-contract.mjs`（跨仓契约）· `verify-sensitive.mjs` + `verify-sensitive-core.mjs`（敏感信息扫描）· `verify-artifact.cjs`（产物 + Fuses + 打包产物与 `out/` 字节一致）· `package-app.mjs` · `refresh-wire-manifests.mjs` · `live2d-install.mjs` · `check-node-version.mjs` · `gpu-fallback-forensics.sh`（Linux GPU 取证脚本）。
+- 仓库根 `scripts/` 2 个：`docs-check.mjs`（文档门禁 + 三个索引生成）、`setup-windows.ps1`。
+
+---
+
+## 3. 启动与退出次序（as-built）
+
+### 3.1 启动
+
+装配顺序里有若干**顺序即正确性**的点，改动前请先读对应注释（`src/main/index.ts` 的 `main()`）：
+
+1. `normalizeHarnessForPackagedRun()`——必须最先，后续所有 harness 读取点都看归一化后的值（`:152`）。
+2. `rejectForbiddenDebugSwitches()`——固定 remote-debugging 端口等被安全策略拒绝（`:153`）。
+3. `app.commandLine.appendSwitch('enable-precise-memory-info')`（`:157`）。
+4. GPU 回退判定 `resolveGpuDecision()` → 必要时 `appendSwitch('disable-gpu')`（`:164-165`，判定在 `config/gpu-mode.ts`，**必须 app ready 前生效**）。
+5. 测试 appData 门 `applyTestAppDataOverride(mode)`（`:172`）——早于身份安装与任何 userData 落盘。
+6. `setAppDataFlavor()`（`:176`）与 `registerCyreneScheme()`（`:177`，app ready 前）。
+7. `installAppIdentity()`（`:178`）→ `requestSingleInstanceLock()`（`:185`）：单实例锁派生自 userData 路径，故身份与风味必须先定；顺序颠倒会让 dev 与正式版互相顶掉。
+8. `await app.whenReady()`（`:191`）→ `setAppUserModelId`（`:194`）→ userData 路径断言（`:200`）→ 生产菜单（`:205`）。
+9. `ensureUserDataDirs()`（`:206`，子目录守卫）→ `createDiagnostics()` + `audit` / `auditAsync`（`:209-226`）。
+10. 崩溃与进程级兜底：`child-process-gone` → `handleChildProcessGone`（GPU 分支只留痕 `gpu:crash`，**不 reload**）；`setCrashSink`（Renderer 崩溃 → 审计 + crash marker + reload）；`installProcessErrorGuards`（未捕获异常/拒绝，fatal 前等审计落盘）（`:227-237`）。
+11. 启动门禁：dev 形态的 `ELECTRON_RENDERER_URL` 必须指向受信地址（回环或 allowlist）（`:238+`）。
+12. 窗口创建（`window-presentation` 唯一入口）→ 通道装配 `registerHandlers(...)`（`:599`）→ 退出编排 `createShutdownHandler(...)`（`:600`）。
+
+### 3.2 退出
+
+真实退出路径上的事件次序（Electron 43.3.0 实测，注释在 `windows/main-window.ts:200-213`）：
+
+```text
+窗口 close →（挂在这里的 flush 钩子）→ destroy → closed（mainWindow 置 null）
+  → window-all-closed（非 macOS 调 app.quit()）→ before-quit →（shutdown steps）→ 退出
+```
+
+- **退出前持久化 flush 挂在窗口 `close`**（`main-window.ts:214-228`），不是只挂 `before-quit`：`window-all-closed` 时 `getMainWindow()` 已为 `null`，只挂 `before-quit` 的 flush 在生产路径上恒空转。
+- flush 由 Main 发起：`before-quit` 发 `app:persist-flush-request` 下行请求，等 Renderer 经 `app:persist-flush-done` 回 ack；预算 700 ms（`persistence/persist-flush.ts:14`），无窗口 / 投递抛错 / 超时 / Renderer 失败一律**不阻断退出**（fail-open），超时留诊断。
+- 退出步骤由 `shutdown.ts` 的 `createShutdownHandler` 有序 await；`app.on('before-quit', () => toolSvc.shutdown())`（`:490`）另有工具侧收口。
+
+---
+
+## 4. 关键数据流
+
+| 流 | 路径 | 要点 |
+|---|---|---|
+| **聊天生成** | `chat:send` → `chat/chat-service.ts` → `BackendAdapter` → WS v2 帧 → `protocol-v2/frame-mapper.ts` → 域事件 → `chat:event` 推送 → `stores/message.store.ts` → 组件 | 一次 generation = 一条 assistant 消息 + 有序 segments；`generation.completed` 是父终止事件，分段完成只结束该段；`assistantSegments` 是可见内容唯一真源；token/model/心情保留后端语义与来源标签，**不按字符估算** |
+| **附件** | 拖入/选择/粘贴 → Renderer 只持有 `File` → preload `toIpcDescriptor` 换 `fileRef` → Main `resolveFileRef` → realpath / 黑名单 / 大小 / 魔数逐条复核 → 上传 | `fileRef` 为 32 字节 CSPRNG，TTL 10 min、容量 256（`attachments/file-ref.ts:35,37`）；拖入只产生待发送附件，**不自动发送**；`bytes` 分支走 IPC（受 4 MiB 全局不变量约束），`fileRef` 分支载荷为空、由 Main 自己读盘并按 kind 复核真实字节数 |
+| **媒体字节与签名 URL** | 页面请求 `cyrene://renderer/__cyrene-media/{type}/{id}` → `attachments/media-service.ts` → 解析签名 URL → Main 取回正文（体积截断）→ 作为同源资源返回 | 目标地址策略在 `media-service.ts:69-86`：与后端**同源**放行；否则主机名必须是**公网字面 IP**；公网域名与回环/私网/链路本地/组播一律拒绝。同源资源意味着「Main 取什么，页面就能读什么」，所以这条策略是安全边界而非优化 |
+| **工具与权限** | 后端 `tool.request` → Main 风险重算 `tools/tool-policy.ts` → 授权窗（Renderer 展示目标与数据范围）→ `tool:decide` → `tools/tool-service.ts` 执行 → 审计 + 公开事件 | 风险取「本地基线 ∨ 后端上报」的较大者，黑名单恒 high；按 `callId` 幂等、终止态不重入；**唯一执行点**在 `tools/tool-service.ts:515`（测试经 `deps.executorOverride` 注入，不另开生产路径）；撤销授权写盘失败 fail-closed（`grant-store.ts` 抛 `GRANT_REVOKE_NOT_PERSISTED`） |
+| **语音** | ① 普通录音 ② 实时语音会话 ③ 输入法转写，三条独立链路 | 只有**转写 final 文本**进草稿；实时字幕不进草稿（`stores/voice.store.ts` + `components/CyChatInput.vue`）。音频上行是唯一的单向 IPC（`voice:audio-chunk`，1 MiB/块，`voice/voice-handlers.ts:22`）；敏感转写内容不进日志与诊断包 |
+| **Live2D** | `live2d:list-models` 清单 → Renderer 加载 → 渲染环（rAF；窗口隐藏时 `beginFrameSubscription`） | dev 形态经 `live2d:read-model-file` 供字节（`corsEnabled:false` 下 `cyrene://` 跨源 `fetch` 会被拒），打包形态走 `cyrene://`（`protocol/live2d-path.ts`）；任何失败进可诊断失败态，不阻塞聊天 |
+| **持久化** | Renderer 防抖 → `chat:persist-session` → Main 原子写 userData 子目录；启动 `chat:hydrate-persistence` 一次性水合 | 守卫在 `persistence/user-data-dirs.ts`：POSIX 用 `O_NOFOLLOW\|O_DIRECTORY` + fd 锚点，Windows 用 `lstat` + `realpath`；写失败语义 `write-failure.ts`，损坏隔离 `corrupt-isolation.ts`；退出 flush 见 §3.2 |
+| **连接与断线** | `transport/real-backend.ts` + `transport/connection-liveness.ts` | `BackendAdapter` 是端口，real / mock 两实现；存活检测用于发现半开连接（其真机取证状态见 doc 16）；断线时 Renderer 保留已显示内容与草稿 |
+
+---
+
+## 5. 契约面与门禁
+
+### 5.1 契约面
+
+| 面 | 位置 | 门禁 |
+|---|---|---|
+| IPC 命令通道（89） | `shared/contracts/ipc.ts` 的 `IpcChannels` | `ipc-surface-alignment.spec.ts`：声明面 ⇔ Main 装配面 ⇔ preload 可达面**集合相等**，三张例外表必须为空 |
+| IPC 推送通道（8） | 同文件 `PushChannels` | 同上：与命令面不相交、不得被注册成 handler |
+| 单向通道（1） | `voice:audio-chunk`，经 `ipc/registry.ts:76-85` 的 `registerOneWayHandler`（`ipcMain.on`，无 invoke 语义） | 通道预算 + `voice-handlers` 运行期 1 MiB 上限 |
+| 单通道载荷预算 | `ipc/channel-budgets.ts`（上界取全局不变量 `MAX_IPC_MESSAGE_BYTES` = 4 MiB，`shared/contracts/ipc.ts:128`） | `ipc-budget-declaration.spec.ts`：新通道必须申报预算 |
+| 后端 WS v2 帧 | `transport/protocol-v2/raw-schemas.ts` + `frame-mapper.ts` | `pnpm -F @cyrene/desktop check:contract`（对真实后端） |
+| 后端 REST | `protocol-v2/rest-schemas.ts` + `rest-mapper.ts`、`character-rest-*.ts` | 同上 |
+| 前端域事件 | `shared/contracts/events.ts` + `shared/schemas/events.ts` | 单测 + 集成 |
+| 线协议夹具 | `main/fixtures/wire-v2/*.jsonl` + `.manifest.json` | `refresh-wire-manifests.mjs` 刷新，契约门禁对拍 |
+
+**纪律：** 未知或畸形外部输入必须**显式失败**，不得用 `any`、宽松 schema 或静默丢字段掩盖漂移。新增 IPC 通道必须同时改三处（Main 注册 + preload 引用 + 预算表），否则门禁红。
+
+### 5.2 本地门禁
+
+| 命令 | 保证什么 | **不保证什么** |
+|---|---|---|
+| `pnpm typecheck` | 两套 tsconfig（node / web，后者 `vue-tsc`）类型通过 | 运行期行为 |
+| `pnpm lint` | `eslint --max-warnings=0`，含 type-aware 规则 | 架构约束（那由判别力 spec 承担） |
+| `pnpm test` | 单测 + 上述判别力 spec；配置启用 `expect.requireAssertions` | 真机 Electron 行为；打包形态 |
+| `pnpm test:integration` | 真机 Electron + Playwright（默认静默窗口）；默认 mock 装配，另有 `real-assembly.spec.ts` 以 `CYRENE_BACKEND=real` 启动并断言缺凭据时 **fail-closed** | **负载敏感**：整套绿不是稳定信号，判读按单文件；real 形态只覆盖「装配能起来 + fail-closed」这两件**免凭据**的事——带凭据的真实往返在 Linux CI 上本就 `skip`（`safeStorage` 不可用） |
+| `pnpm -F @cyrene/desktop check:contract` | 对**真实后端**核对 WS / REST 契约 | 未挂载后端契约目录时 exit 2 = `NOT VERIFIED`——**这不是通过** |
+| `pnpm -F @cyrene/desktop verify:sensitive` | 敏感信息 / 密钥形态扫描 | 语义级泄漏 |
+| `pnpm docs:check` / `pnpm docs:index` | 核心文档元数据、编号连续性、生成索引一致、受检面链接、doc 16 行宽 | 非编号文档的元数据与行宽；`docs/review/**`、`docs/archive/**` 只做断链计数守护 |
+| `pnpm build` / `pnpm package` / `pnpm verify:artifact` | 构建、`electron-builder --dir` 打包、产物静态校验（Fuses 读回、`dist` 与 `out` 字节一致、smoke） | 分发级验收（阶段 8 范围） |
+| `pnpm verify` | 聚合 = `typecheck && lint && test && test:integration && build` | **不含** `docs:check`、`verify:sensitive`、`check:contract`、`verify:artifact` |
+| `pnpm test:e2e` / `pnpm make` | 无——**故意非零退出的占位** | 两者都不得报告为通过或已实现 |
+
+### 5.3 CI
+
+`.github/workflows/ci.yml` 的 6 个作业（runner 已从托管迁到自建）：
+
+| 作业 | Runner | 内容 |
+|---|---|---|
+| `check`（typecheck + lint） | `[self-hosted, Linux, X64, fe-light]` | typecheck、lint、docs:check、verify:sensitive、check:contract（CI 无后端仓库 ⇒ 常态 exit 2，降级为 warning 注解） |
+| `unit tests` | `fe-light` | `pnpm test` |
+| `integration (shard N)` | `fe-linux` | 非 live2d 集成套件，分片 |
+| `integration (live2d …, self-hosted)` | `fe-linux` | live2d core / motion / settings 三文件 matrix |
+| `packaged artifact smoke` | `fe-light` | 清 `out/` + `dist/` → package → `verify:artifact --smoke`（xvfb）+ SHA 证据上传 |
+| `windows build-level` | `[self-hosted, Windows, X64]` | typecheck、lint、`pnpm test`、build、package、静态 `verify:artifact` + SHA 证据上传 |
+
+另有 `linux-runtime.yml`、`windows-runtime.yml` 两个**观测**工作流（运行时取证，非必过门禁；`windows-runtime` 仅 `workflow_dispatch`）。
+
+`ci.yml` 有 `concurrency`（同 ref 只留最新一次），因此**连推时中间提交不留完整 CI 记录**。
+
+---
+
+## 6. 变更影响地图
+
+| 我要改… | 必须同时改 | 会红的门 |
+|---|---|---|
+| 新增 / 删除 IPC 通道 | `shared/contracts/ipc.ts`、Main 注册（`ipc/handlers.ts` 或各域 handler）、`preload/desktop-api.ts`、`ipc/channel-budgets.ts` 预算 | `ipc-surface-alignment`、`ipc-budget-declaration` |
+| 新增窗口 / 对话框 / 通知 / `openDevTools` 调用 | 必须走 `windows/window-presentation.ts`、`native-ui/dialog-service.ts` | `window-presentation-guard` |
+| 改后端 wire 字段或新增帧 | `protocol-v2/raw-schemas.ts` + `frame-mapper.ts`（REST 同理），并刷新 `main/fixtures/wire-v2/` 与其 manifest | `check:contract`、契约相关单测 |
+| 改 renderer 对后端字段的消费方式 | 先看是否该落在 `BackendAdapter`（域事件）而不是组件 | 类型检查 + 契约测试；越层会被 review 打回 |
+| 新增持久化文件 / 目录 | `persistence/user-data-dirs.ts` 的子目录清单 + 原子写与写失败语义 | 相关单测 + 集成 |
+| 新增 Renderer 侧订阅 / rAF / 定时器 / AudioContext | 对应卸载点（`onBeforeUnmount` / `unmounted` 标志） | 集成用例与 review |
+| 改凭据或密钥处理 | `credentials/` + `diagnostics/redact.ts` 形态规则 | `verify:sensitive`（注意 `SELF_EXCLUDED_FILES`） |
+| 新增敏感字符串到测试文件 | `scripts/verify-sensitive-core.mjs` 的 `SELF_EXCLUDED_FILES`（并有 spec 钉住条目数） | `verify:sensitive` |
+| 改文档 | `pnpm docs:index` → `pnpm docs:check`；新增编号文档还要改 `scripts/docs-check.mjs` 的核心文档数 | `docs:check` |
+| 改打包 / 构建产物 | `scripts/verify-artifact.cjs` 的读回与一致性检查、`.github/workflows/ci.yml` 的对应作业 | `verify:artifact`、CI |
+| 改数据库 / 后端契约行为 | 不在本仓库改：走 [doc 02](02-Cyrene-前后端通信协议与前端数据结构-v0.2.md) 记录映射，并跑 `check:contract` | `check:contract` |
+
+---
+
+## 7. 本文的边界与口径
+
+### 7.1 本文不覆盖
+
+- **阶段进度、阻塞项、最近验证读数**：读 [doc 16](16-Cyrene-前端实施任务清单与进度跟踪.md)（唯一状态源）。
+- **设计意图与取舍**：[doc 01](01-Cyrene-Electron-前端总体架构设计-v0.2.md) 与各分册（02～09、11）。
+- **后端内部架构**：后端在自己的仓库，本仓只有适配层。
+- **单条缺陷、已知缺口、未取证项**：doc 16 §5 与 `docs/review/` 的最新审计/裁决记录。
+- **未实现能力**：Local Worker、任务中心（暂缓/排除）、`pnpm make` 与 `pnpm test:e2e`（故意非零占位）。
+
+### 7.2 计数口径与复核命令
+
+- 「文件数」= 该目录下**全部文件**（含非 `.ts` 资产与 `.md`）；「spec 数」= `*.spec.ts`。
+- 数字随开发漂移，本文**只在结构性变化时**更新（新增/删除模块、通道面、数据流、门禁）；不逐次追平文件计数。需要当前精确值时跑下面的命令（PowerShell，仓库根）：
+
+```powershell
+# 各层文件数
+foreach ($p in 'src/main','src/preload','src/renderer','src/shared','tests/unit','tests/integration') {
+  "{0,-18} {1}" -f $p, (Get-ChildItem "apps/desktop/$p" -Recurse -File).Count
+}
+# IPC 命令通道数（只数 IpcChannels 块）
+$t = Get-Content apps/desktop/src/shared/contracts/ipc.ts -Raw
+$b = [regex]::Match($t, '(?s)export const IpcChannels = \{(.*?)\} as const').Groups[1].Value
+([regex]::Matches($b, '(?m)^\s{2}[A-Za-z0-9_]+:')).Count
+```
+
+> 命令通道数**不被门禁钉住**：`ipc-surface-alignment.spec.ts` 保证的是「三面集合相等、例外表为空」，不是字面上的 89。加通道后该 spec 仍会绿，本文的数字需要人工同步。
+
+### 7.3 复核纪律
+
+本文每条结论都给了落点文件。**引用本文做设计或审计时，先打开落点文件确认**——本仓历史上有过「文档声称某行为存在、代码里其实是死代码」的事故（如 `fileRef` 的「重连即清空」），这也是本文坚持给出落点而不是只给结论的原因。
+
+---
+
+## 8. 维护规则
+
+**必须更新本文**（结构性变化）：
+
+- 进程边界、信任边界或不变式的落点发生变化；
+- 新增/删除 Main 模块、Renderer 顶层目录、Shared 子目录；
+- 通道面（命令/推送/单向）、后端适配面、域事件面的结构变化；
+- 启动/退出次序、持久化路径、门禁清单、CI 作业集合变化。
+
+**不要写进本文**：
+
+- 测试计数与门禁读数（属 doc 16）；
+- 阶段状态、阻塞项、下一步（属 doc 16）；
+- 单条修复的来龙去脉（属 `docs/review/` 的决策记录）；
+- 设计意图与未采纳方案（属 doc 01 与各分册）。

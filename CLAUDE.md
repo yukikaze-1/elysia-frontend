@@ -26,6 +26,7 @@ The Renderer is untrusted. Main owns credentials, backend connections, filesyste
    - 10 technical task breakdown
    - 11 settings center
    - 12 phase gates
+   - 20 current architecture as-built (process boundaries, module map, startup/shutdown order, contract surface and gates; it states structure, never status)
 5. Use [review index](docs/review/README.md) and [spec/plan index](docs/superpowers/README.md) only when historical decisions or evidence are needed.
 
 ## Sources of truth

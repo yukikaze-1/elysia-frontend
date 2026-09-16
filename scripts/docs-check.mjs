@@ -178,15 +178,17 @@ const coreDocs = readdirSync(DOCS)
   .filter((name) => /^\d{2}-.*\.md$/.test(name))
   .sort()
 
-// 00～19：19 是 2026-09-12 新增的开发环境隔离与资源登记（多项目并行开发的端口/userData 口径）。
+// 00～20：19 是 2026-09-12 新增的开发环境隔离与资源登记（多项目并行开发的端口/userData 口径）；
+// 20 是 2026-09-16 新增的架构现状总览（as-built 结构与边界，与 doc 01 的设计口径分工）。
 // 新增核心编号文档时必须同步这里的长度（否则「文档总数不符」会静默放过缺失编号）。
-const expectedPrefixes = Array.from({ length: 20 }, (_, index) =>
+const expectedPrefixes = Array.from({ length: 21 }, (_, index) =>
   String(index).padStart(2, '0')
 )
+const prefixRange = `00–${String(expectedPrefixes.length - 1).padStart(2, '0')}`
 
 if (coreDocs.length !== expectedPrefixes.length) {
   fail(
-    `Expected ${expectedPrefixes.length} core documents (00–19), found ${coreDocs.length}`
+    `Expected ${expectedPrefixes.length} core documents (${prefixRange}), found ${coreDocs.length}`
   )
 }
 
