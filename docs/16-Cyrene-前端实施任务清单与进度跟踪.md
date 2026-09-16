@@ -930,6 +930,36 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **仍未做（不谎称已修）**：**P1-3**（零客户端 WS 存活检测：`real-backend.ts` 无 ping/keepalive 源，half-open 连接不可发现，界面停留在假 `connected`）与 **P1-4**（42 个 Electron 集成用例 100% 观测 mock 装配，且 `CYRENE_BACKEND:'mock'` 写在 `opts.env` 之后**不可被调用方覆盖**，打包形态恒 real ⇒ 主目标平台的 real 装配在 Electron 层零端到端覆盖）——两项按用户裁决**单独立项、先定设计**，登记见 §4.2。其余 P2/P3 条目本轮未动。
 - **本轮对既有台账的更正（以追加注记方式，不改写历史原文）**：doc 16 的 H-04 条目、Linux GPU「已修复」、C10「已上 wire」三处；doc 02 §9.3 之前与 §12 的两处、doc 03 §8 之前、doc 06 §3.3/§3.5 注记各一处「会话级 Token 无消费方」——共 **5 处 Token 漂移**（审计报告列了 3 处，实际多出 doc 02 的 §12 行内注记与 doc 06 §3.5 注记两处，**这批漂移正是本仓上一批（`4e4e448`）的漏**：新增了落地注记却没有就地作废旧断言）。报告附录 C 列的六条台账更正同样以追加注记方式落在本记录，不逐条改写 2026-09-15 的历史原文。
 
+**三项立项落地批（2026-09-16，`e292112`）**
+
+> 输入：[三项待设计立项的方案与代价](review/2026-09-16-三项待设计立项的方案与代价.md)。用户选定 **AUD-01 → B / AUD-02 → A + C / Linux GPU → A + B**（逐项经 `ask_user_question` 确认）。本批把 §4.2 的三项从"已登记未修"变为"已落地"，并逐条标出**仍未覆盖**的部分。
+
+| 门禁 | 结果（`e292112`，本机 Windows） |
+|---|---|
+| typecheck / lint | PASS |
+| `pnpm test` | PASS：**264 files / 3287 passed** + 6 expected-fail + 22 skipped（本批新增 3 个 spec 文件 / 29 条） |
+| `pnpm test:integration` | **44 files 全通过 / 180 passed + 3 skipped（exit 0）**。本批新增 2 个文件（`real-assembly.spec.ts` 4 条、`gpu-fallback.spec.ts` 2 条）⇒ 42→44 文件、177→183 用例。**独占运行、无并发负载**（上一批的经验：这套 Electron 集成对负载敏感，并发跑别的 vitest 会得到不可作判据的读数） |
+| `pnpm docs:check` | PASS（20 核心文档 / 97 review 记录 / 40 superpowers / 42 archive） |
+| `verify:sensitive` | PASS（908 文件扫描，368 排除，63 行 allowlist） |
+
+- **AUD-01 客户端存活检测（方案 B）**：新增纯模块 `main/transport/connection-liveness.ts` + `real-backend` 接线（`noteFrame` 接在**任何入站字节**上，含二进制帧；`outstanding` 取既有 `pendingAcks.size`——不必改 15 处 `ws.send`；判死走既有 `onSocketClosed`）。**没有向 WS 发任何东西**：协议两侧都无 `ping`/`pong` 帧（本轮全仓 + 权威后端 grep 均 0 命中），报告"复用既有帧"的前提不成立。
+  - 两条判据：① 有在途请求且静默 ≥ 8s ⇒ 探针（`GET /api/me`）；**宿主可达 ⇒ 这条 socket 已死**（新连接能通、旧连接不响 = half-open 的定义）⇒ 收敛。② 空闲 ≥ 120s ⇒ 探针；宿主不可达才收敛，**可达则什么都不做**（空闲不重连，避免抖动）。8s 这个值有硬约束：**必须小于 15s 的 ACK 超时**，否则用户先看到一次假 `TIMEOUT`，收敛就失去意义（已写成断言）。
+  - 变异验证 6 处，**5 处 RED**：去掉收帧重置、去掉起监视、探针恒判不可达、空闲也判死、判死不收敛。**唯一 GREEN 是"断开时停表"**——`probeHostReachable` 自身的 `disconnected` 早退使它无外部可观测差异，属**卫生性防御而非判别性修复**，据实记于此（不删、不假装被覆盖）。
+  - **仍未做**：真机 half-open 复现（本批用"真实静默挂起服务端"+"close 得不到确认的假 socket"覆盖机制，但没有 NAT 超时/休眠唤醒的真机端到端）。
+- **AUD-02 方案 A（放开覆盖 + 免凭据 real 冒烟）**：`CYRENE_BACKEND` 移到 `opts.env` **之前**（只放开这一项；`CYRENE_TEST_APP_DATA`/`CYRENE_TEST_HARNESS`/`CYRENE_WINDOW_MODE` 三项隔离/安全不变量仍锁在其后）。新增 `tests/integration/real-assembly.spec.ts` 4 条：real 装配确被启动且 `getRuntimeInfo().mode === 'real'`、缺省仍为 mock、**缺 token 时 connect fail-closed 为 `CREDENTIAL_UNAVAILABLE`**、未连接即断开安全。
+  - **为什么必须免凭据**：CI 跑 Electron 的 runner 是 Linux + xvfb，那里 `safeStorage` 为 `basic_text` ⇒ 判不可用 ⇒ 拒存，既有凭据往返用例在该环境直接 `return { skipped: true }` ⇒ **依赖凭据的 real 冒烟会被静默跳过**（报告 S-4「绿灯含义被高估」的同型陷阱）。本 spec 因此不需要任何凭据，在 CI 上是**真跑**。
+  - 变异验证 1 处 RED：把 `CYRENE_BACKEND` 放回 `opts.env` 之后 ⇒ real 冒烟 2 条红，而"缺省仍是 mock"那条**保持绿**（正是期望的判别形态）。
+- **AUD-02 方案 C（mock/real 共享契约测试）**：新增 `tests/unit/mock-real-contract.spec.ts`——同一场景两侧各走真实路径（mock 读内置领域夹具；real 由真实 `WebSocketServer` 发等价 wire 帧经 `FrameMapper` 映射），断言：**real 滤掉 `generation.segment.started` 后事件种类序列与 mock 逐项相同**；**已登记的差异恰好是"默认夹具 0 帧段边界"且数量钉死为 3**；Token 的 `source` 标签（`provider_reported`/`server_aggregate`）与 `total = input + output`、会话累计 2100 两侧一致。
+  - 变异验证 4 处全 RED，**两侧各打两处**（real 侧改来源标签 ×2、mock 侧改夹具用量与补一条段边界）⇒ 证明这条契约测试真的在看**两边**，而不是只把 real 与自己比。
+- **Linux GPU（方案 A + B）**：判定点单列为 `config/gpu-mode.ts`（Linux 且无 `card*`/`renderD*` ⇒ 回退；`CYRENE_GPU_MODE=disable|auto` 可覆盖），由 `index.ts` 在 `app.whenReady()` **之前**调用并应用 `--disable-gpu`，另留 `gpu:runtime-mode` 诊断（`disabled`/`mode`/`source`/`platform`）；支持边界写进 doc 09 §8。**判据不用 `app.getGPUFeatureStatus()`**——它只在 ready 后可用，而崩溃发生在 GPU 进程初始化期。
+  - **⚠️ 落地中撞到并修掉的一处真实回归（如实记录，这是本批最值得留痕的一条）**：判定逻辑最初**并进了 `runtime-environment.ts`**，于是该模块多了一句 `import { readdirSync } from 'node:fs'`。而它被 `windows/window-presentation.ts` 与 `native-ui/dialog-service.ts` 依赖 ⇒ `node:fs` 被拖进它们的依赖图。后果：`tests/integration/renderer-crash.spec.ts`（全仓唯一用 CDP 观测"崩溃后 reload"的用例）**稳定失败**。
+    - 定位方式：`git stash` 掉全部改动跑基线（**通过**，611ms）⇒ 确认是回归而非 flake；再逐文件还原二分 ⇒ 锁定该文件（仅还原它、`index.ts` 保持 HEAD 就已复现）。
+    - 修法：判定点独立成 `config/gpu-mode.ts`，**只由装配根 `index.ts` 调用**，`runtime-environment.ts` 回到纯净解析器（无 fs 依赖）。修复后崩溃用例 **627ms 通过**，GPU 的 18 条单测与 4 处变异全部照旧。
+    - 教训：**在被多处依赖的"纯解析模块"里新增重型依赖（fs/net）会波及依赖它的每一个边界**。`runtime-environment.ts` 自己写明是"窗口呈现判据的唯一解析点"，往里塞第二件事（且带 fs）恰好破坏了那条设计意图。方案文档里"沿用同一个解析点而不是另开一个同形模块"的判断是错的，此处更正。
+  - 应用层另有 `tests/integration/gpu-fallback.spec.ts` 2 条（显式 disable ⇒ 命令行确有该开关；回退后启动链完整）。**只做正向断言**：Linux 上反向断言恒假——测试脚手架自己的 `defaultGlArgs` 就会注入 `--disable-gpu`，写反向用例只会得到永不因本代码变红的假断言（"缺省不干预"留在单测矩阵里）。
+  - 变异验证 4 处全 RED（含"决策算出来但不应用"那处，需重建产物）。
+  - **仍未做**：真实无 GPU 环境的端到端表现（本机 Windows 测不到；判定矩阵靠注入式单测，应用层只验到"开关落到命令行"）。doc 09 §8 已按此口径写明**不支持"无 GPU Linux 已验证"这个结论**。
+
 维护规则：
 - 每个代码批次用新的日期与 commit 整体替换本表，不在其他文档追加另一组“最新数字”。
 - **`NOT VERIFIED` 与 `未执行` 必须显式记录，不得省略或读作通过**；这是 `check:contract` 原以 exit 0 冒充通过所暴露的教训。
@@ -961,16 +991,19 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 
 ### 4.2 待设计立项（审计 P1-3 / P1-4，非阶段 8 决策）
 
-> 2026-09-16 用户裁决：这两条是六条 P1 中唯二「要新建机制而非修缺陷」的，**单独立项、先定设计**，不塞进修复批（混在一起会让"修复必红"的变异验证失去意义）。**在立项完成前，任何人不得把它们读作已修或已覆盖。**
+> 2026-09-16 用户裁决：这两条是六条 P1 中唯二「要新建机制而非修缺陷」的，**单独立项、先定设计**，不塞进修复批（混在一起会让"修复必红"的变异验证失去意义）。
 >
 > **决策输入已备**：[三项待设计立项的方案与代价](review/2026-09-16-三项待设计立项的方案与代价.md)（逐项给出已核事实 + 选项 + 代价 + 推荐）。其中一条事实推翻了报告的前提：**协议两侧都没有 `ping`/`pong` 帧**，故 P1-3 的"复用既有帧"不可行；另补了报告未提的一条硬约束——**CI 跑 Electron 的 runner 是 Linux + xvfb，那里 `safeStorage` 判不可用 ⇒ 依赖凭据的 real 冒烟会被静默跳过**，方案必须绕开它。
+>
+> **2026-09-16 用户选定并已落地：AUD-01 → 方案 B；AUD-02 → 方案 A + C；Linux GPU → 方案 A + B。** 见 §3.1 的本批记录。
 
-| ID | 缺口（审计报告条目） | 现状证据 | 立项前必须先定的口径 |
+| ID | 缺口（审计报告条目） | 状态 | 落地要点 |
 |---|---|---|---|
-| AUD-01 | **零客户端 WS 存活检测**（报告 P1-3，违反 `docs/07:155`） | `real-backend.ts` 全文件无 ping/keepalive/`setInterval` 心跳源；建 socket 只传 `{headers, perMessageDeflate:false}`（无 `autoPong` 声明）；唯一状态来源是被动的 `close`/`error` ⇒ half-open（NAT 超时、休眠唤醒、对端 SIGKILL 未发 FIN）不可发现，界面停在假 `connected`，发送被静默吞掉后报成 `TIMEOUT`，且无自动恢复路径 | ① 心跳频率与后端负载/移动网络的取舍；② **复用既有帧**还是新增帧类型（报告建议复用，且不得新造状态机）；③ 判失活后走**既有**重连路径的哪一条；④ 判定阈值（如连续 2 次未回） |
-| AUD-02 | **Electron 集成套件 100% 观测 mock 装配，且注入不可覆盖**（报告 P1-4） | `tests/integration/helpers/app.ts` 把 `CYRENE_BACKEND: 'mock'` 写在 `...(opts.env ?? {})` **之后** ⇒ 调用方无法覆盖；`config/backend-mode.ts` 在 `isPackaged` 时**恒**返回 `real` ⇒ 打包形态（用户唯一会运行的形态）在 Electron 层零端到端覆盖；`windows` job 明写不启动 Electron | ① 是否放开 `CYRENE_BACKEND` 覆盖（注意它是"三项隔离不变量"之一，放开要写清边界）；② real 冒烟的夹具形态——本地起最小 ws/http 夹具，还是指向真实后端；③ 纳入哪条 CI（可与 `linux-runtime` 取证 workflow 合并）；④ 与 mock/real **共享契约测试**（报告 P2）是否同批 |
+| AUD-01 | **零客户端 WS 存活检测**（报告 P1-3，违反 `docs/07:155`） | **已落地（方案 B）** | 新增纯模块 `main/transport/connection-liveness.ts`：记录最后收帧时刻 + 在途请求数，判定"这条 socket 是否还活着"；两条证据——**有在途请求却静默超宽限期**（8s，**必须小于 15s 的 ACK 超时**，否则用户先看到一次假 TIMEOUT）或**空闲且宿主不可达**。探针是新的只读 REST（`GET /api/me`），**不向 WS 发任何东西**（协议两侧无 ping/pong 可复用）；判死即走**既有** `onSocketClosed`/退避重连，不新造状态机。**空闲且宿主可达时刻意什么都不做**——后端空闲本来就不发东西，按静默无条件重连会造成连接抖动 |
+| AUD-02 | **集成 100% 观测 mock 且注入不可覆盖**（报告 P1-4） | **已落地（方案 A + C）** | ① `CYRENE_BACKEND` 改为**可由调用方覆盖**（排在 `opts.env` 之前），三项隔离/安全不变量仍锁在其后；② 新增 `tests/integration/real-assembly.spec.ts`：**全部免凭据**（否则在 Linux CI 上会被 `skipped`），断言 real 装配确被启动、缺 token 时 connect **fail-closed** 为 `CREDENTIAL_UNAVAILABLE`；③ 新增 `tests/unit/mock-real-contract.spec.ts`：同一场景两侧产出**同构领域事件序列**——把 real 的 `generation.segment.started` 滤掉后必须与 mock **逐项相同**，并把"默认夹具 0 帧段边界"这条差异**恰好钉死**（数量与种类），Token 的来源标签与口径两侧一致 |
+| Linux GPU | **产品侧无 GPU 回退**（报告 P2） | **已落地（方案 A + B）** | ① `runtime-environment.ts` 增第二项运行期判定：Linux 且 `/dev/dri` 下无 `card*`/`renderD*` ⇒ 回退；`CYRENE_GPU_MODE=disable/auto` 可覆盖；② `index.ts` 在 `app.whenReady()` **之前**应用 `--disable-gpu` 并留 `gpu:runtime-mode` 诊断；③ 边界写进 doc 09 §8。判据不用 `app.getGPUFeatureStatus()`——它**只在 ready 后可用**，而崩溃发生在 GPU 进程初始化期 |
 
-> 附：报告另有一条**产品侧缺口**同属"先定口径"类——**Linux 无 GPU 回退**（`--disable-gpu` 只在测试脚手架与 `verify-artifact`，`src/main/**` 零命中，`disableHardwareAcceleration` 全仓 0 命中）。要么在 `src/main` 增加启动期 GPU 可用性判定与回退，要么在文档明确"仅支持有硬件 GL 的 Linux 桌面"。**当前两种都没做**，故 §1 的 Linux GPU 条目按"测试侧修复 + 产品侧缺口"读。
+> **仍未做的（不得读作已覆盖）**：AUD-01 的真实 half-open **实机复现**（本地用真实静默挂起夹具与"close 得不到确认"的假 socket 覆盖了机制，但没有真机 NAT 超时/休眠唤醒的端到端取证）；AUD-02 的**本地夹具真连**那层（方案 B，需落在 Windows 手动 job + 真实后端，自动 CI 会被 skip）；Linux GPU 的**真实无 GPU 环境端到端表现**（本机 Windows 测不到，判定矩阵靠注入式单测 + 应用层只验到"开关落到命令行"）。
 
 ## 5. 下一步
 
