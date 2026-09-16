@@ -194,6 +194,19 @@ describe('GPU 回退判定（2026-09-16 审计 P2）', () => {
     expect(r.gpuModeSource).toBe('default')
   })
 
+  it('X99 形态（2026-09-16 实测）⇒ 同样**不干预**——把"这一档不被覆盖"钉成断言而不是只写在文档里', () => {
+    // X99 的真实 /dev/dri 内容：card0 / card1 / renderD128 / renderD129（内核已加载 nvidia / nvidia_drm / amdgpu）。
+    // **而当初测到"GPU 进程在 Mesa 软件光栅器里确定性段错误"的正是这台机器** ⇒ 判据在它上面不触发，
+    // 产品侧自动回退覆盖不到我们真正观测到崩溃的那一档（"节点在、但该会话里 GPU 用不了"）。
+    // 本条断言的是**已知边界**，不是"已修好"：要覆盖它需要另一套判据（见 doc 09 §8 的 2026-09-16 补记）。
+    const x99Entries = ['card0', 'card1', 'renderD128', 'renderD129']
+    const hasNode = x99Entries.some((n) => /^(card|renderD)\d+$/.test(n))
+    expect(hasNode).toBe(true)   // 前置：按真实实现的判据，这四条确实算"有可用 GPU"
+    const r = resolveGpu({}, 'linux', hasNode)
+    expect(r.disableHardwareAcceleration).toBe(false)
+    expect(r.gpuModeSource).toBe('default')
+  })
+
   it('非 Linux 一律不干预（本缺口只在 Mesa/xvfb 那条路径上有证据）', () => {
     for (const platform of ['win32', 'darwin']) {
       const r = resolveGpu({}, platform, false)
