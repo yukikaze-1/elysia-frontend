@@ -88,12 +88,28 @@ type TableFacts = {
   lastRightAfter: number
 }
 
+/**
+ * 一次查询的**完整原子事实快照**。
+ *
+ * 判别面是「表格 + 消息列 + 全部几何」缺一不可，而元素在虚拟列表重算（行高实测分批提交 →
+ * `visibleIds` 重算）期间可能短暂不在渲染窗口内。因此**查询结果必须整体返回、由调用方对整份快照
+ * 判有效**，绝不能「先 poll 某个条件通过、再重新查询一次」——那是 check-then-re-query 竞态：
+ * 两个时刻之间的 DOM 变化会让第二次查询落空（2026-09-16 run `35001909477` 与
+ * 2026-09-17 run `35140775538` 两次真实红的形态就是这个）。
+ * 缺失状态一并带出，便于失败时直接读出是缺表格还是缺消息列。
+ */
+type TableSnapshot =
+  | { complete: false; hasTable: boolean; hasList: boolean }
+  | ({ complete: true; hasTable: true; hasList: true } & TableFacts)
+
 /** 几何采集（page.evaluate 序列化函数——闭包不可引模块作用域，全部内联） */
-async function collectTableFacts(page: Page): Promise<TableFacts | null> {
+async function collectTableFacts(page: Page): Promise<TableSnapshot> {
   return page.evaluate(() => {
     const table = document.querySelector<HTMLTableElement>('.cy-assistant-row .cy-markdown table')
     const list = document.querySelector<HTMLElement>('.cy-messages')
-    if (!table || !list) return null
+    // 任一缺失 ⇒ 返回「不完整」快照而不是 null：调用方据 hasTable/hasList 分辨装配错误的两半，
+    // 且**不会**把「查询落空」误当成「夹具没渲染」。
+    if (!table || !list) return { complete: false as const, hasTable: table !== null, hasList: list !== null }
     const lastCell = table.querySelector<HTMLElement>('tr > *:last-child')
     const headerCells = table.querySelectorAll<HTMLElement>('thead th')
     const headerCellGap = headerCells.length >= 2
@@ -126,8 +142,27 @@ async function collectTableFacts(page: Page): Promise<TableFacts | null> {
     facts.lastRightAfter = lastCell?.getBoundingClientRect().right ?? Number.NaN
     // 哨兵：完整夹具（含结束标记）已到达 DOM——后续断言不会在"半截内容"上做几何判断
     facts.sentinel = (table.closest('.cy-markdown')?.textContent ?? '').includes('TABLESCROLL-END')
-    return facts
+    return { complete: true as const, hasTable: true as const, hasList: true as const, ...facts }
   })
+}
+
+/**
+ * 等到「一份完整且哨兵为真的快照」，并**把那一份快照本身**交给调用方用于后续断言。
+ *
+ * 为什么用闭包变量保存最后一份快照而不是 poll 完再查一次：`expect.poll` 成功之后**不允许**
+ * 再触碰 DOM —— 否则断言用的就不是「被判定通过的那个状态」，竞态原样回来。
+ * 事件循环语义保证安全：poll 的判定（`latest.sentinel` 读取）与本次 fetch 之间没有任何 await 边界，
+ * poll 返回后读到的 `latest` 必然就是让判定通过的那一份。
+ */
+async function waitForTableSnapshot(page: Page): Promise<TableSnapshot & { complete: true }> {
+  let latest: TableSnapshot | undefined
+  await expect.poll(async () => {
+    latest = await collectTableFacts(page)
+    return latest.complete && latest.sentinel
+  }, { timeout: 15_000, interval: 200 }).toBe(true)
+  // 至此 latest 一定是 complete && sentinel 的那一份（poll 退出条件即它）
+  if (!latest || !latest.complete) throw new Error('等待完整表格快照后仍拿不到快照——装配错误')
+  return latest
 }
 
 let app: ElectronApplication
@@ -150,11 +185,10 @@ describe('Markdown 宽表横向滚动（doc 03 §7.4）', () => {
   it('宽表在气泡内可横向滚动：不被裁切、溢出部分可达、不撑破消息列', async () => {
     await connectAndSend(page, '表格滚动判别用例')
 
-    // ① 等表格与完整夹具到达（列表虚拟化/流式都可能让它晚于发送出现）
-    await expect.poll(async () => (await collectTableFacts(page))?.sentinel ?? false, { timeout: 15_000, interval: 200 })
-      .toBe(true)
-    const facts = await collectTableFacts(page)
-    if (!facts) throw new Error('表格或消息列未找到——夹具未渲染，属装配错误')
+    // ① 等一份**完整且哨兵为真**的原子快照（表格 + 消息列 + 全部几何来自同一次 page.evaluate）
+    //    后续所有断言直接用这一份，**不再触碰 DOM**——否则判定通过的状态与断言用的状态是两个时刻，
+    //    竞态原样回归（这正是 2026-09-16 / 2026-09-17 两次红的形态）。
+    const facts = await waitForTableSnapshot(page)
 
     // 正向哨兵：24 列 ×（表头 + 3 行）= 96 个单元格（缺它说明表格没真渲染，下面全是空过）
     expect(facts.rows).toBe(4) // 表头 + 3 行
