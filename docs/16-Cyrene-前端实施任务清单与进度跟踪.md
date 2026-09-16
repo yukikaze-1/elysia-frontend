@@ -1042,7 +1042,10 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 >
 > **2026-09-16 A/B/C 三批新增的三条边界（同样不得读作已覆盖）**：① symlink 换链的身份复核用例在本机 **EPERM 显式跳过** ⇒ 该分支本机 NOT VERIFIED（Linux CI 覆盖）；② `CYRENE_PACKAGED_HARNESS` 的**打包态端到端断言**只写在 `verify-artifact.cjs --smoke`，本机未安装 electron-builder ⇒ NOT VERIFIED（Linux CI 的 artifact job 覆盖）；③ `cyrene://` 下的 **404 不走** `did-fail-load`（协议 handler 返回带 404 状态的响应，渲染进程视为"加载完成"）⇒ 该形态未被 C 批覆盖。三条的完整上下文见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。
 >
-> **E 批的最新状态（2026-09-16，用户选定"先做 E3 的可交付准备"）**：E1／E2 **按用户选择未推**（解锁条件见下）；**E3 已交付取证工具** `apps/desktop/scripts/gpu-fallback-forensics.sh`（在真 Linux X99 上实跑验证了第 0–3/5 节与 `--launch` 的引导分支；**"启动应用并抓到 `gpu:runtime-mode` 日志"那一段仍未被任何真实运行走到**）。**E3 本身仍是 NOT VERIFIED**——工具就绪 ≠ 取证完成，需要一台真的没有 `/dev/dri` 的 Linux 跑一次并把产物归档到 `docs/review/`。同一次实跑另把失败形状钉准：X99 是 `XDG_SESSION_TYPE=tty` + `DISPLAY` 未设（无桌面会话）却有真实 GPU ⇒ 真实形状是「设备与驱动都在、但没有可用显示会话」（见 doc 09 §8）。
+> **E 批的最新状态（2026-09-16，用户选定"先做 E3 的可交付准备"）**：E1／E2 **按用户选择未推**（解锁条件见下）；**E3 已交付取证工具** `apps/desktop/scripts/gpu-fallback-forensics.sh`（在真 Linux X99 上实跑验证了第 0–3/5 节与 `--launch` 的引导分支；**"启动应用并抓到 `gpu:runtime-mode` 日志"那一段仍未被任何真实运行走到**）。**E3 本身仍是 NOT VERIFIED**——工具就绪 ≠ 取证完成，需要一台真的没有 `/dev/dri` 的 Linux 跑一次并把产物归档到 `docs/review/`。**2026-09-16 第二轮补充**：脚本已在 X99 上**完整走通**（含 `--launch`），并由此拿到一条**实测复现**：
+> 同一次运行里判据未触发（`disabled:false, source:default`）而 GPU 进程崩 3 次、内核 3 条 `segfault … in swrast_dri.so`
+> ⇒「回退覆盖不到 X99 这一档」从推断变为实测，见 [X99 实测记录](review/2026-09-16-X99实测-GPU回退判据不触发与swrast崩溃.md)
+> （其中另列出两个候选新判据，**均未实现、需决策**）。
 
 ## 5. 下一步
 

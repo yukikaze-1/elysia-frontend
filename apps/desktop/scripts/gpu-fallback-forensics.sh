@@ -27,10 +27,13 @@ set -uo pipefail
 
 LAUNCH=0
 TIMEOUT_S=20
+APP_DATA="${CYRENE_TEST_APP_DATA:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --launch) LAUNCH=1; shift ;;
     --timeout) TIMEOUT_S="${2:-20}"; shift 2 ;;
+    # 以 `--mode test` 构建的产物必须带测试 appData 覆盖（那是 fail-closed 门）。生产构建不要传。
+    --app-data) APP_DATA="${2:-}"; shift 2 ;;
     -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
     *) echo "未知参数：$1（用 --help 看用法）" >&2; exit 64 ;;
   esac
@@ -121,6 +124,10 @@ else
   else
     LOG="$(mktemp -t cyrene-gpu-forensics-XXXXXX.log)"
     RUN=(env CYRENE_TEST_HARNESS=1 CYRENE_WINDOW_MODE=silent "$ELECTRON_BIN" "$APP_DIR")
+    if [ -n "$APP_DATA" ]; then
+      echo "测试 appData 覆盖：$APP_DATA"
+      RUN=(env CYRENE_TEST_HARNESS=1 CYRENE_WINDOW_MODE=silent CYRENE_TEST_APP_DATA="$APP_DATA" "$ELECTRON_BIN" "$APP_DIR")
+    fi
     if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
       if have xvfb-run; then echo "无显示会话 ⇒ 用 xvfb-run -a 包一层"; RUN=(xvfb-run -a "${RUN[@]}")
       else echo "无显示会话且无 xvfb-run ⇒ 无法可靠启动（请装 xvfb 或提供 DISPLAY）"; fi

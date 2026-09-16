@@ -375,3 +375,13 @@ Demo 阶段如不做自动更新，应使用清晰的手动升级说明。
 - 打包态承认 harness 需 `CYRENE_PACKAGED_HARNESS=1`（`--smoke` 已设）；冒烟另加端到端断言：只设单变量时调试门仍须拒绝。
 - CI 的 `Clean + package` 步骤原先清的是仓库根（no-op），已修到 `apps/desktop/{out,dist}`。
 - 详见 [A/B/C 三批决策与变异记录](review/2026-09-16-审计剩余项ABC三批落地-决策与变异记录.md)。
+
+> - **2026-09-16 实测复现（不再是推断）**：在 X99 上以当前代码真跑一次（工具见下），同一次运行里同时出现
+>   `gpu:runtime-mode … disabled:false, mode:auto, source:default`（判据未触发）与 3 次
+>   `GPU process exited unexpectedly: exit_code=139` + 内核 3 条 `segfault … in swrast_dri.so`（同一指令偏移）；
+>   应用在 25s 窗口内未自行退出。⇒ **"覆盖不到有节点但无会话的那一档"已从推断变为实测**。
+>   证据与读法见 [X99 实测记录](review/2026-09-16-X99实测-GPU回退判据不触发与swrast崩溃.md)，
+>   其中另列出两个候选新判据（判会话/显示可用性；按 GPU 进程异常自救重启）——**均未实现，需决策**。
+> - E3 交付件 `apps/desktop/scripts/gpu-fallback-forensics.sh` 本轮**首次被完整走通**（含 `--launch`：
+>   `xvfb-run` 包装、stdout 关键行、`journalctl -k` 段错误、app.log 判定行）；仍未走到的只有
+>   **在一台真的没有 `/dev/dri` 的机器上运行**——那正是 E3 仍为 NOT VERIFIED 的原因。
