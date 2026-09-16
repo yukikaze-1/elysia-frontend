@@ -5,6 +5,7 @@ import type { RegisteredTool } from './tool-registry'
 import { computeLocalRisk, isPathBlacklisted, isPathWithinRoot, normalizeToolPath, normalizeReportedRisk, type RiskLevel } from './tool-policy'
 import { redactToolArguments } from './input-summary'
 import { createExecutors, ToolExecError, type ExecResult } from './tool-executors'
+import { captureFileIdentity, type FileIdentity } from './file-identity'
 import { computeTextDiff, detectTextFormat } from './text-diff'
 import type { PublicToolEvent, ToolAttachment, ToolCallStatus } from '@shared/contracts/tool'
 import { GRANT_TTL_OPTIONS_MS } from '@shared/contracts/tool'   // 批次 C（D6C-04）：grant TTL 白名单（grantDirectory F-3 双校验）
@@ -44,7 +45,7 @@ export interface ToolServiceDeps {
    *  「沙盒内受控」分支有唯一入口，避免将来逐处 `startsWith` 复制包含性判定。 */
   sandboxDirectories?: string[]
   isWayland?: boolean               // 注入（测试用）；缺省 isWaylandSession() env 判定（A-4）
-  executorOverride?: (rec: ToolRecord, realPath?: string) => Promise<ExecResult>   // 测试注入（B-1/M12）
+  executorOverride?: (rec: ToolRecord, realPath?: string, signal?: AbortSignal) => Promise<ExecResult>   // 测试注入（B-1/M12）；signal 供"永不 settle 的执行"用例（A1）
   selectedAdd?: (realPath: string) => void   // selected-set 写闭包（A-14：tool-service 注入；executor 可选调用）
   // —— 批次 C（D6C-04/05）：目录授权 ——
   grants?: import('./grant-store').GrantStore      // 批次 C（D6C-04）：grant 仓库（缺省 → 无 grant 面）
@@ -61,6 +62,9 @@ export interface ToolRecord {
   captureSources?: PublicToolEvent['captureSources']; capturePreview?: PublicToolEvent['capturePreview']
   expiresAt: number; paramHash?: string; arguments_: Record<string, unknown>; toolVersion: string
   statusSent: boolean; realPath?: string        // L1：决策链 step 5 normalize 缓存（executor/串行锁读取）
+  /** 2026-09-16 审计 P2（TOCTOU）：授权时刻该 realPath 的文件身份（dev+ino）；执行前复核，防批准后被换链。
+   *  仅在授权时该路径**确为一个普通文件**时才有值（见 file-identity.ts 的四态说明）。 */
+  fileIdentity?: FileIdentity
   /** D4-1：本地风险重算产物（决策链 step 8 前写入；审计 riskLevel 的唯一来源，不再直接读注册表常量） */
   riskLevel?: RiskLevel
   attachments?: ToolAttachment[]                // M2：完成时缓存（重连重发复用 URL，D6B-11）
@@ -97,10 +101,39 @@ export const THUMBNAIL_DATA_URL_MAX = 64 * 1024      // 缩略图 data URL 上�
 export const PREVIEW_DATA_URL_MAX = 256 * 1024       // 全尺寸预览 data URL 上限（A-18/L-5；超限降级为缩略图）
 export const CAPTURE_SESSION_TTL_MS = 120_000        // capture 子状态机停留态超时（M1：awaiting_pick/picked 无执行超时兜底——Renderer 不响应时记录不得永久停留 running）
 export const MAX_RECORDS = 200   // L-1（D6C-09a）：records 容量上限（超出逐最旧终态；awaiting/running 永不逐出）
+/**
+ * `listRecent` 纳入**审批上下文**（diff / captureSources / capturePreview）的字节预算（2026-09-16 审计 P2）。
+ *
+ * 为什么需要预算：`tool:list` 的出参受全局不变量 ≤ `MAX_IPC_MESSAGE_BYTES`（4 MiB，doc 07 §6.3）约束，
+ * 而单张全尺寸截图预览 ≤ `PREVIEW_DATA_URL_MAX`（256 KiB）、单个源缩略图 ≤ `THUMBNAIL_DATA_URL_MAX`（64 KiB）
+ * ⇒ 20 条上限下最坏可达 20 × 约 320 KiB ≈ 6.4 MiB，会越界。逐条无脑附带等于把"出参不超 4 MiB"变成
+ * 一句做不到的声明，故这里按字节先到先得：`listRecent` 已把非终态排在前（它们才是需要审批上下文的记录），
+ * 预算耗尽者退回"无上下文"，与修复前行为一致（不静默截断字段，而是整块不带）。
+ */
+export const HYDRATION_CONTEXT_BUDGET_BYTES = 2 * 1024 * 1024
 
 /** 工具服务结构化错误（IPC 层映射为结构化拒绝） */
 export class ToolServiceError extends Error {
   constructor(public code: string, message: string) { super(message) }
+}
+/** 执行已被放弃（终态先到）。**只**用于让 `run()` 及时返回，绝不外泄成用户可见错误码 */
+class ToolExecutionAbandoned extends Error {
+  constructor() { super('执行已被放弃') }
+}
+/**
+ * 等 `work`，但 signal 一 abort 就立刻拒（A1）。`work` 自身的结局仍被挂上处理器——否则被放弃的
+ * 执行稍后抛错会变成 unhandled rejection（它已经没人 await 了）。
+ */
+function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new ToolExecutionAbandoned())
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(new ToolExecutionAbandoned())
+    signal.addEventListener('abort', onAbort, { once: true })
+    work.then(
+      (v) => { signal.removeEventListener('abort', onAbort); resolve(v) },
+      (e: unknown) => { signal.removeEventListener('abort', onAbort); reject(e instanceof Error ? e : new Error(String(e))) },
+    )
+  })
 }
 // M10 注记：tool-service ↔ tool-executors 存在值导入互引（createExecutors vs 常量/类型）——当前仅函数体内使用不触发 TDZ；
 // 若实现期遇循环 import 告警，把 FILE_READ_MAX_BYTES 等常量下沉到 main/tools/limits.ts（评估后记录取舍）
@@ -113,6 +146,18 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const executors = createExecutors({ ...deps, selectedAdd: (p) => selectedSet.set(p, Date.now()) })   // selected-set 写闭包（A-14）
   const serialLocks = new Map<string, Promise<unknown>>()   // per-path 写串行锁（A-8）
+  /**
+   * 执行中止信号（2026-09-16 审计 P2「执行超时只改状态、不取消 await」+「取消/超时不中止副作用」）。
+   *
+   * 修复前：执行超时只把记录推成终态（wire 已发 `error{TIMEOUT}`），而 `run()` 仍 `await` 那个可能
+   * **永不 settle** 的执行（挂起的 dialog / upload / desktopCapturer）⇒ `decide()` 不返回 ⇒ `tool:decide`
+   * 这个 IPC invoke 永久 pending，权限窗永久 busy、`promoteQueue` 不执行。取消同理：wire 已经告诉用户
+   * 「已取消」，执行器却照旧把文件写下去。
+   *
+   * 现在每条执行持一个 AbortController：终态一落就 abort，`run()` 用 race 立刻返回，执行器在**下一个
+   * 副作用检查点**看到信号即放弃。不能撤回的边界（已在途的 `atomicWriteFile`）写在 run() 注记里。
+   */
+  const execAborts = new Map<string, AbortController>()
   let shutdownFlag = false
   // capture 子状态机会话（D6B-16/M-5/A-2）：awaiting_pick → picked → awaiting_confirm 钉死（乱序拒 CAPTURE_STATE_INVALID、sourceId ∈ 枚举快照）
   interface CaptureSession { sourceId?: string; previewDataUrl?: string; bytes?: Uint8Array; dropped?: number }
@@ -215,6 +260,7 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const captureTimer = captureTimers.get(rec.id); if (captureTimer) { clearTimeout(captureTimer); captureTimers.delete(rec.id) }   // M1：停留态 TTL 清除
     rec.captureSources = undefined; rec.capturePreview = undefined   // L3：终态事件不携带陈旧选择器/预览数据
     rec.status = display; rec.error = err; rec.finishedAt = new Date().toISOString(); rec.durationMs = durationOf(rec)
+    execAborts.get(rec.id)?.abort()   // A1/A2：终态即中止在途执行——等不到的执行不再让调用方挂起，执行器在下一检查点放弃副作用
     const timer = timers.get(rec.id); if (timer) { clearTimeout(timer); timers.delete(rec.id) }
     const wire = wireStatus ?? (display === 'timeout' ? 'cancelled' : toWire(display) ?? 'error')
     void wireSend(rec, wire, err ? { error: err } : {})
@@ -300,21 +346,44 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     // 有界（TTL 120s）但属退出路径未收口资源；这里与 `timers` 同等对待。
     for (const t of captureTimers.values()) clearTimeout(t)
     captureTimers.clear()
+    // A1/A2：退出即中止全部在途执行——否则 `shutdown()` 之后仍有执行器在写盘/上传（wire 侧早已不可送达）
+    for (const abort of execAborts.values()) abort.abort()
   }
   /** 最近公开记录（tool:list，F-2 includeNonTerminalAlways：非终态全量 + 终态补足到 limit——L-2 水合数据源；
-   * L2 取舍注记：diff/captureSources/capturePreview 不进 listRecent——tool:list 仅作 hydration 用，capture/diff 交互态由 tool:event 实时推送） */
+   *
+   * 2026-09-16 审计 P2（审批上下文静默降级）：原取舍注记写「diff/captureSources/capturePreview 不进 listRecent
+   * —— 交互态由 tool:event 实时推送」。但 Renderer 崩溃 reload 后 `tool:list` 是**唯一**水合源：审批侧信道
+   * （`tool.store.ts` 的 upsertLocal）在 `ev.diff` 存在时本可重建，Main 不发就等于"看不到 diff 仍可批准写入"
+   * ——同意面真实性问题。现按 `HYDRATION_CONTEXT_BUDGET_BYTES` 预算纳入（非终态排前，先到先得）。 */
   function listRecent(limit = 20): PublicToolEvent[] {
     const all = [...records.values()].sort((a, b) => (b.startedAt ?? '').localeCompare(a.startedAt ?? ''))
     const TERMINAL = ['completed', 'failed', 'rejected', 'cancelled', 'timeout']
     const nonTerminal = all.filter((r) => !TERMINAL.includes(r.status))
     const terminal = all.filter((r) => TERMINAL.includes(r.status)).slice(0, Math.max(0, limit - nonTerminal.length))
-    return [...nonTerminal, ...terminal].map((rec) => ({
-      id: rec.id, desktopCallId: rec.desktopCallId, toolName: rec.toolName, title: rec.title, runtime: 'desktop' as const,
-      status: rec.status, reason: rec.reason, inputSummary: rec.inputSummary, pathSummary: rec.pathSummary,
-      resultSummary: rec.resultSummary, error: rec.error, truncated: rec.truncated, durationMs: rec.durationMs,
-      startedAt: rec.startedAt, finishedAt: rec.finishedAt, attachmentCount: rec.attachmentCount, dataFlowNote: rec.dataFlowNote,
-      occurredAt: rec.finishedAt ?? rec.startedAt ?? new Date().toISOString(),
-    }))
+    let contextBytes = 0
+    return [...nonTerminal, ...terminal].map((rec) => {
+      const ev: PublicToolEvent = {
+        id: rec.id, desktopCallId: rec.desktopCallId, toolName: rec.toolName, title: rec.title, runtime: 'desktop' as const,
+        status: rec.status, reason: rec.reason, inputSummary: rec.inputSummary, pathSummary: rec.pathSummary,
+        resultSummary: rec.resultSummary, error: rec.error, truncated: rec.truncated, durationMs: rec.durationMs,
+        startedAt: rec.startedAt, finishedAt: rec.finishedAt, attachmentCount: rec.attachmentCount, dataFlowNote: rec.dataFlowNote,
+        occurredAt: rec.finishedAt ?? rec.startedAt ?? new Date().toISOString(),
+      }
+      // 审批上下文按预算附带。diff 先算（它是"批准写入前必须看到的内容"），截图上下文其后且必须整体容纳
+      // ——只带 sources 不带 preview（或反之）会把子状态机摆到半截态，不如整块不带（与修复前同形）。
+      const diffBytes = rec.diff ? Buffer.byteLength(JSON.stringify(rec.diff), 'utf8') : 0
+      if (rec.diff && contextBytes + diffBytes <= HYDRATION_CONTEXT_BUDGET_BYTES) {
+        ev.diff = rec.diff; contextBytes += diffBytes
+      }
+      const captureBytes = (rec.captureSources ? Buffer.byteLength(JSON.stringify(rec.captureSources), 'utf8') : 0)
+        + (rec.capturePreview ? Buffer.byteLength(JSON.stringify(rec.capturePreview), 'utf8') : 0)
+      if (captureBytes > 0 && contextBytes + captureBytes <= HYDRATION_CONTEXT_BUDGET_BYTES) {
+        if (rec.captureSources) ev.captureSources = rec.captureSources
+        if (rec.capturePreview) ev.capturePreview = rec.capturePreview
+        contextBytes += captureBytes
+      }
+      return ev
+    })
   }
   function getRecord(callId: string): ToolRecord | undefined {
     const id = idOf(callId); return id ? records.get(id) : undefined
@@ -324,8 +393,14 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const prev = serialLocks.get(realPath) ?? Promise.resolve()
     const next = prev.then(fn, fn)
     serialLocks.set(realPath, next)
+    // 链尾自清理（2026-09-16）：此前 `serialLocks` 每个写过的路径永久留一行（链已 settle 也不回收）。
+    // 判据是"仍是链尾"——若期间有后继操作接上了，就不能删它的前驱表项。
+    const drop = (): void => { if (serialLocks.get(realPath) === next) serialLocks.delete(realPath) }
+    void next.then(drop, drop)
     return next
   }
+  /** 放弃等待时释放锁（A1）：被放弃的执行若永不 settle，链尾会永久占位 ⇒ 该路径后续每次操作都要陪着挂到超时 */
+  function releasePathLock(realPath: string): void { serialLocks.delete(realPath) }
   /** capture 子状态机 pickSource（D6B-16/M-5/A-2）：awaiting_pick → picked（预览下发 ≤256KiB，超限降级缩略图） */
   async function pickSource(callId: string, sourceId: string): Promise<void> {
     const id = idOf(callId); const rec = id ? records.get(id) : undefined
@@ -428,12 +503,22 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     audit('tool:executing', rec)
     emit(rec)
     await wireSend(rec, 'running')                    // A-7：执行前发 running（上传时序 M4 前置）
+    if (rec.status !== 'running') return    // A1：wireSend 期间已终态（取消/超时/退出）⇒ 不进入执行器
+    const abort = new AbortController()
+    execAborts.set(rec.id, abort)
+    const signal = abort.signal
     // 执行超时定时器（M1：wire error{TIMEOUT}——与 expiresAt 超时的 wire cancelled 区分）
     const timeout = setTimeout(() => { if (rec.status === 'running') { terminal(rec, 'timeout', { code: 'TIMEOUT', message: '执行超时' }, 'timeout', 'error') } }, tool.defaultTimeoutMs)
+    let lockPath: string | undefined
     try {
       const path = realPathOf(rec)
-      const exec = (): Promise<ExecResult> => deps.executorOverride ? deps.executorOverride(rec, path) : executors.execute(rec, path)
-      const result = path ? await withPathLock(path, exec) : await exec()   // per-path 串行锁（A-8，H7 交错断言；锁 key = 缓存 realpath，L1）
+      const exec = (): Promise<ExecResult> => deps.executorOverride ? deps.executorOverride(rec, path, signal) : executors.execute(rec, path, signal)
+      lockPath = path
+      const work = path ? withPathLock(path, exec) : exec()   // per-path 串行锁（A-8，H7 交错断言；锁 key = 缓存 realpath，L1）
+      // A1：不再无限等待——终态（取消/超时/退出）一到就返回，让 tool:decide 等 IPC invoke 一定回包。
+      // **边界（不谎称已覆盖）**：被放弃的执行器可能已越过最后一个检查点（例如正卡在 atomicWriteFile 内），
+      // 那种副作用不可撤回；能保证的是"不越过下一个检查点"与"调用方一定返回"。
+      const result = await raceAbort(work, signal)
       if (rec.status !== 'running') return    // 已终态（取消等）
       // capture 子状态机入口（A-2/完整 H3④）：枚举完成 → awaiting_pick（captureSources 下发）；不 outputSchema、不 completed
       if (rec.toolName === 'desktop.screen.capture' && result.captureSession) {
@@ -465,7 +550,12 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
         const code = codeOf(e); const rawMessage = messageOf(e)
         terminal(rec, 'failed', { code, message: rawMessage === '' ? undefined : rawMessage })   // A-16/M6：error.message 空串归一 undefined
       }
-    } finally { clearTimeout(timeout) }
+    } finally {
+      clearTimeout(timeout)
+      execAborts.delete(rec.id)
+      // A1：放弃等待时释放路径锁——被放弃的执行永不 settle，链尾会永久占位（该路径后续每次操作都陪着挂到超时）
+      if (signal.aborted && lockPath !== undefined) releasePathLock(lockPath)
+    }
   }
   /** 决策链 step 7（A2/L7）：write 授权前预读 + Diff（预读失败 FILE_TOO_LARGE/FILE_IS_BINARY → handleRequest 转 terminal failed，A-15） */
   async function preReadForDiff(rec: ToolRecord, realPath: string): Promise<void> {
@@ -552,7 +642,12 @@ export function createToolService(deps: ToolServiceDeps): ToolService {
     const rec: ToolRecord = { id: req.sourceCallId, desktopCallId: req.callId, conversationId: req.conversationId, toolName: req.toolName, title: tool.title,
       status: 'requested', reason: req.reason, inputSummary: redactToolArguments(req.arguments), pathSummary: derivePathSummary(req.arguments),
       dataFlowNote: tool.dataFlowNote, expiresAt: req.expiresAt, paramHash, arguments_: req.arguments, toolVersion: req.toolVersion,
-      statusSent: false, realPath, startedAt: new Date().toISOString(),
+      statusSent: false, realPath,
+      // 2026-09-16 审计 P2（TOCTOU）：记下"授权这一刻这个路径是谁"，执行前复核（file-identity.ts）。
+      // 只有 read/write 有"授权时的既有文件"这个概念；select/capture 不适用。
+      fileIdentity: realPath && (req.toolName === 'desktop.file.read' || req.toolName === 'desktop.file.write')
+        ? captureFileIdentity(realPath) : undefined,
+      startedAt: new Date().toISOString(),
       // D4-1：本地风险重算（黑名单命中/后端上报值/参数三者共同决定；不再直读注册表常量）
       riskLevel: computeLocalRisk({ base: tool.localRisk, reported: req.reportedRiskLevel, args: req.arguments, realPath,
         blacklisted, sandboxRoots: deps.sandboxDirectories ?? [], platform: deps.platform }) }

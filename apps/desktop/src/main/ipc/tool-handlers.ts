@@ -44,7 +44,7 @@ export function registerToolHandlers(
   register(IpcChannels.toolGrants, createIpcHandler(z.object({}).strict(), GrantListResponseSchema, async () => deps.grants.list(), { sanitize: deps.sanitize }), 1)
   register(IpcChannels.toolGrantRevoke, createIpcHandler(GrantRevokeSchema, z.undefined(), async (input) => {
     if (!deps.grants.list().some((g) => g.id === input.id)) throw new ToolServiceError('GRANT_NOT_FOUND', '授权不存在')   // V-28：未知 → 拒绝；已撤销 → revoke 内部 no-op
-    deps.grants.revoke(input.id)
+    await deps.grants.revoke(input.id)   // 2026-09-16 审计 P2：撤销 fail-closed——落盘失败会抛 GRANT_REVOKE_NOT_PERSISTED（不再静默失效）
   }, { sanitize: deps.sanitize }), 1)
   register(IpcChannels.toolHistory, createIpcHandler(ToolHistoryQuerySchema, HistoryResponseSchema, async (input) =>
     deps.history(deps.auditDir, { limit: input.limit }), { sanitize: deps.sanitize }), 1)

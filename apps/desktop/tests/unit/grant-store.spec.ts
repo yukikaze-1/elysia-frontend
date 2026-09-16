@@ -133,18 +133,32 @@ describe('grant-store', () => {
     expect(store.matches('desktop.file.read', '/home/u/docs/a.txt')).toBeUndefined()
     expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'grant:expired', permissionGrantId: 'grant-exp' }))
     expect(store.list().find((g) => g.id === 'grant-exp')).toMatchObject({ revokedAt: anyString(), revokeSource: 'expired' })  })
-  it('revoke（N-5/F-9）：未过期 → user 分支；已过期 → expired 分支；已撤销 → no-op 不覆写不重复审计', () => {
+  it('revoke（N-5/F-9）：未过期 → user 分支；已过期 → expired 分支；已撤销 → no-op 不覆写不重复审计', async () => {
     const { store, audit } = mkStore([grant()])
-    const r1 = store.revoke('grant-a')
+    const r1 = await store.revoke('grant-a')   // 2026-09-16 审计 P2：revoke 改为异步（fail-closed），断言一字未改
     expect(r1).toMatchObject({ revokeSource: 'user', revokedAt: anyString() })
-    const r2 = store.revoke('grant-a')
+    const r2 = await store.revoke('grant-a')
     expect(r2).toBeUndefined()   // 已撤销 no-op
     expect(audit).toHaveBeenCalledTimes(1)   // 仅 grant:revoked 一次
     const exp = mkStore([grant({ id: 'grant-e2' })])
     now += 86_400_001
-    const r3 = exp.store.revoke('grant-e2')
+    const r3 = await exp.store.revoke('grant-e2')
     expect(r3).toMatchObject({ revokeSource: 'expired' })
     expect(exp.audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'grant:expired' }))
+  })
+  it('revoke fail-closed（2026-09-16 审计 P2）：落盘失败 → 内存回滚 + 抛 GRANT_REVOKE_NOT_PERSISTED + 不发 grant:revoked（只发补偿事件）', async () => {
+    const { store, audit, settings } = mkStore([grant()])
+    expect(store.matches('desktop.file.read', '/home/u/docs/a.txt')).toBeDefined()   // 前置：撤销前确实命中
+    ;(settings.save as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('disk full'))
+    await expect(store.revoke('grant-a')).rejects.toThrow('撤销未能写入本地设置')
+    // 修复前的行为：内存已撤销（list 显示灰显）、磁盘没有、重启后授权复活。现在内存必须回到"未撤销"，
+    // 因为磁盘上就是未撤销——report 说的是真话，内存不能比它更乐观。
+    const g = store.list().find((x) => x.id === 'grant-a')
+    expect(g?.revokedAt).toBeUndefined()
+    expect(g?.revokeSource).toBeUndefined()
+    expect(store.matches('desktop.file.read', '/home/u/docs/a.txt')).toBeDefined()   // 授权仍然有效（与磁盘一致）
+    expect(audit).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'grant:revoked' }))   // 不谎报已撤销
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ type: 'grant:revoke-failed', errorCode: 'GRANT_REVOKE_NOT_PERSISTED' }))
   })
   it('list：prune 后返回全量（活动 + 灰显）', () => {
     const { store } = mkStore([grant(), grant({ id: 'grant-b', revokedAt: 'x', revokeSource: 'user' })])

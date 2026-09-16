@@ -23,7 +23,7 @@ export interface GrantStoreDeps {
 export interface GrantStore {
   list(): PermissionGrant[]
   add(g: Omit<PermissionGrant, 'id' | 'createdAt'>): PermissionGrant
-  revoke(id: string): PermissionGrant | undefined
+  revoke(id: string): Promise<PermissionGrant | undefined>
   matches(toolName: string, realPath: string): PermissionGrant | undefined
   prune(): void
 }
@@ -59,10 +59,20 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
     grants = valid
   }).catch(() => {})   // load 失败 → 空 grants（fail-open，不阻塞启动）
 
-  async function persist(next: PermissionGrant[]): Promise<void> {
+  /**
+   * 落盘。返回是否**真的写成功**（C-10：非 Error 抛掷归一）。
+   *
+   * 2026-09-16 审计 P2「授权撤销的持久化 fail-open」：修复前这里无条件 fail-open（写盘失败只记一行日志），
+   * 于是**撤销**在写盘失败时静默失效——内存说已撤销、磁盘没有，重启后授权复活。现在把结局交给调用方，
+   * 由调用方按动作方向决定处置（方向不同，正确的默认值就不同）：
+   *   · **放权方向**（revoke）→ fail-closed：回滚内存 + 抛公开错误（用户必须知道"没撤掉"）；
+   *   · **收权方向**（add / prune）→ fail-open 但留日志：写盘失败只意味着重启后授权消失（更严格，
+   *     需重新授权）；`prune` 标记的过期项在 `matches` 里本就有 `expiresAt > now()` 判据，不会复活。
+   */
+  async function persist(next: PermissionGrant[]): Promise<boolean> {
     grants = next
-    try { await deps.settings.save({ tools: { grants: next } }) }
-    catch (e) { deps.logger?.warn('grant:save-failed', { message: e instanceof Error ? e.message : String(e) }) }   // C-10：非 Error 抛掷归一；fail-open
+    try { await deps.settings.save({ tools: { grants: next } }); return true }
+    catch (e) { deps.logger?.warn('grant:save-failed', { message: e instanceof Error ? e.message : String(e) }); return false }
   }
 
   function auditGrant(type: string, grant: PermissionGrant, extra: Record<string, unknown> = {}): void {
@@ -78,7 +88,7 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
         auditGrant('grant:expired', g)
       }
     }
-    if (changed) void persist(grants)
+    if (changed) void persist(grants)   // 收权方向 fail-open：写盘失败只让过期标记留在内存，matches 的 expiresAt 判据仍挡得住复活
   }
 
   function list(): PermissionGrant[] {
@@ -95,22 +105,32 @@ export function createGrantStore(deps: GrantStoreDeps): GrantStore {
     if (dup) return dup
     const grant: PermissionGrant = { ...g, scope: { directory: normalized }, id: `grant-${randomUUID()}`, createdAt: new Date().toISOString() }
     auditGrant('grant:created', grant, { summary: `目录授权（工具 ${grant.toolName}，有效期至 ${new Date(grant.expiresAt).toISOString()}）` })   // F-5：无目录路径
-    void persist([...grants, grant])
+    void persist([...grants, grant])   // 收权方向 fail-open（见 persist 注记）：写盘失败只意味着重启后该授权消失（更严格）
     return grant
   }
 
-  function revoke(id: string): PermissionGrant | undefined {
+  /**
+   * 撤销授权。**异步 + fail-closed**（2026-09-16 审计 P2）：写盘失败即回滚内存并抛 `GRANT_REVOKE_NOT_PERSISTED`。
+   *
+   * 审计顺序同时更正：修复前"先发 `grant:revoked` 再 `void persist(...)`"，写盘失败时审计里留着一条
+   * 「已撤销」而内存/磁盘都还是有效——审计记录了一件没发生的事。现改为**落盘成功后**才发撤销事件；
+   * 失败发补偿事件 `grant:revoke-failed`，让审计能解释"用户点了撤销但没撤掉"。
+   */
+  async function revoke(id: string): Promise<PermissionGrant | undefined> {
     const g = grants.find((x) => x.id === id)
     if (!g || g.revokedAt) return undefined   // 未知 / 已撤销 → no-op（N-5）
-    if (g.expiresAt <= now()) {
-      g.revokedAt = new Date().toISOString(); g.revokeSource = 'expired'   // F-9：已过期走 expired 分支
-      auditGrant('grant:expired', g)
-    } else {
-      g.revokedAt = new Date().toISOString(); g.revokeSource = 'user'
-      auditGrant('grant:revoked', g, { cancelSource: 'user' })
+    const expired = g.expiresAt <= now()
+    const revokedAt = new Date().toISOString()
+    const revokeSource: PermissionGrant['revokeSource'] = expired ? 'expired' : 'user'   // F-9：已过期走 expired 分支
+    g.revokedAt = revokedAt; g.revokeSource = revokeSource
+    if (await persist(grants)) {
+      if (expired) auditGrant('grant:expired', g)
+      else auditGrant('grant:revoked', g, { cancelSource: 'user' })
+      return g
     }
-    void persist(grants)
-    return g
+    delete g.revokedAt; delete g.revokeSource   // 回滚：写盘没成功，"已撤销"就不能只活在内存里
+    auditGrant('grant:revoke-failed', g, { errorCode: 'GRANT_REVOKE_NOT_PERSISTED' })
+    throw new ToolServiceError('GRANT_REVOKE_NOT_PERSISTED', '撤销未能写入本地设置，该授权仍然有效')
   }
 
   function matches(toolName: string, realPath: string): PermissionGrant | undefined {

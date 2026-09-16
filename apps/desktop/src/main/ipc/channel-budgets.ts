@@ -123,7 +123,7 @@ export const IPC_CHANNEL_BUDGETS: Readonly<Record<string, ChannelBudget>> = {
   'tts:set-voice': schemaBounded('voice ≤200'),
   'live2d:list-models': NONE,
   'tool:cancel': schemaBounded('callId'),
-  'tool:list': schemaBounded('空对象 strict'),
+  'tool:list': schemaBounded('空对象 strict；出参受 4 MiB 全局不变量约束——审批上下文（diff/capture）由 tool-service.HYDRATION_CONTEXT_BUDGET_BYTES 预算保证，记录数上限 20'),
   'tool:confirm-upload': schemaBounded('callId'),
   'tool:grant-directory': schemaBounded('callId + ttlMs 白名单'),
   'tool:grants': schemaBounded('空对象 strict'),
