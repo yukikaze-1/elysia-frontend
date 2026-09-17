@@ -109,9 +109,11 @@ vi.mock('../../src/main/config/debug-switches', () => ({
   findForbiddenDebugLaunch: () => { h.calls.push('debugSwitchGate'); return h.switchValue === 'forbidden' ? 'switch' : null }
 }))
 
-vi.mock('../../src/main/protocol', () => ({
-  registerCyreneScheme: () => { h.calls.push('registerCyreneScheme') }
-}))
+// 注意：`../../src/main/protocol` 的 mock **只允许一处**（见下方 registerCyreneProtocolHandler 那份）。
+// 曾同时存在一份只给 `registerCyreneScheme` 的旧 mock，依赖"后写的覆盖前面的"——而 Vitest 4 把同一文件内
+// 连续的 mock 动作并成一组**并行** resolve、各自 `resolveId` 完成后才注册（last-write-wins），
+// 于是生效的是"后完成 resolve 的那个"，与源码顺序无关：CI run 35182407425 就翻到了旧的那份，
+// 报 `No "registerCyreneProtocolHandler" export is defined on the "../../src/main/protocol" mock`。
 
 vi.mock('../../src/main/windows/main-window', () => ({
   focusOrDefer: () => { h.calls.push('focusOrDefer') },
