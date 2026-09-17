@@ -150,6 +150,31 @@ const USER_SCROLL_MIN_PX = 64
 let upwardAccum = 0
 
 /**
+ * 自有写入「余波」的归因窗（2026-09-17，Prompt 5 后 CI 修复）：**这不是用户上翻门限**，
+ * `USER_SCROLL_MIN_PX` 与 integration ④ 的判据都**未改动**。
+ *
+ * 修的是什么：④ 在 CI 上三次红（`34692644842`／`34740592698`／本轮 `35182407425`）的读数完全同形——
+ * `WcommitScrollHeights/bottom`（我们写 `scrollTop = scrollHeight`）之后 **40ms**，浏览器把位置回退了
+ * **139px**（`d=139 acc=139 t=6469 max=6515 h=7088 c=573 w=own/+40ms`），回退后距底 46px；
+ * 这一下被 `onScroll` 当成用户上翻累加，越过 64px 门限 ⇒ 意图永久清除、此后 `top` 连续 23 个采样冻结、
+ * 缺口饱和在 5526px。本地同一条分支的回退只有 **31–32px**（低于门限，故本地一直绿）——**量级由环境决定，
+ * 判据不能按量级定**，只能按**来源**定。
+ *
+ * 归因条件（五条同时成立才算"自有写入的余波"，见 `isOwnWriteTail`）：
+ *   ① 位移起点正是我们上次程序性写入的那个位置（±1px，与探针 `w=own` 同一判据）；
+ *   ②  时间邻近（浏览器对我们那次写入的异步沉降）；
+ *   ③  那次写入本身是**贴底写入**（写的就是当时可达的最大位置）；
+ *   ④  可滚动上界相对那次写入**收缩**了——我们写的位置已不可达，位移是布局强制的结果；
+ *   ⑤  回退后**仍在底部附近**——用户主动离开底部会远离它。
+ *
+ * 两根标定读数（不是估的）：CI 实测落点距底 46px（139px 回退）⇒ 必须落进带内；
+ * 既有 `perf-gate` ②b 故意上翻的落点 ≥120px（`clientHeight - top + 120`）⇒ 必须落在带外、照旧清意图。
+ */
+const OWN_WRITE_TAIL_MS = 250
+/** ⑤ 的带：回退后距底 ≤ 此值才可能被判为「仍在底部附近」（见上：46px 要进、≥120px 要出） */
+const OWN_WRITE_TAIL_GAP_PX = 64
+
+/**
  * 只读探针（2026-09-13，④ 收口第二／三轮）：记录**位置下移**与**真正清掉意图**的完整上下文。
  *
  * 为什么需要：上一轮只证明了"意图是被 `onScroll` 的 `scrollTop < prevTop` 分支清的"，但拿到的下移量
@@ -217,6 +242,29 @@ function markWriteSite(site: string): void { writeSite = site }
 
 function computeAtBottom(el: HTMLElement): boolean {
   return el.scrollTop + el.clientHeight >= el.scrollHeight - BOTTOM_EPS
+}
+
+/** 距底缺口（px）：贴底时为 0 */
+function bottomGapOf(el: HTMLElement): number {
+  return el.scrollHeight - el.clientHeight - el.scrollTop
+}
+
+/**
+ * 这次「位置下移」是不是**我们自己那次贴底写入的余波**（布局收缩后引擎把已不可达的位置回退），
+ * 而不是用户上翻？五条同时成立才归因自有——任何一条不成立就照旧按用户上翻累计（见上方常量处头注）。
+ *
+ * 只用**已有**的记账（`noteWrite` 记的 `top/max/at`）+ 本次事件时的几何量，不引入新的监听/时间窗吞事件：
+ * 真实用户上翻要么起点不是我们写的位置（① 挡）、要么已过归因窗（② 挡）、要么**根本没发生收缩**
+ * （④ 挡，流式期间用户上滑恰恰是内容在长）、要么已经离开底部（⑤ 挡，`perf-gate` ②b 就是这一类）。
+ */
+function isOwnWriteTail(prevTop: number, el: HTMLElement): boolean {
+  const w = lastWrite
+  if (!w) return false
+  if (Math.abs(w.top - prevTop) > 1) return false                    // ① 位移起点就是我们写入的位置
+  if (probeNow() - w.at > OWN_WRITE_TAIL_MS) return false            // ② 时间邻近
+  if (w.max - w.top > 1) return false                                // ③ 那次写入本身是贴底写入
+  if (el.scrollHeight - el.clientHeight >= w.max) return false       // ④ 上界相对写入时收缩（我们写的位置已不可达）
+  return bottomGapOf(el) <= OWN_WRITE_TAIL_GAP_PX                    // ⑤ 回退后仍在底部附近
 }
 
 async function followBottomIfSticky(): Promise<void> {
@@ -349,15 +397,20 @@ function onScroll(): void {
     upwardAccum = 0
   } else if (el.scrollTop < prevTop) {
     const delta = prevTop - el.scrollTop
-    upwardAccum += delta
+    // Prompt 5 后 CI 修复：先判**来源**——这次下移是不是我们自己那次贴底写入的余波（布局回退）？
+    // 是则整段不计入用户累计（`USER_SCROLL_MIN_PX` 与判据都不动，见 isOwnWriteTail 头注）。
+    const ownTail = isOwnWriteTail(prevTop, el)
+    if (!ownTail) upwardAccum += delta
     // 只读探针（④ 第二／三轮）：把这次下移的完整上下文记下来。判"是不是我们自己写的"用 prevTop 与
     // 最近一次程序性写入值的比对——`restoreScrollTop` 写的是估算位置，与实测位置不等即非本次写入。
+    // `tail=` 标注本次是否被判为自有写入的余波（只读；CI 读数靠它区分"被吞掉"与"没被吞掉"）。
     const record =
       `d=${Math.round(delta)} acc=${Math.round(upwardAccum)} t=${Math.round(el.scrollTop)}` +
       ` max=${Math.round(el.scrollHeight - el.clientHeight)} h=${Math.round(el.scrollHeight)} c=${Math.round(el.clientHeight)}` +
-      ` w=${lastWrite && Math.abs(lastWrite.top - prevTop) <= 1 ? 'own' : 'ext'}/+${lastWrite ? Math.round(probeNow() - lastWrite.at) : -1}ms`
+      ` w=${lastWrite && Math.abs(lastWrite.top - prevTop) <= 1 ? 'own' : 'ext'}/+${lastWrite ? Math.round(probeNow() - lastWrite.at) : -1}ms` +
+      `${ownTail ? ' tail=own-write' : ''}`
     upLog.value = [...upLog.value, record].slice(-3)
-    if (upwardAccum >= USER_SCROLL_MIN_PX) {
+    if (!ownTail && upwardAccum >= USER_SCROLL_MIN_PX) {
       if (stickToBottom.value && !firstFlip.value) firstFlip.value = record
       if (stickToBottom.value) clearLog.value = [...clearLog.value, record].slice(-3)
       stickToBottom.value = false
