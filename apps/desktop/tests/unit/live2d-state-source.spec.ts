@@ -10,7 +10,7 @@ import {
   composeCharacterState,
   normalizeEmotionCode,
   type Live2dStateSourceInputs
-} from '../../src/renderer/src/live2d/state-source'
+} from '../../src/renderer/src/composables/live2d-state-source'
 
 interface Sources {
   conn: Ref<ConnectionState>

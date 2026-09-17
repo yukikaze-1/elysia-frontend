@@ -15,7 +15,7 @@ import { createDevLive2dFetch, needsIpcResourceSupply } from '../live2d/dev-reso
 import { webglEngine } from '../live2d/gl/webgl'
 import { Live2DController, type Live2DControllerStatus, type NormalizedPoint } from '../live2d/controller'
 import { statePriority, type CharacterState } from '../live2d/state-machine'
-import { createLive2dStateSource, type Live2dStateSource } from '../live2d/state-source'
+import { createLive2dStateSource, type Live2dStateSource } from '../composables/live2d-state-source'
 import { createSineMouthSource, createStepMouthSource, createTtsMouthSource, type MouthLevelSource } from '../live2d/tts-mouth-source'
 import { decideDirective } from '../live2d/directive-rules'
 import { api } from './desktop-api'

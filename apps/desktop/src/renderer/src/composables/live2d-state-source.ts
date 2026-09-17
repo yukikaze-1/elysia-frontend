@@ -1,5 +1,11 @@
-// apps/desktop/src/renderer/src/live2d/state-source.ts
+// apps/desktop/src/renderer/src/composables/live2d-state-source.ts
 // 阶段 5 批次 B（Task 4，B4 wiring / D5B-04）：live2dStateSource——薄状态编排层。
+//
+// 位置（2026-09-17 架构整改 Prompt 5）：本文件原先在 `live2d/state-source.ts`，与纯域判据同目录。
+// 但它运行时依赖 Vue（`watch`），职责是"把 store 的响应式读值编排成状态机的输入"——
+// 属**组合式函数**而非纯域模块。故移入 `composables/`：该目录整目录被架构门禁分类为 Vue 集成面
+// （`tests/unit/architecture-renderer.spec.ts`），仍受特权边界与 bootstrap 方向规则约束。
+// 纯域判据（`live2d/state-machine.ts` / `directive-rules.ts` 等）保持零 Vue 依赖。
 //
 // 职责：组合 connection/message/voice store 的读值（经注入的 getter 函数）→ 仲裁出 `CharacterState` →
 // 只经 `push(controller.setState(...))` 落到 Controller（N2：生产组合走 setState，不用 onEvent——Task 3 评审
@@ -26,8 +32,8 @@
 // conversationStore 作为驱动源：批次 B 无「conversation→角色态」具体映射（无意义），本批不订阅，归阶段 6 / 后续。
 import { watch, type WatchStopHandle } from 'vue'
 import type { ConnectionState } from '@shared/contracts'
-import { statePriority, type CharacterState } from './state-machine'
-import type { MoodEmotion } from './controller'
+import { statePriority, type CharacterState } from '../live2d/state-machine'
+import type { MoodEmotion } from '../live2d/controller'
 
 export interface Live2dStateSourceInputs {
   connection: () => ConnectionState
