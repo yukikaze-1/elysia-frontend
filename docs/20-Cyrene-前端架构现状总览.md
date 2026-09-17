@@ -1,7 +1,7 @@
 # Cyrene 前端架构现状总览（as-built）
 
 **文档状态：** 维护中
-**最后核验：** 2026-09-17
+**最后核验：** 2026-09-18
 **适用阶段：** 全阶段
 **权威范围：** 代码的结构现状——进程与信任边界、模块地图、启动与退出次序、关键数据流、契约面与门禁归属；不含进度、阻塞项与验证结论
 > **与 [doc 01](01-Cyrene-Electron-前端总体架构设计-v0.2.md) 的分工（两份不可互相替代）：**
@@ -24,8 +24,8 @@
 | IPC 面 | 命令通道 **89** · Main→Renderer 推送通道 **8** · 单向通道 **1**（`voice:audio-chunk`，1 MiB/块）；单条 IPC 上限 **4 MiB** |
 | 后端面 | WS v2 帧 + REST 双面适配；raw schema 与 mapper 全在 `src/main/transport/protocol-v2/` |
 | 存储面 | `safeStorage` 凭据（不可读回）+ userData 子目录（fd 锚点 / `lstat`+`realpath` 守卫）+ 原子写 |
-| 代码规模 | `src/main` 167 文件 · `src/preload` 3 · `src/renderer` 227（`.vue` 60）· `src/shared` 34 · `tests` 345 |
-| 门禁 | 见 §5.2（契约面）、§5.3（本地命令与 CI）、§5.4（依赖方向矩阵与 architecture gate 清单） |
+| 代码规模 | `src/main` 163 文件 · `src/preload` 3 · `src/renderer` 227（`.vue` 60）· `src/shared` 33 · `tests` 341 |
+| 门禁 | 见 §5.1（契约面）、§5.2（本地命令）、§5.3（CI）、§5.4（依赖方向矩阵与 architecture gate 清单） |
 
 ---
 
@@ -35,10 +35,10 @@
 ┌─ Renderer（不可信）────────────────────────────────────────────┐
 │  Vue 3 + Pinia：表现与 UI 状态（store = facade，域逻辑在纯 TS 模块）│
 │  components(61) · stores(22) · live2d(75) · utils(23)            │
-│  域逻辑：message(6) · conversation(3) · voice(3) · composer(1)    │
-│          character-editor(2)                                     │
+│  域逻辑：message(5) · conversation(2) · voice(4) · composer(1)    │
+│          character-editor(2) · composables(1)                     │
 └──────────────▲────────────────────────────────┬────────────────┘
-               │ window.cyrene：具名窄 API        │ 推送：chat:event / tool:event / …
+               │ stores/desktop-api.ts（注入点）    │ 推送：chat:event / tool:event / …
 ┌──────────────┴────────────────────────────────▼────────────────┐
 │  Preload：contextBridge，无 ipcRenderer 直通、无 Node 模块        │
 │  唯一 API 面 desktop-api.ts；每方法运行时 schema 校验              │
@@ -63,9 +63,9 @@
 | Renderer 拿不到明文凭据、绝对路径、`ipcRenderer`、Node 模块、通用文件/Shell 方法 | `preload/desktop-api.ts`（唯一 API 面）、`shared/contracts/ipc.ts`、`verify-sensitive` 扫描 |
 | 禁止通用 IPC（`invoke(channel)` / `readFile(path)` / `exec(command)`） | `ipc/registry.ts`（具名通道 + 双端 zod）、`ipc/executor.ts` |
 | 导航 / IPC 来源 / CSP / 自定义协议 / 路径包含 / Fuses 一律 fail-closed | `windows/navigation.ts`、`ipc/registry.ts` 的 sender 三重校验、`protocol/csp.ts`、`protocol/path.ts`、`scripts/verify-artifact.cjs` |
-| 窗口、原生对话框、通知只有唯一入口 | `windows/window-presentation.ts`、`native-ui/dialog-service.ts`；`window-presentation-guard.spec.ts` 对新增调用点直接红 |
+| 窗口与对话框各有唯一入口；Notification / Tray / 全局快捷键 / 自动更新在 Main 全域禁止（**没有任何合法入口**，要加必须同步改门禁） | `windows/window-presentation.ts`、`native-ui/dialog-service.ts`；`window-presentation-guard.spec.ts` 对新增调用点直接红 |
 | 后端工具只做展示；Desktop/本地工具只在 Main 执行；风险本地重算 | `tools/tool-policy.ts`、`tools/tool-service.ts` |
-| Application Service 只拿得到自己声明的后端能力（不持有聚合 `BackendAdapter`） | `transport/backend-ports.ts` 的 7 个领域端口；`backend-capability-ports.spec.ts` 对"消费方 → 端口"与聚合面持有者直接红 |
+| Application Service 只拿得到自己声明的后端能力（不持有聚合 `BackendAdapter`） | `transport/backend-ports.ts` 的 7 个领域端口；`backend-capability-ports.spec.ts` 对"消费方 → 端口"与聚合面持有者直接红。**`BackendAdapter` 没有被删除**：它是 `transport/backend-adapter.ts` 里 7 个端口的**交集 + 传输层接线槽**（`onToolRequest?`），只作为 transport / composition 边界上的完整能力聚合 contract 使用 |
 | Live2D 是纯表现，加载失败不阻塞聊天 | `renderer/src/live2d/`、`main/live2d/serve-gate.ts` |
 | 本地绝对路径不进入 Renderer store 或后端载荷 | `preload/desktop-api.ts` 的 `toIpcDescriptor`（`File` → 不可猜 `fileRef`）、`attachments/file-ref.ts` |
 
@@ -110,23 +110,24 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | `fixtures/` | 29 | 线协议夹具 `wire-v2/*.jsonl` + `.manifest.json`（契约门禁对拍用） | — |
 | `permissions/` | 1 | **仅一个占位 `README.md`**。授权判定实际落在 `tools/`（`tool-policy.ts` / `grant-store.ts`） | — |
 
-> doc 01 §5 的推荐目录与现状有差异，读该节时应知道：现状**没有** `renderer/features/`、`tests/e2e/`、Local Worker 模块；`main/permissions/` 是空壳。
+> doc 01 §5 是**推荐**目录，与现状有差异：现状**没有** `renderer/features/`、`pages/`、`services/`、`tests/e2e/` 与 Local Worker 模块；`main/permissions/` 是空壳。doc 01 §5 已就地补了指向本节的现状注记。
 
 ### 2.2 Preload / Renderer / Shared
 
 - **Preload（3 文件）**：`desktop-api.ts` 是唯一 API 面（按域分组的具名方法，`export type DesktopApi = typeof desktopApi`）；`index.ts` 用 `contextBridge` 装配；`window.d.ts` 只声明类型。每个 `on*` 返回精确移除自身的 disposer。
-- **Renderer（209 文件，`.vue` 60）**：`src/` 200 + `public/` 8 + `index.html`。`src/` 下 `components/` 61（59 `.vue`）· `live2d/` 74（含内置 Cubism framework 子集）· `utils/` 23 · `stores/` 22（其中 18 个 `*.store.ts`）· `assets/` 5 · `layout/` 3 · `voice/` 3 · `attachments/` 2 · 根文件 6（`App.vue`、`bootstrap.ts`、`main.ts`、`env.d.ts`、`tokens.css`、`reduced-motion.css`）。
-- **Renderer 域逻辑（`src/renderer/src/` 下的非 store 目录，2026-09-17 Prompt 4）**：`stores/*.store.ts` 只保留响应式状态、UI 命令与 IPC 编排；可独立测试的判据下沉到这些**零 Vue / 零 Pinia** 的模块：
+- **Renderer（227 文件，`.vue` 60）**：`src/` 212 + `public/` 14 + `index.html`。`src/` 下 `components/` 61（59 `.vue`）· `live2d/` 75（其中 `framework/` 60：59 `.ts` + 1 `.md`，属 vendored）· `utils/` 23 · `stores/` 22（其中 18 个 `*.store.ts`）· `assets/` 5 · `voice/` 4 · `message/` 5 · `layout/` 3 · `conversation/` 2 · `attachments/` 2 · `character-editor/` 2 · `composer/` 1 · `composables/` 1 · 根文件 6（`App.vue`、`bootstrap.ts`、`main.ts`、`env.d.ts`、`tokens.css`、`reduced-motion.css`）。`public/` 是 Live2D 运行时分发面（`live2dcubismcore.min.js` + 13 个 shader 源文件）。
+- **Renderer 域逻辑（`src/renderer/src/` 下的非 store 目录，2026-09-17 Prompt 4）**：`stores/*.store.ts` 只保留响应式状态、UI 命令与 IPC 编排；可独立测试的判据下沉到这些**零 Vue / 零 Pinia** 的模块（下表路径均相对 `renderer/src/`；这些目录**都没有 `index.ts` barrel**，跨模块引用写具体文件）：
   | 目录 | 文件 | 内容 |
   |---|---:|---|
-  | `message/` | 6 | `index-store`（消息表：去重、二分有序插入、乐观 key 迁移）· `acceptance`（replay/REST/快照三条来源的归档准入）· `fencing`（传输世代签名、按代会话身份、请求 owner 台账）· `attribution`（生成事件归属与栅栏判定）· `domain`（角色身份元组、取消码）· `index`（barrel） |
-  | `conversation/` | 3 | `protocol`（会话线解析、绑定快照冲突校验）· `backend-identity`（端点事实域身份与「换端点 → 清保留数据」判定）· `index` |
-  | `voice/` | 3 | `session`（三套语音会话的模式迁移表、会话栅栏、背压窗口、TTS 流归属）· `voice-capture`（PCM 采集，既有）· `pcm-worklet.d.ts` |
+  | `message/` | 5 | `index-store`（消息表：去重、二分有序插入、乐观 key 迁移）· `acceptance`（replay/REST/快照三条来源的归档准入）· `fencing`（传输世代签名、按代会话身份、请求 owner 台账）· `attribution`（生成事件归属与栅栏判定）· `domain`（角色身份元组、取消码） |
+  | `conversation/` | 2 | `protocol`（会话线解析、绑定快照冲突校验）· `backend-identity`（端点事实域身份与「换端点 → 清保留数据」判定） |
+  | `voice/` | 4 | `session`（三套语音会话的模式迁移表、会话栅栏、背压窗口、TTS 流归属）· `voice-capture`（PCM 采集，既有）· `pcm-worklet.js` + `pcm-worklet.d.ts`（AudioWorklet 处理器） |
   | `composer/` | 1 | `dictation-hold`（「按住说话」手势状态机：指针 / 键盘 / 失焦三条时间线） |
   | `character-editor/` | 2 | `draft-patch`（JSON Pointer / dot-path 写入与原型污染守卫）· `draft-templates`（空草稿骨架、详情→草稿映射、错误构造与冲突码判定） |
 
-  `live2d/directive-rules.ts` 同属这一类（后端 Live2D 表现指令的白名单与夹取规则）。
-  `stores/session.ts` 仍是**零依赖的会话身份单例**（`conversation.store` 唯一写入，message/settings/voice 读取），
+  `live2d/directive-rules.ts` 与 `live2d/state-machine.ts` 同属这一类（后端 Live2D 表现指令的白名单与夹取规则；
+  状态→优先级/超时迁移表）。
+  `stores/session.ts` 仍是**零 `stores/*` 依赖的会话身份单例**（只 import `vue` 的 `ref` 与 `@shared/contracts` 的类型；`conversation.store` 唯一写入，message/settings/voice/attachment 读取），
   是切断 `conversation ↔ message` 环的机制，位置与语义未变。
 
   **Vue 集成面（非纯域，但同样受门禁约束）**：`composables/` 是"组件侧可复用的响应式单元"目录，
@@ -141,7 +142,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
   > 不得 import `stores/**` / `components/**` / renderer bootstrap（**含类型边**——这三者是下游层，
   > 它们的类型是实现细节，引用它构成 compile-time 依赖倒置）"。
   > 纯域面按**路径 matcher 的补集**定义，新增 `renderer/src/<新目录>/` 自动被保护，不需要登记文件清单；
-  > 详见 §5.2 与 §5.4。
+  > 详见 §5.4。
   >
   > 纯域面之外的 Vue 依赖只有两类，都不豁免任何规则：
   > ① `composables/**`（目录语义即集成面，新增文件无需登记）；
@@ -152,11 +153,11 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 ### 2.3 测试与脚本
 
-- `tests/unit/` 291 文件（**286 spec** + `global-setup.ts` + `helpers/desktop-api.ts` + `helpers/architecture-imports.ts` + `setup/live2dcubismcore.ts`）。含判别力门禁类 spec：`ipc-surface-alignment`、`ipc-budget-declaration`、`window-presentation-guard`、`dependency-classification`、`main-dependency-graph`、`main-bootstrap-order`、`backend-capability-ports`、`store-graph`（store 间不得有环）、`architecture-root` / `architecture-renderer` / `architecture-transport`（依赖方向，见 §5.2）。
+- `tests/unit/` 287 文件（**283 spec** + `global-setup.ts` + `helpers/desktop-api.ts` + `helpers/architecture-imports.ts` + `setup/live2dcubismcore.ts`）。含判别力门禁类 spec：`ipc-surface-alignment`、`ipc-budget-declaration`、`window-presentation-guard`、`dependency-classification`、`main-dependency-graph`、`main-bootstrap-order`、`backend-capability-ports`、`store-graph`（store 间不得有环）、`architecture-root` / `architecture-renderer` / `architecture-transport`（依赖方向，见 §5.2）。**全部 spec 都直接放在 `tests/unit/` 下（无嵌套子目录）。**
 - `tests/unit/helpers/architecture-imports.ts`：三个 architecture spec 共用的**依赖扫描器**（收源码 / 解析 specifier / AST 抽边 / 图容器 / Tarjan）。它只服务测试、不含任何规则——规则与失败信息写在各自的 spec 里。全仓 dependency scanner 的清点见 §5.4。
 - `tests/integration/` 52 文件（**45 spec** + `global-setup.ts` + `README.md` + `helpers/`）。真机 Electron + Playwright。
 - `tests/helpers/temp-dirs.ts`：跨层共用的临时目录。
-- `apps/desktop/scripts/` 14 个：`check-backend-contract.mjs`（跨仓契约）· `verify-sensitive.mjs` + `verify-sensitive-core.mjs`（敏感信息扫描）· `verify-artifact.cjs`（产物 + Fuses + 打包产物与 `out/` 字节一致）· `package-app.mjs` · `refresh-wire-manifests.mjs` · `live2d-install.mjs` · `check-node-version.mjs` · `gpu-fallback-forensics.sh`（Linux GPU 取证脚本）。
+- `apps/desktop/scripts/` 根 14 个：`check-backend-contract.mjs`（跨仓契约）· `verify-sensitive.mjs` + `verify-sensitive-core.mjs`（敏感信息扫描）· `verify-artifact.cjs`（产物 + Fuses + 打包产物与 `out/` 字节一致）· `package-app.mjs` · `refresh-wire-manifests.mjs` · `live2d-install.mjs` · `check-node-version.mjs` · `gpu-fallback-forensics.sh`（Linux GPU 取证脚本）。另有 `scripts/integration/stage-h/**` 11 个文件（`runner.ts` + `lib/**` + `scenarios/**` + `README.md`，Stage H 真实联调 runner）。
 - 仓库根 `scripts/` 2 个：`docs-check.mjs`（文档门禁 + 三个索引生成）、`setup-windows.ps1`。
 
 ---
@@ -181,7 +182,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 11. 崩溃与进程级兜底：`child-process-gone` → `handleChildProcessGone`（GPU 分支只留痕 `gpu:crash`，**不 reload**）；`setCrashSink`（Renderer 崩溃 → 审计 + crash marker + reload）；`installProcessErrorGuards`（未捕获异常/拒绝，fatal 前等审计落盘）。装配点在任何可能崩溃的构造之前（`bootstrap/runtime-guards.ts`）。
 12. 启动门禁：dev 形态（`config.devToolsAllowed`，即未打包）的 `ELECTRON_RENDERER_URL` 必须指向受信地址且端口与本项目配置一致（`bootstrap/infrastructure.ts`）。
 13. 后端适配器构造：打包恒 Real；未打包默认 Real，仅 `CYRENE_BACKEND=mock` 显式 Mock。mock 夹具 `CYRENE_MOCK_*` 的 env 桥全部在此解析（`bootstrap/transport.ts`）。
-14. 业务服务构造：设置（eager load）→ 目录授权仓库 → 工具服务 → 文件引用表 → 会话存储（eager load）→ 角色草稿（eager load）→ chat → 上传/媒体 → Live2D 注册表 → 退出 flush requester（`bootstrap/services.ts`）。
+14. 业务服务构造（`bootstrap/services.ts`）：角色服务与诊断服务 → 设置（eager load `:174`）→ 目录授权仓库 → 工具服务 → 文件引用表 → 会话存储（eager load）→ 角色草稿（eager load）→ chat → 上传/媒体 → Live2D 注册表 → 退出 flush requester。
 15. 跨服务接线：后端回调 → chat / media / tool；窗口 `close` 上的退出 flush。**构造与接线分离**是 Prompt 2 的核心结构（`bootstrap/wire.ts`）。
 16. 通道装配 `registerHandlers(...)`（`bootstrap/register-ipc.ts`）→ 退出编排 `app.on('before-quit', ...)`（`bootstrap/shutdown-sequence.ts`）。
 17. 窗口创建：协议供给 `registerCyreneProtocolHandler` → 启动痕 → `markAppStarted()` → `ensureMainWindow(...)`（`bootstrap/start-application.ts`）。窗口呈现走 `window-presentation` 唯一入口。
@@ -214,7 +215,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | **聊天生成** | `chat:send` → `chat/chat-service.ts` → `ChatServiceBackendPort`（连接 + 事件源 + 会话/消息三个端口视图）→ WS v2 帧 → `protocol-v2/frame-mapper.ts` → 域事件 → `chat:event` 推送 → `stores/message.store.ts` → 组件 | 一次 generation = 一条 assistant 消息 + 有序 segments；`generation.completed` 是父终止事件，分段完成只结束该段；`assistantSegments` 是可见内容唯一真源；token/model/心情保留后端语义与来源标签，**不按字符估算** |
 | **附件** | 拖入/选择/粘贴 → Renderer 只持有 `File` → preload `toIpcDescriptor` 换 `fileRef` → Main `resolveFileRef` → realpath / 黑名单 / 大小 / 魔数逐条复核 → 上传 | `fileRef` 为 32 字节 CSPRNG，TTL 10 min、容量 256（`attachments/file-ref.ts:35,37`）；拖入只产生待发送附件，**不自动发送**；`bytes` 分支走 IPC（受 4 MiB 全局不变量约束），`fileRef` 分支载荷为空、由 Main 自己读盘并按 kind 复核真实字节数 |
 | **媒体字节与签名 URL** | 页面请求 `cyrene://renderer/__cyrene-media/{type}/{id}` → `attachments/media-service.ts` → 解析签名 URL → Main 取回正文（体积截断）→ 作为同源资源返回 | 目标地址策略在 `media-service.ts:69-86`：与后端**同源**放行；否则主机名必须是**公网字面 IP**；公网域名与回环/私网/链路本地/组播一律拒绝。同源资源意味着「Main 取什么，页面就能读什么」，所以这条策略是安全边界而非优化 |
-| **工具与权限** | 后端 `tool.request` → Main 风险重算 `tools/tool-policy.ts` → 授权窗（Renderer 展示目标与数据范围）→ `tool:decide` → `tools/tool-service.ts` 执行 → 审计 + 公开事件 | 风险取「本地基线 ∨ 后端上报」的较大者，黑名单恒 high；按 `callId` 幂等、终止态不重入；**唯一执行点**在 `tools/tool-service.ts:515`（测试经 `deps.executorOverride` 注入，不另开生产路径）；撤销授权写盘失败 fail-closed（`grant-store.ts` 抛 `GRANT_REVOKE_NOT_PERSISTED`） |
+| **工具与权限** | 后端 `tool.request` → Main 风险重算 `tools/tool-policy.ts` → 授权窗（Renderer 展示目标与数据范围）→ `tool:decide` → `tools/tool-service.ts` 执行 → 审计 + 公开事件 | 风险取「本地基线 ∨ 后端上报」的较大者，黑名单恒 high；按 `callId` 幂等、终止态不重入；**唯一执行点**在 `tools/tool-service.ts:445`（`deps.executorOverride ? … : executors.execute(…)`，全 `src` 只有这一处调用执行器；测试经 `deps.executorOverride` 注入，不另开生产路径）；撤销授权写盘失败 fail-closed（`grant-store.ts` 抛 `GRANT_REVOKE_NOT_PERSISTED`） |
 | **语音** | ① 普通录音 ② 实时语音会话 ③ 输入法转写，三条独立链路 | 只有**转写 final 文本**进草稿；实时字幕不进草稿。转写终态须属于**当前打开的**转写会话（`clientRequestId` 相符，判据在 `voice/session.ts`），故已取消/已放弃会话的迟到终态不会经 `CyChatInput` 的 watch 插进当前会话草稿。音频上行是唯一的单向 IPC（`voice:audio-chunk`，1 MiB/块，`voice/voice-handlers.ts:22`）；敏感转写内容不进日志与诊断包 |
 | **Live2D** | `live2d:list-models` 清单 → Renderer 加载 → 渲染环（rAF；窗口隐藏时 `beginFrameSubscription`） | dev 形态经 `live2d:read-model-file` 供字节（`corsEnabled:false` 下 `cyrene://` 跨源 `fetch` 会被拒），打包形态走 `cyrene://`（`protocol/live2d-path.ts`）；任何失败进可诊断失败态，不阻塞聊天 |
 | **持久化** | Renderer 防抖 → `chat:persist-session` → Main 原子写 userData 子目录；启动 `chat:hydrate-persistence` 一次性水合 | 守卫在 `persistence/user-data-dirs.ts`：POSIX 用 `O_NOFOLLOW\|O_DIRECTORY` + fd 锚点，Windows 用 `lstat` + `realpath`；写失败语义 `write-failure.ts`，损坏隔离 `corrupt-isolation.ts`；退出 flush 见 §3.2 |
@@ -224,15 +225,18 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 **Store = Renderer facade。** 每个 Pinia store 持有响应式状态、对组件暴露的稳定命令、以及自己那几步 IPC 编排；
 判据（状态机、栅栏、分页算法、纯转换）落在 `src/renderer/src/{message,conversation,voice,composer,character-editor}/**`
-与 `live2d/directive-rules.ts` 这些**不 import `vue` / `pinia` / 任何 `stores/*`** 的模块里（§2.2 表）。
-依赖方向单向：`组件 → store（facade）→ 域逻辑模块 → preload `window.cyrene``。域模块不得反向 import store，
+与 `live2d/directive-rules.ts`、`live2d/state-machine.ts` 这些**不 import `vue`（运行时）/ `pinia` / 任何 `stores/*`** 的模块里（§2.2 表）。
+依赖方向单向：`组件 → store（facade）→ 域逻辑模块`，取能力则统一走 **`stores/desktop-api.ts`** 这个注入点
+（`api` 变量，`main.ts` 启动时 `setDesktopApi(window.desktopApi)`、测试注入 mock）——**全局能力入口是
+`window.desktopApi`（`preload/index.ts` 的 `contextBridge.exposeInMainWorld('desktopApi', …)`）；仓库里没有
+`window.cyrene` 这个全局名，`renderer/src/**` 里除 `main.ts` 的注入那一处外也没有直接用 `window.desktopApi`**。域模块不得反向 import store，
 故它们可以在 node 环境下直接单测，不需要 Pinia 实例、mock api 或假定时器。
 
 **会话身份与栅栏（三条彼此的权威来源互不复制）：**
 
 | 身份 | owner / 栅栏读取方 |
 |---|---|
-| 当前会话 id | **owner = `conversation.store` 的 `currentId`**：全部 8 处写入都在该文件内（activate 成功后提交、create、删除当前会话、`clearBackendData`、`removeCreatedConversation`、`activateLocal`）。它经**单向** `watch(currentId, …, { flush: 'sync', immediate: true })` 镜像到 `stores/session.ts`，**session 侧没有任何回写路径**（`setCurrentConversationId` 全仓唯一调用点就是那个 watch）。**栅栏读取方 = `session.ts`**：它是中性身份镜像与读取点，不是第二 owner；`message.store` 取 `currentConversationIdRef()` 的 ref 本体，`settings.store` / `voice.store` / `attachment.store` 取取值函数，都只读且都**不 import `conversation.store`**——这正是环被切断的原因 |
+| 当前会话 id | **owner = `conversation.store` 的 `currentId`**：该 store 是唯一写入方，全部写入（activate 成功后提交、create、删除当前会话、`clearBackendData`、`removeCreatedConversation`、`activateLocal`，含清空为 `undefined`）都在该文件内。它经**单向** `watch(currentId, …, { flush: 'sync', immediate: true })` 镜像到 `stores/session.ts`，**session 侧没有任何回写路径**（`setCurrentConversationId` 全仓唯一调用点就是那个 watch）。**栅栏读取方 = `session.ts`**：它是中性身份镜像与读取点，不是第二 owner；`message.store` 取 `currentConversationIdRef()` 的 ref 本体，`settings.store` / `voice.store` / `attachment.store` 取取值函数，都只读且都**不 import `conversation.store`**——这正是环被切断的原因 |
 | 传输世代 | `message/fencing.ts` 的 `connectionSignatureFor(state)` + `stores/message.store.ts` 的 `connectionEpoch`。签名由 status / endpoint / connectionId / 协议版本 / 能力集合构成；**`activeConversationId` 有意不参与**（它是聊天选中项，不是传输转世）。`connected(A) → connected(B)` 因此也会被判定为换世代（不必先观察到断线） |
 | 一代生成 | `generationId` → `generationByConversation` / `generationSessionById` / `generationIdentityById` 三张表（`message.store`，唯一持有者）。中间事件（delta / segment.*）没有 `conversationId`，归属只能查表，查无即丢；`generation.started` 是唯一登记点。迟到终态另受「连接世代 + 会话 + 角色身份元组」三重校验 |
 | 在途请求 | `message/fencing.ts` 的 `createRequestOwners()`（send / voice-commit / resend+regenerate 共用一个，分页与上下文窗口各一个）。latest-wins：新请求使旧 owner 立即失效；会话切换 / 换世代 / 快照载入 `revokeAll()`。旧请求的 `finally` 只释放「仍属于自己的那一个」 |
@@ -243,8 +247,8 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 **两侧 fence 都不读对方的权威状态**：`message.store` 不从 `conversation.store` 读 `currentId`（改读 `session.ts` 单例），
 `conversation.store` 的端点事实域判定也只用自己的 `conversation/backend-identity.ts`——两者唯一的交汇是 `session.ts` 的镜像。
 
-> **另一条同名但不同层的 `activeConversationId`**：`connectionStore.state.activeConversationId` 来自**后端** session 帧
-> （`main/transport/frame-mapper.ts`，Main 侧透传），表示「后端当前激活的会话」。它只在
+| **另一条同名但不同层的 `activeConversationId`**：`connectionStore.state.activeConversationId` 来自**后端** session 帧
+> （`main/transport/protocol-v2/frame-mapper.ts`，Main 侧透传），表示「后端当前激活的会话」。它只在
 > `conversation.store.initializeConnected` 里被用来决定「首次/重连时该激活哪个会话」，是**激活候选的来源**，
 > 不是 UI 选中项的 owner。两者名字相同、语义不同，不要互相替代。
 
@@ -266,7 +270,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | Main 后端能力端口（7 领域端口） | `transport/backend-ports.ts`（聚合面 `transport/backend-adapter.ts` = 端口交集 + 接线槽） | `backend-capability-ports.spec.ts`：端口清单与逐端口方法名**冻结表**、端口间不重叠/不互相 extends、无未登记端口（interface 与 type 别名两种形态）、除事件源外无单方法端口、消费方 → 端口与 Pick 视图逐字对账、聚合面（含 barrel/命名空间等绕法）只允许 `transport/**` 与 `bootstrap/**`、Real/Mock 对每个端口的编译期与源码级一致性 |
 | 线协议夹具 | `main/fixtures/wire-v2/*.jsonl` + `.manifest.json` | `refresh-wire-manifests.mjs` 刷新，契约门禁对拍 |
 
-**纪律：** 未知或畸形外部输入必须**显式失败**，不得用 `any`、宽松 schema 或静默丢字段掩盖漂移。新增 IPC 通道必须同时改三处（Main 注册 + preload 引用 + 预算表），否则门禁红。
+**纪律：** 未知或畸形外部输入必须**显式失败**，不得用 `any`、宽松 schema 或静默丢字段掩盖漂移。新增 IPC 通道的**四处**同改清单与顺序见 §6 的"新增 / 删除 IPC 通道"行（漏任何一处都会被 `ipc-surface-alignment` 或 `ipc-budget-declaration` 判红）。
 
 ### 5.2 本地门禁
 
@@ -292,7 +296,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | `check`（typecheck + lint） | `[self-hosted, Linux, X64, fe-light]` | typecheck、lint、docs:check、verify:sensitive、check:contract（CI 无后端仓库 ⇒ 常态 exit 2，降级为 warning 注解） |
 | `unit tests` | `fe-light` | `pnpm test` |
 | `integration (shard N)` | `fe-linux` | 非 live2d 集成套件，分片 |
-| `integration (live2d …, self-hosted)` | `fe-linux` | live2d core / motion / settings 三文件 matrix |
+| `integration (live2d …, self-hosted)` | `fe-linux` | live2d 四文件 matrix：core / motion / settings / context-loss（`job matrix.file`，一文件一 job） |
 | `packaged artifact smoke` | `fe-light` | 清 `out/` + `dist/` → package → `verify:artifact --smoke`（xvfb）+ SHA 证据上传 |
 | `windows build-level` | `[self-hosted, Windows, X64]` | typecheck、lint、`pnpm test`、build、package、静态 `verify:artifact` + SHA 证据上传 |
 
@@ -302,13 +306,17 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 ### 5.4 依赖方向门禁（architecture gates）
 
-架构边界由三个 spec 机械保护，全部经 `pnpm test` 进入 CI（`unit tests` 与 `windows build-level` 两个作业都跑）。扫描器共用 `tests/unit/helpers/architecture-imports.ts`；判定口径统一为 **AST 抽边**（`import` / `export … from` / `import =` / 动态 `import()` / `ImportTypeNode` 全形态），并区分 **值边**（有运行时后果）与 **类型边**（编译期擦除）。
+架构边界由 **11 个判别力 spec** 机械保护，全部经 `pnpm test` 进入 CI（`unit tests` 与 `windows build-level` 两个作业都跑）。**三个 `architecture-*` spec 共用**扫描器 `tests/unit/helpers/architecture-imports.ts`，它们的判定口径统一为 **AST 抽边**（`import` / `export … from` / `import =` / 动态 `import()` / `ImportTypeNode` 全形态），并区分 **值边**（有运行时后果）与 **类型边**（编译期擦除）；其余 spec 各有各的实现（`main-dependency-graph` 与 `backend-capability-ports` 自建 AST 解析、`store-graph` 与 `ipc-surface-alignment` / `window-presentation-guard` 用去注释正则、`ipc-budget-declaration` 不读源码只比声明表）。清单（前 3 个是本轮新增的依赖方向门禁，其余 8 个是既有的结构/契约门禁）：
+
+- **依赖方向**：`architecture-root`（shared 隔离 + preload 窄桥）、`architecture-renderer`（renderer 特权边界 + 纯域分层 + bootstrap 方向）、`architecture-transport`（transport 不得依赖有状态服务实现 + 组合根方向）
+- **图与结构**：`main-dependency-graph`（Main 值导入环 = 0 + 组合根导入面）、`store-graph`（store 间值导入环 = 0 + `session.ts` 零 store 依赖）、`main-bootstrap-order`（启动/退出次序）、`backend-capability-ports`（后端能力端口冻结表与消费方对账）
+- **契约与边界**：`ipc-surface-alignment`（通道三面集合相等）、`ipc-budget-declaration`（通道预算申报）、`window-presentation-guard`（建窗/呈现唯一入口）、`dependency-classification`（`dependencies` 与 main/preload 实际用包双向对账）
 
 | spec | 保护的边界 | 主要规则 |
 |---|---|---|
 | `architecture-root.spec.ts` | `src/shared` 的跨进程中性；`src/preload` 的窄桥地位 | shared ✕ main/preload/renderer（**含类型边**）、✕ electron/vue/pinia、✕ 特权 Node 内建；shared 内部无**值**导入环；preload ✕ main/renderer、外部依赖只允许 electron + zod + `@shared/**` |
 | `architecture-renderer.spec.ts` | Renderer 不可信进程；Renderer 纯域模块分层 | renderer ✕ main/preload 实现（含类型边）、✕ electron、✕ 特权 Node 内建；纯域面 ✕ pinia、✕ vue（**仅值边**）、✕ stores/components/renderer bootstrap（**含类型边**）；只有 `main.ts`/`App.vue` 可 import renderer bootstrap |
-| `architecture-transport.spec.ts` | Main 的分层方向 | transport ✕ 有状态服务实现（工厂 / 有状态类 / 整模块导入）；只有 `main/index.ts` 可 import `main/bootstrap/**`；bootstrap ✕ `main/index.ts` |
+| `architecture-transport.spec.ts` | Main 的分层方向 | transport ✕ 有状态服务实现（跨目录**值**导入里出现 `create*` 工厂 / 有成员的类 / 命名空间·默认·副作用整模块导入即红；**纯常量 / 纯函数 / 类型合法**——现行合法边只有 `real-backend → tool-policy.isDomainAllowed`、`frame-mapper → input-summary.redactToolArguments`、`mock-backend → tool-registry.DESKTOP_TOOL_VERSION` 这三类，新增同类纯叶子边不必登记）；只有 `main/index.ts` 可 import `main/bootstrap/**`；bootstrap ✕ `main/index.ts` |
 
 **依赖方向矩阵（as-built）**：`YES` 允许，`NO` 门禁判红（**类型边与值边一并禁止**，除非该格另行注明），`TYPE-ONLY` 仅 `import type` 形态允许，`COND` 条件允许（括号内为条件）。
 
@@ -326,7 +334,7 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 | **shared** | YES | NO | NO | NO | NO | NO | NO | NO | NO |
 | **preload** | YES | YES | NO | NO | NO | NO | NO | NO | NO |
 | **main/bootstrap** | YES | NO | YES | YES | NO | NO | NO | NO | NO |
-| **main/index.ts** | YES | NO | YES | YES | NO | NO | NO | NO | NO |
+| **main/index.ts** | YES | NO | YES | **COND（仅 `config`、`windows`、`bootstrap/**`；具体服务与基础设施一律判红）** | NO | NO | NO | NO | NO |
 | **main/transport** | YES | NO | NO | COND（仅纯常量 / 纯函数 / 类型；工厂与有状态类判红） | NO | NO | NO | NO | NO |
 | **main 其余层** | YES | NO | NO | YES | NO | NO | NO | NO | NO |
 | **renderer bootstrap** | YES | NO | NO | NO | YES | YES | YES | YES | YES |
@@ -344,11 +352,11 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 | 项目 | 事实 |
 |---|---|
-| **机械强制** | 上表全部 `NO` / `TYPE-ONLY` / `COND` 格子；Main 值导入环 = 0（`main-dependency-graph`）；Store 值导入环 = 0（`store-graph`）；后端能力端口消费面（`backend-capability-ports`）；启动/退出次序（`main-bootstrap-order`）；窗口与对话框唯一入口（`window-presentation-guard`）；IPC 三面对齐与通道预算（`ipc-surface-alignment`、`ipc-budget-declaration`） |
-| **仍只是约定（无门禁）** | ① "Renderer 只能经 `window.cyrene` 取能力"的**正向**要求（门禁只禁 electron/Node，不强制经 preload 面）；② "通用 utils 不反向依赖领域语义"（`utils/**` 只被规则 1 覆盖，没有"utils 不得 import 领域模块"的规则）；③ Application Service 与 Electron UI primitive 的距离（`native-ui/dialog-service.ts` 本身就是基础设施适配器，剩余调用点尚未收敛，见 §7.1 指向的 doc 16 §5）；④ 领域模块之间的语义边界（如 message 域不得直接读 conversation 域状态）——由 review 与单测覆盖，无静态规则 |
-| **vendored 精确排除** | 只有 `src/renderer/src/live2d/framework/**`（Cubism SDK 第三方源码，59 个 ts）退出依赖方向规则；Cyrene 自己的 `live2d/directive-rules.ts`、`state-machine.ts`、`gl/**` 仍在受保护面内（有专门用例与 mutation 钉住） |
-| **exception / allowlist** | **0 条豁免**。唯一的两个"清单"都不是豁免而是**分类**：`architecture-renderer.spec.ts` 的 `VUE_FRAMEWORK_ADAPTERS`（**1 项**：`utils/document-visibility.ts`，把浏览器可见性接成响应式源的通用适配器；`composables/**` 按目录整类分类、无需登记）；`architecture-transport.spec.ts` 的跨层纯叶子依赖。两处新增都会被专门的用例追问，且**纯域内的 store 命名规则、类型边、`.js` 出后缀、别名写法全部按行为判定，不依赖任何清单** |
-| **判别力证据** | 每条规则都有 mutation 记录（注入违规 → 红 → 逐字节恢复 → 绿）；解析器另有 AST 形态判别力自证（`require` 三种引号 / 命名空间 / 转出口 / `import =` / 动态 `import()` / `ImportTypeNode` / 注释里的 import / `.js` 出后缀 / 别名归一 / `.vue` 的 `<script src>` / `.d.ts` 边 等 25 条形态）。纯域类型边政策的判别力另由 5 条 mutation 钉住（M16/M16b → stores 类型边红、M17 → components 类型边红、M17c → bootstrap 类型边红、P1–P3 → shared / 同域 / utils 类型边绿） |
+| **机械强制** | 上表**由门禁真正看得见的**那些格子（下表列出的例外除外）；Main 值导入环 = 0（`main-dependency-graph`）；Store 值导入环 = 0（`store-graph`）；后端能力端口消费面（`backend-capability-ports`）；启动/退出次序（`main-bootstrap-order`）；窗口与对话框唯一入口、以及 Notification/Tray/全局快捷键/自动更新在 Main 全域禁止（`window-presentation-guard`）；IPC 三面对齐与通道预算（`ipc-surface-alignment`、`ipc-budget-declaration`） |
+| **仍只是约定（无门禁）** | ① "Renderer 只能经 `window.desktopApi`（preload 的 `contextBridge` 面）取能力"的**正向**要求（门禁只禁 electron/Node，不强制经 preload 面）；② "通用 utils 不反向依赖领域语义"（`utils/**` 属纯域面，受 Rule 2 / Rule 3 / 类型边允许集约束，但**没有**"utils 不得 import 领域模块"这条规则）；③ Application Service 与 Electron UI primitive 的距离（`native-ui/dialog-service.ts` 本身就是基础设施适配器，剩余调用点尚未收敛，见 §7.1 指向的 doc 16 §5）；④ 领域模块之间的语义边界（如 message 域不得直接读 conversation 域状态）——由 review 与单测覆盖，无静态规则；⑤ **跨进程方向的 `main → preload` / `main → renderer` 各列**：三个扫描器的扫描面分别是 main 内部、shared+preload、renderer（见 §5.4 首段），故 `main/**` 反向 import renderer/preload 的实现**不会红**——目前靠约定（当前实测违规数 0） |
+| **vendored 精确排除** | 只有 `src/renderer/src/live2d/framework/**`（Cubism SDK 第三方源码，59 个 `.ts` + 1 个 `LICENSE.md`）退出依赖方向规则；Cyrene 自己的 `live2d/directive-rules.ts`、`state-machine.ts`、`gl/**` 仍在受保护面内（有专门用例钉住） |
+| **exception / allowlist** | **0 条豁免**。唯一的两个"清单"都不是豁免而是**分类**：`architecture-renderer.spec.ts` 的 `VUE_FRAMEWORK_ADAPTERS`（**1 项**：`utils/document-visibility.ts`，把浏览器可见性接成响应式源的通用适配器，新增项会被"未登记的 Vue 运行时依赖"用例逐个点名；`composables/**` 按目录整类分类、无需登记）；`architecture-transport.spec.ts` 里**不冻结清单**——它按性质判定"取到的名字是不是纯叶子"，新增同类纯叶子边合法，只有 `tool-policy.ts` / `input-summary.ts` 的叶子地位被单独钉住。**纯域内的 store 命名规则、类型边、`.js` 出后缀、别名写法全部按行为判定，不依赖任何清单** |
+| **判别力证据** | spec 自带判别力自证：解析器有 AST 形态用例（`require` 三种引号 / 命名空间 / 转出口 / `import =` / 动态 `import()` / `ImportTypeNode` / 注释里的 import / `.js` 出后缀 / 别名归一 / `.vue` 的 `<script src>` / `.d.ts` 边 等 25 条形态），Rule 5 对同一份判定逻辑喂合成样本（"取工厂 ⇒ 红 / 取同模块常量 ⇒ 绿"），纯域各规则的"允许方向"另有正对照用例。**归档的 mutation 记录不写进本文**（本文只认代码；需要当时证据时读 `docs/review/` 与 doc 16 §3.5） |
 
 ---
 
@@ -356,19 +364,19 @@ import 具体服务：`main-dependency-graph.spec.ts` 钉住它的导入面只�
 
 | 我要改… | 必须同时改 | 会红的门 |
 |---|---|---|
-| 新增 / 删除 IPC 通道 | `shared/contracts/ipc.ts`、Main 注册（`ipc/handlers.ts` 或各域 handler）、`preload/desktop-api.ts`、`ipc/channel-budgets.ts` 预算 | `ipc-surface-alignment`、`ipc-budget-declaration` |
-| 新增窗口 / 对话框 / 通知 / `openDevTools` 调用 | 必须走 `windows/window-presentation.ts`、`native-ui/dialog-service.ts` | `window-presentation-guard` |
+| 新增 / 删除 IPC 通道（**唯一清单，按序做**） | ① `shared/contracts/ipc.ts` 声明通道（+ `PushChannels` 若为推送）；② Main 注册 handler（`ipc/handlers.ts` 或各域 handler，入参 schema 同处）；③ `ipc/channel-budgets.ts` 申报预算；④ `preload/desktop-api.ts` 暴露窄方法。**若这条通道要调后端新能力**，先加 ⓪ `transport/backend-ports.ts` 的领域端口（见下方"改某个 Main 服务能用哪些后端能力"行） | `ipc-surface-alignment`（三面集合相等）、`ipc-budget-declaration`（未申报即红）、`backend-capability-ports`（若动了端口） |
+| 新增窗口 / 对话框 / `openDevTools` 调用 | 必须走 `windows/window-presentation.ts`、`native-ui/dialog-service.ts`。**要新增 Notification / Tray / 全局快捷键 / 自动更新不是"走某个入口"的问题**：这四类在 Main 全域被禁，得先改 `window-presentation-guard.spec.ts` 并说明理由 | `window-presentation-guard` |
 | 改后端 wire 字段或新增帧 | `protocol-v2/raw-schemas.ts` + `frame-mapper.ts`（REST 同理），并刷新 `main/fixtures/wire-v2/` 与其 manifest | `check:contract`、契约相关单测 |
 | 改 renderer 对后端字段的消费方式 | 先看是否该落在**域事件**（`shared/contracts/events.ts`）而不是组件；需要新的后端能力时先改 `transport/backend-ports.ts` 的领域端口 | 类型检查 + 契约测试；越层会被 review 打回 |
 | 改 Renderer 的聊天/会话/语音判据（栅栏、分页、状态机、准入） | 先找 `src/renderer/src/{message,conversation,voice,composer}/**` 里对应的纯模块，在那里改并补该模块的边界用例；**不要**把判据搬回 store | 对应模块的判别力 spec（这些模块不依赖 Vue/Pinia，用例直接构造边界） |
 | 在 store 里加跨模块协调 | 优先走 `stores/session.ts` 的单例镜像或域模块的纯判据，**不得**让两个 store 互相 import（会成环） | `store-graph.spec.ts`（Tarjan SCC，环即红）、`store-graph` 对 `session.ts` 零依赖的断言 |
-| 往 `src/renderer/src/stores/` 加非 store 文件 | 新的 Pinia store 必须叫 `<name>.store.ts`；辅助模块应放到 `stores/` 之外，或在 `architecture-renderer.spec.ts` 的 `NON_FACADE` 里写明理由 | `architecture-renderer`（store 命名面用例） |
+| 往 `src/renderer/src/stores/` 加非 store 文件 | Pinia store 一律叫 `stores/<name>.store.ts`；辅助模块（`session.ts`、`desktop-api.ts`、`character-runtime-coordinator.ts` 一类）放 `stores/` 之下但**不叫** `*.store.ts` 即可，**不需要**登记任何清单 | `architecture-renderer`（按**行为**判定：源码里调了 `defineStore` ⇒ 必须在 `stores/**` 且以 `.store.ts` 结尾；反向也查） |
 | 改某个 Main 服务能用哪些后端能力 | 先在 `transport/backend-ports.ts` 找到/新增领域端口（**不得**再把聚合面注入服务），再改 `backend-capability-ports.spec.ts` 的消费方 → 端口冻结表 | `backend-capability-ports`、`main-dependency-graph` |
 | 在 `src/shared/**` 里新增契约 | 只能引 shared 自己的模块 + 跨运行时内建；需要 main 的逻辑时把**纯类型/纯函数下沉**到 shared | `architecture-root`（shared 隔离 / 无值环） |
 | 在 `src/renderer/src/` 下新增纯域模块 | 放进 `renderer/src/<域>/`（**不要**放 `utils/**`，那是通用工具）；不得 import vue（运行时）/ pinia / stores / components / bootstrap——**取类型也不行**（下游层的类型是实现细节，需要中性契约就放 shared 或该域自己的纯模块） | `architecture-renderer` Rule 3（新增目录自动纳入保护；类型边同样判红） |
 | 在纯域模块里需要响应式 | 把编排留在 store / 组件里（store 侧 watch 后回调传入）；确有"框架适配器"性质的模块需把该文件登记进 `VUE_FRAMEWORK_ADAPTERS` 并写明理由；组件侧可复用的响应式单元放 `composables/**`（整目录免登记） | `architecture-renderer`（"未登记的 Vue 运行时依赖"用例会追问） |
-| 让 `main/transport/**` 依赖另一层的逻辑 | 只允许**纯常量 / 纯函数**（且目标模块不含工厂与有状态类），并在 `architecture-transport.spec.ts` 的值导入目标清单里登记 | `architecture-transport` Rule 5 + 清单对账 |
-| 在 renderer 里取 Main 能力 | 走 `window.cyrene`（新增能力需三处同改：Main 注册 + `shared/contracts/ipc.ts` + `preload/desktop-api.ts`） | `architecture-renderer` Rule 2、`ipc-surface-alignment` |
+| 让 `main/transport/**` 依赖另一层的逻辑 | 只允许**纯常量 / 纯函数 / 类型**（目标模块可以含工厂与有状态类，只要取的名字是纯叶子；命名空间 / 默认 / 副作用**整模块导入**一律判红）；新边不必登记——判据按性质，不按清单 | `architecture-transport` Rule 5（含"取工厂 ⇒ 红 / 取同模块常量 ⇒ 绿"的判别力自证） |
+| 在 renderer 里取 Main 能力 | 走 `window.desktopApi` —— **不要直接写全局**：store 侧统一经 `stores/desktop-api.ts` 的 `api` 注入点取用（`main.ts` 是唯一注入处，测试注入 mock）。需要新能力时按"新增 / 删除 IPC 通道"行的四处清单改 | `architecture-renderer` Rule 2、`ipc-surface-alignment` |
 | 新增持久化文件 / 目录 | `persistence/user-data-dirs.ts` 的子目录清单 + 原子写与写失败语义 | 相关单测 + 集成 |
 | 新增 Renderer 侧订阅 / rAF / 定时器 / AudioContext | 对应卸载点（`onBeforeUnmount` / `unmounted` 标志） | 集成用例与 review |
 | 改凭据或密钥处理 | `credentials/` + `diagnostics/redact.ts` 形态规则 | `verify:sensitive`（注意 `SELF_EXCLUDED_FILES`） |
@@ -406,6 +414,8 @@ $b = [regex]::Match($t, '(?s)export const IpcChannels = \{(.*?)\} as const').Gro
 ```
 
 > 命令通道数**不被门禁钉住**：`ipc-surface-alignment.spec.ts` 保证的是「三面集合相等、例外表为空」，不是字面上的 89。加通道后该 spec 仍会绿，本文的数字需要人工同步。
+>
+> §0 的 `tests 341` = `tests/unit` 287 + `tests/integration` 52 + 根目录 2（`tests/helpers/temp-dirs.ts`、`tests/env.d.ts`）；上面的命令按子目录列出，故需要时把那 2 个根文件加上。
 
 ### 7.3 复核纪律
 

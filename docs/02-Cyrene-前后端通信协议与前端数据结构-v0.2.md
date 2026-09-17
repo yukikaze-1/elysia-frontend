@@ -1034,7 +1034,7 @@ idle → connecting → connected
 |---|---|---|---|
 | D-1 | `generationId`（gen_） | `responseId` / `generationId` | 后端已弃用 `responseId`，**别名 generationId**；前端两字段并存时以 generationId 为准 |
 | D-2 | `generation.delta.delta` | `GenerationDeltaEvent.text` | 增量文本改名；语义不变（段内累计、`deltaSequence` 排序） |
-| D-3 | `generation.completed.mood` | `emotion`（EmotionState） | 心情字段改名；**F-1（联调前整改）：** mood 为 LLM 自由文本（真实值如「开心」「平静」），前端经 `normalizeEmotionCode`（`renderer/live2d/state-source.ts`）本地归一为 `MoodEmotion`（`happy/sad/surprised`，中英文别名表见 doc 05 §7/§18；未命中保持 `undefined`→`idle`） |
+| D-3 | `generation.completed.mood` | `emotion`（EmotionState） | 心情字段改名；**F-1（联调前整改）：** mood 为 LLM 自由文本（真实值如「开心」「平静」），前端经 `normalizeEmotionCode`（`renderer/src/composables/live2d-state-source.ts`）本地归一为 `MoodEmotion`（`happy/sad/surprised`，中英文别名表见 doc 05 §7/§18；未命中保持 `undefined`→`idle`） |
 | D-4 | `generation.completed.usage{turn_total, rounds[]}` | `TokenUsage`（source=`provider_reported`） | 按 generation 去重由 `generationId` 保证；rounds 为 provider 逐轮明细 |
 | D-5 | `generation.completed.conversationUsage{total, byModel}` | `conversationUsage`（source=`server_aggregate`） | 会话级累计来自服务端，非前端累加 |
 | D-6 | `generation.segment.completed.content` | `AssistantSegment.text` | 后端整段文本为权威，无需拼 delta；前端 `SegmentCompletedEvent` **已含** `content?: string`（`shared/contracts/events.ts:65`；`frame-mapper.ts:235` 条件透传；2026-09-14 更正，原文为“当前未含 content”），Adapter 透传或用其覆盖累积 |

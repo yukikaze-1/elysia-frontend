@@ -470,7 +470,7 @@ Renderer DevTools 是更高风险能力：它天然可以检查当前已渲染 D
 >   现口径见 §9 正文：**正在保存／已保存／保存失败**三态，常驻设置中心头部下方，失败为 `role="alert"` 且必须说明"改动没丢"。
 >   同时修掉两处代码缺陷：① `settings.store.persist()` 的 `pending = {}` 在 `await` 之前执行 ⇒ 保存失败即**丢弃**该 patch（用户看到开关生效、重启被还原）；
 >   ② `saveError`/`saved` 是**死状态**（全仓无组件渲染），而 Live2D 子页写着"500ms 自动保存"。
->   另修一处**启动路径缺陷**：`SettingsService.load()` 的隔离失败会上抛，而 `main/index.ts` 是 eager `await`——该状态会让**整个应用起不来**（注释却写着"不阻塞启动"）；现转降级态（保现场 + 拒绝写入 + 启动照常）。
+>   另修一处**启动路径缺陷**：`SettingsService.load()` 的隔离失败会上抛，而组合根是 eager `await`（落点原为 `main/index.ts`，2026-09-17 架构整改 Prompt 2 后为 `src/main/bootstrap/services.ts:174`）——该状态会让**整个应用起不来**（注释却写着"不阻塞启动"）；现转降级态（保现场 + 拒绝写入 + 启动照常）。
 >   验证：`settings.store.spec.ts`（失败不丢 patch【判别用例】／自动重试一次／持续失败不热循环／退出 flush 重试）、`cy-settings-save-status.spec.ts`（三态与优先级）、
 >   `settings-service.spec.ts`（写失败= `SETTINGS_SAVE_FAILED` 且无路径／隔离失败不再上抛+降级+拒绝写入）、
 >   **端到端** `tests/integration/settings-save-failure.spec.ts`（真实构造不可隔离的配置文件：应用照常启动 + 拨开关后出现失败提示 + 外部现场未变）。详见 [M-19 决策记录](review/2026-09-13-M-19-设置保存失败可见性-决策记录.md)。

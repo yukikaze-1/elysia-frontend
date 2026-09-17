@@ -102,7 +102,11 @@ pnpm start
 - [doc 16：当前实施状态](docs/16-Cyrene-前端实施任务清单与进度跟踪.md)——当前阶段、阻塞项、最近验证和下一步。
 - [doc 17：环境基线](docs/17-Cyrene-前端开发环境与依赖安装记录.md)——Windows/Linux 安装、启动与联调环境。
 - [doc 19：开发环境隔离与资源登记](docs/19-Cyrene-前端开发环境隔离与资源登记.md)——开发端口段、应用身份、userData 与本地数据隔离，多项目并行开发规则。
-- [doc 20：前端架构现状总览](docs/20-Cyrene-前端架构现状总览.md)——代码现状（as-built）：进程与信任边界、模块地图、启动与退出次序、关键数据流、契约面与门禁归属。
+- [doc 20：前端架构现状总览](docs/20-Cyrene-前端架构现状总览.md)——代码现状（as-built）：进程与信任边界、模块地图、启动与退出次序、关键数据流、契约面与门禁归属。**依赖方向矩阵与 architecture gate 清单的唯一维护处（§5.4）**。
+- [doc 01：Electron 前端总体架构设计](docs/01-Cyrene-Electron-前端总体架构设计-v0.2.md)——**设计口径**（状态「参考」）：架构意图与取舍；与代码现状冲突时以 doc 20 为准。
+- [doc 02：前后端协议与数据结构](docs/02-Cyrene-前后端通信协议与前端数据结构-v0.2.md)——前端领域契约与后端映射。
+- [doc 06：状态管理与本地存储](docs/06-Cyrene-前端状态管理与本地存储设计-v0.2.md)——状态所有权、持久化与 store 划分。
+- [doc 08：测试与 Demo 验收](docs/08-Cyrene-前端测试与Demo验收方案-v0.2.md)——测试分层、门禁清单（含 architecture gate 的"红在哪、怎么修"）与验收方法。
 - [Review 与验收索引](docs/review/README.md)——按日期检索决策、整改、联调和验收证据。
 - [Spec、Plan 与 Final Report 索引](docs/superpowers/README.md)——历史设计和实施计划。
 - [UI 精修整改清单](docs/2026-08-29-UI精修整改清单.md)——阶段 8 前 UI/布局/风格改动的规则与限制。
@@ -139,13 +143,14 @@ third_party/         经审计的第三方资源
 
 | 命令 | 用途 |
 |---|---|
+| `pnpm check:node` | 校验本机 Node 版本与 `.nvmrc` / `engines` 一致（`dev` / `build` / `test` 前会自动跑） |
 | `pnpm dev` | 启动 Electron 开发环境 |
 | `pnpm build` | 构建应用 |
 | `pnpm start` | 以打包产物形态运行（`cyrene://`，发布形态验证） |
 | `pnpm live2d:install` | 装配 Live2D 模型到 userData（首次启动后必做，见上） |
 | `pnpm typecheck` | TypeScript 类型检查 |
 | `pnpm lint` | ESLint |
-| `pnpm test` | 单元测试 |
+| `pnpm test` | 单元测试（含 architecture gate：依赖方向、Main/Store 值导入环、后端能力端口、IPC 三面对齐等；见 [doc 20 §5.4](docs/20-Cyrene-前端架构现状总览.md)） |
 | `pnpm test:integration` | Electron 集成测试（默认 **Silent Test Window Mode**：窗口不显示、不抢焦点、不进任务栏） |
 | `pnpm test:integration:visible` | 同一个集成套件的**可视化调试模式**：Electron 窗口真的显示，便于人工观察窗口/焦点/任务栏行为 |
 | `pnpm verify` | 一次跑完静态 + 单测 + 集成 + 构建（集成部分同为静默模式） |

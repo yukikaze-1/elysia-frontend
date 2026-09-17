@@ -55,6 +55,16 @@ Dated status notes in design documents are historical snapshots. Do not update t
 - Generic IPC such as `invoke(channel)`, `readFile(path)`, or `exec(command)` is forbidden.
 - Navigation, IPC sender origin, CSP, custom protocol, path containment, and Electron Fuses remain fail-closed.
 
+### Architecture gates (mechanically enforced — read before restructuring)
+
+Boundaries below are executable specs under `apps/desktop/tests/unit/`, all collected by `pnpm test` (hence by the CI `unit tests` and `windows build-level` jobs). If CI reds on one of them, the fix is to change the code, not the spec:
+
+- Dependency direction: `architecture-root.spec.ts` (shared isolation, preload narrow bridge), `architecture-renderer.spec.ts` (renderer privileged boundary, pure-domain layering, renderer bootstrap direction), `architecture-transport.spec.ts` (transport must not import stateful service implementations; only `main/index.ts` may import `main/bootstrap/**`).
+- Graphs and composition: `main-dependency-graph.spec.ts` (Main value-import cycles = 0; `main/index.ts` import surface limited to `bootstrap/**`, `config`, `windows`), `store-graph.spec.ts` (store value-import cycles = 0; `stores/session.ts` imports no other store — only `vue`'s `ref` and shared contract types), `main-bootstrap-order.spec.ts` (startup/shutdown ordering), `backend-capability-ports.spec.ts` (7 frozen capability ports; Application Services must not hold the aggregate `BackendAdapter`).
+- Contract and boundaries: `ipc-surface-alignment.spec.ts`, `ipc-budget-declaration.spec.ts`, `window-presentation-guard.spec.ts`, `dependency-classification.spec.ts`.
+
+`import type` erases at compile time and creates no runtime edge — but that does not make it universally legal: a layer rule may forbid type-only edges into a downstream layer's implementation types, and `architecture-renderer.spec.ts` does exactly that for `stores/**`, `components/**`, and renderer bootstrap. The full as-built dependency matrix (allowed / forbidden / type-only / conditional per layer pair, plus the rules that are still convention-only) lives in [doc 20](docs/20-Cyrene-前端架构现状总览.md) §5.4 — that section is the single source of truth for it; do not copy the matrix into other documents.
+
 ### Backend adapter
 
 - Treat the backend as an external system; do not force it to adopt front-end domain names.

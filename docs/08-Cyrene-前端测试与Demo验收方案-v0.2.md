@@ -441,6 +441,21 @@ Mock Backend 的事件样例也作为 Adapter 契约测试夹具。
 | **type-aware lint（测试目录，全集）** | 同上（2026-09-13） | `tests/**` 接入 `recommendedTypeChecked` **全集**，只豁免两条经实测判定"在测试替身上前提不成立"的规则：`require-await`（474 条＝`async` 测试替身）与 `unbound-method`（73 条＝vitest 的 `expect(obj.method)` 惯例 + `window.confirm` 这类原生 this 无关函数）。其余实测 455 条 / 74 文件全部清偿（208 条自动修 + 逐条判语义）。**修法口径**：优先给值标注真实类型（`vi.fn((input: CharacterListQuery) => …)`），使契约漂移时测试**编译失败**；其次 `unknown` + 判型。禁止 `any`/`as any`/`@ts-ignore`/`eslint-disable`（复核时按这三个模式扫 diff）。理由与计数见[决策记录 §3](review/2026-09-13-右键菜单锚点与一族flaky根因-决策记录.md) |
 | **帧类型清单「文档 ↔ 代码」（2026-09-14 新建）** | `tests/unit/contract-doc-frame-inventory.spec.ts` + doc 02 §19.2 机器校验锚点 | 补的是 **"文档 ↔ 代码"这段此前没有任何门禁的缝**：既有 `check:contract` 比的是"代码 ↔ 后端"，于是代码认了、文档没记的漂移会静默累积——`typing`／`character.state.changed`／`character.catalog.changed` 三型就曾长期如此（`git show HEAD` 全文 0 命中）。做法是**集合相等**（非"提到过"）：脚本 `WS_V2_FRAME_TYPES` ⇔ doc 02 §19.2 清单行，**双向 + 顺序 + 声明条数**都校验，另查每个白名单类型都真有 `type: z.literal`（防"文档与白名单一起漂"）。**变异三次均红且点名**：从文档清单删 `typing` → "白名单里有、doc 没有: `typing`"；文档加 `made.up.frame` → 反向红；改白名单顺序 → 顺序断言红。带两道退化哨兵（抽取 <30 型即报"解析器失效"而非静默通过） |
 
+**架构门禁（architecture gates，2026-09-17 新建；判据与矩阵的完整口径在 [doc 20 §5.4](20-Cyrene-前端架构现状总览.md)，此处只写"红在哪、怎么修"）**
+
+三处 architecture spec 由同一份 AST 扫描器 `tests/unit/helpers/architecture-imports.ts` 支撑，全部经 `pnpm test` 进入 CI（`unit tests` 与 `windows build-level` 两个作业都跑）。**门禁红时改代码，不要改 spec**（例外只有一处：文件确实是"框架适配器/集成面"性质时，按 spec 的提示改**分类**——挪目录或登记，见第三行）：
+
+| 门禁 | 位置 | 守什么 / 如何变红 |
+|---|---|---|
+| **依赖方向：shared / preload** | `tests/unit/architecture-root.spec.ts` | `src/shared/**` 不得 import main/preload/renderer（**含 `import type`**）、不得 import electron/vue/pinia、不得用特权 Node 内建；shared 内部不得有**值**导入环；`src/preload/**` 不得 import main/renderer，外部依赖只许 electron + zod + `@shared/**`。**变红**：在 shared 里写一句 `import { ref } from 'vue'`，或给 preload 加一个业务依赖 |
+| **依赖方向：Renderer 特权边界 + 纯域分层** | `tests/unit/architecture-renderer.spec.ts` | renderer 不得 import main/preload 实现（含类型边）、electron、特权 Node 内建；**纯域面**（`renderer/src/**` 去掉 stores/components/composables/bootstrap/`.vue`/vendored/1 个已登记适配器）不得 import pinia（含类型边）、不得**运行时** import vue、不得 import stores/components/renderer bootstrap（**含类型边**）；只有 `main.ts`/`App.vue` 可 import renderer bootstrap。**变红**：在 `message/attribution.ts` 里 `import { useMessageStore } from '../stores/message.store'`；或新增一个"运行时依赖 Vue 但不在集成目录里"的文件（该用例会逐个点名并给三个修法） |
+| **依赖方向：Main 分层** | `tests/unit/architecture-transport.spec.ts` | `main/transport/**` 跨目录**值**导入里不得出现 `create*` 工厂、有成员的类、或命名空间/默认/副作用整模块导入（纯常量、纯函数、类型合法）；只有 `main/index.ts` 可 import `main/bootstrap/**`；bootstrap 不得反向依赖 `index.ts`。**变红**：在 transport 里 `import { createToolService } from '../tools/tool-service'` |
+| **图与结构** | `main-dependency-graph.spec.ts`、`store-graph.spec.ts` | Main 内**值导入环 = 0**（Tarjan SCC）、`main/index.ts` 导入面只允许 `bootstrap/**`+`config`+`windows`；store 之间值导入环 = 0、`stores/session.ts` 零 store 依赖。**变红**：让两个 store 互相 `useXxxStore()` |
+| **组合根与端口** | `main-bootstrap-order.spec.ts`、`backend-capability-ports.spec.ts` | 启动/退出次序与 fatal 短路语义；7 个领域端口的方法名冻结表、端口间不重叠、消费方 → 端口逐字对账、**聚合面 `BackendAdapter` 只允许出现在 `transport/**` 与 `bootstrap/**`**。**变红**：把 `BackendAdapter` 注入某个 Application Service，或改端口方法名不同步冻结表 |
+| **契约与唯一入口** | `ipc-surface-alignment.spec.ts`、`ipc-budget-declaration.spec.ts`、`window-presentation-guard.spec.ts`、`dependency-classification.spec.ts` | IPC 三面集合相等且例外表为空；新通道必须申报预算；建窗/呈现/对话框只走唯一入口；`dependencies` 与 main/preload 实际用包双向对账。**变红**：新增通道漏改四处中的任一处（清单见 [doc 20 §6](20-Cyrene-前端架构现状总览.md)） |
+
+> **判据来源**：这些 spec 自身就是规则的可执行定义——失败信息里写了"允许的方向"与修法，`vitest` 输出即文档。**不要为了变绿而放宽断言**：如需例外，先在 spec 内按它的登记点显式分类并写明理由（当前全仓 exception 为 0 条）。
+
 ## 9. 性能与稳定性
 
 建议建立基线，不将数值视为尚未实测的承诺：

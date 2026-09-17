@@ -261,7 +261,7 @@ AI 消息：复制 Public Reply、复制完整回复组、折叠 Inner Voice、�
 - 使用不透明游标懒加载，打开查看器不阻塞聊天流；
 - 已撤销、过期或下载失败的资源保留可解释占位；搜索失败或无结果不清空现有聊天内容。
 
-> **落地更正（2026-09-15）——本清单「高亮来源消息或回复组分段」只实现到消息级：** 跳转链路确实完整（`CyHistoryViewer.vue:234` → `conversationStore.jumpToMessage` → `messageStore.loadContextWindow` + `setHighlight(messageId, segmentId)`，见 `stores/conversation.store.ts:547-554`），但**消费端只读消息 ID**：`CyMessageList.vue:674` 的行高亮类与 `:691` 的「已定位」胶片判据都是 `highlightMessageId === id`，组件里**没有任何地方读 `highlightSegmentId`**（`stores/message.store.ts:118,601,1180,1184`）⇒ 「回复组分段级高亮」是可写入、无消费者的**半接线状态**，当前不成立。消息级定位（滚动居中 + 6s 自动清除）**成立**，保留。
+> **落地更正（2026-09-15）——本清单「高亮来源消息或回复组分段」只实现到消息级：** 跳转链路确实完整（`CyHistoryViewer.vue:234` → `conversationStore.jumpToMessage` → `messageStore.loadContextWindow` + `setHighlight(messageId, segmentId)`，见 `stores/conversation.store.ts:389-392`），但**消费端只读消息 ID**：`CyMessageList.vue:674` 的行高亮类与 `:691` 的「已定位」胶片判据都是 `highlightMessageId === id`，组件里**没有任何地方读 `highlightSegmentId`**（`stores/message.store.ts:91,626,1216,1220`；行号 2026-09-18 复核更新）⇒ 「回复组分段级高亮」是可写入、无消费者的**半接线状态**，当前不成立。消息级定位（滚动居中 + 6s 自动清除）**成立**，保留。
 
 > **虚拟化注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 结果列表改为**虚拟列表渲染**——`groupedItems`（按自然日分组）扁平化为虚拟行 `rows`（`DayHeaderRow | ResultRow`，day header 固定高 ~34px / item 单行 snippet ~72px / sticker 缩略图行 +64px），复用泛型化 `virtual-window` 数学内核渲染可视窗口 + overscan（`OVERSCAN_PX`），命中结果**500 项不再全量 DOM**（`.cy-history-item` 节点数有界 ≤60，不随结果数线性）。剩余行为不变：日分组 header 仍正确显示（随虚拟行挂载）、锚点补偿改 data 层（`captureAnchor`/`restoreScrollTop` 前缀和二分，跳过 header 取首个 item 行，恢复偏移 ≤1px）、加载更多后新页行可达（滚动触发虚拟窗口重算）、Tab 焦点陷阱查询 overlay 全量 focusable（最后 focusable 仍为 footer「加载更多」）、跳转 `onJump`→`jumpToMessage` 不变、snippet 保持 **mustache 插值转义**（`{{ hit.snippet }}`，非 v-html / 非 renderMarkdown——虚拟化只改 DOM 节点数，**不改变** snippet 敏感文本转义与「不落日志/导出」语义）。
 
@@ -582,7 +582,7 @@ P0 操作：
 > - **§15「窄窗口下 Live2D 和会话栏可折叠」当前不可验收（2026-09-13 已在 §15 清单行内就地改写口径）**：窗口硬最小宽度为 1100，<1100 不可达（§3.1 范围修正在此条上的直接后果）。改写后的口径为「1100 以上**固定布局** + 窄窗保护由 effective-layout 推导；<1100 属已知产品缺口」，并在清单行内显式写明**不得读作"已实现"或"待回归"**。
 >
 > - **§15「沙盒、黑名单、审批历史和已授权范围可查看及撤销」：本阶段不可满足（2026-09-15 补记，与 §12.5 落地注记同一事实）。** 实测：**已授权范围**可查看且可撤销（`CySecurityPane` 直读 `tool:grants` + `tool:grant-revoke`）、**审批历史**已落地（`tool:history` 只读，`HISTORY_MAX=200`）；而**沙盒目录**与**域名黑名单**既无持久化面也无管理 UI——`src` 全域 grep `sandboxDirectories|domainBlacklist|SecurityPolicy` **0 命中**，`isDomainAllowed` 只有定义与单测、生产零调用（`main/tools/tool-policy.ts:113`）；路径黑名单是内置常量 `PATH_BLACKLIST_DEFAULTS`（`:11-26`），按 D6B-14 **不进 settings.json、无管理 UI**。⇒ 该项按**部分满足**读，不得当作"沙盒/黑名单可管理"。
-> - **§12.6「客户端版本」：未落地（2026-09-15 补记）。** `src/renderer` 全域 grep `客户端版本|appVersion|clientVersion` **0 命中**；诊断页当前只显示**协议版本 + 后端版本**（`CyDiagnosticsPane.vue:267`）。
+> - **§12.6「客户端版本」：未落地（2026-09-15 补记）。** `src/renderer` 全域 grep `客户端版本|appVersion|clientVersion` **0 命中**；诊断页当前只显示**协议版本 + 后端版本**（`CyDiagnosticsPane.vue:273`；行号 2026-09-18 复核更新）。
 > 逐条处置建议（做／砍／改写规格）见 doc 16 的规格漂移台账；**在做与砍确定之前，以上条目不得当作已交付能力**。
 
 ## 2026-09-16 落地注记（渲染层行为两处）

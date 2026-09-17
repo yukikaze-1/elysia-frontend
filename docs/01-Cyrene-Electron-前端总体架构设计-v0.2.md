@@ -1,9 +1,9 @@
 # Cyrene Electron 前端总体架构设计
 
 **文档状态：** 参考（阶段 1～7 架构设计基线）
-**最后核验：** 2026-08-29
+**最后核验：** 2026-09-18
 **适用阶段：** 阶段 1～8
-**权威范围：** 进程、模块、信任边界和总体数据流；现行行为以代码为准
+**权威范围：** 进程、模块、信任边界和总体数据流；现行行为以代码为准。**代码结构现状（as-built）读 [doc 20](20-Cyrene-前端架构现状总览.md)，本文只写设计意图**
 **技术基线：** Electron + Vue 3 + TypeScript + Vite
 **初始文档日期：** 2026-08-03
 
@@ -204,6 +204,8 @@ apps/desktop/
 
 `shared/contracts` 仅存放跨进程契约；不要把依赖 Electron 或 Vue 的实现放入该目录。
 
+> **落地现状注记（2026-09-18 核验）：** 上方是**推荐**结构（设计口径），与代码现状有差异——现状 `src/main` 另有 `bootstrap/`（组合根各生命周期阶段）、`characters/`、`models/`、`settings/`、`connection/`、`native-ui/`、`config/`、`fixtures/`；`renderer/` 下**没有** `features/`、`pages/`、`services/`、`app/`，而是 `stores/` + `components/` + `composables/` + 各领域目录；`tests/` 下**没有** `e2e/`。`main/permissions/` 目录存在但只有一个占位 `README.md`（授权判定实际在 `tools/`）。逐目录的真实清单见 [doc 20](20-Cyrene-前端架构现状总览.md) §2。
+
 ## 6. 核心接口边界
 
 ### 6.1 后端适配器
@@ -245,6 +247,13 @@ interface BackendAdapter {
 
 > **阶段 7 批次 A（2026-08-22）接口语义升级：** `subscribe(handler)` 由**单处理器槽**升级为**多处理器 Set**——每次调用把 handler 加入集合（重复订阅去重，再次订阅返回新的取消函数但不重复注册），返回的取消函数将该 handler 移出集合；事件到达时按注册顺序调用全部处理器，单处理器抛错以 try/catch 包裹为 warn 记录（不外抛、不阻断其他处理器）。real/mock 双实现对齐（Mock 原为单槽，并列订阅会覆盖既有聊天订阅导致断流）；`BackendAdapter` 为后端事件的唯一数据源，诊断/开发 tap（阶段 7 批次 A `diagnostics:dev-event`）作为并列消费者经 `subscribe` 挂载，不引入第二事件入口。
 
+> **落地现状注记（2026-09-18 核验，架构整改 Prompt 3；上方代码块仍是设计草案）：** 落地形状不是"一个宽接口注入所有消费方"，而是**领域能力端口 + 聚合面**两件东西：
+> - 领域端口在 `src/main/transport/backend-ports.ts`（**7 个**：连接 / 事件源 / 会话消息 / 附件媒体 / 模型服务 / 语音 / 桌面工具），每个 Application Service 只被注入自己声明的那几个端口视图；
+> - `src/main/transport/backend-adapter.ts` 的 `BackendAdapter` **没有被删除**，但已收窄为这 7 个端口的**交集 + 传输层接线槽**（`onToolRequest?`），只作为 **transport / composition 边界上的完整能力聚合 contract** 使用（RealBackend / MockBackend 的 `implements` 声明与组合根持有实例时的类型），**不是 Application Service 的依赖接口**——`backend-capability-ports.spec.ts` 对"服务持有聚合面"直接判红；
+> - 因此上方方法列表与实现有差异（如落地另有 `getConversationMessages` / `getMessageContext` / `renameConversation` / `listStickers` / `signAttachmentUrl` / `readToolAttachment` / `getToolCallStatus` / `uploadToolAttachment` 等），**逐字事实以上述两个文件的端口定义与 `backend-capability-ports.spec.ts` 的冻结表为准**。
+> **运行期只有一份后端连接**：`RealBackend` 单实例持有共享 WebSocket、鉴权、重连与存活检测；上面的端口只是**同一实例的窄依赖视图**，不是各自建立连接的后端。
+> 结构与门禁的完整现状见 [doc 20](20-Cyrene-前端架构现状总览.md) §4、§5.4。
+
 ### 6.2 Desktop API
 
 ```typescript
@@ -280,9 +289,9 @@ interface DesktopApi {
 }
 ```
 
-> **实现口径注记（2026-09-14 复核，F-7）：** 上方 `DesktopApi` 是 v0.2 设计草案，**照它实现会走错**——`selectFiles`/`requestToolExecution`/`respondPermission`/`cancelTool`/`listSecurityPolicy`/`updateSecurityPolicy`/`listPermissionHistory`/`revokePermissionGrant`/`readSettings`/`updateSettings`/`onDesktopEvent` 在 `src` **0 命中**；落地面是 `src/preload/desktop-api.ts:718-831`（`export type DesktopApi = typeof desktopApi` 见 `:833`）。
+> **实现口径注记（2026-09-14 复核，F-7；行号 2026-09-18 复核更新）：** 上方 `DesktopApi` 是 v0.2 设计草案，**照它实现会走错**——`selectFiles`/`requestToolExecution`/`respondPermission`/`cancelTool`/`listSecurityPolicy`/`updateSecurityPolicy`/`listPermissionHistory`/`revokePermissionGrant`/`readSettings`/`updateSettings`/`onDesktopEvent` 在 `src` **0 命中**；落地面是 `src/preload/desktop-api.ts`（`desktopApi` 对象 `:768` 起、`export type DesktopApi = typeof desktopApi` 见 `:883`）。
 
-> 对应关系：`respondPermission`→`toolDecide`（`{callId, decision:'allow_once'|'deny'}`）、`cancelTool`→`toolCancel`、`listPermissionHistory`→`toolListHistory`、`revokePermissionGrant`→`toolRevokeGrant`、`onDesktopEvent`→`onToolEvent`/`onChatEvent`；设置面由上方 `settingsLoad`/`settingsSave` 覆盖（`shared/contracts/ipc.ts:53-54` 只有 `settings:load`/`settings:save`，故 `readSettings`/`updateSettings` 是重复且未落地）；`selectFiles`/`requestToolExecution`/`listSecurityPolicy`/`updateSecurityPolicy` **无对应实现**（Main 的原生选择器只服务执行期工具与目录授权，见 `src/main/tools/tool-executors.ts:25`、`src/main/index.ts:426`）。原文保留以存设计口径。
+> 对应关系：`respondPermission`→`toolDecide`（`{callId, decision:'allow_once'|'deny'}`）、`cancelTool`→`toolCancel`、`listPermissionHistory`→`toolListHistory`、`revokePermissionGrant`→`toolRevokeGrant`、`onDesktopEvent`→`onToolEvent`/`onChatEvent`；设置面由上方 `settingsLoad`/`settingsSave` 覆盖（`shared/contracts/ipc.ts:54-55` 只有 `settings:load`/`settings:save`，故 `readSettings`/`updateSettings` 是重复且未落地）；`selectFiles`/`requestToolExecution`/`listSecurityPolicy`/`updateSecurityPolicy` **无对应实现**（Main 的原生选择器只服务执行期工具与目录授权，经 `src/main/tools/tool-executors.ts:9` 的 `defaultDialogService` 唯一入口）。原文保留以存设计口径。
 
 Renderer 不获得用于绕过工具层的 `readFile(path)` 或 `exec(command)` 接口。
 
@@ -407,7 +416,7 @@ BackendAdapter 将一次后端 AI 回复映射为一个父 Message/Response，�
 
 > **性能收敛注记（2026-08-26，阶段 7 批次 C，已开发、未联调）：** 补两条性能面落地——① 历史查看器虚拟化：`CyHistoryViewer` 的 `groupedItems` 扁平化为虚拟行 `rows`，复用泛型化 `virtual-window` 数学内核（`buildPrefix<T>`/`captureAnchor<T>`/`restoreScrollTop<T>`，注入 estimate/keyFor/isAnchorable；`estimateHeight` 泛型签名 + `Message` 重载并存，消息列表调用处零改动），可视窗口 + overscan 渲染，500 项历史资源 DOM 节点有界；② 渲染缓存：`renderMarkdown` 模块级 `Map<string,string>`（source→HTML）+ `clearMarkdownCache()` 挂 `resetConversation`**（该挂接点已被取代，见下方更正注记）**，完成态 segment 免重复 `marked.parse`+`DOMPurify.sanitize`。性能测量由集成 suite（`perf-gate.spec.ts`）常驻门禁——历史查看器 DOM 节点有界（硬失败）+ JS 堆上限（告警非硬失败，`app.commandLine.appendSwitch('enable-precise-memory-info')` 精确读取）+ 100 分段全量呈现 + 长会话行有界 + Live2D 折叠 rAF 停复核。**三态=已开发、未联调**（真实 Windows Electron 联调为批次后）。
 
-> **缓存清空挂接点更正（2026-09-14 复核，F-8）：** 上注「`clearMarkdownCache()` 挂 `resetConversation`」**已被取代**（`98efd5d`，2026-09-11）：现由**渲染层在模块加载时自行订阅会话边界事件**清空——`renderer/src/utils/markdown.ts:148-152`；`renderer/src/stores/message.store.ts:604-608` 明写此前“此处直接调用 `clearMarkdownCache()`”使 store 反向依赖渲染层，该依赖系**有意反转**（功能层不再 import 渲染层）。「会话切换必清空渲染缓存」的安全语义不变。
+> **缓存清空挂接点更正（2026-09-14 复核，F-8；行号 2026-09-18 更新）：** 上注「`clearMarkdownCache()` 挂 `resetConversation`」**已被取代**（`98efd5d`，2026-09-11）：现由**渲染层在模块加载时自行订阅会话边界事件**清空——`renderer/src/utils/markdown.ts:148-152`；`renderer/src/stores/message.store.ts:630` 明写此前“此处直接调用 `clearMarkdownCache()`”使 store 反向依赖渲染层，该依赖系**有意反转**（功能层不再 import 渲染层）。「会话切换必清空渲染缓存」的安全语义不变。
 
 ## 11. 必须与后端核对的接口点
 

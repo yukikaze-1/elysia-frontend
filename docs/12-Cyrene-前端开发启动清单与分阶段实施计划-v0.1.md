@@ -153,7 +153,7 @@
 | [x] | F-07 | P1 | 授权级别：仅一次、目录范围、命令模板、有效期及撤销 | **2026-08-20 预检拍板（F-07）**：仅一次/拒绝最小闭环——select=safe/automatic、read=medium 每次确认+selected-set 豁免、write/capture=high 强确认；`PermissionDecision` 只产出 allow_once/deny；allow_scoped + 设置页授权管理/命令模板空态归批次 C | 6 |
 | [x] | F-08 | P1 | 受控命令模板是否进入 Demo；若进入，允许命令与参数范围 | **2026-08-21 批次 C 关闭**：命令模板空态确认——`desktop.command.run` 全阶段不注册，**受控命令不进入 Demo**；设置页命令模板区为空态文案（「未启用受控命令执行。桌面工具仅包括文件选择/读取/写入与屏幕捕获，不支持任意命令执行。」），无列表无注册入口 | 6 |
 | [x] | F-09 | P1 | 文件写入 Diff、覆盖、写前哈希、冲突和回滚要求 | **2026-08-20 预检拍板（F-09）**：引成熟 diff 库（jsdiff `diff@^9.0.0`）行级 `diffLines`（本批不做词级标注）；写前哈希冲突 → `FILE_CONFLICT`；原子替换 + 格式保留（BOM/换行/末尾换行）；批次 B 已落地 | 6 |
-| [x] | F-10 | P1 | 截图在 Windows、X11、Wayland 的选择与授权要求 | **2026-08-20 预检拍板（F-10）**：capture 走「选择 → 预览 → 确认上传」+ high 风险强确认；**Wayland 会话在授权前即拒**（`CAPTURE_UNAVAILABLE`——`apps/desktop/src/main/tools/tool-service.ts:532` 决策链 6 号门禁 + `tool-executors.ts:99` 执行器独立复核）；平台范围由注册表声明 `supportedPlatforms: ['windows','linux']`（`tool-registry.ts:56`）；批次 B 已落地 | 6 |
+| [x] | F-10 | P1 | 截图在 Windows、X11、Wayland 的选择与授权要求 | **2026-08-20 预检拍板（F-10）**：capture 走「选择 → 预览 → 确认上传」+ high 风险强确认；**Wayland 会话在授权前即拒**（`CAPTURE_UNAVAILABLE`——`apps/desktop/src/main/tools/tool-service.ts:570` 决策链门禁 + `tool-executors.ts:137` 执行器独立复核；行号 2026-09-18 复核更新）；平台范围由注册表声明 `supportedPlatforms: ['windows','linux']`（`tool-registry.ts:56`）；批次 B 已落地 | 6 |
 | [ ] | F-11 | P2 | 审批历史和工具日志的保留时间、容量、清理与导出策略 | 设置页行为和存储上限明确 | 7 |
 
 ### 4.7 Live2D 资源与表现规则

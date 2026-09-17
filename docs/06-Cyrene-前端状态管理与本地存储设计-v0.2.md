@@ -164,7 +164,7 @@
 > **未落地标注（2026-09-15，对照代码逐字复核）——§3.10／§3.11／§3.12 三个 store 在实现中不存在，也无同名取代物：** 全仓 grep `useSearchStore|useResourceStore|useStickerStore` **0 命中**（`apps/desktop` 全域）。实际落点见下三条：
 > ① **历史查看器的查询/范围/分页/命中态**在 `stores/historyViewer.store.ts`（跳转锚点 `:125-127`，经 `CyHistoryViewer.vue:234` → `conversationStore.jumpToMessage`）；
 > ② **会话媒体/表情/文件的分类索引**是后端搜索结果的资源臂——组件 `CyHistoryResultItem.vue:11-16` 按 `hit.resource.kind` 渲染，**renderer 侧没有资源索引 store**；
-> ③ **表情面板**清单与选择态是组件本地 `ref`（`components/CyStickerPanel.vue:14-37`，经 `api.listStickers()` 拉 `stickerId` 清单；待发送队列 `CyChatInput.vue:180` 的 `pendingStickers`）。
+> ③ **表情面板**清单与选择态是组件本地 `ref`（`components/CyStickerPanel.vue:14-37`，经 `api.listStickers()` 拉 `stickerId` 清单；待发送队列 `CyChatInput.vue:170` 的 `pendingStickers`，模板见 `:512`；行号 2026-09-18 复核更新）。
 > ⇒ 三节按**设计期口径**读，不得当作已落地 store。
 
 ### 3.13 `layoutStore`
@@ -357,7 +357,7 @@ interface PersistedSettingsV2 {
 > **保存失败可见性注记（2026-09-13，M-19）：** 设置保存这条链此前有**两处**让失败到达不了用户，本轮都修了：
 > ① **改动被丢弃**——`settings.store.persist()` 的 `pending = {}` 在 `await` **之前**执行，写盘失败即丢掉该 patch（用户看到开关即时生效、重启后被静默还原）。现失败时把这份 patch **merge 回待写队列**（等待期间的新改动优先），并安排**一次**延时自动重试（不是按 500ms 防抖节奏重试——磁盘满/权限不足是持续失败，那样等于热循环打盘）；再失败则留给下一次修改或退出 flush。
 > ② **失败不可见**——`saveError` / `saved` 是**死状态**（全仓无组件渲染），而 Live2D 子页写着"500ms 自动保存"。现设置中心**头部下方常驻三态**：正在保存／已保存／**保存失败（`role="alert"`，并明确"改动仍保留在待写队列"）**；文案经 `error-message.ts` 单一来源，跨 IPC 只传 code（`SETTINGS_SAVE_FAILED` 单次写失败；隔离失败复用 `PERSISTENCE_DEGRADED`），**不含任何本地路径**。
-> ③ 顺带修掉一处**启动路径缺陷**（H-11b 同族、本轮排查发现）：`SettingsService.load()` 的损坏隔离失败会**上抛**，而 `main/index.ts` 是 eager `await settingsSvc.load()`（注释写着"不阻塞启动"）——"配置文件是符号链接 / 被 AV 或备份代理锁住导致改名失败"会让**整个应用起不来**。现转降级态：保留默认内存态、**拒绝后续写入**（保现场，与 `SessionStore` 同纪律）、留痕计数，启动照常。
+> ③ 顺带修掉一处**启动路径缺陷**（H-11b 同族、本轮排查发现）：`SettingsService.load()` 的损坏隔离失败会**上抛**，而组合根是 eager `await settingsSvc.load()`（注释写着"不阻塞启动"；落点原为 `main/index.ts`，2026-09-17 架构整改 Prompt 2 后为 `src/main/bootstrap/services.ts:174`）——"配置文件是符号链接 / 被 AV 或备份代理锁住导致改名失败"会让**整个应用起不来**。现转降级态：保留默认内存态、**拒绝后续写入**（保现场，与 `SessionStore` 同纪律）、留痕计数，启动照常。
 > 口径细节见 doc 11 §9（原「跨端同步四态」已按本地保存语义改写为三态）与 [M-19 决策记录](review/2026-09-13-M-19-设置保存失败可见性-决策记录.md)。
 
 安全策略由 Main 单独持久化，包含沙盒目录、规范化路径黑名单、域名黑名单、权限审批历史和有效授权。Renderer 只获得公开摘要和撤销接口。

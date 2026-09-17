@@ -6,6 +6,8 @@
 **方法：** 7 个领域 Subagent 并行审查 + 主 Agent 对全部 Critical/High 逐条二次验证（读完整调用链、实测、反证）
 **本轮不修改任何业务代码。** 唯一的文件写入是本文档。
 
+> **⚠️ 历史快照（基线 `d71f37d`，2026-09-11，未随代码更新）：** 本文正文（含 Executive Summary、`Architecture` 各节与全部 H/M/L 条目）按**当时**代码写下，**不得当作现状读**；其中所有行号与体量读数（如 `main/index.ts` 503 行组装根、`RealBackend` 1859 行、`message.store` 1120 行、组合根自引用与晚绑定）**均已漂移**。2026-09-16/17 的架构整改 Prompt 1～5（`203b4e3`／`10d5e9d`／`883e210`／`70528bd`）处置了其中的组合根与桥容器问题。架构现状读 [doc 20](../20-Cyrene-前端架构现状总览.md)，批次状态读 [doc 16](../16-Cyrene-前端实施任务清单与进度跟踪.md) §3.5。**正文一字未改**（历史主张按仓纪律保留；条目的当代状态见 doc 16 的 `S5-*` 台账）。
+
 > **文件名说明：** 任务书指定 `docs/review/full-frontend-review.md`，但本仓库 `docs/review/` 的历史记录一律采用 `YYYY-MM-DD-<标题>.md` 约定，且 `scripts/docs-check.mjs` 的索引生成器依赖该日期前缀（`dateFromName()` 正则 `^\d{4}-\d{2}-\d{2}`）。为不破坏索引与既有链接检查，本文档落为 `docs/review/2026-09-11-full-frontend-review.md`。若要严格使用任务书原路径，改回即可，但需同步 `pnpm docs:index`。
 
 ---

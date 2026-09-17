@@ -96,7 +96,7 @@ type PerformanceMode = "auto" | "quality" | "balanced" | "low_power";
 >
 > **`Live2DSettings` 全量 10 字段（doc 11 §7.1 设置子页 + doc 05 §14）：** `enabled`（缺省 true；与 G1 布局 `live2dShown` 正交）/`modelId`（null = 默认首个可用）/`scale`（0.5–3）/`offsetX`/`offsetY`（±2）/`mouseTracking`/`autoMotions`/`lipSync`/`performanceMode`（统一四值 `auto|quality|balanced|low_power`，旧三值 `high/low` 读回归一）/`reduceMotion`。契约经 `SettingsStateSchema.live2d` `.default(DEFAULT_LIVE2D)` 兼容旧 settings.json（不崩、不 bump version）。
 
-> **注（批次 C 收口落地，2026-08-18，D5C-09）：** 本表接口按批次 C 真实实现再修订——`reset(modelId?)` 签名扩展：缺省当前 modelId 优先、不可用回退首个可用、失败 → fallback（GPU 丢失一次重建路径，D5C-04）；`setExpression(file): boolean` 与 `playMotion(file, priority, durationMs?): boolean` **均返回 boolean**（白名单命中执行 true、未命中/未就绪/仲裁拒绝 false，脱敏日志落点）；`playMotion` 扩**第三参 `durationMs`（数值）**，生效时长取 `min(durationMs, MOTION_MAX_MS=15s)`，显式 durationMs 跳过同动作去抖合并；`live2dStateSource` 返回句柄 **`{ unsub, recompose }`**（`recompose()` 按当前业务源重组合，供 GPU 重建后恢复 CharacterState）；state-source 增 **`pushDirective(state, strength, durationMs?): boolean`**（后端指令瞬态覆盖：建议强度 ≤1 仲裁、永不覆盖 client 2/3 级现实态、超时回业务态）。**lipSync 门定案（批次 B Task5 M3 关闭，D5C-02）**：lipSync 只门控 C1/B4 **参数级电口**（`autoMotions ∧ lipSync` 门写 `ParamMouthOpenY`，门关写 0 清态、不残留上一帧）；**B3 动作口部不受 lipSync 门**（模型作者编排，闭嘴门控记为后续需求）。完整签名与语义见 `renderer/src/live2d/controller.ts` / `state-source.ts` / `stores/live2d.store.ts`。
+> **注（批次 C 收口落地，2026-08-18，D5C-09）：** 本表接口按批次 C 真实实现再修订——`reset(modelId?)` 签名扩展：缺省当前 modelId 优先、不可用回退首个可用、失败 → fallback（GPU 丢失一次重建路径，D5C-04）；`setExpression(file): boolean` 与 `playMotion(file, priority, durationMs?): boolean` **均返回 boolean**（白名单命中执行 true、未命中/未就绪/仲裁拒绝 false，脱敏日志落点）；`playMotion` 扩**第三参 `durationMs`（数值）**，生效时长取 `min(durationMs, MOTION_MAX_MS=15s)`，显式 durationMs 跳过同动作去抖合并；`live2dStateSource` 返回句柄 **`{ unsub, recompose }`**（`recompose()` 按当前业务源重组合，供 GPU 重建后恢复 CharacterState）；state-source 增 **`pushDirective(state, strength, durationMs?): boolean`**（后端指令瞬态覆盖：建议强度 ≤1 仲裁、永不覆盖 client 2/3 级现实态、超时回业务态）。**lipSync 门定案（批次 B Task5 M3 关闭，D5C-02）**：lipSync 只门控 C1/B4 **参数级电口**（`autoMotions ∧ lipSync` 门写 `ParamMouthOpenY`，门关写 0 清态、不残留上一帧）；**B3 动作口部不受 lipSync 门**（模型作者编排，闭嘴门控记为后续需求）。完整签名与语义见 `renderer/src/live2d/controller.ts` / `renderer/src/composables/live2d-state-source.ts`（2026-09-17 架构整改 Prompt 5 从 `live2d/state-source.ts` 迁出） / `stores/live2d.store.ts`。
 
 ## 4. 模型资源包
 
@@ -242,7 +242,7 @@ AI 文本内容不在前端进行复杂情绪分析。后端有明确指令时�
 
 消息 `emotion` 主要用于文本标签展示；只有经过本地映射表识别的情绪代码才能转换为 Live2D 表情。未知代码显示为普通心情文本或“未知”，不能直接当作动作/表达式名称。
 
-后端 `generation.completed.mood` 为 **LLM 自由文本**（真实值如「开心」「平静」「难过」，也可能混英文），前端经 `normalizeEmotionCode`（`live2d/state-source.ts`）本地归一为 `happy/sad/surprised` 枚举码——ASCII 大小写不敏感、中文按字面精确匹配（别名表见 §18）。未命中保持 `undefined` → `idle`（行为不变）；归一只在本地进行，未知码绝不成为动作/表达式名（联调前整改 F-1，2026-08-18）。
+后端 `generation.completed.mood` 为 **LLM 自由文本**（真实值如「开心」「平静」「难过」，也可能混英文），前端经 `normalizeEmotionCode`（`renderer/src/composables/live2d-state-source.ts`；2026-09-17 架构整改 Prompt 5 从 `live2d/state-source.ts` 迁出）本地归一为 `happy/sad/surprised` 枚举码——ASCII 大小写不敏感、中文按字面精确匹配（别名表见 §18）。未命中保持 `undefined` → `idle`（行为不变）；归一只在本地进行，未知码绝不成为动作/表达式名（联调前整改 F-1，2026-08-18）。
 
 ## 8. 后端表现指令
 

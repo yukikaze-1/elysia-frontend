@@ -1,7 +1,7 @@
 # Cyrene 前端实施任务清单与进度跟踪
 
 **文档状态：** 维护中（项目当前状态的唯一事实源）
-**最后核验：** 2026-09-15
+**最后核验：** 2026-09-18
 **适用阶段：** 阶段 0～8
 **权威范围：** 当前阶段、完成状态、阻塞项、最近验证和下一步；任务定义与阶段门槛分别以 doc 10、doc 12 为准
 
@@ -311,7 +311,7 @@ Linux xvfb 与 Windows 运行时 job 都直接继承了测试侧显式注入的�
 
 **本批变异验证 3 次**：M1 失败后不再放回 patch → 单测 **红 4 条**；M2 摘掉设置页状态条 → 组件 **红 5/6** + 集成红于 `expected +0 to be 1`；M3 `SettingsService.load()` 恢复"隔离失败上抛" → 单测红于 promise rejected、**集成红于 `firstWindow: Target page, context or browser has been closed`（应用根本起不来）**——即修前的真实行为。
 
-**本批顺带发现的第四条缺陷（不在评审里，实测确认）**：`SettingsService.load()` 的隔离失败会上抛，而 `main/index.ts:374` 是 **eager `await settingsSvc.load()`**（注释却写着"不阻塞启动"）⇒ 设置文件无法隔离时**整个应用起不来**。已改为降级态（保现场 + 拒绝写入 + 启动照常），与 `SessionStore` 同纪律。**这条不是 M-19 原文的范围，是排查中打出来的**——记录在此以免被读成"顺手重构"。
+**本批顺带发现的第四条缺陷（不在评审里，实测确认）**：`SettingsService.load()` 的隔离失败会上抛，而 `main/index.ts:374` 是 **eager `await settingsSvc.load()`**（注释却写着"不阻塞启动"）⇒ 设置文件无法隔离时**整个应用起不来**。已改为降级态（保现场 + 拒绝写入 + 启动照常），与 `SessionStore` 同纪律。**这条不是 M-19 原文的范围，是排查中打出来的**——记录在此以免被读成"顺手重构"。（行号注（2026-09-18）：`main/index.ts` 已由架构整改 Prompt 2 拆成 99 行组合根，该 eager load 现落 `src/main/bootstrap/services.ts:174`。）
 
 **本批观察到一次单元测试 flake（如实记录，未改任何断言）**：全量 `pnpm test` 第一遍红在 `real-backend-search.spec.ts`「单流（all）首屏按 sortKey 升序」，栈落在 `RealBackend.restFailure`，同轮 stderr 出现 happy-dom 的 `AsyncTaskManager has been destroyed` / `DOMException [NetworkError] … http://localhost:3000/x`（该 spec 注入 fetch 替身）。**单独重跑该文件 10/10 绿、随后全量重跑 252 文件全绿**，故定性为 happy-dom 拆装竞态类偶发；**未放宽任何断言**。本批改动面（设置域）与该 spec（历史查询 REST）无交集。
 
@@ -627,7 +627,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
   - **本会话一次自伤事故（记录在案）**：做变异验证时用 `Get-Content -Raw` + `WriteAllText` 回写 `cy-attachment-media.spec.ts`，而本 shell 的 `Get-Content` 按 ANSI 解码 UTF-8 ⇒ 中文全部变乱码。已 `git checkout` 恢复并用编辑工具重做，随后对全部改动文件做 U+FFFD/乱码体检（`ENCODING_OK`）。**本仓库文件一律不要用 shell 读改写**（与上一轮子代理的事故同因）。
   - **验证口径**：`typecheck:node` EXIT=0；全量单测 **241 文件 / 2950 passed**（6 expected fail、22 skipped）EXIT=0；迁移进度门禁 5/5 绿。
 - **本批一个值得记的连带**：P2-10 的新 spec 用了未登记的新临时目录前缀，**被我自己在 P2-6 建的门禁抓住**（`cyvs-（unit/verify-sensitive-e2e.spec.ts）`）——门禁按设计工作，已登记。
-- **另一处自指教训（`98c8e39`）**：P2-10 的扫描器用例**自己触发了它所测试的门禁**——它需要往夹具里植入一个秘密令牌，而我把它写成了源码里的完整字面量，于是 `pnpm verify:sensitive` 把该测试文件判成违规，CI 的 `Sensitive info scan` 步骤变红（`0aa4792` 那次唯一红的一步）。修法：标识符拆成两段、运行时拼接（规则是**逐行**匹配的），夹具里仍是完整令牌形态、检出腿照旧被测。**我在这上面连踩两次**——第一次修完代码后，我给该规则写的**解释性注释里又复现了同一形态**（标识符 + 等号 + 省略号，省略号是非空白字符照样命中）。教训：**为一条正则门禁写"反面例子"时，注释与文档同样在扫描面内**；解释规则不能靠复现被禁形态。
+- **另一处自指教训（`98c8e39`）**：P2-10 的扫描器用例**自己触发了它所测试的门禁**——它需要往夹具里植入一个秘密令牌，而我把它写成了源码里的完整字面量，于是 `pnpm -F @cyrene/desktop verify:sensitive` 把该测试文件判成违规，CI 的 `Sensitive info scan` 步骤变红（`0aa4792` 那次唯一红的一步）。修法：标识符拆成两段、运行时拼接（规则是**逐行**匹配的），夹具里仍是完整令牌形态、检出腿照旧被测。**我在这上面连踩两次**——第一次修完代码后，我给该规则写的**解释性注释里又复现了同一形态**（标识符 + 等号 + 省略号，省略号是非空白字符照样命中）。教训：**为一条正则门禁写"反面例子"时，注释与文档同样在扫描面内**；解释规则不能靠复现被禁形态。
 
 
 - **H-11c / P1-6 已修**（`59b85d4`，评审第 3 步「稳定性收口」的最后一项）：REST 栅栏改为**只按 source scope 判定**。原实现在**检查状态码之前**先套 transport-incarnation 栅栏 ⇒ 任何 WS 重连（含自动重连）都把已到达的正常 `200` 丢掉、替换为"连接来源已切换，请重试"；而 fetch **未被 abort**、服务端副作用**已提交** ⇒ 非幂等写（上传/建会话/保存）会**误报失败并诱导重复提交**。经用户确认产品事实（**本项目只面向一个后端**）后，同一 source 的重连不再作废已完成响应；换源仍由 `sourceGeneration` 拦下，`disconnected` 仍拒绝。双向变异：还原旧栅栏 → 新用例红于 `连接来源已切换，请重试`（真机症状被精确复现）；删掉 source 检查 → 「换源仍作废」用例红。
@@ -771,7 +771,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **④ `state-machine.ts` 注释与常量集合不自洽 —— 经复核重新定性，未改**：实测
   `listening_start`/`working_start`/`waiting_permission_start` 三个事件**在全仓没有任何生产者**，
   `waiting_permission` 的生产路径走 `state-source` 的 `toolWaiting`；且 `controller.ts:293-296` 与
-  `state-source.ts:5` **明写「生产只走 setState，不用 onEvent」**（N2 评审项）⇒ `onEvent` 那套优先级仲裁
+  `state-source.ts:5` **明写「生产只走 setState，不用 onEvent」**（N2 评审项；该文件 2026-09-17 已迁至 `renderer/src/composables/live2d-state-source.ts`，同一句注释现在 `:12`）⇒ `onEvent` 那套优先级仲裁
   **在生产里从不执行**，只被 `live2d-state.spec.ts` 调用。上引注释说的「驱动源 null」**本身正确**，
   缺的是「`onEvent` 为生产死代码」这一句，故 review 的「注释与常量集合不自洽」**判错了机制**。本轮**未改**。
 
@@ -799,7 +799,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **范围与来源**：2026-08-29 开发者真机走查（Windows、Mock 演示模式、`pnpm dev`、Electron 43.3.0，3 张标注截图）产出 12 个编号问题 + 3 条附注观察（A/B/C），并入五批精修执行。
 - **已修复并提交（走查文档口径）**：问题 **3/4**（batch01 + 02rev：表情归位、输入区功能键分组）、**7**（设置内容区 `translateZ(0)` 合成层稳定，判为字形级重渲染的缓解）、**9**（删 nav note 列 + 面包屑去「阶段 N」）、**10**（折叠开关上移标题栏左上替三点、设置沉底）、**11**（删 Cy 徽标）为一批；问题 **1**（滚动条抖动）、**2**（窗口边缘空药丸）、**6**（聊天头部信息架构）、附注 **A**（回到底部按钮遮正文）为 `c58781e` 一批。
 - **问题 1/2 的真机反馈重构**：初版「滚动停后 150ms 一次大跳」被真机打回，根因三条（① 视口外回复「完整↔20px 骨架」几何折叠、② 批处理重排、③ 补偿按旧高度累计放大）；重构为**取消骨架几何切换**（虚拟窗口/overscan 内全量渲染真实内容，删视图感知延迟）+ **高度批次改「锚点捕获→合并→恢复」**（删累计 delta 补偿）+ 始终记录锚点行实测高 + `.cy-messages` 加 `overflow-anchor: none`。perf-gate ②b/③ 按用户拍板重写（视图感知/延迟契约废止——真机几何折叠 > 延迟渲染收益）。
-- **不修的两项（明确记录，不含糊）**：问题 **8**（附件媒体 `__cyrene-media/attachment/…` 500 反复请求）**已定位为 Mock 边界**——Mock 模式上传附件不存字节（`mock-backend.ts:641`），代理 500，vlist 重挂载即重发；改进点（媒体失败缓存）未做。问题 **12**（任务中心空占位 +「阶段 6 落地」误导文案）**已由任务系统架构稿 TSA-01 推翻「删除入口」结论，改正式立项**，走查批次不再处理。附注 **C**（Live2D `Failed to fetch`）判定**非缺陷**：`pnpm dev` 形态 localhost Renderer 跨源访问 `cyrene://` 被安全策略拒绝（该限制 2026-09-10 已另修：dev 下改经 IPC 供给字节，见 §1）。
+- **不修的两项（明确记录，不含糊）**：问题 **8**（附件媒体 `__cyrene-media/attachment/…` 500 反复请求）**已定位为 Mock 边界**——Mock 模式上传附件不存字节（`mock-backend.ts:761`；行号 2026-09-18 复核更新），代理 500，vlist 重挂载即重发；改进点（媒体失败缓存）未做。问题 **12**（任务中心空占位 +「阶段 6 落地」误导文案）**已由任务系统架构稿 TSA-01 推翻「删除入口」结论，改正式立项**，走查批次不再处理。附注 **C**（Live2D `Failed to fetch`）判定**非缺陷**：`pnpm dev` 形态 localhost Renderer 跨源访问 `cyrene://` 被安全策略拒绝（该限制 2026-09-10 已另修：dev 下改经 IPC 供给字节，见 §1）。
 - **本文件口径声明**：上列提交号与批次归属**转抄自走查文档的状态块**，本次未逐个提交复核 diff；走查文档自带的行号/类名已注明「引用前先与当前代码对拍」（其组件行号随后续批次多处变更）。
 - **2026-09-15 追加的一条代码补齐**：整改清单 §3「滚动容器预留滚动条空间」点名四容器，此前只有 2 处有 `scrollbar-gutter: stable`（消息区、向导体），**会话列表 / 历史查看器 / 设置内容区三处缺**（2026-09-14 review 记为「代码不足、文档对」）⇒ 已补齐，本节该条转为**已满足**。
 
@@ -957,10 +957,10 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
   - 变异验证 1 处 RED：把 `CYRENE_BACKEND` 放回 `opts.env` 之后 ⇒ real 冒烟 2 条红，而"缺省仍是 mock"那条**保持绿**（正是期望的判别形态）。
 - **AUD-02 方案 C（mock/real 共享契约测试）**：新增 `tests/unit/mock-real-contract.spec.ts`——同一场景两侧各走真实路径（mock 读内置领域夹具；real 由真实 `WebSocketServer` 发等价 wire 帧经 `FrameMapper` 映射），断言：**real 滤掉 `generation.segment.started` 后事件种类序列与 mock 逐项相同**；**已登记的差异恰好是"默认夹具 0 帧段边界"且数量钉死为 3**；Token 的 `source` 标签（`provider_reported`/`server_aggregate`）与 `total = input + output`、会话累计 2100 两侧一致。
   - 变异验证 4 处全 RED，**两侧各打两处**（real 侧改来源标签 ×2、mock 侧改夹具用量与补一条段边界）⇒ 证明这条契约测试真的在看**两边**，而不是只把 real 与自己比。
-- **Linux GPU（方案 A + B）**：判定点单列为 `config/gpu-mode.ts`（Linux 且无 `card*`/`renderD*` ⇒ 回退；`CYRENE_GPU_MODE=disable|auto` 可覆盖），由 `index.ts` 在 `app.whenReady()` **之前**调用并应用 `--disable-gpu`，另留 `gpu:runtime-mode` 诊断（`disabled`/`mode`/`source`/`platform`）；支持边界写进 doc 09 §8。**判据不用 `app.getGPUFeatureStatus()`**——它只在 ready 后可用，而崩溃发生在 GPU 进程初始化期。
+- **Linux GPU（方案 A + B）**：判定点单列为 `config/gpu-mode.ts`（Linux 且无 `card*`/`renderD*` ⇒ 回退；`CYRENE_GPU_MODE=disable|auto` 可覆盖），由装配链在 `app.whenReady()` **之前**调用并应用 `--disable-gpu`，另留 `gpu:runtime-mode` 诊断（`disabled`/`mode`/`source`/`platform`）；支持边界写进 doc 09 §8。**判据不用 `app.getGPUFeatureStatus()`**——它只在 ready 后可用，而崩溃发生在 GPU 进程初始化期。（落点注（2026-09-18）：调用点随架构整改 Prompt 2 从 `main/index.ts` 迁到 `src/main/bootstrap/pre-ready.ts:189-191`，语义未变。）
   - **⚠️ 落地中撞到并修掉的一处真实回归（如实记录，这是本批最值得留痕的一条）**：判定逻辑最初**并进了 `runtime-environment.ts`**，于是该模块多了一句 `import { readdirSync } from 'node:fs'`。而它被 `windows/window-presentation.ts` 与 `native-ui/dialog-service.ts` 依赖 ⇒ `node:fs` 被拖进它们的依赖图。后果：`tests/integration/renderer-crash.spec.ts`（全仓唯一用 CDP 观测"崩溃后 reload"的用例）**稳定失败**。
     - 定位方式：`git stash` 掉全部改动跑基线（**通过**，611ms）⇒ 确认是回归而非 flake；再逐文件还原二分 ⇒ 锁定该文件（仅还原它、`index.ts` 保持 HEAD 就已复现）。
-    - 修法：判定点独立成 `config/gpu-mode.ts`，**只由装配根 `index.ts` 调用**，`runtime-environment.ts` 回到纯净解析器（无 fs 依赖）。修复后崩溃用例 **627ms 通过**，GPU 的 18 条单测与 4 处变异全部照旧。
+    - 修法：判定点独立成 `config/gpu-mode.ts`，**只由装配链调用**（`main/index.ts`，2026-09-18 起该调用点在 `bootstrap/pre-ready.ts:189-191`），`runtime-environment.ts` 回到纯净解析器（无 fs 依赖）。修复后崩溃用例 **627ms 通过**，GPU 的 18 条单测与 4 处变异全部照旧。
     - 教训：**在被多处依赖的"纯解析模块"里新增重型依赖（fs/net）会波及依赖它的每一个边界**。`runtime-environment.ts` 自己写明是"窗口呈现判据的唯一解析点"，往里塞第二件事（且带 fs）恰好破坏了那条设计意图。方案文档里"沿用同一个解析点而不是另开一个同形模块"的判断是错的，此处更正。
   - 应用层另有 `tests/integration/gpu-fallback.spec.ts` 2 条（显式 disable ⇒ 命令行确有该开关；回退后启动链完整）。**只做正向断言**：Linux 上反向断言恒假——测试脚手架自己的 `defaultGlArgs` 就会注入 `--disable-gpu`，写反向用例只会得到永不因本代码变红的假断言（"缺省不干预"留在单测矩阵里）。
   - 变异验证 4 处全 RED（含"决策算出来但不应用"那处，需重建产物）。
@@ -1035,6 +1035,22 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 - **本机验证范围（不谎称）**：typecheck／lint／`pnpm test`（266 文件 / 3320 passed + 6 expected-fail + 25 skipped）／`ipc-security` 单跑 18/18（Windows 走可用分支）。**那两条分支在本机仍然跑不到**，其证据只有 Linux CI。
 - **流程更正（已写进 doc 08 的 2026-09-16 落地注记）**：批次记录里的「门禁绿」必须区分**本地**与 **CI**；凡覆盖声明依赖平台条件 `skip` 的用例，其验证面就是那个平台，批次收尾必须附 CI run 结论。
 - **未做**：未改任何产品代码（两处都是测试侧问题）；未加 retry、未放宽任何断言；未处置 `windows build-level` 在 run `35083388931` 的一次后端连接失败（该 job 在该 run 红、最新 run 已绿，属环境态，**未定性**）。
+
+### 3.5 架构整改批次 Prompt 1～5（2026-09-17，`203b4e3`／`10d5e9d`／`883e210`／`70528bd`）
+
+> 四个提交是一个批次：**消 Main 值导入环 + 治理组合根（P1+2）→ 拆后端能力端口（P3）→ 下沉 Renderer 纯域逻辑（P4）→ 把上述边界升级为机械门禁（P5）**。本批**不改产品行为**（P4 只搬判据，唯一行为修正是 voice 栅栏的 4 处缺陷）。结构与门禁的逐条现状写在 [doc 20](20-Cyrene-前端架构现状总览.md) §2／§3／§5.4——本文件只记状态与读数，不复制它的结构描述。
+
+| 提交 | 做了什么 | 关键落点 |
+|---|---|---|
+| `203b4e3` P1+2 | ① `tools/tool-service ↔ tool-executors` 值导入环消除（执行契约与数值策略下沉 `tool-execution-contract.ts`／`tool-limits.ts`）；② `main/index.ts` 641 行 → **99 行**，装配拆进 `src/main/bootstrap/**`（10 模块），**`mediaBridge`／`chatBridge`／`toolBridge`／`fileRefsHolder` 四个晚绑定桥容器全部删除** | `bootstrap/pre-ready.ts`…`test-probe.ts`、`main-dependency-graph.spec.ts`、`main-bootstrap-order.spec.ts` |
+| `10d5e9d` P3 | `BackendAdapter` 从 43 方法宽接口拆为 **7 个领域能力端口**（`transport/backend-ports.ts`）；聚合面收窄为"端口交集 + 接线槽"，Application Service 不再持有 | `transport/backend-ports.ts`、`backend-adapter.ts`、`backend-capability-ports.spec.ts` |
+| `883e210` P4 | Renderer 巨型 store 的纯判据下沉到 `message/`·`conversation/`·`voice/`·`composer/`·`character-editor/`·`live2d/directive-rules.ts`；顺带修 **4 处 voice 栅栏缺陷** | 上列目录 + 各自判别力 spec；`message.store.ts` 与 `voice.store.ts` 各有数百行级改动（该提交合计 32 文件 / +4917 / −1014） |
+| `70528bd` P5 | 新增三个架构门禁 spec（`architecture-root`／`architecture-renderer`／`architecture-transport`）与共用扫描器 `tests/unit/helpers/architecture-imports.ts`；`live2d/state-source.ts` **移动**到 `composables/live2d-state-source.ts`（门禁判定它是 Vue 集成面，故改代码而非登记豁免） | `tests/unit/architecture-*.spec.ts` |
+
+- **门禁读数（本机 Windows，2026-09-18 本文件复核时重跑）**：三个 architecture spec + `main-dependency-graph` + `store-graph` + `backend-capability-ports` = **6 文件 / 123 用例全绿**（`vitest run` 定向执行，3.69s）。**Main 值导入环 = 0、Store 值导入环 = 0、聚合面未被任何 Application Service 持有**，均由上述 spec 断言。
+- **CI**：本批四个提交已推送；用户于本批收口时确认 CI 全绿。**本文件不复核该结论的 run id**——需要原始证据时直接查 GitHub Actions 上这四个 commit 的 run，或见下方"文档面"一条。
+- **文档面**：本批的文档改动集中在 `docs/20`（四个提交都更新了它）。`docs/01`／`02`／`05`／`06`／`07`／`11`／`12` 与 `main/*/README.md` 的路径/行号漂移由 **2026-09-18 的文档同步审计**统一修正（那一轮不改任何代码）。
+- **仍未做**：P4 的 `architecture-renderer.spec.ts:107` 注释里"纯域面当前实测 51 个文件"与同文件 `:320` 的"55"及实际 55 不一致（**测试内注释陈旧，无断言钉住，本轮不改测试**）；doc 20 §5.4 列出的四条"仍只是约定"的规则照旧无门禁。
 
 ## 4. 阶段 8 阻塞项
 
@@ -1119,6 +1135,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 | `S5-A15d` | self-hosted `windows` job 冷启动耗时／转暖稳定值 | **未取得稳定值**（第二次 29m16s > 第一次 27m36s，「转暖更快」在本机不成立）；集成步骤本身 1534.41s | 下方 ② |
 | `S5-A15e` | `tool-executors.ts` 懒下载 dialog 的实测前提 | **前提已失效**（已改为经 `defaultDialogService`）⇒ **需重新实测，未测** | 下方 ④ |
 | `S5-A16` | H-06／H-07 侦察（两处与评审措辞不符 + mock 确定性缺陷） | **缺陷已修**（`07c71dd`） | `§3.1` |
+| `S5-A17` | 架构整改 Prompt 1～5（消 Main 值环 + 组合根治理 + 后端能力端口 + Renderer 纯域下沉 + 机械门禁） | **四个提交全部落地**（2026-09-17，`203b4e3`／`10d5e9d`／`883e210`／`70528bd`） | 新增 `§3.5`（读数与落点）；结构现状见 [doc 20](20-Cyrene-前端架构现状总览.md) |
 | `S5-B1` | H-01 取舍：完整默认黑名单（`/tmp`、`%TEMP%` 下的附件被拒） | **已定案**，代价明确、改一处即可放开 | 下方 `S5-B1` 原文 |
 | `S5-B2` | H-01 **结构性修法**（Main 签发不可猜 `fileRef`、`path` 仅由 `webUtils.getPathForFile` 铸造） | **已完成（2026-09-15）**：`path` 已移出 IPC 面，改由 Main 的 `fileRef` 表解析（32B CSPRNG、TTL 10min、容量 256）；唯一铸造点是 preload 经 `attachments:register-file-ref` 换 token。**不是 HMAC**——`isTrustedSenderFor` 分不出 preload 与页面主世界，信任锚只能是 Main 内存。**同日复核修正三处过度声称**（「重连清空」的 `clear()` 零调用点／`bytes` 判限用对端自报 size／失败文案构成存在性 oracle），三处均已落地。 | doc 07 §9.2 + [汇总](review/2026-09-15-五路并行全量评审发现汇总.md) §2.1 |
 | `S5-B3` | H-11b renderer 半边（持久化故障对用户可见） | **已完成**（2026-09-13，含 `CyPersistenceBanner` 全局挂载与错误码拆分，变异 4 次） | 下方 `S5-B3` 原文 + `§3.1` |
@@ -1141,7 +1158,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
 2. Stage H 已闭账；后续多角色新增需求应另立批次，不再复用已关闭的整改项。
 2. 保留参数化 Stage H runner、公开 API tail 强串行语义和 fixture 的“停服务后 cleanup → 冷启动复查”顺序。
 3. 任务中心、Neo4j 与阶段 8 均保持原有暂缓/排除状态；Stage H 完成不自动启动这些范围。
-4. 全量评审建议的 P0 批次**已全部完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；**P0-7 的 `EXT-01` 半边已解除**（2026-09-12：使用范围限定为个人自用 ⇒ 该约束面没有实例，见 §4 与对应决策记录）。Windows 打包进 CI（P2-4）**已完成**：`ci.yml` 的 windows job 跑 `electron-builder --dir` 与静态 `verify:artifact`（`ci.yml:428`＝`Package (electron-builder --dir)`／`:432`＝静态 `verify:artifact` 实测；原写「L388／L392」已漂移，2026-09-14 更正）。
+4. 全量评审建议的 P0 批次**已全部完成**：H-02／H-03／H-04 与安全三项（H-12／H-11b／H-01 止血）均已修复并变异验证，见 §1 与 §3.1；**P0-7 的 `EXT-01` 半边已解除**（2026-09-12：使用范围限定为个人自用 ⇒ 该约束面没有实例，见 §4 与对应决策记录）。Windows 打包进 CI（P2-4）**已完成**：`ci.yml` 的 windows job 跑 `electron-builder --dir` 与静态 `verify:artifact`（`ci.yml:438`＝`Package (electron-builder --dir)`／`:441`＝静态 `verify:artifact`；行号 2026-09-18 复核更新——同一条曾从「L388／L392」更正到「:428／:432」，`ci.yml` 后续增行后再次漂移，这类行号引用按本文件口径应以脚本名而非行号定位）。
    - **P0-7 的另一半已定案（2026-09-12）**：评审 P0-7 行含两项——`EXT-01` **与** `asar: false` 的处置（改 `asar: true`，或为 `resources/app/**` 补 SHA-256 清单）+ `verify-artifact.cjs` 校验。实测仍为 `asar: false`、无任何清单校验；同日记录只写了「原本只依赖 EXT-01」，与评审该行的定义不符。**结论：按同一使用范围（个人自用、不对外分发）解除**，见 [P0-7 asar 与产物完整性范围解除决策记录](review/2026-09-12-P0-7-asar与产物完整性范围解除-决策记录.md)——与 `EXT-01` 同纪律：只主张"触发面没有实例"，**不主张已安全/已合规**，且**不计入"已实现"**（doc 16 只记范围解除）；出现对外分发／多人使用／自动更新／上架即原样恢复。至此外发分发阻塞项两条均已范围解除，P0 批次完成度不再有缺口。
 4.1 **建议的门禁判别力三项已完成**（`b51ba49`，报告 P1-2／P2-5／P1-4，见 §1 与 §3.1）。剩余 **H-05～H-10 六条 High 一条未动**，均属 P1：H-05 契约镜像锚点（P1-3）、H-06／H-07 角色域双缓存（P1-10，高风险、需真机复验）、H-08 长会话性能（P1-9）、H-09 写文件大小校验前移＋diff 出主线程（P1-8）、H-10 流式 watchdog／切会话取消（P1-7）、H-11a 写序列化＋唯一临时名（P1-5）。另 P1-1（`registry` 预算默认值）、P1-11（`noImplicitAny`／type-aware lint）、P1-12（renderer 报错进诊断包）亦未动。**注：本行「一条未动」的清单已被下一行（第二轮更新）取代。**
 5. **剩余批次进度（2026-09-11 第二轮更新）**：**评审所列各项均已落地** —— H-10／H-09（**只有写路径半边**：大小校验前移＋超限省略大输入预览；「diff 出主线程」**未做**——代码实测 `src/main` 内无 `utilityProcess`／`worker_threads`，`computeTextDiff` 仍在主线程同步调用。理由是实测改了严重性口径：写入上限 2 MiB → 26 ms≈一帧、非冻结，故与 H-08 第三半同属「按实测判定无需做」）／H-11a／H-05／H-07(mock 侧)／H-06+H-07(判据收敛)／H-08(两个安全半边)／H-02(重落地)／P2-6／P1-1(声明门禁)／P1-11(noImplicitAny + 三条 type-aware)／P1-12 全部完成并各自变异验证，CI 5/5 全绿（`1ee4f4b`）。
@@ -1198,7 +1215,7 @@ CI 历史（本表 CI 行只记当前批次，历史见下）：- `b498c59` / [r
    - **拒绝写入语义与操作级 fail-open 均未变**；这一条同时兑现了 doc 06 §12 一直写着却从未实现的「**提示用户**」；
    - 变异 4 次；集成用例在本机（Windows **junction** 形态）与 CI（Linux **symlink** 形态）都能跑真链路，见 §3.1。
    **M-19（设置保存失败不可见）已于 2026-09-13 单独修复**（见下一条与 §3.1 的 M-19 批次行）：保存失败不再丢弃改动 + 设置中心三态可见 + doc 11 §9 口径改写；并顺带修掉一处**启动路径缺陷**（设置文件隔离失败会让应用起不来）。
-8. ~~M-20 其余 6 处 `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）未动、待用户决定~~ **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`，见 §3.1）：这 6 处改用配对文本 token `--cy-accent-text`（`tokens.css:33`，明暗两套；评审建议的 `--cy-accent-strong` 在浅色下仍 <4.5:1，故未采用）。本轮复测：`color: var(--cy-accent)` 在 `src/renderer/src` 下 **0 命中**，配对 token 有 29 处使用。此项因此不再需要用户决定。
+8. ~~M-20 其余 6 处 `--cy-accent` 文本误用（`CyConnectionPanel`×2、`CyLinkAttachment`、`CyRealtimeBar`、`CyToolCard`、`CyMessageList` hover）未动、待用户决定~~ **已完成**（P2-7 批 `9d2d07e`+`dd8e91c`，见 §3.1）：这 6 处改用配对文本 token `--cy-accent-text`（`tokens.css:39`，明暗两套；行号 2026-09-18 复核更新。评审建议的 `--cy-accent-strong` 在浅色下仍 <4.5:1，故未采用）。本轮复测：`color: var(--cy-accent)` 在 `src/renderer/src` 下 **0 命中**，配对 token 有 29 处使用。此项因此不再需要用户决定。
 9. `ui/设计风格.md` 的归属待定：或收进 `docs/` 并挂到 doc 00／03，或明确标注为参考资料（像 `ref/`）。
 10. 报告按仓库纪律**原样保留**（历史记录不改写其历史主张）；R-09 的更正记于 §1 与 §3.1，不回头修改报告正文。
 
